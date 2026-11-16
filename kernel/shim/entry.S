@@ -105,7 +105,8 @@ st_abs_cpsr:    .word 0             @ +0x88 CPSR at that read (I bit 7 = IRQs ma
 st_dec_calls:   .word 0             @ +0x8C set_decrementer calls
 st_dec_last:    .word 0             @ +0x90 last deadline (ticks)
 st_dec_lr:      .word 0             @ +0x94 caller of the last set_decrementer
-st_dbg_pad:     .word 0, 0          @ +0x98
+st_irq_n:       .word 0             @ +0x98 IRQ vector entries (any ID)
+st_dbg_pad:     .word 0             @ +0x9C
 
 @ ---------------------------------------------------------------------------
 @ void shim_putc(int c): append to the log ring; clean the touched lines so
@@ -270,6 +271,40 @@ shim_get_abstime:
     moveq r0, #0
     moveq r1, #0
     bxeq lr
+    @ bring-up snapshot (shim+0x5F00, 2 lines): timer + GIC state at every
+    @ clock read, so a hang shows whether the tick is pending/delivered
+    ldr r2, =PRIV_VA
+    ldr r1, =(_shim_base + 0x5F00)
+    ldr r0, [r2, #PT_COUNT]
+    str r0, [r1, #0x00]
+    ldr r0, [r2, #PT_CTRL]
+    str r0, [r1, #0x04]
+    ldr r0, [r2, #PT_ISR]
+    str r0, [r1, #0x08]
+    ldr r0, [r2, #GICC_CTRL]
+    str r0, [r1, #0x0C]
+    ldr r0, [r2, #GICC_PMR]
+    str r0, [r1, #0x10]
+    ldr r0, [r2, #0x118]            @ highest pending (does not acknowledge)
+    str r0, [r1, #0x14]
+    add r2, r2, #0x1000             @ distributor
+    ldr r0, [r2]
+    str r0, [r1, #0x18]
+    ldr r0, [r2, #0x100]            @ enabled 0-31
+    str r0, [r1, #0x1C]
+    ldr r0, [r2, #0x200]            @ pending 0-31
+    str r0, [r1, #0x20]
+    ldr r0, [r2, #0x204]            @ pending 32-63
+    str r0, [r1, #0x24]
+    ldr r0, [r2, #0x104]            @ enabled 32-63
+    str r0, [r1, #0x28]
+    ldr r0, [r2, #0x300]            @ active 0-31
+    str r0, [r1, #0x2C]
+    mrc p15, 0, r0, c1, c0, 0
+    str r0, [r1, #0x30]
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
+    mcr p15, 0, r1, c7, c10, 1
     mrs r12, cpsr
     cpsid if
     ldr r2, =PRIV_VA
@@ -357,6 +392,15 @@ shim_irq:
     ldr r0, =PRIV_VA
     ldr r1, [r0, #GICC_IAR]
     str r1, st_last_irq
+    ldr r2, st_irq_n
+    add r2, r2, #1
+    str r2, st_irq_n
+    ldr r2, =st_inited              @ make +0x40..+0x9F visible to the ARM9 now
+    mcr p15, 0, r2, c7, c10, 1
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
     b shim_audio_hook               @ audio: PL080 emulation (kernel/shim/audio*); comes back
     .global shim_irq_resume, irq_save0  @ to shim_irq_resume with r0/r1 intact, or ends the IRQ itself
 shim_irq_resume:

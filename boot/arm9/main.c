@@ -359,6 +359,15 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                        (unsigned)st[0x84 / 4], (unsigned)st[0x88 / 4] & 0x1FF);
                 status(25, CON_GREY, "dec %u l%u @%08x", (unsigned)st[0x8C / 4],
                        (unsigned)st[0x90 / 4], (unsigned)st[0x94 / 4]);
+                /* timer + GIC snapshot from the last clock read (shim+0x5F00) */
+                vu32 *g = (vu32 *)(cfg.shim_pa + 0x5F00);
+                status(21, CON_GREY, "irq %u pt %x c%x s%x", (unsigned)st[0x98 / 4],
+                       (unsigned)g[0], (unsigned)g[1], (unsigned)g[2]);
+                status(22, CON_GREY, "cc%x pm%x hp%x dc%x act%x", (unsigned)g[3],
+                       (unsigned)g[4], (unsigned)g[5], (unsigned)g[6], (unsigned)g[11]);
+                status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
+                       (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
+                status(20, CON_GREY, "sctlr %08x", (unsigned)g[12]);
             }
         }
         tick++;
