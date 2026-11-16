@@ -1,0 +1,111 @@
+/*
+ * ios3ds shim: the network mailbox as the read/write sysctl "kern.ios3ds_net"
+ * (4096 opaque bytes = netio_t, boot/common/wifi_proto.h). ios3ds-wifid polls
+ * it and bridges the frames to an IOUserEthernet interface.
+ *
+ * NOT wired in yet. To wire: add this file to the gcc command in
+ * scripts/mkboot.py build_shim() (next to tools/ios3ds-input/shim/input.c,
+ * with -I tools/ios3ds-wifi/shim) and call shim_net_register() next to
+ * shim_input_register() in kernel/shim/blk.c. No kernel patch is needed.
+ *
+ * Why one fixed-size RW opaque OID: sysctl_handle_opaque() (= sysctl_io_opaque
+ * with changed == NULL) copies exactly arg2 bytes out and, if a new value was
+ * supplied, exactly arg2 bytes in, without this file having to know struct
+ * sysctl_req. We detect "a new value arrived" by the magic the caller put in.
+ *
+ * Kernel facts (8C148, xnu-1504.58.28), shared with tools/ios3ds-input:
+ *   sysctl_register_oid   0x80159c54 (Thumb)
+ *   sysctl_handle_opaque  0x80159242 (Thumb)
+ *   sysctl__kern_children 0x8027f7b8
+ *   struct sysctl_oid: 36-byte pre-OID2 layout
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#include "ios3ds.h"
+#include "wifi_proto.h"
+
+static inline void net_dclean(volatile void *p, u32 len)
+{
+    u32 a = (u32)p & ~31u, end = (u32)p + len;
+    for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c10, 1" :: "r"(a) : "memory");
+    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+}
+
+/* Only ever used on lines the ARM11 never writes, so nothing can be lost. */
+static inline void net_dinval(volatile void *p, u32 len)
+{
+    u32 a = (u32)p & ~31u, end = (u32)p + len;
+    for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
+    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+}
+
+#define NET_DINVAL(p, len) net_dinval((volatile void *)(p), (u32)(len))
+#define NET_DCLEAN(p, len) net_dclean((volatile void *)(p), (u32)(len))
+#include "net_core.h"
+
+struct sysctl_oid {
+    void       *oid_parent;
+    void       *oid_link;
+    int         oid_number;
+    int         oid_kind;
+    void       *oid_arg1;
+    int         oid_arg2;
+    const char *oid_name;
+    int       (*oid_handler)(struct sysctl_oid *, void *, int, void *req);
+    const char *oid_fmt;
+};
+_Static_assert(sizeof(struct sysctl_oid) == 36, "xnu-1504 arm sysctl_oid");
+
+#define CTLFLAG_RW      0xC0000000
+#define CTLTYPE_OPAQUE  5
+#define OID_AUTO        (-1)
+#define EBUSY           16
+
+#define KPI(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
+#define sysctl_register_oid   KPI(0x80159c54, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPI(0x80159242, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_KERN_CHILDREN  ((void *)0x8027f7b8)
+
+#define NETMBOX ((volatile netmbox_t *)NET_VA)
+#define NETIO   ((netio_t *)(NET_VA + NET_IO_OFF))
+
+static volatile u32 net_busy;
+
+static int net_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *req)
+{
+    /* The io buffer is single-instance and the copyout/copyin below can
+       block, so a second caller is turned away instead of sharing it. */
+    u32 cpsr, was;
+    __asm__ volatile("mrs %0, cpsr\n\tcpsid if" : "=r"(cpsr) :: "memory");
+    was = net_busy;
+    net_busy = 1;
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory");
+    if (was) return EBUSY;
+
+    netio_t *io = (netio_t *)arg1;
+    net_core_fill(NETMBOX, io);
+    int err = sysctl_handle_opaque(oidp, io, arg2, req);
+    /* magic is still NETIO_MAGIC unless userland supplied a new value */
+    if (!err) net_core_apply(NETMBOX, io);
+    net_busy = 0;
+    return err;
+}
+
+static struct sysctl_oid net_oid = {
+    .oid_parent  = SYSCTL_KERN_CHILDREN,
+    .oid_number  = OID_AUTO,
+    .oid_kind    = (int)(CTLFLAG_RW | CTLTYPE_OPAQUE),
+    .oid_arg1    = (void *)(NET_VA + NET_IO_OFF),
+    .oid_arg2    = (int)NETIO_SIZE,
+    .oid_name    = "ios3ds_net",
+    .oid_handler = net_sysctl,
+    .oid_fmt     = "S,ios3ds_net",
+};
+
+/* Thread context only (takes the funnel and a rw-lock). Idempotent. */
+void shim_net_register(void)
+{
+    static int done;
+    if (done) return;
+    done = 1;
+    sysctl_register_oid(&net_oid);
+}
