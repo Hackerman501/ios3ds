@@ -166,6 +166,28 @@ void a11_main(void)
         }
         if (sh->a9_cmd == A9CMD_JUMP) {
             u32 pc = sh->jump_pc, r0 = sh->jump_r0;
+            /* MPCore coherency like libn3ds mmu.c / start.s: reset the SCU,
+               invalidate its tag RAMs, enable it, then ACTLR.SMP (bit 5).
+               Luma hands over with ACTLR 0xF (AMP): there, exclusive
+               accesses (LDREX/STREX, i.e. every XNU lock and atomic) to
+               memory the page tables mark Shared never succeed on this bus,
+               so XNU spun silently right after "iBoot version" on hardware
+               (QEMU models no caches or monitors). XNU's own ACTLR writes
+               are patched out (kernel/patches.json actlr-write), so it stays. */
+            vu32 *scu = (vu32 *)0x17E00000u;
+            u32 actlr;
+            scu[0] = 0x1FFEu;               /* SCU off, all alias/access bits */
+            scu[3] = 0xFFFFu;               /* invalidate all tag RAM ways */
+            scu[0] = 0x1FFFu;               /* SCU on */
+            __asm__ volatile("mrc p15, 0, %0, c1, c0, 1" : "=r"(actlr));
+            actlr |= 0x2Fu;                 /* SMP + return stack + branch prediction + folding */
+            __asm__ volatile("mcr p15, 0, %0, c1, c0, 1\n"
+                             "mcr p15, 0, %1, c7, c7, 0\n"     /* invalidate both caches */
+                             "mcr p15, 0, %1, c7, c10, 4\n"    /* DSB */
+                             "mcr p15, 0, %1, c7, c5, 4"        /* flush prefetch buffer */
+                             : : "r"(actlr), "r"(0) : "memory");
+            __asm__ volatile("mrc p15, 0, %0, c1, c0, 1" : "=r"(actlr));
+            a11_printf("[a11] SCU on, SMP mode: ACTLR %08x\n", actlr);
             a11_printf("[a11] jumping to %08x r0=%08x\n", pc, r0);
             sh->a11_stage = A11_STAGE_JUMPING;
             sh->a11_ack = A9CMD_JUMP;
