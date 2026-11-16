@@ -109,9 +109,12 @@ _Static_assert(sizeof(netmbox_t) <= NET_IO_OFF, "netmbox overlaps the io buffer"
  *                  being acknowledged (0 with NETIO_F_NOACK: no ack); nframes
  *                  TX frames in data[]
  *
- * A call may do both at once: old = fresh status + RX batch, new = ack of the
- * previous batch + TX. A plain read (e.g. `sysctl -a`) never loses frames, and
- * a repeated ack is harmless (acks are absolute sequence numbers).
+ * The shim builds the outgoing batch *before* it applies an incoming ack
+ * (sysctl_handle_opaque copies out, then in), so a combined read+write call
+ * would hand back the frames it just acknowledged. ios3ds-wifid therefore
+ * writes (ack + TX, oldp = NULL) and then reads. A plain read (e.g.
+ * `sysctl -a`) never loses frames, and a repeated ack is harmless (acks are
+ * absolute sequence numbers).
  */
 #define NET_SYSCTL_NAME "kern.ios3ds_net"
 #define NETIO_SIZE      4096u

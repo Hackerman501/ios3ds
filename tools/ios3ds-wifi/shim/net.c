@@ -3,10 +3,9 @@
  * (4096 opaque bytes = netio_t, boot/common/wifi_proto.h). ios3ds-wifid polls
  * it and bridges the frames to an IOUserEthernet interface.
  *
- * NOT wired in yet. To wire: add this file to the gcc command in
- * scripts/mkboot.py build_shim() (next to tools/ios3ds-input/shim/input.c,
- * with -I tools/ios3ds-wifi/shim) and call shim_net_register() next to
- * shim_input_register() in kernel/shim/blk.c. No kernel patch is needed.
+ * Built into shim.bin by scripts/mkboot.py build_shim(); registered from
+ * shim_mdevstrategy() (kernel/shim/blk.c, first root-disk I/O = thread
+ * context). No kernel patch is needed.
  *
  * Why one fixed-size RW opaque OID: sysctl_handle_opaque() (= sysctl_io_opaque
  * with changed == NULL) copies exactly arg2 bytes out and, if a new value was
