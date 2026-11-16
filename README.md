@@ -77,7 +77,7 @@ scripts/build-ios-toolchain.sh   # armv6 iOS Mach-O toolchain (ld64/cctools-port
 
 ## Try it on a console (SD only, nothing touches NAND or FIRM)
 1. Run `make sd`, then copy the **contents** of `build/sd/` to the root of the SD card. That includes `luma/payloads/ios3ds.firm` and the `ios3ds/` folder (about 1 GB).
-2. Hold **START** at power-on and choose `ios3ds` in Luma3DS's chainloader menu.
+2. Hold **START** at power-on and choose `ios3ds` in Luma3DS's chainloader menu, **or** start `ios3ds` from the Homebrew Launcher. That reboots into ios3ds, and ios3ds puts Luma back as `boot.firm` first thing; see [docs/real-hardware.md](docs/real-hardware.md).
 3. What you should see:
    - **Bottom screen:** the version, "SD ok", "ARM11 ok", then a countdown. Hold **B** to stay in the monitor.
    - **Top screen:** the boot log, including XNU's own messages. Once SpringBoard draws, the top screen shows iOS; turn the console 90° clockwise to read it.
@@ -88,7 +88,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
 
 ## Limitations and notes
 - **Why iOS 4.2.1 and not later:** later iOS versions need ARMv7; the 3DS ARM11 is ARMv6.
-- **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
+- **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. The `ios3ds.3dsx` launcher swaps `boot.firm` on the SD card and reboots instead. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
 - **Missing hardware support:**
   - touch is untested (buttons work in the emulator);
   - no audio, Wi-Fi or real-time clock (the clock shows 1969/1970 time);

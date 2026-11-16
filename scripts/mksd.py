@@ -5,6 +5,8 @@
 
 Always writes the card tree to build/sd/ (copy its contents to the root of the
 real SD card):
+  3ds/ios3ds.3dsx             Homebrew Launcher entry (if built): swaps boot.firm, reboots
+  ios3ds/ios3ds.firm          the payload again, for the launcher
   luma/payloads/ios3ds.firm   the payload (hold START at boot for Luma's menu,
                               or rename to x_ios3ds.firm to boot it with X)
   ios3ds/boot.cfg             loader configuration (editable: cmdline=...)
@@ -38,6 +40,12 @@ def build_tree(args):
     if not os.path.exists(firm):
         sys.exit("build the payload first: make -C boot")
     shutil.copy(firm, os.path.join(tree, "luma", "payloads", "ios3ds.firm"))
+    # for the Homebrew Launcher route (tools/ios3ds-launcher, docs/real-hardware.md)
+    shutil.copy(firm, os.path.join(tree, "ios3ds", "ios3ds.firm"))
+    launcher = os.path.join(ROOT, "build", "launcher", "ios3ds.3dsx")
+    if os.path.exists(launcher):
+        os.makedirs(os.path.join(tree, "3ds"), exist_ok=True)
+        shutil.copy(launcher, os.path.join(tree, "3ds", "ios3ds.3dsx"))
     kernel = os.path.join(args.staging, "kernelcache.macho")
     if os.path.exists(kernel) and not args.no_kernel:
         import mkboot  # noqa: E402

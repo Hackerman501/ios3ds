@@ -18,6 +18,7 @@
 #include "blksrv.h"
 #include "display.h"
 #include "tsc.h"
+#include "swap.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -376,6 +377,7 @@ void a9_main(int argc, char **argv)
     } else {
         log_ok("SD mounted, logging to sd:/ios3ds/log.txt\n");
         status(7, CON_GREEN, "SD ok");
+        firm_swap_restore();            /* launcher (.3dsx) boot: Luma back first */
     }
 
     logp("waiting for ARM11 (stage %s)...\n", stage_name(SHARED->a11_stage));

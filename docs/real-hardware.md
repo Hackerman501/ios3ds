@@ -41,10 +41,35 @@ Every stage writes to the screen and to `sd:/ios3ds/log.txt`. The previous run i
 
 To get back: hold POWER ~10 s, then power on normally.
 
-## 4. Can it run as a `.3dsx`?
+## 4. Launching from the Homebrew Launcher (`.3dsx`)
 
-A `.3dsx` is a user-mode program under Nintendo's kernel. XNU needs to own the CPU (MMU, vectors, interrupts) and our design needs the ARM9 as its I/O processor, so XNU cannot run *inside* a `.3dsx`. A `.3dsx` can, however, act as a **launcher** that hands the machine over to `ios3ds.firm`, with no START-at-boot menu. Return to Horizon by rebooting. What is feasible on current Luma3DS is being researched; see section 5 (to be filled in from the research agent's findings).
+**Why iOS can't run inside a `.3dsx`:** a `.3dsx` is a user-mode program under Nintendo's kernel. XNU must own the CPU (MMU, vectors, interrupts), and ios3ds needs the ARM9 as its I/O processor. The ARM9 runs Process9, in ARM9-only memory the ARM11 can't map, and the old ARM11→ARM9 exploits (firmlaunch-hax, safehax) are patched on current firmware.
 
-## 5. 3DSX launcher (research)
+**Why a homebrew app can't launch a `.firm` directly:** the userland firmlaunch (pm `LaunchFirm` → `svcKernelSetState(0, …)`) is hooked by Luma's `patchFirmlaunches`. The hook always reloads the file Luma itself booted from (`launchedPath`) and skips the chainloader menu (Luma3DS `arm9/source/patches.c`, `main.c` FIRMLAUNCH branch).
 
-_Pending._
+**What we do: `tools/ios3ds-launcher` → `sd:/3ds/ios3ds.3dsx`.** It is a launcher. It only renames files on the SD card, then reboots:
+
+1. create `ios3ds/swap.flg`;
+2. rename `boot.firm` (Luma) → `ios3ds/luma.firm`;
+3. rename `ios3ds/ios3ds.firm` → `boot.firm`;
+4. reboot (`PTMSYSM_RebootAsync`, fallback `APT_HardwareResetAsync`).
+
+boot9strap then boots ios3ds directly. Our FIRM header sets boot9strap's screen-init flag, so the screens come up as they do under Luma.
+
+**Luma comes back first:** the monitor's **first action after mounting the SD card** is the reverse swap (`boot/arm9/swap.c`). The next power-on is Luma again.
+
+**Why an interrupted swap still boots:**
+- Renames only, no copies, so no half-written `boot.firm` can exist.
+- Between the two renames there is no `sd:/boot.firm`, and boot9strap falls back to `ctrnand:/boot.firm`, which the 3ds.hacks.guide installs. If you skipped that step, the fix is copying `ios3ds/luma.firm` back to `boot.firm` on a PC.
+- After the swap, ios3ds boots and restores Luma.
+- If anything is left over, the launcher sees `ios3ds/luma.firm` on its next start and offers **Y: restore Luma**.
+
+**To return to the HOME Menu:** hold POWER ~10 s, then power on; that boots Luma as usual.
+
+**Tested:**
+- QEMU: the monitor restores a simulated swap (`launcher swap: restored, next boot is Luma`); iOS still boots with long-filename support enabled in FatFs.
+- Azahar 2126.2: the `.3dsx` runs, swaps on A, and restores on Y. Azahar can't boot a FIRM, so its "reboot" just restarts the app.
+
+**Not tested on real hardware yet.**
+
+Building the launcher needs devkitARM + libctru: `source ../rockbox-3ds/scripts/env.sh && make -C tools/ios3ds-launcher`, then `make sd` adds `3ds/ios3ds.3dsx`.
