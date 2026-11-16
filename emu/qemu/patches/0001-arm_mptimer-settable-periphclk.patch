@@ -1,0 +1,44 @@
+diff --git a/hw/timer/arm_mptimer.c b/hw/timer/arm_mptimer.c
+index 7cc5915..f02c4f6 100644
+--- a/hw/timer/arm_mptimer.c
++++ b/hw/timer/arm_mptimer.c
+@@ -64,6 +64,21 @@ static inline uint32_t timerblock_scale(uint32_t control)
+     return (((control >> 8) & 0xff) + 1) * 10;
+ }
+ 
++/*
++ * ios3ds: boards may set the MPCore peripheral clock (Hz). 0 keeps the
++ * historic 100 MHz (10 ns) behaviour for every other machine.
++ */
++uint32_t arm_mptimer_periphclk_hz;
++
++static inline void timerblock_set_rate(struct ptimer_state *timer, uint32_t control)
++{
++    if (arm_mptimer_periphclk_hz) {
++        ptimer_set_freq(timer, arm_mptimer_periphclk_hz / (((control >> 8) & 0xff) + 1));
++    } else {
++        ptimer_set_period(timer, timerblock_scale(control));
++    }
++}
++
+ /* Must be called within a ptimer transaction block */
+ static inline void timerblock_set_count(struct ptimer_state *timer,
+                                         uint32_t control, uint64_t *count)
+@@ -155,7 +170,7 @@ static void timerblock_write(void *opaque, hwaddr addr,
+             ptimer_stop(tb->timer);
+         }
+         if ((control & 0xff00) != (value & 0xff00)) {
+-            ptimer_set_period(tb->timer, timerblock_scale(value));
++            timerblock_set_rate(tb->timer, value);
+         }
+         if (value & 1) {
+             uint64_t count = ptimer_get_count(tb->timer);
+@@ -222,7 +237,7 @@ static void timerblock_reset(TimerBlock *tb)
+         ptimer_transaction_begin(tb->timer);
+         ptimer_stop(tb->timer);
+         ptimer_set_limit(tb->timer, 0, 1);
+-        ptimer_set_period(tb->timer, timerblock_scale(0));
++        timerblock_set_rate(tb->timer, 0);
+         ptimer_transaction_commit(tb->timer);
+     }
+ }

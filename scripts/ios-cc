@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# ios-cc: clang driver wrapper producing ARMv6 iOS 4.2 Mach-O (C and
+# assembly; no ObjC/C++ runtime support in the stub SDK headers).
+# Toolchain comes from scripts/build-ios-toolchain.sh (build/toolchain/).
+#
+#   scripts/ios-cc -O2 hello.c -o hello                  # MH_EXECUTE (LC_UNIXTHREAD, own crt1)
+#   scripts/ios-cc -O2 -bundle eng.c -o Eng.bundle/Eng   # MH_BUNDLE
+#   scripts/ios-cc -O2 -dynamiclib -install_name /usr/lib/libfoo.dylib foo.c -o libfoo.dylib
+#   scripts/ios-cc -c foo.c                              # compile only
+#
+# When linking it adds our crt1 (executables only), -lSystem and the static
+# compiler-rt builtins, then ad-hoc signs the output with ldid (SHA-1 code
+# directory, which is what the iOS 4 kernel understands).
+#
+# Environment: IOS_CC_NO_SIGN=1  skip signing
+#              IOS_CC_ENTITLEMENTS=file.plist  embed entitlements when signing
+#              IOS_CLANG=clang-18  host clang to use
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+TC="$ROOT/build/toolchain"
+SDK="$TC/sdk"
+LD="$TC/bin/arm-apple-darwin10-ld"
+CLANG="${IOS_CLANG:-clang}"
+
+[[ -x "$LD" && -d "$SDK/usr/include" ]] || {
+    echo "ios-cc: toolchain missing, run scripts/build-ios-toolchain.sh" >&2; exit 1; }
+
+link=1 exe=1 nostdlib=0 out=a.out prev=
+for a in "$@"; do
+    if [[ "$prev" == -o ]]; then out="$a"; fi
+    case "$a" in
+        -c|-S|-E|-M|-MM|-fsyntax-only|--version|-v|-dumpmachine|-print-*) link=0 ;;
+        -bundle|-dynamiclib|-shared) exe=0 ;;
+        -r) exe=0; nostdlib=1 ;;
+        -nostdlib|-nodefaultlibs|-nostartfiles) nostdlib=1 ;;
+        -o?*) out="${a#-o}" ;;
+    esac
+    prev="$a"
+done
+[[ $# -eq 0 ]] && link=0
+
+args=(-target armv6-apple-ios4.2 -mfloat-abi=softfp -isysroot "$SDK" -fno-stack-protector)
+if [[ $link -eq 0 ]]; then
+    exec "$CLANG" "${args[@]}" "$@"
+fi
+
+# Link: we name every startup file / library ourselves instead of relying on
+# what the driver would look for in a real SDK.
+libs=()
+if [[ $nostdlib -eq 0 ]]; then
+    [[ $exe -eq 1 ]] && libs+=("$SDK/usr/lib/crt1.o")
+    libs+=(-lSystem "$TC/lib/libclang_rt.builtins-armv6.a")
+fi
+# Leave out load commands a 2010 linker would not have emitted
+# (LC_ENCRYPTION_INFO, LC_FUNCTION_STARTS, LC_DATA_IN_CODE).
+"$CLANG" "${args[@]}" --ld-path="$LD" -nostdlib \
+    -Wl,-no_encryption,-no_function_starts,-no_data_in_code_info "$@" "${libs[@]}"
+
+# -r output is a relocatable object: nothing to sign.
+for a in "$@"; do [[ "$a" == -r ]] && exit 0; done
+if [[ -z "${IOS_CC_NO_SIGN:-}" && -f "$out" ]]; then
+    if [[ -n "${IOS_CC_ENTITLEMENTS:-}" ]]; then
+        "$TC/bin/ldid" -Hsha1 "-S$IOS_CC_ENTITLEMENTS" "$out"
+    else
+        "$TC/bin/ldid" -Hsha1 -S "$out"
+    fi
+fi

@@ -1,0 +1,188 @@
+{
+ "_comment": "Changes applied to a copy of the user's 4.2.1 root filesystem by scripts/mkrootfs.py",
+ "write": {
+  "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
+  "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
+  "/var/log/syslog": "",
+  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDontLockEver</key>\n\t<true/>\n</dict>\n</plist>\n"
+ },
+ "disable_daemons": [
+  "com.apple.BTServer.plist",
+  "com.apple.CommCenter.plist",
+  "com.apple.CommCenterMobileHelper.plist",
+  "com.apple.CommCenterRootHelper.plist",
+  "com.apple.wifiFirmwareLoader.plist",
+  "com.apple.MobileInternetSharing.plist",
+  "com.apple.racoon.plist",
+  "com.apple.apsd.plist",
+  "com.apple.apsd.tcpdump.en0.plist",
+  "com.apple.apsd.tcpdump.pdp_ip0.plist",
+  "com.apple.marco.tcpdump.en0.plist",
+  "com.apple.marcoagent.plist",
+  "com.apple.tcpdump.server.plist",
+  "com.apple.chud.chum.plist",
+  "com.apple.chud.pilotfish.plist",
+  "com.apple.iapd.plist",
+  "com.apple.accessoryd.plist",
+  "com.apple.usbptpd.plist",
+  "com.apple.wapic.plist",
+  "com.apple.locationd.plist",
+  "com.apple.itunesstored.plist",
+  "com.apple.dataaccess.dataaccessd.plist",
+  "com.apple.gamed.plist",
+  "com.apple.AOSNotification.plist",
+  "com.apple.mobile.keybagd.plist",
+  "com.apple.datamigrator.plist",
+  "com.apple.mobile.lockdown.plist"
+ ],
+ "grow_bytes": 1073741824,
+ "remove": [
+  "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db"
+ ],
+ "plist_set": {
+  "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
+   "StandardErrorPath": "/dev/console",
+   "StandardOutPath": "/dev/console",
+   "EnvironmentVariables": {
+    "MBX2D_PAGE_FLIP": "0",
+    "CA_ENABLE_OGL": "0"
+   }
+  }
+ },
+ "add": {
+  "build/rootfs-add/usr/libexec/ios3ds-sample": "/usr/libexec/ios3ds-sample",
+  "rootfs/files/com.ios3ds.sample.plist": "/System/Library/LaunchDaemons/com.ios3ds.sample.plist"
+ },
+ "chmod": {
+  "/usr/libexec/ios3ds-sample": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.sample.plist": "0644"
+ },
+ "file_patches": [
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684b894",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_activate -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684b9ac",
+   "orig": "f0402de90c708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_copy_buid_identity -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684ba84",
+   "orig": "f0402de90c708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_copy_identity -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bb48",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_remove_value -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bb94",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_set_value -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bbe4",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_disconnect -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bc28",
+   "orig": "80402de900708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_get_securecontext -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bc44",
+   "orig": "80402de900708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_get_socket -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bc64",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_receive_message -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bc94",
+   "orig": "80402de900708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_send_message -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bcb0",
+   "orig": "80402de900708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_recv -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bcc4",
+   "orig": "80402de900708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_send -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684bd94",
+   "orig": "f0402de90c708de2",
+   "new": "0100a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_connect -> dummy handle (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684c68c",
+   "orig": "f0402de90c708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_secure_checkin -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684c7b8",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "liblockdown stub: lockdown_checkin -> 0/NULL (no lockdownd/activation on ios3ds)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x54cba4c",
+   "orig": "90402de904708de224d04de20040a0e1",
+   "new": "0310a0e3001080e50000a0e31eff2fe1",
+   "why": "MobileKeyBag AppleKeyStoreGetDeviceLockState: *state=3 (keybag disabled / no passcode), return 0; the kernel call blocks forever without a system keybag (keybagd disabled)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x54cd6a0",
+   "orig": "80402de900708de2",
+   "new": "0100a0e31eff2fe1",
+   "why": "MobileKeyBag MKBDeviceUnlockedSinceBoot -> true"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x684b8e0",
+   "orig": "90402de904708de204d04de204308de200c0a0e304c023e5000090e57efbffeb0040a0e100009de5000050e30000000aad0900eb0400a0e104d047e2",
+   "new": "24309fe5003093e5030052e11c009f051eff2f0118309fe5003093e5030052e110009f050000a0131eff2fe18062a63ec4c92d3e5063a63ed044923e",
+   "why": "liblockdown stub: lockdown_copy_value -> \"Activated\" for ActivationState, kCFBooleanFalse for BrickState, else NULL (offline research activation)"
+  }
+ ]
+}

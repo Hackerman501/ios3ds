@@ -1,0 +1,128 @@
+[
+ {
+  "name": "ppmr-read",
+  "va": "0x80060274",
+  "orig": "923f1fee",
+  "new": "0030a0e3",
+  "why": "MRC c15,c2,4 (ARM1176 peripheral port remap) does not exist on ARM11 MPCore -> mov r3,#0"
+ },
+ {
+  "name": "ppmr-write",
+  "va": "0x80064208",
+  "orig": "920f0fee",
+  "new": "0000a0e1",
+  "why": "MCR c15,c2,4 in the vector-page reset path -> nop"
+ },
+ {
+  "name": "ifar-pabt-user",
+  "va": "0x800662e0",
+  "orig": "501f16ee",
+  "new": "0e10a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: the handler already did lr -= 4 at 0x800662ac, so fault address = lr (mov r1, lr)"
+ },
+ {
+  "name": "ifar-pabt-kernel",
+  "va": "0x8006632c",
+  "orig": "505f16ee",
+  "new": "0e50a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: fault address = lr after the entry lr -= 4 (mov r5, lr)"
+ },
+ {
+  "name": "actlr-write",
+  "va": "0x80067bf0",
+  "orig": "300f01ee",
+  "new": "0000a0e1",
+  "why": "ARM1176 ACTLR bits mean different things on MPCore (bit5 = SMP): ignore writes"
+ },
+ {
+  "name": "uart-init",
+  "va": "0x801dcdd0",
+  "orig": "90402de9",
+  "new": "1eff2fe1",
+  "why": "S5L UART init would touch MMIO that does not exist on the 3DS: bx lr"
+ },
+ {
+  "name": "uart-baud",
+  "va": "0x801dce5c",
+  "orig": "80402de9",
+  "new": "1eff2fe1",
+  "why": "S5L UART baud setup: bx lr"
+ },
+ {
+  "name": "uart-tx-ready",
+  "va": "0x801dcee8",
+  "orig": "0c309fe5003093e5",
+  "new": "0400a0e31eff2fe1",
+  "why": "S5L UART transmit-ready: always ready (mov r0,#4; bx lr)"
+ },
+ {
+  "name": "uart-tx-data",
+  "va": "0x801dcf00",
+  "orig": "0c309fe57000efe6",
+  "new": "04f01fe5@shim+0x0@",
+  "why": "S5L UART transmit: ldr pc,=shim_putc (log ring read by the ARM9)"
+ },
+ {
+  "name": "uart-rx-ready",
+  "va": "0x801dcf18",
+  "orig": "0c309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive-ready: never (mov r0,#0; bx lr)"
+ },
+ {
+  "name": "uart-rx-data",
+  "va": "0x801dcf30",
+  "orig": "08309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive: mov r0,#0; bx lr"
+ },
+ {
+  "name": "timer-get-abstime",
+  "va": "0x80068038",
+  "orig": "74c093e580109ce5",
+  "new": "04f01fe5@shim+0x10@",
+  "why": "cpu_data timer hook: 64-bit time base from the MPCore watchdog (S5L timer regs don't exist)"
+ },
+ {
+  "name": "timer-get-decrementer",
+  "va": "0x80068064",
+  "orig": "74c093e5b4009ce5",
+  "new": "04f01fe5@shim+0x14@",
+  "why": "cpu_data timer hook: ticks left = MPCore private timer counter"
+ },
+ {
+  "name": "timer-set-decrementer",
+  "va": "0x80068078",
+  "orig": "600083e574c093e5",
+  "new": "04f01fe5@shim+0x18@",
+  "why": "cpu_data timer hook: arm the MPCore private timer (GIC IRQ 29)"
+ },
+ {
+  "name": "irq-entry",
+  "va": "0x8006648c",
+  "orig": "04e04ee200d00fe1",
+  "new": "04f01fe5@shim+0x1c@",
+  "why": "IRQ entry -> shim: GIC ack; timer IRQ re-enters the kernel's FIQ handler (r9_fiq)"
+ },
+ {
+  "name": "mdevstrategy",
+  "va": "0x80072bf8",
+  "orig": "f0b55e4655464446",
+  "new": "004b1847@shim+0x20@",
+  "why": "memdev (md0) strategy -> shim: block I/O served by the ARM9 from sd:/ios3ds/rootfs.hfs (Thumb: ldr r3,[pc]; bx r3)"
+ },
+ {
+  "name": "rtc-wait-0s",
+  "va": "0x802e78b4",
+  "orig": "1e23",
+  "new": "0023",
+  "why": "AppleARMPE::getGMTTimeOfDay waits 30 s for an RTC that doesn't exist yet (PMU/MCU driver TODO): timeout 0"
+ },
+ {
+  "name": "clcd-sync-swap",
+  "va": "0x807a9b68",
+  "orig": "0400000a",
+  "new": "0000a0e1",
+  "why": "AppleM2CLCD swap_begin: take the debug-flag-0x10 path (swap-done signalled synchronously, no frame IRQ needed)"
+ }
+]

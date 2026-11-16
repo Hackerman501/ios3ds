@@ -1,0 +1,14 @@
+# Build output. Everything Apple-derived (kernel, device tree, rootfs, keys)
+# is generated into build/ from the user's own IPSW and must never be committed.
+/build/
+*.ipsw
+*.img3
+*.dmg
+*.hfs
+*.macho
+keys-*.json
+*.firm
+*.elf
+*.o
+*.d
+__pycache__/
