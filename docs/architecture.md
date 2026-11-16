@@ -85,6 +85,7 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
   - QuartzCore's display skips its ES1 probe, so SpringBoard keeps the software compositor;
   - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot.
+  - with `IOS3DS_GL=pica` the engine renders on the PICA200 through the shim's `ios3ds_gpu` service (`kernel/shim/pica.c`); see [pica200.md](pica200.md).
 - `ios3ds-sample` (`tools/ios3ds-sample`) prints every process's thread state to the console periodically. It is a debugging aid.
 
 ## 5. Debugging aids

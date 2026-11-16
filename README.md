@@ -16,7 +16,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 | M2 | XNU prints through our console path | done (emulator) |
 | M3 | Root filesystem from SD, `launchd`, daemons | done (emulator) |
 | M4 | Framebuffer (done), buttons (done in emulator: START = Home, SELECT = lock, L/R = volume), touch (driver written, untested: the emulator has no touchscreen model yet) | mostly done |
-| M5 | Graphics: SpringBoard needs no GPU (QuartzCore's software compositor). OpenGL ES 1.1 works through our CPU engine `tools/ios3ds-gl` ([docs/gpu.md](docs/gpu.md)); a PICA200 back end is future work | home screen reached without a GPU; `ios3ds-gltest` passes and draws in the emulator |
+| M5 | Graphics: SpringBoard needs no GPU (QuartzCore's software compositor). OpenGL ES 1.1 works through our engine `tools/ios3ds-gl` ([docs/gpu.md](docs/gpu.md)): CPU rasterizer by default, plus a PICA200 back end ([docs/pica200.md](docs/pica200.md)) that is opt-in until verified on hardware | home screen reached without a GPU; `ios3ds-gltest` passes on both back ends in the emulator (the GPU there is a software model of the PICA200) |
 
 ## How it works
 
@@ -95,6 +95,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);
   - OpenGL ES 1.1 is CPU-rendered (`tools/ios3ds-gl`): no PVRTC textures, no mipmaps or stencil yet, and no ES 2.0 (the MBX engine slot is ES1 only).
+  - The PICA200 back end has only run against our software GPU model, not on a real console; enable it per process with `IOS3DS_GL=pica`.
 
 ## Credits and prior art
 - [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research notes on booting 8C148, which were invaluable.

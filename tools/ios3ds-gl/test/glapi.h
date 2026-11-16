@@ -16,6 +16,11 @@
     F(void, glBlendFunc, (GLenum s, GLenum d), (s, d)) \
     F(GLenum, glCheckFramebufferStatusOES, (GLenum t), (t)) \
     F(void, glClear, (GLbitfield m), (m)) \
+    F(void, glClientActiveTexture, (GLenum t), (t)) \
+    F(void, glColorMask, (GLboolean r, GLboolean g, GLboolean b, GLboolean a), (r, g, b, a)) \
+    F(void, glDepthMask, (GLboolean f), (f)) \
+    F(void, glFramebufferTexture2DOES, (GLenum t, GLenum a, GLenum tt, GLuint x, GLint l), (t, a, tt, x, l)) \
+    F(void, glTexEnvfv, (GLenum t, GLenum p, const GLfloat *v), (t, p, v)) \
     F(void, glClearColor, (GLclampf r, GLclampf g, GLclampf b, GLclampf a), (r, g, b, a)) \
     F(void, glColor4f, (GLfloat r, GLfloat g, GLfloat b, GLfloat a), (r, g, b, a)) \
     F(void, glColorPointer, (GLint s, GLenum t, GLsizei st, const GLvoid *p), (s, t, st, p)) \

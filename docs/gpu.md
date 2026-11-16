@@ -3,8 +3,9 @@
 iOS 4.2.1 on the iPod touch 2G draws GL through the MBX Lite GPU. The 3DS has a
 PICA200 instead, and Apple's `MBXGLEngine` can't drive it. `tools/ios3ds-gl` is a
 replacement engine that plugs into the same slot inside `OpenGLES.framework`.
-Today it draws with a CPU rasterizer. It is split so that a PICA200 back end can
-take over the drawing later without touching the rest.
+It draws with a CPU rasterizer by default. A second back end renders on the
+PICA200 itself ([pica200.md](pica200.md)); it is opt-in until it has been
+verified on real hardware.
 
 Apps, and later QuartzCore, keep using Apple's `OpenGLES.framework` unmodified.
 They call `gl*` and `EAGLContext` as usual. Only the engine behind those calls is
@@ -100,6 +101,7 @@ buffer.
 |---|---|
 | `api.c` | The ES 1.1 state machine: 177 entry points by slot (`gl_install_dispatch`), objects (textures, buffers, renderbuffers, framebuffers, fences), matrices, `glGet*`, pixel transfer. |
 | `draw.c` | Front end: vertex fetch (all array types, VBOs, indices), modelview/projection and texture matrices, 8 lights, colour material, fog, primitive assembly. Points and lines become quads. `glDrawTex*OES` is handled here too. Its output is **clip-space triangles** plus the GC state. |
+| `pica_be.c` | The PICA200 `Backend` ([pica200.md](pica200.md)): command lists, GPU-side render targets and textures, read-back. |
 | `raster.c` | The software `Backend`: clipping, viewport, face culling, perspective-correct spans, 2 texture units (nearest/linear, repeat/clamp/mirror; full `GL_COMBINE`), alpha test, depth test (16-bit), blending (all factors and equations), colour mask, scissor, fog, polygon offset. |
 | `iface.c` | EAGL glue: the 11-entry table, IOSurface-backed renderbuffers and textures, the CA drawable protocol. IOSurface and IOMobileFramebuffer are resolved with `dlsym`. |
 | `thunks.S` | 841 12-byte stubs. Each unimplemented slot logs `[gl] unimplemented GL call: slot N` to the console once, then returns 0. |
@@ -120,7 +122,7 @@ profile, plus `OES_framebuffer_object`, `OES_draw_texture`, `OES_point_size_arra
 - logic op, multisampling, smooth points and lines;
 - `matrix_palette` and `weight_pointer`.
 
-## 4. Plugging in a PICA200 back end
+## 4. Back ends
 
 The rasterizer sits behind `struct Backend` (`engine.h`):
 
@@ -135,36 +137,27 @@ typedef struct Backend {
 } Backend;
 ```
 
-- `Vtx` already carries the lit colour, texture coordinates after the texture
-  matrix, and the fog factor. A PICA back end can therefore use a pass-through
-  vertex shader and do no T&L of its own.
+- `Vtx` carries the lit colour, texture coordinates after the texture matrix,
+  and the fog factor.
 - Every per-fragment setting is in the GC: blend, alpha and depth test, texenv
   and combiners, scissor, cull, colour mask, and polygon offset.
 - `RT` names the target: its colour words, a 16-bit depth buffer, the pitch, and
   `flip` (GL row 0 is the last memory row).
-- `Tex.be_priv`/`be_seq` exist so a back end can cache a tiled copy and know when
-  it is stale.
+- `Tex.be_priv`/`be_seq` let a back end cache its own copy of a texture.
+- `gl_be_forget(mem)` tells back ends that renderbuffer or texture storage is
+  about to be freed.
 
-To switch back ends, `gl_gc_new` sets `gc->be`, and no other code needs to
-change. `tools/ios3ds-pica` already covers the hardware side:
-- command lists;
-- state and TEV encoders;
-- Morton tiling;
-- the `kern.ios3ds_gpu` sysctl transport;
-- `pica_ff`'s GL-texenv-to-TEV mapping.
+There are two:
 
-Its `triangles` would:
-1. upload `Vtx` into the arena;
-2. emit the state from the GC;
-3. draw into a tiled colour/depth buffer.
+| back end | file | `GL_RENDERER` |
+|---|---|---|
+| CPU rasterizer (default, and the fallback) | `raster.c` | `ios3ds software rasterizer` |
+| PICA200 GPU | `pica_be.c` + `tools/ios3ds-pica` | `ios3ds PICA200` |
 
-`finish` would then de-tile (PPF display transfer) into `rt->color`, because
-IOSurfaces and readback stay linear BGRA.
-
-Later, a `draw(GC *, arrays…)` hook could hand untransformed arrays to
-`pica_ff`'s fixed-function vertex shader. That would move T&L off the CPU as
-well. The front end would then call it instead of `transform()` whenever the
-back end provides it.
+`gl_gc_new` asks `gl_pick_backend()`: with `IOS3DS_GL=pica` (or `auto`) in the
+process environment and a usable GPU the context draws on the PICA200,
+otherwise on the CPU. The GPU back end, the kernel service behind it and the
+software GPU model used to test it are described in [pica200.md](pica200.md).
 
 ## 5. Test: `ios3ds-gltest`
 
@@ -181,6 +174,9 @@ The test is `tools/ios3ds-gl/test/gltest.c`. It uses only the public API: an
    - a lit, culled, depth-tested cube in a frustum.
 2. It reads back 10 probe pixels and prints `ok`/`FAIL` for each, then
    `PASS`/`FAIL`, to the console.
+   It then repeats this on a second context created with `IOS3DS_GL=pica` and
+   compares the two frames pixel by pixel (skipped, with a log line, when the
+   GPU is not usable).
 3. After `delay` seconds it binds the main display's framebuffer IOSurface
    (`IOMobileFramebufferGetLayerDefaultSurface`) as a renderbuffer with
    `attachImage:toCoreSurface:invertedRender:YES`. For `seconds` it then draws the
@@ -218,4 +214,4 @@ Screenshots aren't committed (iOS artwork); rerun the commands above to reproduc
   `CA_ENABLE_OGL=1`, and support L565 render targets;
 - a UIKit GL app through CAEAGLLayer;
 - PVRTC decode and mipmaps;
-- the PICA200 back end (§4).
+- the PICA200 back end on real hardware ([pica200.md](pica200.md) §8).

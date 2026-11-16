@@ -53,6 +53,8 @@ $(STAGING)/kernelcache.macho:
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
+	$(MAKE) -C tools/ios3ds-pica test
+	$(MAKE) -C tools/ios3ds-gl host-test
 
 clean:
 	rm -rf $(BUILD)/boot $(BUILD)/sd $(BUILD)/sd.img $(BUILD)/emu

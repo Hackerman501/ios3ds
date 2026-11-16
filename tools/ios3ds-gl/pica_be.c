@@ -12,7 +12,7 @@
  *                 the GPU copy is stale and written back by finish()
  *
  * Draws are batched into one command list per flush. The GPU is reached
- * through pica_dev_t: the kern.ios3ds_gpu sysctl on iOS, the software model
+ * through pica_dev_t: the ios3ds_gpu sysctl on iOS, the software model
  * in the host build. Anything this back end cannot do falls back to the
  * software rasterizer for that render target, with a log line.
  * SPDX-License-Identifier: GPL-3.0-or-later */
@@ -513,6 +513,7 @@ static void state_viewport(DState *s, const GC *gc, const PTarget *t, const int 
 {
     float m[16], ident[16];
     int x0 = 0, y0 = 0, x1 = t->w, y1 = t->h;
+    int gl_scissor = scissor && sc;     /* the GL scissor test itself is on */
     int fits = vp[0] >= 0 && vp[1] >= 0 && vp[2] > 0 && vp[3] > 0 && vp[0] + vp[2] <= t->pw && vp[1] + vp[3] <= t->ph;
     memset(m, 0, sizeof m);
     memset(ident, 0, sizeof ident);
@@ -536,7 +537,7 @@ static void state_viewport(DState *s, const GC *gc, const PTarget *t, const int 
         if (vp[1] + vp[3] < y1) y1 = vp[1] + vp[3];
         scissor = 1;
     }
-    if (scissor && sc) {
+    if (gl_scissor) {
         if (sc[0] > x0) x0 = sc[0];
         if (sc[1] > y0) y0 = sc[1];
         if (sc[0] + sc[2] < x1) x1 = sc[0] + sc[2];
