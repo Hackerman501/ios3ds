@@ -44,6 +44,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/m1-design.md](docs/m1-design.md): the 3DS payload, mailbox protocol, `boot.cfg`
 - [docs/m2-first-panic.md](docs/m2-first-panic.md): first kernel output and panic
 - [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
+- [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
 
 ## No Apple files in this repository
