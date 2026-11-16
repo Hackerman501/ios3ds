@@ -2,10 +2,11 @@
  * ios3ds shim: export the ARM9's input mailbox to userland as the read-only
  * sysctl "kern.ios3ds_input" (512 opaque bytes = inmbox_t).
  *
- * NOT wired in yet. To wire: copy to kernel/shim/input.c (the shim Makefile
- * rule picks up *.c), and call shim_input_register() once from thread
- * context - the first line of shim_mdevstrategy() in blk.c is the natural
- * place (first call = root mount in bsd_init, long before launchd). No new
+ * NOT wired in yet. To wire: copy to kernel/shim/input.c, add it to the gcc
+ * command in scripts/mkboot.py build_shim() (next to entry.S and blk.c), and
+ * call shim_input_register() once from thread context - the first line of
+ * shim_mdevstrategy() in blk.c is the natural place (first call = root
+ * mount in bsd_init, long before launchd). No new
  * kernel patch is needed: sysctl_register_oid() is a normal KPI and the OID
  * lives in shim memory, which XNU never reuses.
  *
