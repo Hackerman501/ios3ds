@@ -20,6 +20,7 @@
 #include "tsc.h"
 #include "swap.h"
 #include "wifi/wifi.h"
+#include "audio.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -316,6 +317,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         input_poll(cfg.shim_pa);
         /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
         if (wifi_poll()) busy = true;
+        audio_poll(cfg.shim_pa);    /* docs/audio.md */
         static bool ios_display, x_latched;
         static int screen_mode;
         if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
@@ -556,6 +558,7 @@ void a9_main(int argc, char **argv)
     /* Wi-Fi: wifi.cfg, WPA2 key derivation, network mailbox (docs/wifi.md) */
     wifi_init();
 
+    audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");

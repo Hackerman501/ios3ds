@@ -105,33 +105,34 @@ static void cdc_page(u8 page)
     spi_xfer(&w, 2, NULL, 0);
 }
 
-static void cdc_write(u8 page, u8 reg, u8 val)
+void cdc_write(u8 page, u8 reg, u8 val)
 {
     cdc_page(page);
     u32 w = (u32)(reg << 1) | (u32)val << 8;
     spi_xfer(&w, 2, NULL, 0);
 }
 
-static void cdc_read(u8 page, u8 reg, u32 *out, u32 len)
+void cdc_read(u8 page, u8 reg, u32 *out, u32 len)
 {
     cdc_page(page);
     u32 w = (u32)(reg << 1) | 1u;
     spi_xfer(&w, 1, out, len);
 }
 
-static u8 cdc_read8(u8 page, u8 reg)
+u8 cdc_read8(u8 page, u8 reg)
 {
     u32 v = 0;
     cdc_read(page, reg, &v, 1);
     return (u8)v;
 }
 
-static void cdc_mask(u8 page, u8 reg, u8 val, u8 mask)
+void cdc_mask(u8 page, u8 reg, u8 val, u8 mask)
 {
     cdc_write(page, reg, (cdc_read8(page, reg) & ~mask) | (val & mask));
 }
 
-bool tsc_init(void)
+/* also used by boot/arm9/audio.c (CODEC sound setup, runs before tsc_init) */
+void cdc_bus_init(void)
 {
     /* all three buses on the new interface (what libn3ds and Horizon use) */
     CFG11_SPI_CNT = 7;
@@ -140,6 +141,14 @@ bool tsc_init(void)
     NSPI2->int_stat = 7;            /* ack anything pending */
     spi_dead = false;
     cur_page = 0xFF;
+}
+
+bool cdc_bus_dead(void) { return spi_dead; }
+void cdc_forget_page(void) { cur_page = 0xFF; }    /* after a CODEC soft reset */
+
+bool tsc_init(void)
+{
+    cdc_bus_init();
 
     /* touch + circle-pad ADC. Values 0x43/0x69/0x80/0x11 are libn3ds'
        launch-day HWCAL defaults (analogPrecharge 4, analogSense 3,

@@ -10,6 +10,7 @@
 @   +0x18  b shim_set_decrementer cpu_data timer hook +0x68  (r0 = ticks, r3 = cpu_data)
 @   +0x1C  b shim_irq             kernel IRQ handler entry (IRQ mode)
 @   +0x20  b shim_mdevstrategy    bsd/dev/memdev.c mdevstrategy(buf_t) -> SD via ARM9
+@   +0x24  b shim_iic_transfer    AppleARMIICDevice transfer -> register file (audio codec/amp)
 @
 @ Time base: MPCore watchdog in timer mode = free-running 32-bit down-counter,
 @ extended to 64 bits here. Deadlines: MPCore private timer, one-shot, GIC
@@ -75,6 +76,7 @@ _shim_base:
     b shim_set_decrementer          @ +0x18
     b shim_irq                      @ +0x1C
     b shim_mdevstrategy             @ +0x20 (C, blk.c)
+    b shim_iic_transfer             @ +0x24 (C, kernel/shim/audio.c)
 
 @ ---------------------------------------------------------------------------
 @ statistics / state (read by the ARM9 via physical address = shim_pa + off)
@@ -275,6 +277,9 @@ shim_set_decrementer:
     bl shim_init
     pop {r0, r3, r4, lr}
     str r0, [r3, #0x60]             @ cpu_data->decrementer, like the original
+    push {r3, lr}
+    bl shim_audio_setdec            @ audio: wake earlier if an emulated DMA item ends first
+    pop {r3, lr}
     cmp r0, #0
     moveq r0, #1
     ldr r2, =PRIV_VA
@@ -308,6 +313,9 @@ shim_irq:
     ldr r0, =PRIV_VA
     ldr r1, [r0, #GICC_IAR]
     str r1, st_last_irq
+    b shim_audio_hook               @ audio: PL080 emulation (kernel/shim/audio*); comes back
+    .global shim_irq_resume, irq_save0  @ to shim_irq_resume with r0/r1 intact, or ends the IRQ itself
+shim_irq_resume:
     mov r2, r1, lsl #22
     mov r2, r2, lsr #22             @ interrupt ID
     cmp r2, #IRQ_PTIMER
