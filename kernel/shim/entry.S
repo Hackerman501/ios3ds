@@ -206,6 +206,27 @@ shim_init:
     str r1, [r0, #PT_ISR]
     @ GIC: priority 0 for IRQ 29, enable it, enable distributor + CPU interface
     add r2, r0, #GICD_CTRL           @ r2 = distributor base (offsets > 4 KiB)
+    @ real hardware: whatever boot ROM / Luma left enabled or pending must not
+    @ reach us (an enabled, still-asserted level IRQ = endless IRQ storm and a
+    @ silent hang; QEMU starts with everything off). Disable + unpend all
+    @ PPIs/SPIs (SGIs stay), then enable exactly ours below.
+    mvn r1, #0
+    str r1, [r2, #0x180]            @ ICENABLER0..7
+    str r1, [r2, #0x184]
+    str r1, [r2, #0x188]
+    str r1, [r2, #0x18C]
+    str r1, [r2, #0x190]
+    str r1, [r2, #0x194]
+    str r1, [r2, #0x198]
+    str r1, [r2, #0x19C]
+    str r1, [r2, #0x280]            @ ICPENDR0..7
+    str r1, [r2, #0x284]
+    str r1, [r2, #0x288]
+    str r1, [r2, #0x28C]
+    str r1, [r2, #0x290]
+    str r1, [r2, #0x294]
+    str r1, [r2, #0x298]
+    str r1, [r2, #0x29C]
     mov r1, #0
     strb r1, [r2, #(GICD_IPRIORITY - GICD_CTRL + IRQ_PTIMER)]
     mov r1, #(1 << IRQ_PTIMER)
@@ -326,6 +347,10 @@ shim_irq_resume:
     ldr r2, st_timer_irqs
     add r2, r2, #1
     str r2, st_timer_irqs
+    adr r2, st_inited               @ the ARM9 reads the stats from RAM: clean
+    mcr p15, 0, r2, c7, c10, 1      @ +0x40..+0x7F (2 lines) so they are live
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
     mrs r2, spsr
     tst r2, #0x40                   @ FIQs masked where we interrupted?
     bne 3f
@@ -397,6 +422,15 @@ shim_irq_resume:
     beq 9f                          @ spurious: no EOI
     ldr r0, =PRIV_VA
     str r1, [r0, #GICC_EOIR]
+    @ and switch it off for good (ICENABLER[id/32] = 1 << id%32): an unknown
+    @ level IRQ would otherwise fire again forever
+    ldr r0, =(PRIV_VA + 0x1180)
+    mov r1, r2, lsr #5
+    add r0, r0, r1, lsl #2
+    and r2, r2, #31
+    mov r1, #1
+    mov r1, r1, lsl r2
+    str r1, [r0]
     ldr r2, st_other_irqs
     add r2, r2, #1
     str r2, st_other_irqs

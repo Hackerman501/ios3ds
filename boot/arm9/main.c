@@ -349,6 +349,12 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             status(27, CON_GREY, "monitor alive #%u a11=%s", tick / 64, stage_name(SHARED->a11_stage));
             status(28, CON_GREY, "xnu ring: %u bytes", ring ? (unsigned)ring->head : 0);
             status(29, CON_GREY, "md0: %u req, %u err", bs, be);
+            if (cfg.shim_pa) {          /* shim stats (kernel/shim/entry.S +0x40..) */
+                vu32 *st = (vu32 *)cfg.shim_pa;
+                status(26, CON_GREY, "shim i%u t%u o%u L%u d%u v%u j%u", (unsigned)st[0x40 / 4],
+                       (unsigned)st[0x4C / 4], (unsigned)st[0x50 / 4], (unsigned)st[0x54 / 4] & 0x3FF,
+                       (unsigned)st[0x58 / 4], (unsigned)st[0x78 / 4], (unsigned)st[0x7C / 4]);
+            }
         }
         tick++;
         /* ~2 ms of mailbox polling instead of a blind delay: block requests

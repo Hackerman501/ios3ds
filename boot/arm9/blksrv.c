@@ -9,7 +9,7 @@
 #include "fatfs/ff.h"
 
 static FIL f;
-static DWORD clmt[256];
+static DWORD clmt[32768];   /* 128 KiB: a 1 GiB image copied onto a busy card can have ~15k fragments */
 static bool open_ok;
 static u32 served, errors;
 
