@@ -87,7 +87,8 @@ def build_shim(outdir):
         elf = os.path.join(td, "shim.elf")
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld"),
                         os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"),
-                        os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"), "-o", elf,
+                        os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
+                        os.path.join(ROOT, "tools", "ios3ds-wifi", "shim", "net.c"), "-o", elf,
                         "-Wl,--no-warn-rwx-segments"], check=True)
         out = os.path.join(outdir, "shim.bin")
         subprocess.run([objcopy, "-O", "binary", elf, out], check=True)

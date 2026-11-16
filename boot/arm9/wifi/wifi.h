@@ -1,0 +1,84 @@
+/*
+ * ios3ds ARM9 Wi-Fi: public interface of boot/arm9/wifi (see docs/wifi.md).
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#pragma once
+#include "ios3ds.h"
+#include "wifi_proto.h"
+
+/* libc subset: the monitor's own (boot/common/util.h) or the host's for tests */
+#ifdef WIFI_HOST_TEST
+#include <string.h>
+#else
+#include "util.h"
+#endif
+
+/* ---- sd:/ios3ds/wifi.cfg ---------------------------------------------- */
+enum { WIFI_SEC_OPEN = 0, WIFI_SEC_WPA2 = 1 };
+enum { WIFI_BE_AUTO = 0, WIFI_BE_OFF, WIFI_BE_AR6014, WIFI_BE_QEMU, WIFI_BE_LOOP };
+
+typedef struct {
+    char ssid[33];          /* 1..32 bytes */
+    u8   ssid_len;
+    char psk[65];           /* passphrase (8..63 chars) or 64 hex digits = PMK */
+    u8   security;          /* WIFI_SEC_* (default: WPA2 if psk given, else open) */
+    u8   backend;           /* WIFI_BE_* */
+    u8   have_pmk;          /* pmk[] valid (from 64 hex digits or pmk=) */
+    u8   pmk[32];
+    u8   have_mac;          /* mac= override (QEMU / loop backends only) */
+    u8   mac[6];
+    char fw[64];            /* firmware container, default 0:/ios3ds/wifi-fw.bin */
+    u32  verbose;           /* 1 = log every state change, 2 = also frames */
+} wifi_cfg_t;
+
+/* Parse the text of wifi.cfg (modified in place). Returns 0, or the 1-based
+   number of the first bad line negated. Unknown keys are ignored. */
+int wifi_cfg_parse(char *txt, wifi_cfg_t *out);
+/* Check a parsed config; returns NULL if usable, else a message. */
+const char *wifi_cfg_check(const wifi_cfg_t *c);
+
+/* ---- mailbox, ARM9 side (wifi_ring.c; pure, host-tested) --------------- */
+void net_mbox_init(volatile netmbox_t *m, u32 backend, const u8 mac[6]);
+/* ARM9 -> iOS. Returns 0, -1 = ring full (counted), -2 = bad length. */
+int  net_mbox_push_rx(volatile netmbox_t *m, const u8 *frame, u32 len);
+/* iOS -> ARM9. Copies the oldest pending frame; returns its length, 0 = none.
+   The slot is released by net_mbox_tx_done(). */
+u32  net_mbox_peek_tx(volatile netmbox_t *m, u8 *frame, u32 cap);
+void net_mbox_tx_done(volatile netmbox_t *m);
+
+/* ---- 802.3 <-> AR6K WMI data frames (wifi_frame.c; pure, host-tested) --- */
+#define WMI_DATA_HDR    2u      /* u8 info; u8 info2 ("00 1C" in dsiwifi; RX: s8 rssi, u8 info) */
+#define LLC_SNAP_LEN    8u
+/* Ethernet II frame -> { wmi hdr, dst, src, be16 length, AA AA 03 00 00 00,
+   ethertype, payload }. Returns the output length, or 0 if it does not fit. */
+u32 wifi_frame_to_wmi(const u8 *eth, u32 len, u8 *out, u32 cap);
+/* The reverse (firmware -> iOS). Accepts LLC/SNAP (RFC 1042 and bridge-tunnel)
+   and passes frames that are already Ethernet II. Returns the Ethernet frame
+   length, or 0 for anything that cannot be converted. *ethertype is set. */
+u32 wifi_frame_from_wmi(const u8 *wmi, u32 len, u8 *out, u32 cap, u16 *ethertype);
+
+/* ---- backends ---------------------------------------------------------- */
+typedef struct {
+    const char *name;
+    u32 id;                                         /* NET_BACKEND_* */
+    int (*init)(const wifi_cfg_t *cfg, u8 mac[6]);  /* 0 = present */
+    /* Advance the driver by one bounded step; returns a NET_ST_* state. */
+    u32 (*poll)(void);
+    int (*tx)(const u8 *eth, u32 len);              /* 0 = sent, <0 = busy/error */
+    u32 (*rx)(u8 *eth, u32 cap);                    /* frame length, 0 = none */
+    int (*last_error)(void);
+} wifi_backend_t;
+
+extern const wifi_backend_t wifi_backend_ar6014;    /* ar6k.c */
+extern const wifi_backend_t wifi_backend_vnic;      /* vnic.c */
+extern const wifi_backend_t wifi_backend_loop;      /* wifi.c */
+
+/* ---- monitor hooks (wifi.c) -------------------------------------------- */
+/* Once, after the SD card is mounted and before the jump into XNU: reads
+   sd:/ios3ds/wifi.cfg, derives the PMK, initialises the mailbox at NET_PA and
+   starts the backend. Never fails the boot: without a config the mailbox
+   just reports NET_ST_OFF. */
+void wifi_init(void);
+/* Every monitor-loop iteration: one driver step + move pending frames.
+   Returns true if it did work (the loop then skips its idle delay). */
+bool wifi_poll(void);

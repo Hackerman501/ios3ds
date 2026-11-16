@@ -19,6 +19,7 @@
 #include "display.h"
 #include "tsc.h"
 #include "swap.h"
+#include "wifi/wifi.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -298,6 +299,8 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         }
         /* 3DS pad + touch -> shim input ring (read by /usr/libexec/ios3ds-input) */
         input_poll(cfg.shim_pa);
+        /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
+        if (wifi_poll()) busy = true;
         static bool ios_display;
         if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
             if (!ios_display) {
@@ -526,6 +529,8 @@ void a9_main(int argc, char **argv)
     }
     /* marker pattern in the page-table area: lets the monitor see the entry stub run */
     memset((void *)cfg.top_pa, 0xA5, 0x9000);
+    /* Wi-Fi: wifi.cfg, WPA2 key derivation, network mailbox (docs/wifi.md) */
+    wifi_init();
 
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
