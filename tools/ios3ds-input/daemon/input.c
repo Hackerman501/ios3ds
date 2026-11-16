@@ -234,6 +234,49 @@ static void send_key(uint32_t usage, int down)
     CFRelease(ev);
 }
 
+/* SpringBoard arms a hold timer when it handles a button-down (lock: 2.5 s
+   -> power-off sheet; menu: Voice Control / hint). Its run loop can lag by
+   seconds (QEMU, software compositor), so a separately sent up can lose the
+   race and every tap becomes a hold (re-log 19/20). Short taps are therefore
+   sent as down+up back to back on release; the down of a real hold is sent
+   once the button has been held for HOLD_US. */
+#define NKEYS   (sizeof keymap / sizeof keymap[0])
+#define HOLD_US 800000ull
+static uint8_t key_state[NKEYS];        /* 0 idle, 1 down pending, 2 down sent */
+static uint64_t key_t0[NKEYS];
+
+/* poll-loop ticks (~16 ms each); mach_timebase_info is not usable here */
+static uint64_t loops;
+static uint64_t now_us(void) { return loops * 16000u; }
+
+static void key_send(unsigned i, int down)
+{
+    if (opt_debug) say("[input] key %02x %s @%u", keymap[i].usage, down ? "down" : "up", (unsigned)loops);
+    send_key(keymap[i].usage, down);
+}
+
+static void key_edge(unsigned i, int down)
+{
+    if (down) {
+        key_state[i] = 1;
+        key_t0[i] = now_us();
+    } else {
+        if (key_state[i] == 1) key_send(i, 1);
+        if (key_state[i]) key_send(i, 0);
+        key_state[i] = 0;
+    }
+}
+
+static void key_tick(void)
+{
+    unsigned i;
+    for (i = 0; i < NKEYS; i++)
+        if (key_state[i] == 1 && now_us() - key_t0[i] >= HOLD_US) {
+            key_send(i, 1);
+            key_state[i] = 2;
+        }
+}
+
 static void apply(const insample_t *prev, const insample_t *cur)
 {
     unsigned i;
@@ -242,11 +285,8 @@ static void apply(const insample_t *prev, const insample_t *cur)
     float nx, ny;
 
     for (i = 0; i < sizeof keymap / sizeof keymap[0]; i++)
-        if (diff & keymap[i].btn) {
-            if (opt_debug) say("[input] key %02x %s", keymap[i].usage,
-                               (cur->buttons & keymap[i].btn) ? "down" : "up");
-            send_key(keymap[i].usage, (cur->buttons & keymap[i].btn) != 0);
-        }
+        if (diff & keymap[i].btn)
+            key_edge(i, (cur->buttons & keymap[i].btn) != 0);
 
     if (is && !was) {
         map_touch(cur, &nx, &ny);
@@ -337,6 +377,8 @@ int main(int argc, char **argv)
             say("[input] SpringBoard went away; restarting");
             return 0;                       /* reconnect via launchd */
         }
+        loops++;
+        key_tick();
         usleep(16000);
     }
 }

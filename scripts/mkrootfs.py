@@ -109,7 +109,8 @@ def build(staging, out, recipe_path=None, verbose=True):
                         print("[mkrootfs] patched %s @%#x: %s" % (path, off, fp.get("why", "")))
             hfs(out, "rm", path)
             hfs(out, "add", tmp, path)
-            hfs(out, "chmod", "0644", path)
+            # re-added files lose their mode; executables set "mode" on a patch
+            hfs(out, "chmod", next((fp["mode"] for fp in fps if "mode" in fp), "0644"), path)
         for path, mode in recipe.get("chmod", {}).items():
             hfs(out, "chmod", mode, path)
     if recipe.get("disable_daemons"):
