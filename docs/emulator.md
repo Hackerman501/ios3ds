@@ -51,3 +51,16 @@ python3 emu/run.py --regs                      # register dump of both CPUs at t
 python3 emu/mon.py --boot 7 "info registers" "x/16wx 0x80251ef0"   # poke a stopped VM
 python3 emu/run.py --gdb     # waits for arm-none-eabi-gdb on :1234
 ```
+
+
+## Interactive window: `emu/viewer.py`
+Our QEMU build has no GTK/SDL/VNC display, so `emu/viewer.py` starts QEMU headless with a QMP socket. It shows the 3DS screens plus an upright iOS view (the top screen rotated back) at ~8 fps, and sends real key down/up events.
+
+Keys:
+- Enter/H = START (iOS Home)
+- Backspace/K = SELECT (iOS lock)
+- Q/W = L/R (volume)
+- A, S, X, Y = A, B, X, Y
+- arrows = D-pad
+
+There is no touch input yet (no touchscreen model in the board).
