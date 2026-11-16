@@ -4,7 +4,8 @@
   "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
   "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
   "/var/log/syslog": "",
-  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDontLockEver</key>\n\t<true/>\n</dict>\n</plist>\n"
+  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDontLockEver</key>\n\t<true/>\n</dict>\n</plist>\n",
+  "/System/Library/Caches/com.apple.dyld/enable-dylibs-to-override-cache": ""
  },
  "disable_daemons": [
   "com.apple.BTServer.plist",
@@ -53,13 +54,19 @@
   "build/rootfs-add/usr/libexec/ios3ds-sample": "/usr/libexec/ios3ds-sample",
   "rootfs/files/com.ios3ds.sample.plist": "/System/Library/LaunchDaemons/com.ios3ds.sample.plist",
   "build/rootfs-add/usr/libexec/ios3ds-input": "/usr/libexec/ios3ds-input",
-  "tools/ios3ds-input/daemon/com.ios3ds.input.plist": "/System/Library/LaunchDaemons/com.ios3ds.input.plist"
+  "tools/ios3ds-input/daemon/com.ios3ds.input.plist": "/System/Library/LaunchDaemons/com.ios3ds.input.plist",
+  "build/rootfs-add/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine": "/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine",
+  "build/rootfs-add/usr/libexec/ios3ds-gltest": "/usr/libexec/ios3ds-gltest",
+  "tools/ios3ds-gl/test/com.ios3ds.gltest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist"
  },
  "chmod": {
   "/usr/libexec/ios3ds-sample": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.sample.plist": "0644",
   "/usr/libexec/ios3ds-input": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.input.plist": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.input.plist": "0644",
+  "/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine": "0755",
+  "/usr/libexec/ios3ds-gltest": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist": "0644"
  },
  "file_patches": [
   {
@@ -187,6 +194,20 @@
    "orig": "90402de904708de204d04de204308de200c0a0e304c023e5000090e57efbffeb0040a0e100009de5000050e30000000aad0900eb0400a0e104d047e2",
    "new": "24309fe5003093e5030052e11c009f051eff2f0118309fe5003093e5030052e110009f050000a0131eff2fe18062a63ec4c92d3e5063a63ed044923e",
    "why": "liblockdown stub: lockdown_copy_value -> \"Activated\" for ActivationState, kCFBooleanFalse for BrickState, else NULL (offline research activation)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x4ff9458",
+   "orig": "4170706c654d425844657669636500",
+   "new": "494f5265736f757263657300000000",
+   "why": "OpenGLES _eagl_init: IOServiceMatching(\"AppleMBXDevice\") -> \"IOResources\" (always registered), so EAGL loads MBXGLEngine.bundle = tools/ios3ds-gl (docs/gpu.md)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x46de620",
+   "orig": "600800eb",
+   "new": "0000a0e3",
+   "why": "QuartzCore CA::WindowServer::M2Display ctor: skip the ES1 eagl_context probe (bl -> mov r0,#0). With an EAGL engine present the display otherwise switches to CA's GL compositor (L565 surfaces) and the screen stays black; this keeps the software compositor (docs/gpu.md)"
   }
  ]
 }

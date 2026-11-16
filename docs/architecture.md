@@ -80,6 +80,11 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
   - liblockdown is stubbed, reporting "Activated" and BrickState = false;
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
 - SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0` and `CA_ENABLE_OGL=0`, and `SBDontLockEver` is set in `com.apple.springboard.plist`.
+- OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:
+  - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
+  - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
+  - QuartzCore's display skips its ES1 probe, so SpringBoard keeps the software compositor;
+  - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot.
 - `ios3ds-sample` (`tools/ios3ds-sample`) prints every process's thread state to the console periodically. It is a debugging aid.
 
 ## 5. Debugging aids
