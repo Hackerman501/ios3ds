@@ -97,6 +97,15 @@ cfg_vic0_pa:    .word 0             @ +0x70 fake VIC0 page PA (patched in by mkb
 cfg_clcd_pa:    .word 0             @ +0x74 fake CLCD page PA (patched in by mkboot)
 st_vblanks:     .word 0             @ +0x78
 st_injected:    .word 0             @ +0x7C
+@ hardware bring-up probes, one cache line, cleaned to RAM on every update so
+@ the ARM9 monitor can show them live (nothing else may move +0x00..+0x9F)
+st_abs_calls:   .word 0             @ +0x80 get_abstime calls after init
+st_abs_raw:     .word 0             @ +0x84 last watchdog up-count
+st_abs_cpsr:    .word 0             @ +0x88 CPSR at that read (I bit 7 = IRQs masked)
+st_dec_calls:   .word 0             @ +0x8C set_decrementer calls
+st_dec_last:    .word 0             @ +0x90 last deadline (ticks)
+st_dec_lr:      .word 0             @ +0x94 caller of the last set_decrementer
+st_dbg_pad:     .word 0, 0          @ +0x98
 
 @ ---------------------------------------------------------------------------
 @ void shim_putc(int c): append to the log ring; clean the touched lines so
@@ -272,6 +281,13 @@ shim_get_abstime:
     addlo r1, r1, #1                @ wrapped since the last read
     strlo r1, st_ticks_hi
     str r0, st_last_up
+    str r0, st_abs_raw
+    str r12, st_abs_cpsr
+    ldr r2, st_abs_calls
+    add r2, r2, #1
+    str r2, st_abs_calls
+    ldr r2, =st_abs_calls
+    mcr p15, 0, r2, c7, c10, 1      @ clean the probe line
     msr cpsr_c, r12
     ldr r2, [r3, #0x50]
     adds r0, r0, r2
@@ -298,6 +314,13 @@ shim_set_decrementer:
     bl shim_init
     pop {r0, r3, r4, lr}
     str r0, [r3, #0x60]             @ cpu_data->decrementer, like the original
+    str r0, st_dec_last
+    str lr, st_dec_lr
+    ldr r2, st_dec_calls
+    add r2, r2, #1
+    str r2, st_dec_calls
+    ldr r2, =st_abs_calls
+    mcr p15, 0, r2, c7, c10, 1
     push {r3, lr}
     bl shim_audio_setdec            @ audio: wake earlier if an emulated DMA item ends first
     pop {r3, lr}
@@ -347,7 +370,7 @@ shim_irq_resume:
     ldr r2, st_timer_irqs
     add r2, r2, #1
     str r2, st_timer_irqs
-    adr r2, st_inited               @ the ARM9 reads the stats from RAM: clean
+    ldr r2, =st_inited              @ the ARM9 reads the stats from RAM: clean
     mcr p15, 0, r2, c7, c10, 1      @ +0x40..+0x7F (2 lines) so they are live
     add r2, r2, #32
     mcr p15, 0, r2, c7, c10, 1

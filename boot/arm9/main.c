@@ -354,6 +354,11 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 status(26, CON_GREY, "shim i%u t%u o%u L%u d%u v%u j%u", (unsigned)st[0x40 / 4],
                        (unsigned)st[0x4C / 4], (unsigned)st[0x50 / 4], (unsigned)st[0x54 / 4] & 0x3FF,
                        (unsigned)st[0x58 / 4], (unsigned)st[0x78 / 4], (unsigned)st[0x7C / 4]);
+                /* clock probes: reads/raw watchdog/CPSR, deadline sets/last/caller */
+                status(24, CON_GREY, "abs %u w%08x c%03x", (unsigned)st[0x80 / 4],
+                       (unsigned)st[0x84 / 4], (unsigned)st[0x88 / 4] & 0x1FF);
+                status(25, CON_GREY, "dec %u l%u @%08x", (unsigned)st[0x8C / 4],
+                       (unsigned)st[0x90 / 4], (unsigned)st[0x94 / 4]);
             }
         }
         tick++;
