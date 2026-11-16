@@ -17,6 +17,7 @@
 #include "log.h"
 #include "blksrv.h"
 #include "display.h"
+#include "tsc.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -294,6 +295,8 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 log_ok("[monitor] XNU entry stub ran: L1[0x%x] = %08x (TTBR region %08x)\n", idx, e, cfg.top_pa);
             }
         }
+        /* 3DS pad + touch -> shim input ring (read by /usr/libexec/ios3ds-input) */
+        input_poll(cfg.shim_pa);
         static bool ios_display;
         if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
             if (!ios_display) {

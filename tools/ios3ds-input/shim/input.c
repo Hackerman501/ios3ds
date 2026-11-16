@@ -23,7 +23,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
-#include "../input_proto.h"     /* -> boot/common/ios3ds.h once wired */
+#include "input_proto.h"
 
 struct sysctl_oid {
     void       *oid_parent;     /* struct sysctl_oid_list * */

@@ -27,7 +27,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "../input_proto.h"
+#include "input_proto.h"
 
 /* ---- libSystem ----------------------------------------------------- */
 typedef unsigned int mach_port_t;

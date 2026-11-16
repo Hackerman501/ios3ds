@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 #include "ios3ds.h"
-#include "../input_proto.h"
+#include "input_proto.h"
 
 /* Bring up SPI bus 2 + the CODEC's touch/circle-pad ADC. Returns false if the
    CODEC does not answer (e.g. the QEMU board, where the SPI block is a stub). */

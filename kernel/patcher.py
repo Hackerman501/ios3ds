@@ -24,8 +24,15 @@ def _expand(hexstr, symbols):
 
 
 def apply_all(img, base_va, path, symbols=None):
-    with open(path) as f:
-        recipes = json.load(f)
+    """path: kernel/patches.json; every kernel/patches-*.json next to it is
+    applied too (one file per subsystem keeps parallel work conflict-free)."""
+    import glob
+    import os
+    recipes = []
+    files = [path] + sorted(glob.glob(os.path.join(os.path.dirname(path), "patches-*.json")))
+    for fn in files:
+        with open(fn) as f:
+            recipes += json.load(f)
     applied = []
     for p in recipes:
         if not p.get("enabled", True):
