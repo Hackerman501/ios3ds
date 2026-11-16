@@ -15,7 +15,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 | M1 | `.firm` payload: on-screen console, SD log, loads kernel + device tree, boot_args, jumps to XNU | done (emulator) |
 | M2 | XNU prints through our console path | done (emulator) |
 | M3 | Root filesystem from SD, `launchd`, daemons | done (emulator) |
-| M4 | Framebuffer (done), touch and buttons (in progress) | partly done |
+| M4 | Framebuffer (done), buttons (done in emulator: START = Home, SELECT = lock, L/R = volume), touch (driver written, untested: the emulator has no touchscreen model yet) | mostly done |
 | M5 | Graphics: SpringBoard needs no GPU (QuartzCore's software compositor); PICA200 GL engine is future work | home screen reached without a GPU |
 
 ## How it works
@@ -89,7 +89,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
 - **Why iOS 4.2.1 and not later:** later iOS versions need ARMv7; the 3DS ARM11 is ARMv6.
 - **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
 - **Missing hardware support:**
-  - no input yet (touch/buttons → iOS);
+  - touch is untested (buttons work in the emulator);
   - no audio, Wi-Fi or real-time clock (the clock shows 1969/1970 time);
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);

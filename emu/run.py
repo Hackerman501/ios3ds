@@ -76,10 +76,18 @@ def main():
     events = []
     for s in filter(None, a.shots.split(",")):
         events.append((float(s), "shot", None))
+    keys = []
     for k in filter(None, a.keys.split(",")):
         t, act = k.split(":")
         key, updown = act.rsplit("_", 1)
-        events.append((float(t), "key", (key, updown)))
+        keys.append((float(t), key, updown))
+    for t, key, updown in keys:
+        if updown != "down":
+            continue
+        # hold until the matching key_up (sendkey takes a hold time); 3 s if none
+        up = [u for u, k2, ud in keys if k2 == key and ud == "up" and u > t]
+        hold = int(round(((min(up) - t) if up else 3.0) * 1000))
+        events.append((t, "key", (key, max(hold, 50))))
     events.append((a.time, "quit", None))
     events.sort(key=lambda e: e[0])
 
@@ -95,10 +103,9 @@ def main():
             hmp(mon, "screendump %s -f png" % png)
             print("[run] screenshot %s" % png)
         elif kind == "key":
-            key, updown = arg
-            # HMP has no key-down/up; sendkey with a hold time approximates it
-            if updown == "down":
-                hmp(mon, "sendkey %s 3000" % key.replace("+", "-"))
+            key, hold = arg
+            # HMP has no key-down/up: sendkey with the down->up time as hold
+            hmp(mon, "sendkey %s %d" % (key.replace("+", "-"), hold))
         elif kind == "quit":
             if a.regs:
                 for cpu in (0, 1):

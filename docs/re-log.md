@@ -263,3 +263,13 @@ The IFAR replacement was `lr-4`, but the handler had already done `sub lr,lr,#4`
   - `CFLOG_FORCE_STDERR=1`: no visible output.
   - mkrootfs file patches now take an optional `mode`; they used to force 0644, which broke the patched SpringBoard executable.
 - **Next:** get syslogd writing (or patch NSLog's ASL path to stderr), then trace which button handlers run.
+
+## 21. Buttons work; the "holds" were the test harness (2026-11-16)
+- `emu/run.py` turned every `key_down` into `sendkey <key> 3000` and ignored `key_up`. **Every test press was therefore a 3 s hold**, which explains the power-off sheet and the hint in entries 19/20.
+- run.py now uses the down→up interval as the sendkey hold time.
+- **Results:**
+  - Home tap on page 1 → Spotlight ("Search iPod" with keyboard), screenshot `docs/img-home-spotlight.png`;
+  - 4 s lock hold → "slide to power off";
+  - lock tap → no visible change (screen-off isn't mirrored).
+- The daemon's deferred-down for taps stays: a slow SpringBoard run loop can still lose a separate up to the 2.5 s hold timer on real hardware.
+- The SpringBoard trace patch and syslog-to-console line were removed. NSLog never reached the console in any configuration we tried (open).
