@@ -273,3 +273,11 @@ The IFAR replacement was `lr-4`, but the handler had already done `sub lr,lr,#4`
   - lock tap → no visible change (screen-off isn't mirrored).
 - The daemon's deferred-down for taps stays: a slow SpringBoard run loop can still lose a separate up to the 2.5 s hold timer on real hardware.
 - The SpringBoard trace patch and syslog-to-console line were removed. NSLog never reached the console in any configuration we tried (open).
+
+## 22. Audio: Apple's kexts on emulated PL080/I2S/I2C (2026-11-16)
+- Kept `dmac0`/`i2c0`/`i2s0` on fake pages; see `docs/audio.md` for the design and addresses.
+- `AppleARMIICDevice` transfer (0x802e4d1e, vtable 0x35c) takes `(this, op, sublen, sub*, len, buf*)`; op 1 = read, 2 = write (the CS42L58 driver's read-modify-write pairs in the boot log confirm it). Patched to a shim register file.
+- `AppleARMPL080DMAC` filter (0x807d115c) reads the TC status once and writes IntTCClear once, so the shim can apply write-1-to-clear at its next service.
+- **QEMU boot (450 s):** `AppleARMPL080DMAC::start`, `AppleS5L8900XI2SController::start`, three `_initDMAChannel`s, `AppleCS42L58Audio::start` and 78 I2C register accesses; SpringBoard home screen renders as before; mediaserverd idles with 19 threads.
+- Volume-up (R) and lock (SELECT) presses reach SpringBoard (`[input] key e9/30`), but no HUD appeared and no output stream started, so the DMA/CSND path is covered only by the host test (`tests/test_audio.py`) so far.
+- The ARM9 CODEC init reports "id 00" in QEMU (SPI stub) and carries on.

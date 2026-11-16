@@ -1,8 +1,11 @@
 # Audio: iOS 4.2.1 sound out of the 3DS speaker
 
-Status: **implemented, boot-tested in QEMU, not yet run on hardware**. QEMU
-has no CSND or CODEC model, so in the emulator the kexts start and the
-emulated DMA runs, but nothing is heard (see section 6).
+Status: **implemented, boot-tested in QEMU, not yet run on hardware**. In
+QEMU the kexts start (PL080, I2S, CS42L58 with 78 I2C register accesses) and
+the home screen renders as before. No output stream has been started yet
+(volume/lock key presses did not start one), so the DMA → CSND path is so far
+covered only by the host test `tests/test_audio.py`. QEMU has no CSND or
+CODEC model, so nothing would be heard there anyway (section 6).
 
 ## 1. Summary
 
@@ -157,5 +160,8 @@ samples (VOL halves as gains) into a QEMU audio backend at the I2S1 rate.
    `function-hp_detect`.
 4. Microphone: RX DMA currently delivers silence; CSND capture units could
    feed it.
-5. Exercise a real stream in QEMU (e.g. keyboard clicks) and check the shim's
-   `ios3ds-audio: tx start` line and the ARM9 `[audio] stream` lines.
+5. Start a real stream in QEMU: a small userland tool (AudioQueue or
+   `AudioServicesPlaySystemSound`) under `tools/ios3ds-audio/`, then look for
+   the shim's `ios3ds-audio: tx start` line and the ARM9 `[audio] stream` lines.
+   Volume keys gave no HUD in QEMU; find out why (no route? mediaserverd waiting
+   on something?).
