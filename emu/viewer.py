@@ -8,7 +8,8 @@ real key down/up events through QMP.
 
 Mouse: click/drag on the iOS view (or the 3DS bottom screen) = touch.
 Keys (3DS button):  Enter / H = START (iOS Home)   Backspace / K = SELECT (iOS lock)
-                    A = A   S = B   X = X   Y = Y   Q = L (vol -)   W = R (vol +)
+                    A = A   S = B   X = X (screen mode: top/both/bottom)   Y = Y
+                    Q = L (vol -)   W = R (vol +)
                     arrow keys = D-pad   (SELECT+START together = XNU panic dump)
 Close the window to quit QEMU; the SD log stays in sd:/ios3ds/log.txt.
 """
@@ -34,7 +35,7 @@ KEYS = {"Return": "ret", "KP_Enter": "ret", "h": "ret",
         "Up": "up", "Down": "down", "Left": "left", "Right": "right"}
 
 HELP = ("Mouse = touch (iOS view or bottom screen)   Enter/H = Home   Backspace/K = Lock   Q/W = Volume -/+   "
-        "A S X Y = A B X Y   Arrows = D-pad   (iOS needs ~7 min to boot)")
+        "X = screen mode   A S Y = A B Y   Arrows = D-pad   (iOS needs ~7 min to boot)")
 
 
 def ios_to_display(nx, ny):

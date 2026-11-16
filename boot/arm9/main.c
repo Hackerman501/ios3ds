@@ -84,6 +84,7 @@ typedef struct {
     u32 ba_revision, ba_version;
     u32 probes;
     u32 display_regs;
+    u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -91,6 +92,18 @@ typedef struct {
 } bootcfg_t;
 
 static bootcfg_t cfg;
+
+static const char *const screen_names[SCREEN_MODES] = { "top", "both", "bottom" };
+
+/* where iOS and the monitor log go (display.h SCREEN_*) */
+static void apply_screen_mode(int m)
+{
+    display_set_mode(m);
+    con_show(CON_TOP, m == SCREEN_BOTTOM);
+    con_show(CON_BOTTOM, m == SCREEN_TOP);
+    log_target(m == SCREEN_TOP ? CON_BOTTOM : m == SCREEN_BOTTOM ? CON_TOP : -1);
+    log_color(CON_CYAN, "[monitor] screen mode: %s (X = next)\n", screen_names[m]);
+}
 
 static int parse_bootcfg(char *txt)
 {
@@ -104,7 +117,8 @@ static int parse_bootcfg(char *txt)
     cfg.mem_size = FCRAM_SIZE;
     cfg.ba_revision = 1;
     cfg.probes = 1;
-    cfg.ba_version = 5;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
+    cfg.ba_version = 5;
+    cfg.screen = SCREEN_BOTH;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -116,6 +130,7 @@ static int parse_bootcfg(char *txt)
         { "video_height", &cfg.video_height }, { "video_depth", &cfg.video_depth },
         { "jump", &cfg.jump }, { "countdown_ms", &cfg.countdown_ms },
         { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
+        { "screen", &cfg.screen },
     };
     int lineno = 0;
     char *line = txt;
@@ -301,15 +316,24 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         input_poll(cfg.shim_pa);
         /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
         if (wifi_poll()) busy = true;
-        static bool ios_display;
+        static bool ios_display, x_latched;
+        static int screen_mode;
         if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;
                 log_color(CON_GREEN, "[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer\n");
-                log_to_bottom(true);
+                screen_mode = cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH;
+                apply_screen_mode(screen_mode);
             }
             display_blit(cfg.display_regs);
         }
+        /* X: next screen mode (X is not forwarded to iOS as a button) */
+        bool xdown = !(HID_PAD & HID_X);
+        if (ios_display && xdown && !x_latched) {
+            screen_mode = (screen_mode + 1) % SCREEN_MODES;
+            apply_screen_mode(screen_mode);
+        }
+        x_latched = xdown;
         static bool combo_latched;
         bool combo = !(HID_PAD & HID_SELECT) && !(HID_PAD & HID_START);
         if (cfg.shim_pa && combo && !combo_latched) {
@@ -352,7 +376,7 @@ void a9_main(int argc, char **argv)
         bot1 = (u8 *)fbs[5];
     }
     con_init(top0, top1, bot0, bot1);
-    display_init(top0, top1);
+    display_init(top0, top1, bot0, bot1);
 
     status(0, CON_GREEN, "ios3ds %s", IOS3DS_VERSION);
     status(1, CON_GREY, "M1 loader - ARM9 monitor");

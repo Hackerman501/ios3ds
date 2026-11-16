@@ -81,8 +81,9 @@ scripts/build-ios-toolchain.sh   # armv6 iOS Mach-O toolchain (ld64/cctools-port
 3. What you should see:
    - **Bottom screen:** the version, "SD ok", "ARM11 ok", then a countdown. Hold **B** to stay in the monitor.
    - **Top screen:** the boot log, including XNU's own messages. Once SpringBoard draws, the top screen shows iOS; turn the console 90° clockwise to read it.
-4. Hold **SELECT+START** to make XNU panic and dump every thread's backtrace into the log.
-5. Send back `sd:/ios3ds/log.txt` (the previous run is kept as `log_prev.txt`).
+4. Press **X** to switch screen modes: *both* (default: iOS on top, plus a touch copy on the bottom screen, so you tap what you see), *bottom* (iOS on the touchscreen, log on top), *top* (log on the bottom). The start mode is `screen=` in `ios3ds/boot.cfg`.
+5. Hold **SELECT+START** to make XNU panic and dump every thread's backtrace into the log.
+6. Send back `sd:/ios3ds/log.txt` (the previous run is kept as `log_prev.txt`).
 
 The first real-hardware runs are expected to fail early. Every stage writes a readable message to the screen and to `log.txt`.
 

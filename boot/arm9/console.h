@@ -19,3 +19,4 @@ void con_set_color(int which, u32 color);
 void con_putc(int which, char c);
 void con_puts(int which, const char *s);
 void con_line(int which, int row, u32 color, const char *s);
+void con_show(int which, bool on);

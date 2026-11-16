@@ -17,6 +17,7 @@ typedef struct {
     int cols, rows;
     int cx, cy;
     u32 color;
+    bool hidden;        /* iOS owns this screen: keep the text, draw nothing */
     char text[30][50];
     u32 tcolor[30];
 } con_t;
@@ -37,6 +38,7 @@ static void put_px_col(con_t *c, int x, int y, u32 rgb)
 
 static void draw_char(con_t *c, int col, int row, char ch, u32 fg)
 {
+    if (c->hidden) return;
     const unsigned char *g = font8x8_basic[(unsigned char)ch & 0x7F];
     int x0 = col * 8, y0 = row * 8;
     for (int y = 0; y < 8; y++) {
@@ -132,5 +134,19 @@ void con_line(int which, int row, u32 color, const char *s)
     c->tcolor[row] = color;
     if (have_fb) {
         for (int col = 0; col < c->cols; col++) draw_char(c, col, row, c->text[row][col], color);
+    }
+}
+
+/* hide a console while iOS is shown on that screen; showing it again repaints
+   the text kept meanwhile */
+void con_show(int which, bool on)
+{
+    con_t *c = &cons[which];
+    if (c->hidden == !on) return;
+    c->hidden = !on;
+    if (on && have_fb) {
+        for (int i = 0; i < 2; i++)
+            if (c->fb[i]) memset(c->fb[i], 0, (size_t)c->width * SCR_H * BPP);
+        redraw(c);
     }
 }

@@ -18,6 +18,7 @@ static bool sync_each = true;
 static int con_target = CON_TOP;
 
 void log_to_bottom(bool on) { con_target = on ? CON_BOTTOM : CON_TOP; }
+void log_target(int which) { con_target = which; }   /* -1: SD only */
 
 static void sd_write(const char *s, u32 n)
 {
@@ -33,8 +34,10 @@ static void sd_write(const char *s, u32 n)
 
 void log_raw(const char *s, u32 n, u32 color)
 {
-    con_set_color(con_target, color);
-    for (u32 i = 0; i < n; i++) con_putc(con_target, s[i]);
+    if (con_target >= 0) {
+        con_set_color(con_target, color);
+        for (u32 i = 0; i < n; i++) con_putc(con_target, s[i]);
+    }
     sd_write(s, n);
 }
 

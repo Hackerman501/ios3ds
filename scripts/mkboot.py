@@ -185,6 +185,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True):
         "# set jump=0 to stop before starting XNU",
         "jump=1",
         "countdown_ms=2000",
+        "# iOS screen mode, X cycles at run time: 0 = top (log on bottom), 1 = both (bottom = touch map), 2 = bottom only",
+        "screen=1",
         "# XNU boot-args (edit freely, max 255 chars)",
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",
