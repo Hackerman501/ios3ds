@@ -29,6 +29,7 @@
  * is how CA tells the engine about each buffer it allocates for the layer.
  * SPDX-License-Identifier: GPL-3.0-or-later */
 #include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -219,6 +220,23 @@ void tex_release_surface(Tex *t)
 }
 
 /* ----------------------------------------------------------- interface */
+/* Log the caller chain (r7 frame records) once per event kind, to see which
+ * framework drives the engine in a process. */
+static void log_callers(const char *what)
+{
+    void **fp = __builtin_frame_address(0);
+    char buf[160];
+    int n = 0, i;
+    buf[0] = 0;
+    for (i = 0; i < 8 && fp && ((uintptr_t)fp & 3) == 0; i++) {
+        n += snprintf(buf + n, sizeof buf - n, " %p", fp[1]);
+        if (n >= (int)sizeof buf)
+            break;
+        fp = (void **)fp[0];
+    }
+    gl_log("%s (pid %d) from%s", what, getpid(), buf);
+}
+
 static int glesCreateSharegroup(void **out)
 {
     Share *sh = gl_share_new();
@@ -249,7 +267,7 @@ static int glesCreateGC(void *sg, void **front, void **back, void **out)
         gl_install_dispatch(gc, back);
     *out = gc;
     if (!said++)
-        gl_log("context created (%s, pid %d)", gc->be->name, getpid());
+        log_callers("context created (" "software rasterizer" ")");
     return 1;
 }
 
@@ -264,6 +282,9 @@ static int glesBindCoreSurface(void *g, GLenum target, IOSurfaceRef s)
     GC *gc = g;
     int w, h, pitch;
     uint32_t *px = NULL;
+    static unsigned calls;
+    if (!calls++)
+        log_callers("first BindCoreSurface");
     if (s && !(px = surface_pixels(s, &w, &h, &pitch))) {
         gl_set_error(gc, GL_INVALID_VALUE);
         return 0;
@@ -404,7 +425,10 @@ static int glesPresentView(void *g)
 static int glesSwapNotification(void *gc, uint32_t fb_id, uint32_t transaction, void *layer)
 {
     static void *fb;
+    static unsigned calls;
     (void)gc; (void)fb_id;
+    if (!calls++)
+        log_callers("first SwapNotification");
     io_init();
     if (!fb && io.fb_main)
         io.fb_main(&fb);

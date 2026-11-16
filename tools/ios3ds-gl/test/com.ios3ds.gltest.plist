@@ -7,8 +7,8 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/libexec/ios3ds-gltest</string>
-		<string>200</string>
-		<string>400</string>
+		<string>360</string>
+		<string>60</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
