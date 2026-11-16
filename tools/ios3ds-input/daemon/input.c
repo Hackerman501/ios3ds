@@ -26,6 +26,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <dlfcn.h>
 
 #include "input_proto.h"
 
@@ -176,8 +177,56 @@ static void send_touch(float nx, float ny, int touch, uint32_t mask)
     CFRelease(hand);
 }
 
+/* Hardware buttons: SpringBoard ignores keyboard IOHIDEvents that another
+   client dispatches (verified in QEMU, re-log 19), so buttons go the
+   iOS 3/4 way instead: a GSEventRecord to SpringBoard's PurpleSystemEventPort
+   via GraphicsServices' GSSendSystemEvent (as Veency does). Record layout
+   checked against _GSSendEvent in 8C148: infoSize at +0x30, 52 bytes. */
+typedef struct {
+    int32_t type, subtype;
+    float x, y, wx, wy;
+    uint32_t context;
+    uint32_t ts_lo, ts_hi;          /* uint64 timestamp, 4-byte aligned on armv6 */
+    uint32_t window, flags, pid, info_size;
+} gsrec_t;
+_Static_assert(sizeof(gsrec_t) == 52, "GSEventRecord (iOS 4)");
+
+static void (*gs_send_system)(gsrec_t *);
+static uint64_t (*gs_timestamp)(void);
+
+static int gs_type(uint32_t usage)
+{
+    switch (usage) {
+    case kHIDUsage_Csmr_Menu:      return 1000;    /* kGSEventMenuButtonDown */
+    case kHIDUsage_Csmr_VolumeInc: return 1006;
+    case kHIDUsage_Csmr_VolumeDec: return 1008;
+    case kHIDUsage_Csmr_Power:     return 1010;    /* kGSEventLockButtonDown */
+    }
+    return 0;
+}
+
 static void send_key(uint32_t usage, int down)
 {
+    int t = gs_type(usage);
+    if (!gs_send_system) {
+        void *h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", 1);
+        if (h) {
+            gs_send_system = (void (*)(gsrec_t *))dlsym(h, "GSSendSystemEvent");
+            gs_timestamp = (uint64_t (*)(void))dlsym(h, "GSCurrentEventTimestamp");
+        }
+        if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
+    }
+    if (gs_send_system && t) {
+        gsrec_t r;
+        uint64_t ts = gs_timestamp ? gs_timestamp() : mach_absolute_time();
+        memset(&r, 0, sizeof r);
+        r.type = t + (down ? 0 : 1);
+        r.ts_lo = (uint32_t)ts;
+        r.ts_hi = (uint32_t)(ts >> 32);
+        r.pid = (uint32_t)getpid();
+        gs_send_system(&r);
+        return;
+    }
     IOHIDEventRef ev = IOHIDEventCreateKeyboardEvent(0, mach_absolute_time(),
             kHIDPage_Consumer, usage, down, 0);
     if (!ev) return;
