@@ -97,8 +97,45 @@ static Tex *tex_new(GLuint name)
     return t;
 }
 
+/* Back ends that keep copies keyed on engine memory (the PICA200 one: render
+   targets in GPU memory) must drop them before that memory goes away. */
+void gl_be_forget(const void *mem)
+{
+#ifdef GL_PICA
+    pica_forget(mem);
+#else
+    (void)mem;
+#endif
+}
+
+static void be_tex_deleted(Tex *t)
+{
+#ifdef GL_PICA
+    if (t->be_priv)
+        pica_backend.tex_deleted(t);
+#else
+    (void)t;
+#endif
+}
+
+/* IOS3DS_GL=pica|auto selects the GPU back end when the GPU is usable;
+   anything else (and any failure) means the software rasterizer. */
+const Backend *gl_pick_backend(void)
+{
+#ifdef GL_PICA
+    const char *e = getenv("IOS3DS_GL");
+    if (e && (!strcmp(e, "pica") || !strcmp(e, "auto"))) {
+        if (pica_backend_init())
+            return &pica_backend;
+        gl_log("IOS3DS_GL=%s but the GPU back end is not usable: software rasterizer", e);
+    }
+#endif
+    return &sw_backend;
+}
+
 void gl_tex_drop_image(Tex *t)
 {
+    gl_be_forget(t->px);
     if (t->surface)
         tex_release_surface(t);
     else if (t->own_px)
@@ -135,6 +172,8 @@ Rb *gl_rb_lookup(GC *gc, GLuint name)
 
 void gl_rb_drop_storage(Rb *rb)
 {
+    gl_be_forget(rb->color);
+    gl_be_forget(rb->depth);
     if (rb->dr)
         drawable_detach(rb);
     if (rb->own_color)
@@ -164,8 +203,7 @@ void gl_share_release(Share *sh)
     for (i = 0; i < sh->tex.n; i++)
         if (sh->tex.obj[i]) {
             Tex *t = sh->tex.obj[i];
-            if (sw_backend.tex_deleted)
-                sw_backend.tex_deleted(t);
+            be_tex_deleted(t);
             gl_tex_drop_image(t);
             free(t);
         }
@@ -818,8 +856,7 @@ static void api_DeleteTextures(GC *gc, GLsizei n, const GLuint *names)
         for (u = 0; u < MAX_TEX_UNITS; u++)
             if (gc->tu[u].bound == names[i])
                 gc->tu[u].bound = 0;
-        if (gc->be->tex_deleted)
-            gc->be->tex_deleted(t);
+        be_tex_deleted(t);
         gl_tex_drop_image(t);
         free(t);
         gc->share->tex.obj[names[i]] = NULL;
@@ -1959,7 +1996,7 @@ GC *gl_gc_new(Share *sh)
         return NULL;
     gc->share = sh;
     sh->refs++;
-    gc->be = &sw_backend;
+    gc->be = gl_pick_backend();
     gc->matrix_mode = GL_MODELVIEW;
     gc->mv[0] = gc->proj[0] = mat_identity;
     gc->mvp_dirty = 1;

@@ -226,6 +226,40 @@ static void write_ppm(const char *path)
     printf("gltest: wrote %s\n", path);
 }
 
+/* The whole frame as RGBA bytes, for comparing two back ends. */
+static unsigned char *grab(void)
+{
+    unsigned char *px = malloc((size_t)W * H * 4);
+    if (px)
+        glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    return px;
+}
+
+/* Pixel-compare the GPU back end's frame with the software rasterizer's.
+   Edges may differ by a pixel (fill rules) and colours by a few steps
+   (the GPU works in 8-bit fixed point), so: count pixels that differ by more
+   than 24 in a channel; up to 1 % of the frame is tolerated. */
+static void compare(const unsigned char *a, const unsigned char *b)
+{
+    long n = (long)W * H, bad = 0, any = 0, i;
+    int max = 0, c;
+    for (i = 0; i < n; i++) {
+        int d = 0;
+        for (c = 0; c < 4; c++) {
+            int e = abs(a[i * 4 + c] - b[i * 4 + c]);
+            if (e > d)
+                d = e;
+        }
+        if (d > max)
+            max = d;
+        any += d > 0;
+        bad += d > 24;
+    }
+    printf("gltest: pica vs software: %ld of %ld pixels differ at all, %ld by more than 24 (max %d) %s\n",
+           any, n, bad, max, bad * 100 <= n ? "ok" : "FAIL");
+    fails += bad * 100 > n;
+}
+
 /* An offscreen framebuffer: RGBA8 colour + 16-bit depth renderbuffers. */
 static int offscreen(void)
 {
@@ -247,23 +281,43 @@ static int offscreen(void)
 
 #ifdef GL_HOST
 void host_gl_init(void);
+extern int setenv(const char *, const char *, int);
 
-int main(int argc, char **argv)
+static unsigned char *one_pass(const char *backend, const char *ppm)
 {
+    setenv("IOS3DS_GL", backend, 1);
     host_gl_init();
     if (!offscreen())
-        return 1;
+        exit(1);
     make_texture();
     draw_scene(0);
     run_checks();
+    if (ppm)
+        write_ppm(ppm);
+    return grab();
+}
+
+int main(int argc, char **argv)
+{
+    char path[1024];
+    unsigned char *sw, *hw;
+    sw = one_pass("sw", argc > 1 ? argv[1] : NULL);
     if (argc > 1)
-        write_ppm(argv[1]);
+        snprintf(path, sizeof path, "%s.pica.ppm", argv[1]);
+    hw = one_pass("pica", argc > 1 ? path : NULL);
+    if (!strstr((const char *)glGetString(GL_RENDERER), "PICA")) {
+        printf("gltest: the PICA200 back end did not come up FAIL\n");
+        fails++;
+    } else if (sw && hw) {
+        compare(sw, hw);
+    }
     printf("gltest: %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
     return fails != 0;
 }
 
 #else /* iOS */
 extern int gettimeofday(struct timeval *, void *);     /* the stub SDK has no <sys/time.h> */
+extern int setenv(const char *, const char *, int);
 
 typedef void *id;
 typedef void *SEL;
@@ -330,6 +384,39 @@ int main(int argc, char **argv)
     if (argc > 3)
         write_ppm(argv[3]);
     printf("gltest: %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
+
+    /* The same scene on the PICA200 back end (a second context created with
+       IOS3DS_GL=pica), compared pixel by pixel with the frame above. If the
+       GPU is not usable the engine says why on the console and falls back. */
+    {
+        unsigned char *sw = grab(), *hw;
+        id ctx2;
+        int before = fails;
+        setenv("IOS3DS_GL", "pica", 1);
+        ctx2 = MSG(id (*)(id, SEL), cls, "alloc"));
+        ctx2 = MSG(id (*)(id, SEL, int), ctx2, "initWithAPI:"), 1);
+        if (ctx2) {
+            MSG(signed char (*)(id, SEL, id), cls, "setCurrentContext:"), ctx2);
+            if (!strstr((const char *)glGetString(GL_RENDERER), "PICA")) {
+                printf("gltest: PICA200 back end not available (see [gl] pica lines above): GPU pass skipped\n");
+                MSG(signed char (*)(id, SEL, id), cls, "setCurrentContext:"), ctx);
+            } else if (offscreen()) {
+                make_texture();
+                t0 = now();
+                draw_scene(0);
+                glFinish();
+                printf("gltest: PICA200 offscreen frame took %.0f ms\n", (now() - t0) * 1000);
+                run_checks();
+                hw = grab();
+                if (sw && hw)
+                    compare(sw, hw);
+                free(hw);
+                printf("gltest: PICA200 %s (%d failed)\n", fails > before ? "FAIL" : "PASS", fails - before);
+                ctx = ctx2;             /* the on-screen demo below runs on the GPU */
+            }
+        }
+        free(sw);
+    }
 
     if (secs <= 0)
         return fails != 0;
