@@ -88,6 +88,6 @@ const char *pica_strerror(uint32_t st)
 {
     static const char *const s[] = { "ok", "bad request", "GPU is powered off / in reset", "no contiguous memory for the arena",
         "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)",
-        "no kern.ios3ds_gpu service (shim without GPU support)" };
+        "no ios3ds_gpu sysctl service" };
     return st < sizeof s / sizeof s[0] ? s[st] : "unknown error";
 }

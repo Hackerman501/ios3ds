@@ -11,7 +11,7 @@
  * Register semantics follow the Citra/Azahar software renderer (GPL-2.0+,
  * src/video_core); nothing was copied, see docs/pica200.md for the mapping
  * and for what is deliberately not modelled.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later (so it can be linked into QEMU)
  */
 #ifndef PICASIM_H
 #define PICASIM_H

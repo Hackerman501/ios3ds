@@ -70,7 +70,7 @@ def layout(kernel_va, kernel_len, dt_len):
 
 
 def build_shim(outdir):
-    """Build kernel/shim (entry.S + blk.c) linked at its fixed kernel VA."""
+    """Build kernel/shim (entry.S, blk.c, the input and GPU services) linked at its fixed kernel VA."""
     import subprocess
     import tempfile
     cross = subprocess.run([os.path.join(ROOT, "scripts", "setup-toolchain.sh")],
@@ -82,12 +82,17 @@ def build_shim(outdir):
     sd = os.path.join(ROOT, "kernel", "shim")
     flags = ["-mcpu=mpcore", "-marm", "-mfloat-abi=soft", "-O2", "-ffreestanding", "-fno-builtin",
              "-fno-tree-loop-distribute-patterns", "-nostdlib", "-Wall", "-Wextra",
-             "-I" + os.path.join(ROOT, "boot", "common")]
+             # iOS' ABI lets callees clobber r9; keep our C code off it so calls into the kernel are safe
+             "-ffixed-r9",
+             "-I" + os.path.join(ROOT, "boot", "common"),
+             "-I" + os.path.join(ROOT, "tools", "ios3ds-pica", "include")]
     with tempfile.TemporaryDirectory() as td:
         elf = os.path.join(td, "shim.elf")
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld"),
                         os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"),
-                        os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"), "-o", elf,
+                        os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
+                        os.path.join(sd, "pica.c"),
+                        os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"), "-o", elf,
                         "-Wl,--no-warn-rwx-segments"], check=True)
         out = os.path.join(outdir, "shim.bin")
         subprocess.run([objcopy, "-O", "binary", elf, out], check=True)

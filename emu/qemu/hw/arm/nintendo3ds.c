@@ -16,6 +16,10 @@
  *     (top screen above bottom screen), rotated framebuffers like hardware
  *   - HID pad register @0x10146000 (keyboard mapped)
  *   - CFG11 SOCINFO (reports Old 3DS)
+ *   - the PICA200 GX block @0x10400000 (PSC memory fill, PPF transfer engine,
+ *     P3D command-list processor) backed by the software model in
+ *     tools/ios3ds-pica/sim/picasim.c, and PDN_GPU_CNT @0x10141200 reading
+ *     "clocked, out of reset" as Luma leaves it (docs/pica200.md)
  *
  * Boot: "-kernel payload.firm" is loaded the way Luma3DS's chainloader does it
  * (sections copied, ARM9 entry with argc=2/argv incl. framebuffer pointers when
@@ -56,6 +60,7 @@
 #include "qemu/timer.h"
 #include "target/arm/cpu.h"
 #include "target/arm/cpu-qom.h"
+#include "picasim.h"
 
 /* ------------------------------------------------------------------------ */
 /* Memory map                                                               */
@@ -605,13 +610,16 @@ typedef struct {
     MemoryRegion fcram9, vram9, axiwram9, dspram9;   /* aliases for ARM9 */
     MemoryRegion itcm, itcm_m1, itcm_m2, arm9ram, dtcm, boot9, boot11, boot11_m1, boot11_m2;
     MemoryRegion io_shared, io_shared9;              /* shared IO container */
-    MemoryRegion cfg9, hid, cfg11, pdc, irq9, timer9;
+    MemoryRegion cfg9, hid, cfg11, pdc, irq9, timer9, gx, pdn;
 
     DeviceState *gic;
     DeviceState *sdcard;
 
     CtrPdc pdc_regs[2];
     qemu_irq pdc_irq[2];           /* GIC 42/43: PDC0/PDC1 H, V and error */
+    PicaSim pica;                  /* GX block: PSC, PPF, P3D */
+    qemu_irq gx_irq[4];            /* GIC 40 PSC0, 41 PSC1, 44 PPF, 45 P3D */
+    uint32_t gpu_cnt, gpuprot;     /* PDN_GPU_CNT, CFG11_GPUPROT */
     QEMUTimer *vblank, *hblank;
     int64_t vblank_stamp;
     uint16_t hid_pad;            /* active low */
@@ -1485,6 +1493,8 @@ static uint64_t cfg11_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
     switch (addr & ~3) {
+    case 0x140:              /* CFG11_GPUPROT */
+        return reg_lane(s->gpuprot, addr);
     case 0x1C0:              /* CFG11_SPI_CNT */
         return reg_lane(s->spi_cnt, addr);
     case 0xFFC:              /* CFG11_SOCINFO: bit0 = CTR, bit1 = New3DS */
@@ -1498,6 +1508,8 @@ static void cfg11_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
     CtrMachine *s = opaque;
     if (addr == 0x1C0) {
         s->spi_cnt = v & 7;
+    } else if (addr == 0x140) {
+        s->gpuprot = v & 0x10F;
     }
 }
 
@@ -1505,6 +1517,86 @@ static const MemoryRegionOps cfg11_ops = {
     .read = cfg11_read, .write = cfg11_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = { .min_access_size = 1, .max_access_size = 4 },
+};
+
+/* --- PDN: only PDN_GPU_CNT (+0x200) ------------------------------------- */
+static uint64_t pdn_read(void *opaque, hwaddr addr, unsigned size)
+{
+    CtrMachine *s = opaque;
+    return (addr & ~3) == 0x200 ? reg_lane(s->gpu_cnt, addr) : 0;
+}
+
+static void pdn_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+{
+    CtrMachine *s = opaque;
+    if (addr == 0x200 && size == 4) {
+        s->gpu_cnt = v & 0x1007F;
+    }
+}
+
+static const MemoryRegionOps pdn_ops = {
+    .read = pdn_read, .write = pdn_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 1, .max_access_size = 4 },
+};
+
+/* --- GX block: PSC fill, PPF, P3D (software PICA200 model) --------------- */
+/* The GPU does DMA by physical address: FCRAM and VRAM are reachable. */
+static uint8_t *gx_mem(void *opaque, uint32_t pa, uint32_t len, int write)
+{
+    CtrMachine *s = opaque;
+    if (pa >= CTR_FCRAM_BASE && len <= CTR_FCRAM_SIZE && pa - CTR_FCRAM_BASE <= CTR_FCRAM_SIZE - len) {
+        return (uint8_t *)memory_region_get_ram_ptr(&s->fcram) + (pa - CTR_FCRAM_BASE);
+    }
+    if (pa >= CTR_VRAM_BASE && len <= CTR_VRAM_SIZE && pa - CTR_VRAM_BASE <= CTR_VRAM_SIZE - len) {
+        if (write) {
+            memory_region_set_dirty(&s->vram, pa - CTR_VRAM_BASE, len);
+        }
+        return (uint8_t *)memory_region_get_ram_ptr(&s->vram) + (pa - CTR_VRAM_BASE);
+    }
+    return NULL;
+}
+
+static void gx_log(void *opaque, const char *msg)
+{
+    warn_report("%s", msg);
+}
+
+static void gx_reset(CtrMachine *s)
+{
+    PicaSimHost host = { .mem = gx_mem, .log = gx_log, .opaque = s };
+    picasim_init(&s->pica, &host);
+    s->gpu_cnt = 0x1007F;       /* Luma initialised the screens: clock on, nothing in reset */
+    s->gpuprot = 0;
+}
+
+static uint64_t gx_read(void *opaque, hwaddr addr, unsigned size)
+{
+    CtrMachine *s = opaque;
+    return picasim_read(&s->pica, addr);
+}
+
+static void gx_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+{
+    CtrMachine *s = opaque;
+    uint32_t st;
+    if (!(s->gpu_cnt & 0x10000)) {
+        return;                 /* unclocked */
+    }
+    picasim_write(&s->pica, addr, v);
+    /* level interrupts follow the status bits (GX +0x34) */
+    st = picasim_read(&s->pica, 0x34);
+    qemu_set_irq(s->gx_irq[0], (st >> 26) & 1);
+    qemu_set_irq(s->gx_irq[1], (st >> 27) & 1);
+    qemu_set_irq(s->gx_irq[2], (st >> 30) & 1);
+    qemu_set_irq(s->gx_irq[3], (st >> 31) & 1);
+}
+
+static const MemoryRegionOps gx_ops = {
+    .read = gx_read, .write = gx_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 4 },
+    .impl = { .min_access_size = 4, .max_access_size = 4 },
 };
 
 /* --- PDC (two display controllers, 0x100 bytes each) --------------------- */
@@ -1782,6 +1874,7 @@ static void ctr_reset_io(void *opaque)
     }
     s->ptr_down = false;
     s->cpad_x = s->cpad_y = 0;
+    gx_reset(s);
 }
 
 static void ctr_reset_arm9(void *opaque)
@@ -1961,6 +2054,10 @@ static void ctr_init(MachineState *machine)
     s->gic = dev;
     s->pdc_irq[0] = qdev_get_gpio_in(dev, 42 - 32);
     s->pdc_irq[1] = qdev_get_gpio_in(dev, 43 - 32);
+    s->gx_irq[0] = qdev_get_gpio_in(dev, 40 - 32);
+    s->gx_irq[1] = qdev_get_gpio_in(dev, 41 - 32);
+    s->gx_irq[2] = qdev_get_gpio_in(dev, 44 - 32);
+    s->gx_irq[3] = qdev_get_gpio_in(dev, 45 - 32);
     s->mcu_irq = qdev_get_gpio_in(dev, 113 - 32);
     s->hblank = timer_new_ns(QEMU_CLOCK_VIRTUAL, ctr_hblank, s);
     s->mcu.power_held = timer_new_ns(QEMU_CLOCK_VIRTUAL, mcu_power_held, s);
@@ -1973,6 +2070,8 @@ static void ctr_init(MachineState *machine)
     memory_region_add_subregion(&s->io_shared, CTR_HID_BASE - CTR_IO_SHARED_BASE, &s->hid);
     memory_region_init_io(&s->cfg11, NULL, &cfg11_ops, s, "ctr.cfg11", 0x1000);
     memory_region_add_subregion(&s->io_shared, CTR_CFG11_BASE - CTR_IO_SHARED_BASE, &s->cfg11);
+    memory_region_init_io(&s->pdn, NULL, &pdn_ops, s, "ctr.pdn", 0x1000);
+    memory_region_add_subregion(&s->io_shared, 0x10141000 - CTR_IO_SHARED_BASE, &s->pdn);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };
@@ -2031,6 +2130,9 @@ static void ctr_init(MachineState *machine)
     /* ---- ARM11-only IO ---- */
     memory_region_init_io(&s->pdc, NULL, &pdc_ops, s, "ctr.pdc", 0x200);
     memory_region_add_subregion(sys, CTR_PDC0_BASE, &s->pdc);
+    /* the rest of the GX block; the PDC registers above take precedence */
+    memory_region_init_io(&s->gx, NULL, &gx_ops, s, "ctr.gx", 0x2000);
+    memory_region_add_subregion_overlap(sys, 0x10400000, &s->gx, -1);
     ctr_add_unimp(sys, "ctr.io11.unimp", CTR_IO11_BASE, 0x400000);
 
     /* ---- display + input ---- */

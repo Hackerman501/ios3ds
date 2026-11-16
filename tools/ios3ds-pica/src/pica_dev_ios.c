@@ -1,6 +1,6 @@
 /*
  * ios3ds-pica: the GPU as iOS userland sees it: requests to the kernel shim
- * through the kern.ios3ds_gpu sysctl (include/pica_proto.h).
+ * through the ios3ds_gpu sysctl (include/pica_proto.h).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <stddef.h>
@@ -10,21 +10,30 @@
 extern int sysctl(int *name, unsigned namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 extern int sysctlnametomib(const char *name, int *mibp, size_t *sizep);
 
+extern int *__error(void);
+extern int snprintf(char *, size_t, const char *, ...);
+
 static int mib[4];
 static size_t miblen;
+static char why[96] = "no " PICA_SYSCTL_NAME " sysctl service";
 
 static uint32_t call(pica_req_t *r)
 {
     if (!miblen) {
         size_t n = 3;
-        if (sysctlnametomib(PICA_SYSCTL_NAME, mib, &n) != 0 || n != 2)
+        if (sysctlnametomib(PICA_SYSCTL_NAME, mib, &n) != 0 || n < 1 || n > 3) {
+            snprintf(why, sizeof why, "no sysctl node \"" PICA_SYSCTL_NAME "\" (errno %d): shim without GPU support",
+                     *__error());
             return PICA_ERR_NO_SERVICE;
+        }
         miblen = n;
     }
     r->status = PICA_ERR_BAD_OP;
     mib[miblen] = (int)(uintptr_t)r;
-    if (sysctl(mib, (unsigned)miblen + 1, NULL, NULL, NULL, 0) != 0)
+    if (sysctl(mib, (unsigned)miblen + 1, NULL, NULL, NULL, 0) != 0) {
+        snprintf(why, sizeof why, "sysctl " PICA_SYSCTL_NAME " request %u failed (errno %d)", r->op, *__error());
         return PICA_ERR_NO_SERVICE;
+    }
     return r->status;
 }
 
@@ -83,7 +92,6 @@ const pica_dev_t *pica_dev_ios(void)
 const char *pica_strerror(uint32_t st)
 {
     static const char *const s[] = { "ok", "bad request", "GPU is powered off / in reset", "no contiguous memory for the arena",
-        "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)",
-        "no kern.ios3ds_gpu service (shim without GPU support)" };
+        "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)", why };
     return st < sizeof s / sizeof s[0] ? s[st] : "unknown error";
 }

@@ -1,7 +1,7 @@
 /*
  * ios3ds-pica: how a GL back end reaches the GPU. One table of operations,
  * two implementations:
- *   pica_dev_ios()   the kern.ios3ds_gpu sysctl -> kernel shim  (src/pica_dev_ios.c)
+ *   pica_dev_ios()   the ios3ds_gpu sysctl -> kernel shim  (src/pica_dev_ios.c)
  *   pica_dev_host()  driver core + software PICA model, in-process (src/pica_dev_host.c)
  * Every call returns PICA_OK or a PICA_ERR_* code (pica_proto.h).
  * SPDX-License-Identifier: GPL-3.0-or-later

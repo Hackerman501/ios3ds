@@ -3,20 +3,25 @@
  * userland (src/pica_dev_ios.c). Included by both: C only, fixed-width
  * types, no libc.
  *
- * Transport: the sysctl node "kern.ios3ds_gpu". A request is one extra MIB
- * component after the node: the address of a pica_req_t in the caller.
+ * Transport: the top-level sysctl node "ios3ds_gpu". A request is one extra
+ * MIB component after the node: the address of a pica_req_t in the caller.
  *
  *     int mib[4]; size_t n = 4;
- *     sysctlnametomib("kern.ios3ds_gpu", mib, &n);      // n == 2
+ *     sysctlnametomib("ios3ds_gpu", mib, &n);           // n == 1
  *     mib[n] = (int)&req;
  *     sysctl(mib, n + 1, NULL, NULL, NULL, 0);          // req.status = result
+ *
+ * (Not under "kern.": as "kern.ios3ds_gpu" the request call failed in QEMU.
+ * Likely cause, from the xnu-1504 source: __sysctl sends every CTL_KERN name
+ * through the old kern_sysctl() first, which answers ENOTDIR for a name with
+ * more than one component after "kern" unless it is on a fixed list.)
  *
  * The shim copies the request in, runs it and copies it back; bulk data
  * (texels, vertices, command lists, read-back pixels) is copied between the
  * caller's buffers and the GPU arena by the shim as well. Nothing is written
  * through the sysctl interface itself, so it only needs sysctl *read* rights,
  * and userland never maps GPU registers or physical memory. Reading the node
- * without the extra component ("sysctl kern.ios3ds_gpu") returns a
+ * without the extra component ("sysctl ios3ds_gpu") returns a
  * pica_info_t and has no side effects.
  *
  * The GPU works on physical addresses. All memory it touches is one
@@ -27,7 +32,7 @@
 #pragma once
 #include <stdint.h>
 
-#define PICA_SYSCTL_NAME   "kern.ios3ds_gpu"
+#define PICA_SYSCTL_NAME   "ios3ds_gpu"
 #define PICA_SYSCTL_LEAF   "ios3ds_gpu"
 #define PICA_PROTO_VERSION 2
 

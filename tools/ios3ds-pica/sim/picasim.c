@@ -14,7 +14,7 @@
  *   - textures are filtered bilinearly when the magnification filter bit is
  *     set (Citra's software path is nearest only; the hardware filters)
  *   - all buffer addresses are bounds-checked through host.mem
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later (so it can be linked into QEMU)
  */
 #include <math.h>
 #include <string.h>
