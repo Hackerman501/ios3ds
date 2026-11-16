@@ -159,7 +159,7 @@ static void map_touch(const insample_t *s, float *nx, float *ny)
  *   child:  index, identity (<= 5), x, y, pressure, range, touch
  * Down = Range|Touch + touch 1, move = Position + touch 1,
  * up = Range|Touch + touch 0 (the child must still be present). */
-static void send_touch(float nx, float ny, int touch, uint32_t mask)
+static void send_touch_hid(float nx, float ny, int touch, uint32_t mask)
 {
     uint64_t now = mach_absolute_time();
     IOHIDEventRef hand, finger;
@@ -177,6 +177,16 @@ static void send_touch(float nx, float ny, int touch, uint32_t mask)
     CFRelease(hand);
 }
 
+static void send_touch_gs(float nx, float ny, int touch, uint32_t mask);
+
+/* Touches: like the buttons, SpringBoard ignores digitizer IOHIDEvents that a
+   client dispatches (QEMU, re-log 22), so they go as GraphicsServices hand
+   events (send_touch_gs); IOHID is only the fallback. */
+static void send_touch(float nx, float ny, int touch, uint32_t mask)
+{
+    send_touch_gs(nx, ny, touch, mask);
+}
+
 /* Hardware buttons: SpringBoard ignores keyboard IOHIDEvents that another
    client dispatches (verified in QEMU, re-log 19), so buttons go the
    iOS 3/4 way instead: a GSEventRecord to SpringBoard's PurpleSystemEventPort
@@ -191,9 +201,6 @@ typedef struct {
 } gsrec_t;
 _Static_assert(sizeof(gsrec_t) == 52, "GSEventRecord (iOS 4)");
 
-static void (*gs_send_system)(gsrec_t *);
-static uint64_t (*gs_timestamp)(void);
-
 static int gs_type(uint32_t usage)
 {
     switch (usage) {
@@ -205,17 +212,108 @@ static int gs_type(uint32_t usage)
     return 0;
 }
 
+/* kGSEventHand (3001): GSEventRecord + GSHandInfo (0x24) + one GSPathInfo
+   (0x18). Layout from 8C148: _GSEventGetHandInfo copies 0x24 bytes at
+   record+0x34, _GSEventGetPathInfoAtIndex = record+0x58 + 24*i; UIKit's
+   _UIApplicationHandleEvent reads pathInfosCount at hand+0x21, type 8 =
+   cancel, and treats a path as touching while proximity bit 1 is set (it
+   derives began/moved/ended from that and its own touch map). */
+typedef struct {
+    gsrec_t rec;
+    struct {
+        int32_t type;               /* 1 down, 2 dragged, 6 up (8 = cancel) */
+        int16_t dx, dy;
+        float f[6];
+        uint8_t b20, count, pad[2];
+    } hand;
+    struct {
+        uint8_t index, identity, proximity, pad;
+        float pressure, major_radius;
+        float x, y;
+        uint32_t window;
+    } path;
+} gstouch_t;
+_Static_assert(sizeof(gstouch_t) == 52 + 0x24 + 0x18, "GS hand event");
+
+static void (*gs_send_event)(gsrec_t *, mach_port_t);
+static mach_port_t (*gs_named_port)(const char *);
+static mach_port_t (*sbs_port)(void);
+static void (*sb_frontmost)(mach_port_t, char *);
+static void (*gs_send_system)(gsrec_t *);
+static uint64_t (*gs_timestamp)(void);
+
+static void gs_load(void)
+{
+    static int done;
+    void *h;
+    if (done) return;
+    done = 1;
+    h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", 1);
+    if (h) {
+        gs_send_system = (void (*)(gsrec_t *))dlsym(h, "GSSendSystemEvent");
+        gs_send_event = (void (*)(gsrec_t *, mach_port_t))dlsym(h, "GSSendEvent");
+        gs_named_port = (mach_port_t (*)(const char *))dlsym(h, "GSCopyPurpleNamedPort");
+        gs_timestamp = (uint64_t (*)(void))dlsym(h, "GSCurrentEventTimestamp");
+    }
+    h = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", 1);
+    if (h) {
+        sbs_port = (mach_port_t (*)(void))dlsym(h, "SBSSpringBoardServerPort");
+        sb_frontmost = (void (*)(mach_port_t, char *))dlsym(h, "SBFrontmostApplicationDisplayIdentifier");
+    }
+    if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
+}
+
+static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
+{
+    static char app[256];
+    static mach_port_t app_port;
+    gstouch_t e;
+    uint64_t ts;
+    float x = nx * 320.0f, y = ny * 480.0f;
+
+    gs_load();
+    if (!gs_send_system) {
+        send_touch_hid(nx, ny, touch, mask);
+        return;
+    }
+    memset(&e, 0, sizeof e);
+    ts = gs_timestamp ? gs_timestamp() : mach_absolute_time();
+    e.rec.type = 3001;                          /* kGSEventHand */
+    e.rec.x = e.rec.wx = x;
+    e.rec.y = e.rec.wy = y;
+    e.rec.ts_lo = (uint32_t)ts;
+    e.rec.ts_hi = (uint32_t)(ts >> 32);
+    e.rec.pid = (uint32_t)getpid();
+    e.rec.info_size = sizeof e.hand + sizeof e.path;
+    e.hand.type = (mask & kIOHIDDigitizerEventPosition) ? 2 : touch ? 1 : 6;
+    e.hand.count = 1;
+    e.path.index = 1;
+    e.path.identity = 2;
+    e.path.proximity = touch ? 3 : 0;
+    e.path.pressure = touch ? 1.0f : 0.0f;
+    e.path.major_radius = touch ? 1.0f : 0.0f;
+    e.path.x = x;
+    e.path.y = y;
+
+    /* frontmost app gets the touch on its own purple port; on the home screen
+       (no app) SpringBoard gets it through the system event port */
+    if (touch && !(mask & kIOHIDDigitizerEventPosition)) {   /* new touch: re-resolve */
+        char id[256] = "";
+        if (sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
+        if (strcmp(id, app)) {
+            strncpy(app, id, sizeof app - 1);
+            app_port = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+            if (opt_debug) say("[input] touch target %s", id[0] ? id : "SpringBoard");
+        }
+    }
+    if (app_port && gs_send_event) gs_send_event(&e.rec, app_port);
+    else gs_send_system(&e.rec);
+}
+
 static void send_key(uint32_t usage, int down)
 {
     int t = gs_type(usage);
-    if (!gs_send_system) {
-        void *h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", 1);
-        if (h) {
-            gs_send_system = (void (*)(gsrec_t *))dlsym(h, "GSSendSystemEvent");
-            gs_timestamp = (uint64_t (*)(void))dlsym(h, "GSCurrentEventTimestamp");
-        }
-        if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
-    }
+    gs_load();
     if (gs_send_system && t) {
         gsrec_t r;
         uint64_t ts = gs_timestamp ? gs_timestamp() : mach_absolute_time();

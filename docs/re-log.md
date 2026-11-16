@@ -273,3 +273,14 @@ The IFAR replacement was `lr-4`, but the handler had already done `sub lr,lr,#4`
   - lock tap → no visible change (screen-off isn't mirrored).
 - The daemon's deferred-down for taps stays: a slow SpringBoard run loop can still lose a separate up to the 2.5 s hold timer on real hardware.
 - The SpringBoard trace patch and syslog-to-console line were removed. NSLog never reached the console in any configuration we tried (open).
+
+## 22. Touch works (2026-11-16)
+- **QEMU:** CTR CODEC/TSC on NSPI bus 2 plus I2C/MCU, and an absolute pointer, all in `nintendo3ds.c` (from the QEMU agent's draft). The ARM9 driver reports `tsc_ok`, and pen samples land in the input ring with correct ADC values.
+- **Ignored path:** digitizer IOHIDEvents dispatched by our daemon reach SpringBoard's event system but are ignored, as keyboard events were (entry 19).
+- **Working path:** `kGSEventHand` (3001) GSEvents, layout from 8C148:
+  - `_GSEventGetHandInfo` copies 0x24 bytes at record+0x34;
+  - `_GSEventGetPathInfoAtIndex` = record+0x58+24*i;
+  - `_UIApplicationHandleEvent` reads `pathInfosCount` at hand+0x21, treats type 8 as cancel, and treats a path as touching while proximity bit 1 is set.
+  - Target: the frontmost app's purple port (`SBFrontmostApplicationDisplayIdentifier` → `GSCopyPurpleNamedPort`), else `GSSendSystemEvent` (SpringBoard).
+- **Daemon:** needs `flipx` since the display blit rotates (`ix = rr*4/3`).
+- **Result:** tapping Settings at iOS (47,320) opens Settings (`emu/tap.py`).

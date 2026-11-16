@@ -6,6 +6,7 @@ real key down/up events through QMP.
 
   emu/viewer.py [--sd build/sd.img] [--firm build/boot/ios3ds.firm] [--fps 8]
 
+Mouse: click/drag on the iOS view (or the 3DS bottom screen) = touch.
 Keys (3DS button):  Enter / H = START (iOS Home)   Backspace / K = SELECT (iOS lock)
                     A = A   S = B   X = X   Y = Y   Q = L (vol -)   W = R (vol +)
                     arrow keys = D-pad   (SELECT+START together = XNU panic dump)
@@ -32,8 +33,18 @@ KEYS = {"Return": "ret", "KP_Enter": "ret", "h": "ret",
         "a": "a", "s": "s", "x": "x", "y": "y", "q": "q", "w": "w",
         "Up": "up", "Down": "down", "Left": "left", "Right": "right"}
 
-HELP = ("Enter/H = Home   Backspace/K = Lock   Q/W = Volume -/+   "
+HELP = ("Mouse = touch (iOS view or bottom screen)   Enter/H = Home   Backspace/K = Lock   Q/W = Volume -/+   "
         "A S X Y = A B X Y   Arrows = D-pad   (iOS needs ~7 min to boot)")
+
+
+def ios_to_display(nx, ny):
+    """Normalised iOS point (0..1, portrait, origin top-left) -> pixel on the
+    400x480 QEMU display (bottom-screen touch panel at x 40..359, y 240..479).
+    Inverse of map_touch() in tools/ios3ds-input/daemon/input.c with `flipx`
+    (the ARM9 shows iOS rotated on the top screen; the panel shares its axes)."""
+    px = ny * 320.0
+    py = (240.0 - 640.0 / 3.0) / 2.0 + (1.0 - nx) * (640.0 / 3.0)
+    return 40.0 + px, 240.0 + py
 
 
 class QMP:
@@ -56,6 +67,14 @@ class QMP:
             r = json.loads(self.f.readline())
             if "return" in r or "error" in r:   # skip async events
                 return r
+
+    def pointer(self, x, y, down=None):
+        """x, y: pixel on the 400x480 display; down: None = move only"""
+        ev = [{"type": "abs", "data": {"axis": "x", "value": int(x * 32768 / 400)}},
+              {"type": "abs", "data": {"axis": "y", "value": int(y * 32768 / 480)}}]
+        if down is not None:
+            ev.append({"type": "btn", "data": {"down": down, "button": "left"}})
+        self.cmd("input-send-event", events=ev)
 
     def key(self, qcode, down):
         self.cmd("input-send-event", events=[{"type": "key", "data": {
@@ -129,6 +148,23 @@ def main():
                 pass
         root.after(int(1000 / a.fps), frame)
 
+    def to_display(ev):
+        if ev.x < 480 and ev.y < 720:            # upright iOS view (2x)
+            return ios_to_display(ev.x / 480.0, ev.y / 720.0)
+        if ev.x >= 490:                          # raw 3DS screens (1.5x)
+            return (ev.x - 490) / 1.5, ev.y / 1.5
+        return None
+
+    def mouse(down):
+        def h(ev):
+            p = to_display(ev)
+            if p:
+                q.pointer(p[0], p[1], down)
+        return h
+
+    pic.bind("<ButtonPress-1>", mouse(True))
+    pic.bind("<B1-Motion>", mouse(None))
+    pic.bind("<ButtonRelease-1>", mouse(False))
     root.bind("<KeyPress>", press)
     root.bind("<KeyRelease>", release)
     root.after(200, frame)
