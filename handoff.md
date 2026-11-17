@@ -82,11 +82,12 @@ Known 30 s delay on every boot, QEMU included: `AppleARMPE::getGMTTimeOfDay` sti
 | Branch | Status |
 |---|---|
 | `main` | everything merged (GL software engine, Wi-Fi, audio, input, screen modes, launcher, HW probes) |
-| `agent/pica` | **not merged on purpose.** PICA200 GL back end: GPU service in the shim, GX model in QEMU, `IOS3DS_GL=pica\|auto`, `-ffixed-r9` in mkboot. Merge once the hardware boot works. Pushed to origin. |
+| `agent/pica` | superseded by `agent/gpu` |
+| `agent/gpu` | `agent/pica` + main, reviewed for real hardware, plus the GPU display mirror (the screen copy moves from the ARM9 to the PICA200, self-tested, ARM9 copy as fallback). New: `gpu.bin` (shim GPU part + command lists, `load=` in boot.cfg), mailbox at shim+0x7F00, boot.cfg `gpu=` / `gpu_mirror=`. See docs/pica200.md §9-11. |
 
 ## 6. Backlog after the hardware boot works
 
 1. Real hardware, stages 2–4 in [docs/real-hardware.md](docs/real-hardware.md): root disk over real SD timing, SpringBoard, input.
-2. Merge `agent/pica`, then test PICA200 on hardware.
+2. Merge `agent/gpu`, then test PICA200 on hardware (docs/pica200.md §11 lists the log lines to read).
 3. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
 4. Audio on hardware: speaker and headphones through CSND ([docs/audio.md](docs/audio.md)).

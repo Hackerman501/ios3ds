@@ -24,13 +24,14 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 3DS (Luma3DS chainloader)
  ├─ ARM9  "monitor" ── consoles on both LCDs, sd:/ios3ds/log.txt, loads everything from SD,
  │                     serves XNU's root disk (md0) from sd:/ios3ds/rootfs.hfs,
- │                     mirrors iOS's framebuffer onto the top LCD
+ │                     mirrors iOS's framebuffer onto the LCDs (CPU copy, until the GPU mirror runs)
  └─ ARM11 core 0 ───── stub: CPU probes, VFP on → jumps into Apple's XNU (core 1 stays parked)
       XNU 1504.58.28 (stock kernelcache + kernel/patches.json + kernel/shim)
         ├─ timer:      MPCore watchdog (time base) + private timer (deadlines), GIC IRQ 29 → kernel's FIQ handler
         ├─ console:    pexpert's S5L UART ops → shim → log ring → ARM9 → screen + SD
         ├─ root disk:  memdev (md0) strategy → shim → ARM9 block server → FAT file on SD
-        ├─ display:    Apple's AppleM2CLCD on a fake register page; 3DS VBlank (GIC 42) → CLCD frame IRQ
+        ├─ display:    Apple's AppleM2CLCD on a fake register page; 3DS VBlank (GIC 42) → CLCD frame IRQ;
+        │              the PICA200 copies the framebuffer to the LCDs, stepped from VBlank (docs/pica200.md §9)
         └─ IOKit platform kexts start against "fake" S5L8720 register pages in AXI WRAM
       launchd → configd, notifyd, syslogd, mediaserverd, … → SpringBoard (home screen)
 ```
@@ -97,6 +98,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
   - no activation (liblockdown is stubbed to report "Activated" for research);
   - OpenGL ES 1.1 is CPU-rendered (`tools/ios3ds-gl`): no PVRTC textures, no mipmaps or stencil yet, and no ES 2.0 (the MBX engine slot is ES1 only).
   - The PICA200 back end has only run against our software GPU model, not on a real console; enable it per process with `IOS3DS_GL=pica`.
+  - The GPU display mirror (the screen copy on the PICA200) self-tests at boot and falls back to the ARM9 copy; boot.cfg `gpu_mirror=0` / `gpu=0` switch it / all GPU use off.
 
 ## Credits and prior art
 - [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research notes on booting 8C148, which were invaluable.

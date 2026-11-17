@@ -75,7 +75,10 @@ list. A top-level node goes straight to the OID tree, and works.
 | `TRANSFER` | PPF display transfer |
 
 One request runs at a time (a flag taken with interrupts masked; waiters
-`IOSleep`). Blocks of processes that died are reclaimed when the arena runs
+`IOSleep`). The same flag keeps GL requests and the display mirror's frames
+apart (§9). boot.cfg `gpu=0` makes bring-up refuse before touching any
+register; every request then answers `PICA_ERR_GPU_OFF` and the engine uses
+the CPU. Blocks of processes that died are reclaimed when the arena runs
 full (`proc_find`). Completion is **polled**: `PSC_FILLn_CNT` bit 1, `PPF_CNT`
 bit 8, and bit 31 (P3D) of the GX interrupt status register at +0x34, every
 20 µs, for at most 2 s. A timeout is logged with the registers involved and
@@ -101,6 +104,9 @@ address registers) before anything untrusted may use GL.
   first request (falling back to 4 and 2 MiB). It is ordinary wired, cached
   kernel memory; the GPU sees it by physical address. `CFG11_GPUPROT`
   (0x10140140) is written 0 so GPU DMA may reach all of FCRAM.
+- Right after allocating, the shim cleans and invalidates the whole D-cache
+  once (`c7,c14,0`): lines the pages' previous owner (or a zeroing) left dirty
+  would otherwise be evicted over GPU output at some random later time.
 - Cache: after the CPU writes arena memory the shim cleans those D-cache
   lines (`c7,c10,1`), and before it reads memory the GPU wrote it invalidates
   them (`c7,c6,1`). Blocks are multiples of 128 bytes, so a line never holds
@@ -178,6 +184,12 @@ and all of `GL_COMBINE` (sources, operands, functions, scale) directly.
 until a flush: `finish`, target change, texture upload, full clear, or a full
 buffer. Each list is self-contained (shader, base state, target), so several
 GL processes can share the GPU without tracking each other.
+
+**Self-check.** `pica_backend_init` (for `IOS3DS_GL=pica` and `auto`) first
+sends a 64x64 pattern through the whole path the frames depend on: WRITE,
+PPF linear→tiled, PPF tiled→linear, READ, then a PSC fill and back. Any
+wrong word or failed operation is logged (`[gl] pica: GPU self-check: …: not
+using the GPU`) and the context gets the software rasterizer.
 
 **Fallback.** If the GPU is unavailable, a target is larger than 1024, the
 arena is full or a GPU operation fails, the same draw goes to the software
@@ -274,7 +286,7 @@ Console lines to expect (QEMU, and hopefully hardware):
 ```
 [pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT 0x00000000, GX clock ..., GX stat ...
 [pica] arena 8192 KiB at VA 0x... = PA 0x2...; driver ready (state 0)
-[gl] pica: GPU up: arena 8192 KiB at PA 0x2... (8064 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: GPU up (self-check passed): arena 8192 KiB at PA 0x2... (8064 KiB free), PDN_GPU_CNT 0x1007f, PICA200
 [gl] context 0x... uses the ios3ds PICA200
 gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds PICA200"
 gltest: ... ok   (10 probes)
@@ -299,6 +311,9 @@ Commands and output are in `re-log.md`, entry 27.
   host, and the animated scene drawn through the emulated GPU appears on the
   top LCD. The model logged no unsupported operation. The home screen and the
   software context are unaffected.
+- **Display mirror** (§9, re-log entry 28): host test byte-identical to the
+  ARM9's display.c in all three modes; QEMU plain and `--icount 2` boots to
+  the home screen with the mirror on, self-test exact, spot checks 0/512.
 - **Real hardware**: not run.
 
 ## 8. First run on a real 3DS: what to look at
@@ -328,3 +343,205 @@ Commands and output are in `re-log.md`, entry 27.
 Then: make `auto` the default, move waits to the P3D interrupt, map the arena
 into clients (or at least present with a PPF transfer straight into the
 framebuffer), and move T&L into the vertex shader.
+
+## 9. The GPU display mirror
+
+Until now the ARM9 copied iOS's framebuffer to the LCDs itself
+(`boot/arm9/display.c`): 320x480 BGRA, rotated and scaled to 360x240 on the
+top screen and 2/3 scale on the bottom one. The ARM9 also serves the root
+disk, and the ARM11 kernel spins with IRQs off until each block request is
+served, so every millisecond of copying is a millisecond of stalled iOS (the
+copy is paced down to 2 fps while md0 is busy for exactly that reason). The
+mirror moves the copy to the PICA200, driven by the ARM11 shim. The contract
+is `boot/common/gpu_mirror.h`.
+
+### What the GPU does per frame
+
+```
+PPF  iOS framebuffer (VRAM 0x18000000, linear BGRA)  -> texture 320x480 RGBA8, tiled   0x18480000
+P3D  gpumirror.bin list: two textured quads          -> RT top 240x400 RGBA8, tiled    0x18516000
+                                                     -> RT bottom 240x320 RGBA8, tiled 0x18573C00
+PPF  RT top + bottom (one transfer when Luma's bottom framebuffer follows the top one,
+     as it does: 0x18300000 / 0x18346500)            -> LCD framebuffers, RGBA8 -> BGR8
+     ... once per framebuffer set (Luma has two, the CPU copy wrote both too)
+```
+
+Four GPU operations per frame in "both" mode (3 + 1 per set in the others).
+
+**Why this is a plain scaling.** The 3DS framebuffers are column-major:
+framebuffer row j is screen column j, and its 240 pixels run from the bottom
+of the screen up. In those terms the CPU copy's "rotation" disappears; both
+screens are axis-aligned scalings of the iOS picture (`gm_map()` in the
+header is the CPU copy's integer maths as one function):
+
+| screen | framebuffer pixel (i, j) | iOS pixel |
+|---|---|---|
+| top 240x400 | j 20..379 (else black) | x = ⌊4i/3⌋, y = ⌊4(j−20)/3⌋ |
+| bottom 240x320 | i 14..226 (else black) | x = ⌊(3i−40)/2⌋, y = ⌊3j/2⌋ |
+
+**Exactness.** The quads are nearest-sampled with texture coordinates chosen
+so that the GPU's `⌊s·320⌋`, `⌊t·480⌋` at each pixel centre equals the CPU
+copy's integer division: iOS x = 4/3·q − 1/2 at column q (and so on), which
+gives fractional parts 1/6, 1/2, 5/6 at pixel centres, i.e. at least 1/6
+texel away from any rounding edge; float24 texture coordinates are good to
+~1e-5. The quads' edges lie on pixel boundaries, so coverage is exact too;
+the margins are never drawn (both render targets are black-filled once).
+
+**Colour.** The texture holds iOS's bytes B,G,R,A, which the GPU reads as
+RGBA8 (bytes A,B,G,R): sample.a = B, .b = G, .g = R. Three TEV stages
+rebuild the colour: `g·(1,0,0)`, `+ b·(0,1,0)`, `+ a·(0,0,1)` (multiplications
+by 0 or 255 and sums of disjoint channels: exact). The read-out transfer
+drops alpha and writes B,G,R bytes, the LCD format.
+
+**The command lists are built at build time** (`tools/ios3ds-pica/mirror/
+genmirror.c`) with the same encoders as the GL back end, at fixed physical
+addresses: the shim needs no floating point and no encoder. Two lists, one
+per sampling hypothesis (below).
+
+### Who does what
+
+- **ARM9** (`boot/arm9/gpumirror.c`): before XNU starts it fills the mailbox
+  `gmbox_t` at shim+0x7F00 (boot.cfg switches, Luma's framebuffer addresses,
+  the screen mode). When AppleM2CLCD starts driving the display it sets
+  `want`. It skips its CPU copy only while the shim's `frames` counter
+  advances (within 1 s) and the shim has acknowledged the current mode;
+  otherwise it copies as before. A screen-mode change (X) bumps `seq` and
+  waits up to 100 ms for the shim to acknowledge it, so no GPU frame for the
+  old mode overwrites the console redrawn on the screen given back.
+- **Shim, thread context** (`shim_gpu_thread_poll` in `kernel/shim/pica.c`,
+  called from the input daemon's sysctl, which polls every 16 ms, and from
+  the GL service): once `want` is set it brings the GPU up (the GL service's
+  bring-up), checks gpu.bin and the framebuffer layout, runs the self-test
+  and switches the mirror on.
+- **Shim, IRQ context** (`shim_gpu_irq`, called by `entry.S` on GIC 42 VBlank
+  and GIC 29 timer interrupts, on the audio glue's private IRQ stack): every
+  `gpu_vbl_div`-th VBlank it starts a frame if the GPU is free, and on every
+  interrupt it starts the next operation of a frame in flight whose current
+  operation has finished (`pica_mirror.c` `pm_poll`). It never waits for the
+  GPU (unless boot.cfg `gpu_spin_us` asks for it). No GPU interrupt is
+  enabled: completion is polled, from interrupts that already exist.
+- **Arbitration with GL**: `busy` = 1 while a GL request owns the GPU, 2 while
+  a mirror frame is in flight. A VBlank that finds GL busy skips its frame
+  (`busy_skips`); a GL request that finds a frame in flight sleeps (`IOSleep`)
+  until the interrupts have finished it. Mirror lists are self-contained, as
+  GL's are, so neither depends on the other's GPU state.
+
+### Self-test and fallbacks
+
+Before the first frame, `pm_selftest` mirrors a synthetic 320x480 picture
+(unique colour per pixel, alpha not 0xFF) from the FCRAM arena into an arena
+buffer framed by 4 KiB sentinels, and compares **every byte** with `gm_map`.
+QEMU's GPU model was written from the same references as the encoders, so
+three hardware facts are left open and tried in turn until one variant is
+exact (`GM_VAR_*`):
+
+| bit | hypothesis |
+|---|---|
+| 1 | nearest sampling rounds instead of truncating: list [1], texcoords −½ texel |
+| 2 | texture rows are stored the other way round: upload with the PPF flip flag |
+| 4 | render-target rows the other way round: per-screen read-outs with the flip flag |
+
+Fallbacks to the ARM9 CPU copy, each logged:
+- boot.cfg `gpu=0` (nothing touches the GPU, GL included) or `gpu_mirror=0`;
+- no gpu.bin, GPU bring-up failure, framebuffers overlapping the mirror's VRAM;
+- self-test: no exact variant, sentinel overwritten, or an operation timing out;
+- at run time: an operation not finishing within 200 ms → mirror off for good;
+- iOS framebuffer not 320x480 32 bpp in /vram → frames skipped;
+- GL holding the GPU for over a second → the ARM9 copies until frames resume.
+
+### Memory
+
+| range | use |
+|---|---|
+| shim+0x7F00 (PA 0x20847F00), 256 B | `gmbox_t` mailbox: lines 0-1 ARM9, lines 2-4 ARM11 |
+| PA 0x208B0000, 32 KiB | the shim's GPU part (pica.c, pica_drv.c, pica_mirror.c), from gpu.bin |
+| PA 0x208B8000, ≤ 32 KiB | gpumirror blob: command lists and vertex arrays, from gpu.bin |
+| VRAM 0x18480000-0x185BEC00 | texture and the two render targets |
+
+The shim's GPU code moved out of the main shim because the main shim must end
+below +0x5F00 (probe snapshot, mailboxes). `link.ld` places every object named
+`*pica*.o` at 0x808B0000; `scripts/mkboot.py` writes them (bss included as
+zeros) plus the blob to `gpu.bin`, loaded by `load=0:/ios3ds/gpu.bin,0x208b0000`.
+The main shim calls into it only when the part's header magic is present
+(`kernel/shim/gpu_glue.c`), so a missing gpu.bin means no GPU, nothing worse.
+
+### boot.cfg
+
+```
+gpu=1            # 0: the kernel never touches the GPU (GL: CPU rasterizer, screen: ARM9)
+gpu_mirror=1     # 0: screen copy stays on the ARM9
+gpu_vbl_div=2    # a GPU frame at most every 2nd VBlank (30 fps)
+gpu_spin_us=0    # IRQ-time busy-wait for the GPU per step
+```
+
+## 10. Real-hardware review (what QEMU cannot show)
+
+QEMU has no caches, its GPU finishes every operation inside the register
+write that starts it, and its model shares our reading of the references.
+This is what was checked or changed for the first hardware run, and how a
+log will show it.
+
+| topic | what the code does | unverified assumption | log line that confirms / denies |
+|---|---|---|---|
+| D-cache, arena | after `IOMallocContiguous` the whole D-cache is cleaned and invalidated once (`c7,c14,0`): dirty lines of the pages' previous owner could otherwise be evicted over GPU output later. Then: clean after every CPU write (WRITE, command lists, self-test buffers), invalidate before the GPU writes and before the CPU reads (READ, TRANSFER/FILL destinations, self-test output) | Old 3DS has no outer cache, so L1 maintenance by MVA reaches memory | `[gl] pica: GPU self-check …` (round trip through PPF + cache), `[gpu] mirror self-test variant …: 0 of 518400 bytes differ` |
+| D-cache, mirror | texture and render targets are in VRAM, never touched by the CPU; the blob is written by the ARM9 before XNU runs (never in ARM11 caches); the iOS framebuffer is read exactly as the ARM9 reads it | iOS writes /vram so that DRAM is current (the ARM9 copy works on hardware, so it is) | `[gpu] spot check (GPU copy): 0 of N sampled LCD pixels differ` on a still screen |
+| addresses | GL: arena physical addresses only (`IOMallocContiguous` returns the PA; XNU's physBase is FCRAM's real 0x20000000). Mirror: fixed VRAM PAs and the blob's PA (0x208B8000); the source is the PA AppleM2CLCD programs into the CLCD window register | GPUPROT = 0 opens all of FCRAM to the GPU | first P3D list / PPF in the self-test finishes (no `did not finish`) |
+| registers | the GX block is reached through `entry.S`'s 1 MiB device section at 0xBFE00000 (the one the VBlank code uses; not mapped twice); PDN and CFG11 through `ml_io_map` | — | `[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT …` |
+| power/clock | Luma's state is kept: `PDN_GPU_CNT` must read 0x1007F (else clock on + resets released, logged); the block is never reset (the LCD controllers are in it); PSC/PPF control registers are zeroed, P3D gets IRQ_CMP/AUTOSTOP/config mode, one throw-away texture copy | Luma leaves PSC/PPF idle | `[pica] bring-up:` value; `[pica] TIMEOUT waiting for the first PPF texture copy` would deny |
+| completion | polled: PPF_CNT bit 8, PSC_FILLn bit 1, GX +0x34 bit 31 (P3D, after IRQ_ACK). No GIC line is enabled beyond main's 29 and 42; the mirror is stepped from those two | the bit positions (libn3ds/3dbrew) | self-test `GPU a/b/c ticks (upload/draw/read-out)` non-zero and sane; `did not finish` names the stage otherwise |
+| VRAM | mirror: 0x18480000-0x185BEC00 (above Luma's second framebuffer set, below 6 MiB); the shim refuses framebuffers inside it or inside /vram | Luma's framebuffer addresses (checked at run time) | `[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom 0x18346500/0x18446500 (2 sets)` |
+| texture | NPOT 320x480 RGBA8 texture, nearest, clamp | the PICA200 samples NPOT textures (Citra handles any size; libctru's docs ask for POT) | self-test variant result; an NPOT failure shows as garbage in every variant |
+| sampling | truncation (Citra) tried first, rounding second | — | `variant 0 (as modelled)` vs `variant 1 (sampling rounds)` |
+| row order | texture and render-target rows as Citra stores them tried first, flips after | — | the variant number (bits 2 and 4) |
+| GPU hang | every mirror operation has a 200 ms limit; a timeout switches the mirror off for good, the ARM9 notices within 1 s | — | `[gpu] display mirror FAILED (GPU timeout)` + `[gpu] screen copy: ARM9 CPU again` |
+
+## 11. First hardware run of `agent/gpu`: what to look at
+
+Everything below is in `sd:/ios3ds/log.txt`. Nothing GPU-related can stop
+the boot: the mirror only starts after the home screen's display is on, the
+GL test runs on its own context, and every failure falls back to the CPU.
+
+1. `[gpu] PICA200: gpu=1 gpu_mirror=1 (every 2. VBlank, spin 0 us); mailbox at 20847f00`
+   (ARM9, before XNU): boot.cfg was read.
+2. `[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT …, GX clock …, GX stat …`:
+   Luma's power state (§2). Anything but 0x1007F is followed by what the shim
+   did about it. `GX clock` should read 0x70100 on hardware (0 in QEMU).
+3. `[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom
+   0x18346500/0x18446500 (2 sets)`: Luma's layout as the mirror expects it.
+   Otherwise `… is not where the mirror can write it` and the CPU copy stays.
+4. `[gpu] mirror self-test variant N (…): B of 518400 bytes differ, guard
+   intact; GPU a/b/c ticks (upload/draw/read-out)`: one line per variant tried.
+   - variant 0 with 0 bytes: the model's assumptions hold. Ticks are
+     ~0.955 µs: these are the **real** GPU costs of one frame's stages.
+   - a later variant passing tells which assumption was wrong (§9 table).
+   - all fail: the first-difference line (screen, framebuffer row, pixel,
+     expected vs got byte) is the starting point. All-zero output: P3D drew
+     nothing (sampling/texture setup). Shifted by one pixel: sampling. Garbage
+     everywhere: NPOT texture or tiling. Right picture, wrong colours: TEV or
+     RGBA8 byte order.
+   - `GPU operation k of n (…) did not finish`: completion bit or a hung
+     engine (§4 sources); the stage is named.
+   - `guard OVERWRITTEN`: the read-out's dimensions are misread; mirror off.
+5. `[gpu] display mirror ACTIVE …` then `[gpu] screen copy: PICA200 (ARM9 CPU copy paused)`.
+6. Every 30 s: `[gpu] mirror: F frames in 30 s (x fps); GPU per frame: upload …
+   us, draw … us, read-out … us; frame avg … us (incl. IRQ latency); ARM11 IRQ
+   time … us/frame …` and `[gpu] spot check (GPU copy): 0 of 512 sampled LCD
+   pixels differ` (on a still screen; animation can make a few differ).
+   Compare with the `[monitor] CPU screen copy: … ms each (ARM9)` lines from
+   before the mirror started, and with md0 throughput in the `[hb]` lines.
+7. `[gpu] screen copy: ARM9 CPU again (GPU frames stopped …)`: GL held the
+   GPU for over a second (fine, it comes back) or the mirror failed
+   (`display mirror FAILED (GPU timeout)`; the register value is in the
+   mailbox, `first_bad[3]`).
+8. GL: `[gl] pica: GPU up (self-check passed)` or `[gl] pica: GPU self-check:
+   …: not using the GPU`; then the gltest lines as in §8, including
+   `gltest: PICA200 offscreen frame took N ms` next to the software one.
+9. X still cycles the screen modes; the console must come back cleanly on the
+   screen given back (the shim acknowledges each mode change first).
+
+If anything goes wrong: `gpu_mirror=0` in `sd:/ios3ds/boot.cfg` brings back
+the ARM9 copy exactly as on main; `gpu=0` keeps the kernel away from the GPU
+altogether (GL then uses the CPU rasterizer). Commenting out the
+`load=0:/ios3ds/gpu.bin,…` line has the same effect as `gpu=0` (the shim
+then finds no GPU part); do not just delete the file: a `load=` entry whose
+file is missing stops the boot, as for any `load=` entry.
