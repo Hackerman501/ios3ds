@@ -439,8 +439,8 @@ static int fb_ok(uint32_t pa, uint32_t len)
 /* Thread context. Brings the mirror up once the ARM9 asks for it. */
 void shim_gpu_thread_poll(void)
 {
-    uint32_t src_pa = 0, out_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
-    int v;
+    uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
+    int v, keep_tex = 0;
 
     if (m_tried || !gm_valid())
         return;
@@ -468,7 +468,14 @@ void shim_gpu_thread_poll(void)
         goto out;
     }
     mplat_init();
-    if (pm_init(&mir, &mplat, (const void *)GM_BLOB_VA, GM_BLOB_PA)) {
+    /* the texture: 512x512 RGBA8, power of two (run13: NPOT textures sample
+       garbage), 1 MiB - only the FCRAM arena has room */
+    if (pica_drv_alloc(&drv, 0, GM_TEX_BYTES, 0x1000, &tex_pa) != PICA_OK) {
+        k_printf("[gpu] display mirror: no arena memory for the 512x512 texture: CPU copy stays\n");
+        m_set(GM_ST_FAILED, GM_WHY_NO_MEM);
+        goto out;
+    }
+    if (pm_init(&mir, &mplat, (void *)GM_BLOB_VA, GM_BLOB_PA, tex_pa)) {
         k_printf("[gpu] display mirror: no valid gpumirror.bin at PA 0x%08x (magic 0x%08x): CPU copy stays\n",
                  GM_BLOB_PA, *(vu32 *)GM_BLOB_VA);
         m_set(GM_ST_FAILED, GM_WHY_NO_BLOB);
@@ -481,8 +488,9 @@ void shim_gpu_thread_poll(void)
     m_fb[3] = GM->bot_fb[1];
     m_nsets = m_fb[1] && m_fb[3] && (m_fb[1] != m_fb[0] || m_fb[3] != m_fb[2]) ? 2 : 1;
     k_printf("[gpu] display mirror: LCD framebuffers top 0x%08x/0x%08x bottom 0x%08x/0x%08x (%u set%s); "
-             "texture 0x%08x, targets 0x%08x/0x%08x..0x%08x\n", m_fb[0], m_fb[1], m_fb[2], m_fb[3], m_nsets,
-             m_nsets > 1 ? "s" : "", GM_TEX_PA, GM_RT_TOP_PA, GM_RT_BOT_PA, GM_VRAM_HI);
+             "upload 0x%08x, texture 0x%08x (FCRAM, 512x512), targets 0x%08x/0x%08x..0x%08x\n", m_fb[0], m_fb[1],
+             m_fb[2], m_fb[3], m_nsets, m_nsets > 1 ? "s" : "", GM_SCR_PA, tex_pa, GM_RT_TOP_PA, GM_RT_BOT_PA,
+             GM_VRAM_HI);
     for (i = 0; i < 2 * m_nsets; i++)
         if (!fb_ok(m_fb[i % 2 * 2 + i / 2], i % 2 ? GM_BOT_FB_BYTES : GM_TOP_FB_BYTES)) {
             k_printf("[gpu] display mirror: framebuffer 0x%08x is not where the mirror can write it: CPU copy stays\n",
@@ -505,8 +513,15 @@ void shim_gpu_thread_poll(void)
         GM->first_bad[i] = fbad[i];
     if (v < 0) {
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
-        if (denv.vram)
-            pd_dump_mirror(&denv);
+        if (denv.vram) {
+            /* the variants left their own last state: draw variant 0 once more and show it */
+            mir.variant = 0;
+            pm_begin(&mir, &(pm_frame_t){ src_pa, 1, 1, { out_pa + GUARD, out_pa + GUARD },
+                                          { out_pa + GUARD + GM_TOP_FB_BYTES, out_pa + GUARD + GM_TOP_FB_BYTES } });
+            while (pm_poll(&mir, mir.timeout_ticks) == PM_BUSY)
+                ;
+            pd_dump_mirror(&denv, (const uint32_t *)(drv.va + (tex_pa - drv.pa)));
+        }
         m_set(GM_ST_FAILED, GM_WHY_SELFTEST);
         goto out;
     }
@@ -519,8 +534,11 @@ void shim_gpu_thread_poll(void)
     GM->variant = (uint32_t)v;
     k_printf("[gpu] display mirror: self-test passed (variant %u) in %u us: the PICA200 copies the screen now "
              "(every %u. VBlank)\n", v, (GM->selftest_ticks * 1000u) / (TICK_HZ / 1000u), GM->vbl_div ? GM->vbl_div : 1);
+    keep_tex = 1;
     m_set(GM_ST_ACTIVE, GM_WHY_NONE);
 out:
+    if (tex_pa && !keep_tex)
+        pica_drv_free(&drv, 0, tex_pa);
     if (src_pa)
         pica_drv_free(&drv, 0, src_pa);
     if (out_pa)
@@ -567,6 +585,16 @@ void shim_gpu_irq(uint32_t id)
     vu32 *clcd;
     pm_frame_t f;
 
+    if (id == PICA_IRQ_PDC0) {
+        /* which framebuffer set each LCD shows: for the ARM9's CPU copy */
+        uint32_t s0 = *(vu32 *)(GX_VA + 0x478), s1 = *(vu32 *)(GX_VA + 0x578);
+        if (GM->pdc_magic != GM_PDC_MAGIC || GM->pdc_swap[0] != s0 || GM->pdc_swap[1] != s1) {
+            GM->pdc_swap[0] = s0;
+            GM->pdc_swap[1] = s1;
+            GM->pdc_magic = GM_PDC_MAGIC;
+            dc_clean(&GM->pdc_magic, 12);
+        }
+    }
     if (m_state != GM_ST_ACTIVE)
         return;
     t0 = m_ticks();

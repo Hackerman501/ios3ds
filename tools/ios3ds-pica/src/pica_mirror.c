@@ -11,7 +11,7 @@
 #define GXO(word)   ((word) * 4u)
 #define P3DO(reg)   (0x1000u + (reg) * 4u)
 
-int pm_init(pica_mirror_t *m, const pm_plat_t *p, const void *blob, uint32_t blob_pa)
+int pm_init(pica_mirror_t *m, const pm_plat_t *p, void *blob, uint32_t blob_pa, uint32_t tex_pa)
 {
     const gm_blob_t *b = (const gm_blob_t *)blob;
     uint32_t i;
@@ -21,7 +21,7 @@ int pm_init(pica_mirror_t *m, const pm_plat_t *p, const void *blob, uint32_t blo
     m->p = p;
     m->timeout_ticks = p->tick_hz / 5;          /* 200 ms per operation */
     if (b->magic != GM_BLOB_MAGIC || b->version != GM_BLOB_VERSION || b->blob_pa != blob_pa ||
-        b->size > GM_BLOB_MAX || b->tex_pa != GM_TEX_PA || b->rt_top_pa != GM_RT_TOP_PA ||
+        b->size > GM_BLOB_MAX || b->scr_pa != GM_SCR_PA || b->rt_top_pa != GM_RT_TOP_PA ||
         b->rt_bot_pa != GM_RT_BOT_PA || b->src_wh != (GM_SRC_H << 16 | GM_SRC_W))
         return -1;
     for (i = 0; i < 2; i++) {
@@ -31,6 +31,15 @@ int pm_init(pica_mirror_t *m, const pm_plat_t *p, const void *blob, uint32_t blo
         m->list_pa[i] = blob_pa + b->list_off[i];
         m->list_bytes[i] = b->list_bytes[i];
     }
+    /* point both lists at the texture (in the arena: FCRAM) */
+    for (i = 0; i < 2; i++) {
+        uint32_t *w = (uint32_t *)((uint8_t *)blob + b->tex_patch[i]);
+        if (b->tex_patch[i] < b->list_off[i] || b->tex_patch[i] >= b->list_off[i] + b->list_bytes[i] || (tex_pa & 7))
+            return -1;
+        *w = tex_pa >> 3;
+        p->to_gpu(w, 4);
+    }
+    m->tex_pa = tex_pa;
     return 0;
 }
 
@@ -46,6 +55,14 @@ static void kick(pica_mirror_t *m, uint32_t n)
         p->wr(GXO(GX_PPF_FLAGS), m->op[n].e);
         p->wr(GXO(GX_PPF_UNK14), 0);
         p->wr(GXO(GX_PPF_CNT), PPF_CNT_START);
+    } else if (m->op[n].kind == PM_OP_TEXCOPY) {
+        p->wr(GXO(GX_PPF_IN_ADDR), m->op[n].a >> 3);
+        p->wr(GXO(GX_PPF_OUT_ADDR), m->op[n].c >> 3);
+        p->wr(GXO(GX_PPF_FLAGS), PPF_TEXCOPY);
+        p->wr(GXO(GX_PPF_TC_LEN), m->op[n].b);
+        p->wr(GXO(GX_PPF_TC_INDIM), m->op[n].d);
+        p->wr(GXO(GX_PPF_TC_OUTDIM), m->op[n].e);
+        p->wr(GXO(GX_PPF_CNT), PPF_CNT_START);
     } else {
         /* acknowledge the previous list's end marker; the flag drops at once */
         p->wr(P3DO(P3D_IRQ_ACK), 0);
@@ -60,7 +77,7 @@ static void kick(pica_mirror_t *m, uint32_t n)
 static int finished(pica_mirror_t *m, uint32_t n)
 {
     const pm_plat_t *p = m->p;
-    if (m->op[n].kind == PM_OP_PPF) {
+    if (m->op[n].kind != PM_OP_P3D) {
         if (!(p->rd(GXO(GX_PPF_CNT)) & PPF_CNT_DONE))
             return 0;
         p->wr(GXO(GX_PPF_CNT), 0);
@@ -92,10 +109,14 @@ void pm_begin(pica_mirror_t *m, const pm_frame_t *f)
                          (v & GM_VAR_OUT_FLIP ? PPF_FLIP_V : 0);
     m->nops = 0;
     m->cur = 0;
-    /* 1. iOS framebuffer -> tiled texture (same format, rows as stored) */
-    add(m, PM_OP_PPF, 0, f->src_pa, in_dim, GM_TEX_PA, in_dim,
+    /* 1. iOS framebuffer -> tiled, 320 wide (same format, rows as stored),
+       then each 8-row tile row (10240 bytes) into the 512-wide texture
+       (16384 bytes per tile row): a raw copy with an output gap */
+    add(m, PM_OP_PPF, 0, f->src_pa, in_dim, GM_SCR_PA, in_dim,
         PPF_OUT_TILED | PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8) |
         (v & GM_VAR_IN_FLIP ? PPF_FLIP_V : 0));
+    add(m, PM_OP_TEXCOPY, 0, GM_SCR_PA, GM_SRC_W * GM_SRC_H * 4, m->tex_pa, GM_SRC_W * 8 * 4 / 16,
+        ((GM_TEX_W - GM_SRC_W) * 8 * 4 / 16) << 16 | GM_SRC_W * 8 * 4 / 16);
     /* 2. both quads */
     add(m, PM_OP_P3D, 1, m->list_pa[s], m->list_bytes[s], 0, 0, 0);
     /* 3. render targets -> LCD framebuffers, RGBA8 -> BGR8. The bottom
@@ -151,9 +172,9 @@ int pm_poll(pica_mirror_t *m, uint32_t spin_ticks)
             continue;
         }
         if (now - m->t_op0 > m->timeout_ticks) {
-            m->why_timeout = m->op[m->cur].kind == PM_OP_PPF ? m->p->rd(GXO(GX_PPF_CNT))
+            m->why_timeout = m->op[m->cur].kind != PM_OP_P3D ? m->p->rd(GXO(GX_PPF_CNT))
                                                               : m->p->rd(GXO(GX_PSC_IRQ_STAT));
-            if (m->op[m->cur].kind == PM_OP_PPF)
+            if (m->op[m->cur].kind != PM_OP_P3D)
                 m->p->wr(GXO(GX_PPF_CNT), 0);
             m->timeouts++;
             m->state = PM_TIMEOUT;
@@ -241,7 +262,8 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
         pm_begin(m, &f);
         if (wait_frame(m) != PM_DONE) {
             p->log("[gpu] mirror self-test: GPU operation %u of %u (%s) did not finish, register 0x%08x\n",
-                   m->cur + 1, m->nops, m->op[m->cur].kind == PM_OP_PPF ? "PPF transfer" : "P3D list",
+                   m->cur + 1, m->nops, m->op[m->cur].kind == PM_OP_P3D ? "P3D list" :
+                   m->op[m->cur].kind == PM_OP_PPF ? "PPF transfer" : "PPF texture copy",
                    m->why_timeout);
             return -1;
         }

@@ -117,11 +117,62 @@ static uint32_t *scratch(size_t words)
     return P.scratch;
 }
 
+/* A constant-colour quad over a 64x64 RGBA8 target at `color`: the list a
+   clear is made of (no PSC fills: the fill engine cannot write FCRAM, where
+   the arena is - hardware run 13). Returns the list size in bytes. */
+static uint32_t solid_list(uint32_t *list, uint32_t cap, uint32_t color, uint32_t vbuf, uint32_t tev_color)
+{
+    static const float ident[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    pica_cmd_t c;
+    pica_fb_t fb;
+    pica_raster_t rs;
+    pica_tev_t tev[PICA_TEV_STAGES];
+    pica_vtx_layout_t l;
+    float clip[16];
+    int i;
+    pica_cmd_init(&c, list, cap);
+    pica_emit_base_state(&c);
+    pica_ff_emit_program(&c);
+    memset(&fb, 0, sizeof fb);
+    fb.color_pa = color;
+    fb.width = fb.height = 64;
+    fb.color_fmt = PICA_CB_RGBA8;
+    pica_emit_framebuffer(&c, &fb);
+    pica_emit_viewport(&c, 0, 0, 64, 64);
+    pica_emit_scissor(&c, 0, 0, 0, 0, 0);
+    pica_raster_defaults(&rs);
+    rs.write_mask = PICA_WRITE_COLOR;
+    pica_emit_raster(&c, &rs);
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_tev_passthrough(&tev[i]);
+    tev[0].src_rgb[0] = tev[0].src_a[0] = PICA_TEVSRC_CONSTANT;
+    tev[0].color = tev_color;
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_emit_tev(&c, (unsigned)i, &tev[i]);
+    pica_emit_texunits(&c, 0);
+    pica_ff_clip_matrix(clip, ident, ident);
+    pica_ff_emit_matrices(&c, clip, NULL, NULL, 1.0f);
+    memset(&l, 0, sizeof l);
+    l.count = PICA_FF_ATTRS;
+    l.attr[PICA_FF_POSITION].type = PICA_FLOAT;  l.attr[PICA_FF_POSITION].size = 4;
+    l.attr[PICA_FF_COLOR].type = PICA_FLOAT;     l.attr[PICA_FF_COLOR].size = 4;
+    l.attr[PICA_FF_TEXCOORD0].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD0].size = 2;
+    l.attr[PICA_FF_TEXCOORD1].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD1].size = 2;
+    l.nbuffers = 1;
+    l.buffer[0].stride = sizeof(Vtx);
+    l.base_pa = vbuf;
+    pica_emit_vtx_layout(&c, &l);
+    pica_emit_draw_arrays(&c, PICA_TRIANGLES, 0, 6);
+    pica_emit_fb_flush(&c);
+    return pica_cmd_finish(&c);
+}
+
 /* Before the first draw: one round trip through everything every frame
    relies on and the model cannot vouch for on hardware - the transport, the
-   shim's cache maintenance, the PPF in both directions (8x8 tiling) and the
-   PSC fill. 64x64 RGBA8, a pattern up and back, then a fill and back.
-   0 = usable; otherwise logs what came back and the caller uses the CPU. */
+   shim's cache maintenance, the PPF in both directions (8x8 tiling) and a
+   P3D draw into the arena (FCRAM). 64x64 RGBA8: a pattern up and back, then
+   a constant-colour quad and back. 0 = usable; otherwise logs what came
+   back and the caller uses the CPU. */
 static int self_check(void)
 {
     enum { N = 64 * 64 };
@@ -149,19 +200,37 @@ static int self_check(void)
                    first * 2654435761u ^ 0x5A5AA5A5u);
             st = PICA_ERR_RANGE;
             what = NULL;
-        } else if ((what = "memory fill", st = P.dev->fill(b, N * 4, 0x11223344u, PSC_FILL_32, 0, 0, 0, 0)) == PICA_OK &&
-                   (what = "tiled->linear transfer", st = P.dev->transfer(b, dim, a, dim,
-                       PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8))) == PICA_OK &&
-                   (what = "read-back", st = P.dev->read(a, buf, N * 4)) == PICA_OK) {
-            for (i = 0; i < N; i++)
-                if (buf[i] != 0x11223344u && !bad++)
-                    first = i;
-            if (bad) {
-                gl_log("pica: GPU self-check: memory fill left %u of %u words wrong (word %u: 0x%08x): "
-                       "not using the GPU", bad, (unsigned)N, first, buf[first]);
-                st = PICA_ERR_RANGE;
-                what = NULL;
+        } else {
+            static const float corner[6][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 1 }, { -1, 1 } };
+            uint32_t vb = 0, *list = malloc(4096 * 4), bytes = 0;
+            Vtx q[6];
+            memset(q, 0, sizeof q);
+            for (i = 0; i < 6; i++) {
+                q[i].x = corner[i][0];
+                q[i].y = corner[i][1];
+                q[i].w = 1;
             }
+            what = "allocating";
+            st = list ? P.dev->alloc(sizeof q, 0, &vb) : PICA_ERR_NO_MEM;
+            if (st == PICA_OK && !(bytes = solid_list(list, 4096, b, vb, 0x87654321u)))
+                st = PICA_ERR_RANGE;
+            if (st == PICA_OK && (what = "a P3D draw", st = P.dev->submit(list, bytes, vb, q, sizeof q)) == PICA_OK &&
+                (what = "tiled->linear transfer", st = P.dev->transfer(b, dim, a, dim,
+                    PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8))) == PICA_OK &&
+                (what = "read-back", st = P.dev->read(a, buf, N * 4)) == PICA_OK) {
+                for (i = 0; i < N; i++)
+                    if (buf[i] != 0x21436587u && !bad++)
+                        first = i;
+                if (bad) {
+                    gl_log("pica: GPU self-check: a constant-colour quad left %u of %u words wrong (word %u: 0x%08x, "
+                           "expected 0x21436587): not using the GPU", bad, (unsigned)N, first, buf[first]);
+                    st = PICA_ERR_RANGE;
+                    what = NULL;
+                }
+            }
+            if (vb)
+                P.dev->free(vb);
+            free(list);
         }
     }
     if (st != PICA_OK && what)
@@ -401,7 +470,15 @@ static PDepth *get_depth(const RT *rt, const PTarget *t)
         d->key = rt->depth;
         d->pw = t->pw;
         d->ph = t->ph;
-        P.dev->fill(d->pa, bytes, 0x00FFFFFF, PSC_FILL_32, 0, 0, 0, 0);     /* far */
+        {   /* far: a constant, so tiling does not matter; written by the CPU because
+               the fill engine cannot reach the (FCRAM) arena */
+            uint32_t *z = scratch(bytes / 4), k;
+            if (z) {
+                for (k = 0; k < bytes / 4; k++)
+                    z[k] = 0x00FFFFFF;
+                P.dev->write(d->pa, z, bytes);
+            }
+        }
     }
     d->used = ++P.tick;
     return d;
@@ -793,7 +870,6 @@ static void pica_clear(GC *gc, RT *rt, GLbitfield mask)
 {
     PTarget *t = bind_target(rt);
     int color = (mask & GL_COLOR_BUFFER_BIT) != 0, depth, full, all_ch, i;
-    uint32_t cw, dw, bytes;
     float cc[4];
     if (!t) {
         sw_backend.clear(gc, rt, mask);
@@ -806,37 +882,18 @@ static void pica_clear(GC *gc, RT *rt, GLbitfield mask)
         cc[i] = gc->clear_color[i];
     if (rt->opaque)
         cc[3] = 1;
-    cw = rgba_u32(cc);
-    cw = (cw & 0xFF) << 24 | (cw & 0xFF00) << 8 | (cw >> 8 & 0xFF00) | cw >> 24;     /* R<<24 | G<<16 | B<<8 | A */
-    dw = (uint32_t)((gc->clear_depth < 0 ? 0 : gc->clear_depth > 1 ? 1 : gc->clear_depth) * 16777215.0f);
     full = !gc->scissor_on || (gc->scissor[0] <= 0 && gc->scissor[1] <= 0 &&
                                gc->scissor[0] + gc->scissor[2] >= t->w && gc->scissor[1] + gc->scissor[3] >= t->h);
     all_ch = gc->color_mask[0] && gc->color_mask[1] && gc->color_mask[2] && (gc->color_mask[3] || rt->opaque);
-    bytes = (uint32_t)t->pw * t->ph * 4;
 
-    if (full && (!color || all_ch)) {
-        /* whole buffers: the memory fill engine, outside any command list */
-        uint32_t st;
-        flush_list();
-        if (P.state != 1) {
-            sw_backend.clear(gc, rt, mask);
-            return;
-        }
-        st = P.dev->fill(color ? t->color_pa : 0, color ? bytes : 0, cw, PSC_FILL_32,
-                         depth ? P.cur_depth->pa : 0, depth ? bytes : 0, dw, PSC_FILL_32);
-        if (st != PICA_OK) {
-            gpu_fail("a memory fill", st);
-            sw_backend.clear(gc, rt, mask);
-            return;
-        }
-        if (color) {
-            t->gpu_valid = 1;
-            t->dirty = 1;
-        }
-        return;
-    }
+    /* Every clear is a quad at the clear depth (depth function ALWAYS). The
+       PSC fill engine would be faster but cannot write FCRAM, and the arena
+       is FCRAM (hardware run 13). A clear of all colour channels over the
+       whole target needs no upload of the old picture first. */
+    if (full && color && all_ch)
+        t->gpu_valid = 1;
 
-    /* scissored or channel-masked: a quad at the clear depth */
+    /* a quad at the clear depth */
     {
         static const float corner[6][2] = { { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 1 }, { -1, 1 } };
         static const int whole_vp[4] = { 0, 0, 0, 0 };

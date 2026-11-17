@@ -8,7 +8,8 @@
  * (pica_cmd/pica_state/pica_ff), so the kernel shim needs no floating point
  * and no encoder of its own: it only points the GPU at these lists. The
  * lists use fixed physical addresses (VRAM texture and render targets, the
- * blob's own vertex arrays at GM_BLOB_PA), so they are complete as built.
+ * blob's own vertex arrays at GM_BLOB_PA); only the texture's address (it is
+ * allocated from the FCRAM arena) is patched in by the shim (tex_patch).
  *
  * Two lists, identical except for their vertex arrays:
  *   [0] texture coordinates for a GPU whose nearest sampling truncates
@@ -54,9 +55,9 @@ static void quad(MVtx *v, float W, float H, float q0, float q1, float r0, float 
         v[i].w = 1.0f;
         v[i].c[0] = v[i].c[1] = v[i].c[2] = v[i].c[3] = 1.0f;
         /* GL t runs from the last stored texture row (t = 0) to the first;
-           iOS row 0 is stored first, so t * 480 = 480 - Y */
-        v[i].t0[0] = (X + shift) / (float)GM_SRC_W;
-        v[i].t0[1] = ((float)GM_SRC_H - Y + shift) / (float)GM_SRC_H;
+           iOS row y is stored row y of the 512x512 texture, so t * 512 = 512 - Y */
+        v[i].t0[0] = (X + shift) / (float)GM_TEX_W;
+        v[i].t0[1] = ((float)GM_TEX_H - Y + shift) / (float)GM_TEX_H;
         v[i].fog = 1.0f;
     }
 }
@@ -214,8 +215,8 @@ int main(int argc, char **argv)
     }
     for (i = 0; i < 2; i++) {
         const Pass passes[2] = {
-            { GM_RT_TOP_PA, GM_RT_W, GM_RT_TOP_H, GM_TEX_PA, GM_SRC_W, GM_SRC_H, 0, 0, 6 },
-            { GM_RT_BOT_PA, GM_RT_W, GM_RT_BOT_H, GM_TEX_PA, GM_SRC_W, GM_SRC_H, 0, 6, 6 },
+            { GM_RT_TOP_PA, GM_RT_W, GM_RT_TOP_H, GM_TEX_PLACEHOLDER, GM_TEX_W, GM_TEX_H, 0, 0, 6 },
+            { GM_RT_BOT_PA, GM_RT_W, GM_RT_BOT_H, GM_TEX_PLACEHOLDER, GM_TEX_W, GM_TEX_H, 0, 6, 6 },
         };
         uint32_t bytes = build_list((uint32_t *)(blob + off), (GM_BLOB_MAX - off) / 4, GM_BLOB_PA + vtx_off[i], passes, 2);
         if (!bytes) {
@@ -224,6 +225,18 @@ int main(int argc, char **argv)
         }
         h->list_off[i] = off;
         h->list_bytes[i] = bytes;
+        {   /* the texture lives in the FCRAM arena: the shim patches this word */
+            uint32_t k, n = 0;
+            for (k = 0; k < bytes / 4; k++)
+                if (((uint32_t *)(blob + off))[k] == GM_TEX_PLACEHOLDER >> 3) {
+                    h->tex_patch[i] = off + k * 4;
+                    n++;
+                }
+            if (n != 1) {
+                fprintf(stderr, "genmirror: texture address found %u times in list %u\n", n, i);
+                return 1;
+            }
+        }
         off = (off + bytes + 15) & ~15u;
     }
     /* diagnostics (pica_diag.c): one solid quad, one 64x64 and one 48x40
@@ -263,7 +276,7 @@ int main(int argc, char **argv)
     h->version = GM_BLOB_VERSION;
     h->blob_pa = GM_BLOB_PA;
     h->size = off;
-    h->tex_pa = GM_TEX_PA;
+    h->scr_pa = GM_SCR_PA;
     h->rt_top_pa = GM_RT_TOP_PA;
     h->rt_bot_pa = GM_RT_BOT_PA;
     h->src_wh = GM_SRC_H << 16 | GM_SRC_W;

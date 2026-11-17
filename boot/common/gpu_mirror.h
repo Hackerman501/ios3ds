@@ -8,7 +8,9 @@
  * the 3DS LCD framebuffers itself (display.c). With the GPU mirror the ARM11
  * shim does it on the PICA200 instead, started from the VBlank interrupt:
  *
- *   1. PPF display transfer  iOS framebuffer (VRAM, linear) -> GM_TEX_PA (tiled RGBA8)
+ *   1. PPF display transfer  iOS framebuffer (VRAM, linear) -> GM_SCR_PA (tiled RGBA8, 320 wide)
+ *      PPF texture copy      -> a 512x512 texture in the FCRAM arena (tile rows re-strided:
+ *                            the PICA200 samples non-power-of-two textures wrongly, run13)
  *   2. P3D command list      two textured quads: GM_RT_TOP_PA (240x400) and
  *                            GM_RT_BOT_PA (240x320), nearest sampling at
  *                            exactly the CPU copy's pixel mapping (gm_map)
@@ -25,6 +27,7 @@
    +0x6000, inmbox +0x6200..+0x63FF, gmbox +0x7F00..+0x7FFF, bounce +0x8000) */
 #define SHIM_GM_OFF       0x7F00u
 #define GM_MAGIC          0x524D4D47u   /* 'GMMR' */
+#define GM_PDC_MAGIC      0x53434450u   /* 'PDCS' */
 
 enum {                                  /* gmbox_t.state */
     GM_ST_OFF = 0,          /* nothing tried yet (or the shim predates the mirror) */
@@ -81,8 +84,14 @@ typedef struct {
     uint32_t steps;         /* IRQ-time steps that touched the GPU */
     uint32_t selftest_ticks;/* duration of the whole self-test */
     uint32_t first_bad[4];  /* default variant: first mismatch {offset, expected, got, ops} */
-    /* lines 5-7: free */
-    uint32_t _r5[24];
+    /* line 5: ARM11, every VBlank: which framebuffer set each LCD shows
+       (PDC0/PDC1 +0x78 "swap": bit 0 next, bit 4 current; the ARM9 cannot
+       read the GPU block itself). The CPU copy writes only those. */
+    uint32_t pdc_magic;     /* GM_PDC_MAGIC once published */
+    uint32_t pdc_swap[2];   /* top, bottom */
+    uint32_t _r5[5];
+    /* lines 6-7: free */
+    uint32_t _r6[16];
 } gmbox_t;
 _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 
@@ -96,19 +105,24 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
    0x18000000-0x182FFFFF  /vram: iOS framebuffer (AppleM2CLCD window 1)
    0x18300000 / 0x18346500  Luma: top / bottom framebuffer, set 0
    0x18400000 / 0x18446500  Luma: top / bottom framebuffer, set 1 (ends 0x1847EA00)
-   0x18480000  texture   320x480 RGBA8, 8x8 tiled (0x96000)
+   0x18480000  upload    320x480 RGBA8, 8x8 tiled (0x96000); copied on into
+               the 512x512 texture, which lives in the FCRAM arena (1 MiB)
    0x18516000  RT top    240x400 RGBA8 tiled     (0x5DC00)
    0x18573C00  RT bottom 240x320 RGBA8 tiled     (0x4B000), ends 0x185BEC00
    The shim checks the framebuffer addresses the ARM9 reports against this. */
 #define GM_SRC_W          320u
 #define GM_SRC_H          480u
-#define GM_TEX_PA         0x18480000u
+#define GM_SCR_PA         0x18480000u   /* upload target (tiled, 320 wide) */
+#define GM_TEX_W          512u          /* the texture the quads sample: power of two */
+#define GM_TEX_H          512u
+#define GM_TEX_BYTES      (GM_TEX_W * GM_TEX_H * 4u)
+#define GM_TEX_PLACEHOLDER 0x2FF00000u  /* genmirror's texture address, patched at run time */
 #define GM_RT_W           240u
 #define GM_RT_TOP_H       400u
 #define GM_RT_BOT_H       320u
-#define GM_RT_TOP_PA      (GM_TEX_PA + GM_SRC_W * GM_SRC_H * 4u)
+#define GM_RT_TOP_PA      (GM_SCR_PA + GM_SRC_W * GM_SRC_H * 4u)
 #define GM_RT_BOT_PA      (GM_RT_TOP_PA + GM_RT_W * GM_RT_TOP_H * 4u)
-#define GM_VRAM_LO        GM_TEX_PA
+#define GM_VRAM_LO        GM_SCR_PA
 #define GM_VRAM_HI        (GM_RT_BOT_PA + GM_RT_W * GM_RT_BOT_H * 4u)
 #define GM_IOS_VRAM_HI    0x18300000u   /* end of /vram */
 #define GM_TOP_FB_BYTES   (GM_RT_W * GM_RT_TOP_H * 3u)
@@ -133,7 +147,7 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 #define GM_BLOB_VA        0x808B8000u
 #define GM_BLOB_MAX       0x8000u
 #define GM_BLOB_MAGIC     0x424D4D47u   /* 'GMMB' */
-#define GM_BLOB_VERSION   2u
+#define GM_BLOB_VERSION   3u
 
 /* GPU diagnostics (tools/ios3ds-pica/src/pica_diag.c): small VRAM scratch
    areas above the mirror's buffers, in the window the shim maps uncached */
@@ -150,12 +164,13 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 
 typedef struct {
     uint32_t magic, version, blob_pa, size;
-    uint32_t tex_pa, rt_top_pa, rt_bot_pa, src_wh;      /* what the lists were built for */
+    uint32_t scr_pa, rt_top_pa, rt_bot_pa, src_wh;      /* what the lists were built for */
     uint32_t list_off[2], list_bytes[2];                /* [0] exact, [1] GM_VAR_SAMPLE_HALF */
     uint32_t diag_off[3], diag_bytes[3];                /* diagnostics: solid, texture 64x64, texture 48x40 */
     uint32_t diag_patch;                                /* blob offset of the solid list's colour-buffer
                                                            address word (PA >> 3), to render elsewhere */
-    uint32_t _r[13];
+    uint32_t tex_patch[2];                              /* blob offsets of list[n]'s texture address word */
+    uint32_t _r[11];
 } gm_blob_t;
 _Static_assert(sizeof(gm_blob_t) == 128, "gm_blob_t layout");
 
