@@ -149,23 +149,41 @@ def main():
                 pass
         root.after(int(1000 / a.fps), frame)
 
-    def to_display(ev):
-        if ev.x < 480 and ev.y < 720:            # upright iOS view (2x)
-            return ios_to_display(ev.x / 480.0, ev.y / 720.0)
-        if ev.x >= 490:                          # raw 3DS screens (1.5x)
-            return (ev.x - 490) / 1.5, ev.y / 1.5
+    # A drag belongs to the view it started in: later motion is clamped to that
+    # view and the release is ALWAYS sent. (A release outside the views used to
+    # be dropped, leaving QEMU's pen down: iOS saw a finger that never lifted.)
+    drag = {"view": None}
+
+    def view_at(ev):
+        if ev.x < 480 and ev.y < 720:
+            return "ios"                         # upright iOS view (2x)
+        if ev.x >= 490 and ev.y < 720:
+            return "ds"                          # raw 3DS screens (1.5x)
         return None
 
-    def mouse(down):
-        def h(ev):
-            p = to_display(ev)
-            if p:
-                q.pointer(p[0], p[1], down)
-        return h
+    def to_display(view, ev):
+        y = min(max(ev.y, 0), 719)
+        if view == "ios":
+            return ios_to_display(min(max(ev.x, 0), 479) / 480.0, y / 720.0)
+        return (min(max(ev.x, 490), 1089) - 490) / 1.5, y / 1.5
 
-    pic.bind("<ButtonPress-1>", mouse(True))
-    pic.bind("<B1-Motion>", mouse(None))
-    pic.bind("<ButtonRelease-1>", mouse(False))
+    def mouse_down(ev):
+        drag["view"] = view_at(ev)
+        if drag["view"]:
+            q.pointer(*to_display(drag["view"], ev), down=True)
+
+    def mouse_move(ev):
+        if drag["view"]:
+            q.pointer(*to_display(drag["view"], ev))
+
+    def mouse_up(ev):
+        if drag["view"]:
+            q.pointer(*to_display(drag["view"], ev), down=False)
+            drag["view"] = None
+
+    pic.bind("<ButtonPress-1>", mouse_down)
+    pic.bind("<B1-Motion>", mouse_move)
+    pic.bind("<ButtonRelease-1>", mouse_up)
     root.bind("<KeyPress>", press)
     root.bind("<KeyRelease>", release)
     root.after(200, frame)
