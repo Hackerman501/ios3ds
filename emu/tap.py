@@ -3,6 +3,8 @@
 
   emu/tap.py --time 470 --tap 450:47,320 --shots 448,460,469
   (--tap t:x,y with x,y in iOS points of the 320x480 portrait screen)
+  emu/tap.py --drag 440:280,240:40,240   swipe from (280,240) to (40,240) in 0.4 s
+  (--drag t:x0,y0:x1,y1[:seconds], 10 steps)
 Screenshots (upright iOS view) go to build/emu/tap_<t>.png.
 """
 import argparse
@@ -18,10 +20,12 @@ import viewer
 ap = argparse.ArgumentParser()
 ap.add_argument("--time", type=float, default=470)
 ap.add_argument("--tap", action="append", default=[])
+ap.add_argument("--drag", action="append", default=[])
 ap.add_argument("--shots", default="")
 ap.add_argument("--sd", default=os.path.join(viewer.ROOT, "build", "sd.img"))
+ap.add_argument("--out", default=os.path.join(viewer.ROOT, "build", "emu"))
 a = ap.parse_args()
-out = os.path.join(viewer.ROOT, "build", "emu")
+out = a.out
 os.makedirs(out, exist_ok=True)
 tmp = tempfile.mkdtemp(prefix="ios3ds-tap-")
 sock = os.path.join(tmp, "qmp.sock")
@@ -36,6 +40,15 @@ for t in a.tap:
     ts, xy = t.split(":")
     x, y = (float(v) for v in xy.split(","))
     ev += [(float(ts), "down", (x, y)), (float(ts) + 0.15, "up", (x, y))]
+for d in a.drag:
+    ts, p0, p1, *dur = d.split(":")
+    (x0, y0), (x1, y1) = ([float(v) for v in p.split(",")] for p in (p0, p1))
+    t, step = float(ts), (float(dur[0]) if dur else 0.4) / 10
+    ev.append((t, "down", (x0, y0)))
+    for i in range(1, 11):
+        f = i / 10.0
+        ev.append((t + step * i, "move", (x0 + (x1 - x0) * f, y0 + (y1 - y0) * f)))
+    ev.append((t + step * 10 + 0.05, "up", (x1, y1)))
 ev.append((a.time, "quit", None))
 t0 = time.time()
 for t, kind, arg in sorted(ev, key=lambda e: e[0]):
@@ -45,9 +58,9 @@ for t, kind, arg in sorted(ev, key=lambda e: e[0]):
         q.cmd("screendump", filename=f)
         Image.open(f).crop((20, 0, 380, 240)).rotate(-90, expand=True).save(
             os.path.join(out, "tap_%g.png" % t))
-    elif kind in ("down", "up"):
+    elif kind in ("down", "up", "move"):
         dx, dy = viewer.ios_to_display(arg[0] / 320.0, arg[1] / 480.0)
-        q.pointer(dx, dy, kind == "down")
+        q.pointer(dx, dy, None if kind == "move" else kind == "down")
     else:
         q.cmd("quit")
 proc.wait(timeout=20)

@@ -581,10 +581,13 @@ shim_irq_resume:
     ldr r1, =(AXI_VA - AXI_PA)
     add r0, r0, r1                  @ r0 = fake CLCD (VA)
     ldr r1, [r0, #0x08]
-    tst r1, #1                      @ frame IRQ armed by the driver?
+    tst r1, #1                      @ frame IRQ enabled by the driver?
     beq 9f
-    bic r1, r1, #1                  @ one-shot: the driver re-arms it on the next swap
-    str r1, [r0, #0x08]
+    @ Not one-shot: the enable stays set while the driver wants frames and it
+    @ clears it itself when idle (AppleM2CLCD interrupt action 0x807a9df8,
+    @ register shadow at ivar 0x254). Clearing it here starved vsync clients:
+    @ GSHeartbeat (UIScrollView paging/bounce) never ticked once rendering
+    @ stopped, so a swiped page froze where the finger lifted.
     mov r1, #1
     str r1, [r0, #0x0C]             @ frame IRQ status
     ldr r2, cfg_vic0_pa
