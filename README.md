@@ -7,7 +7,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 - A small set of binary patches and a "shim" bridges the hardware differences.
 - The 3DS's ARM9 acts as a monitor and I/O processor.
 
-> **Status (2026-11-16):** in the project's own QEMU model of the 3DS (`-M nintendo3ds`), iOS boots all the way to the **SpringBoard home screen**. The icon grid, status bar and dock are drawn by Apple's unmodified display stack and mirrored onto the 3DS top screen. Not yet tested on a real console.
+> **Status (2026-11-17):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS**. Touch, the Home, lock and volume buttons, and apps (Settings, Notes, Mail, App Store) work, and boot to a usable home screen takes about a minute. In the project's own QEMU model (`-M nintendo3ds`) the same build runs, including a PICA200 GPU path for GL and the screen mirror; that GPU path has not run on hardware yet. Hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
 
 | Milestone | Goal | State |
 |---|---|---|

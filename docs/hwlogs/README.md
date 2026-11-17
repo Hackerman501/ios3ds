@@ -35,3 +35,7 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - `BSD root` right after the kernel starts. SpringBoard and input were up before the first heartbeat at t=66 s.
 - Settings, Notes and the App Store opened. Home (`key 40`) and lock (`key 30`) reached iOS.
 - Regression: `gltest: offscreen frame took 0 ms`. With timeout 0 the calendar can be initialised before AppleARMPE is up, and early `gettimeofday` deltas read 0. QEMU reproduced it intermittently. Fixed in the next build by `iortc-wait-2s` (re-log §26).
+
+## run11 (`9748841`, IORTC wait 2 s)
+- Healthy boot: the RTC line is back, SpringBoard and input are up before t=82 s, and Notes and search work.
+- gltest still reads `0 ms` on hardware, so the 2 s wait did not fix the early-boot `gettimeofday` problem there (it did in QEMU). The next build logs the raw `gettimeofday` result.
