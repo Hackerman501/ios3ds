@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include "pica_mirror.h"
 #include "pica_drv.h"
+#include "pica_diag.h"
 #include "pica_regs.h"
 #include "../sim/picasim.h"
 #include "display.h"
@@ -201,6 +202,11 @@ int main(int argc, char **argv)
     v = pm_selftest(&m, arena, ARENA_PA, arena + 0x100000, ARENA_PA + 0x100000, 4096, &bad0, fb);
     CHECK(v == 0 && bad0 == 0, "self-test: variant %d, %u bad bytes", v, bad0);
     printf("self-test: variant %d, %u bad bytes, %u GPU frames\n", v, bad0, m.frames);
+    {   /* the failure dump's expectations are right: right after a passing self-test all 16 words match */
+        pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
+        uint32_t same = pd_dump_mirror(&e);
+        CHECK(same == 16, "pd_dump_mirror after a good self-test: %u of 16 words as expected", same);
+    }
 
     /* 2. a broken list must be caught: both lists = the half-texel one */
     bad = m;
@@ -248,6 +254,18 @@ int main(int argc, char **argv)
         printf("read-out flip variant: %u bytes differ from the row-reversed frame (%u ops: per-screen transfers)\n",
                d, m.nops);
         m.variant = 0;
+    }
+
+    /* 4a. the staged hardware diagnostics (pica_diag.c) pass on the model */
+    {
+        pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
+        uint32_t r, all = PD_FILL_VRAM | PD_FILL_FCRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT |
+                          PD_TEX_NPOT;
+        pd_dump_regs(&e, "host");
+        r = pd_fill_tests(&e, "host") | pd_gpu_tests(&e);
+        CHECK(r == all, "diagnostics on the model: 0x%x of 0x%x", r, all);
+        pd_dump_mirror(&e);
+        printf("diagnostics on the model: 0x%x (all = 0x%x)\n", r, all);
     }
 
     /* 4b. the same with a GPU that takes its time: frames need several steps */

@@ -93,7 +93,8 @@ def build_shim(outdir):
     # the GPU part: link.ld places every object named *pica*.o at GPU_PART_VA (gpu.bin)
     srcs += [os.path.join(sd, "pica.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
-             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c")]
+             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c"),
+             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c")]
     with tempfile.TemporaryDirectory() as td:
         elf = os.path.join(td, "shim.elf")
         objs = []
@@ -234,6 +235,10 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True):
         "gpu_mirror=1",
         "gpu_vbl_div=2",
         "gpu_spin_us=0",
+        "# gpu_clk=1: set the GX clock register to 0x70100 (GSP/libn3ds value) if Luma left it 0;",
+        "# gpu_diag=1: staged GPU tests at bring-up, logged as [gpu-diag] (docs/pica200.md section 12)",
+        "gpu_clk=1",
+        "gpu_diag=1",
         "# XNU boot-args (edit freely, max 255 chars)",
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",

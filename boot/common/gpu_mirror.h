@@ -60,7 +60,9 @@ typedef struct {
     uint32_t mirror_enable; /* boot.cfg gpu_mirror= 0: ARM9 CPU copy only */
     uint32_t vbl_div;       /* start a frame at most every Nth VBlank (>= 1) */
     uint32_t spin_us;       /* IRQ-time busy-wait budget per step (0 = never wait) */
-    uint32_t _r1[4];
+    uint32_t gpu_clk;       /* boot.cfg gpu_clk=  1: set GX_GPU_CLK = 0x70100 at bring-up if it reads 0 */
+    uint32_t gpu_diag;      /* boot.cfg gpu_diag= 1: staged GPU diagnostics at bring-up ([gpu-diag] lines) */
+    uint32_t _r1[2];
     /* line 2: ARM11 status (cleaned to RAM after every update) */
     uint32_t state;         /* GM_ST_* */
     uint32_t reason;        /* GM_WHY_* when FAILED / DISABLED */
@@ -131,15 +133,31 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 #define GM_BLOB_VA        0x808B8000u
 #define GM_BLOB_MAX       0x8000u
 #define GM_BLOB_MAGIC     0x424D4D47u   /* 'GMMB' */
-#define GM_BLOB_VERSION   1u
+#define GM_BLOB_VERSION   2u
+
+/* GPU diagnostics (tools/ios3ds-pica/src/pica_diag.c): small VRAM scratch
+   areas above the mirror's buffers, in the window the shim maps uncached */
+#define GD_VRAM_PA        0x185C0000u   /* .. 0x185D4000 */
+#define GD_FILL_PA        0x185C0000u   /* 4 KiB fill target */
+#define GD_RT_PA          0x185C8000u   /* 64x64 RGBA8 render target */
+#define GD_TEX_PA         0x185CC000u   /* up to 64x64 RGBA8 texture */
+#define GD_PPF_PA         0x185D0000u   /* 64x64 RGBA8 tiled */
+#define GD_RT_W           64u
+#define GD_NPOT_W         48u           /* NPOT texture test: 48x40 */
+#define GD_NPOT_H         40u
+#define GD_SOLID_TEV      0x87654321u   /* TEV constant R=0x21 G=0x43 B=0x65 A=0x87 */
+#define GD_SOLID_WORD     0x21436587u   /* ... as an RGBA8 colour-buffer word */
 
 typedef struct {
     uint32_t magic, version, blob_pa, size;
     uint32_t tex_pa, rt_top_pa, rt_bot_pa, src_wh;      /* what the lists were built for */
     uint32_t list_off[2], list_bytes[2];                /* [0] exact, [1] GM_VAR_SAMPLE_HALF */
-    uint32_t _r[4];
+    uint32_t diag_off[3], diag_bytes[3];                /* diagnostics: solid, texture 64x64, texture 48x40 */
+    uint32_t diag_patch;                                /* blob offset of the solid list's colour-buffer
+                                                           address word (PA >> 3), to render elsewhere */
+    uint32_t _r[13];
 } gm_blob_t;
-_Static_assert(sizeof(gm_blob_t) == 64, "gm_blob_t layout");
+_Static_assert(sizeof(gm_blob_t) == 128, "gm_blob_t layout");
 
 /*
  * The pixel mapping of the CPU copy (boot/arm9/display.c), as one function:

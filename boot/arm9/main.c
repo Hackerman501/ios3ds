@@ -100,7 +100,7 @@ typedef struct {
     u32 probes;
     u32 display_regs;
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
-    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us;  /* PICA200 (gpumirror.c, docs/pica200.md) */
+    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -138,6 +138,8 @@ static int parse_bootcfg(char *txt)
     cfg.gpu = 1;
     cfg.gpu_mirror = 1;
     cfg.gpu_vbl_div = 2;
+    cfg.gpu_clk = 1;
+    cfg.gpu_diag = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -151,7 +153,7 @@ static int parse_bootcfg(char *txt)
         { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
         { "screen", &cfg.screen },
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
-        { "gpu_spin_us", &cfg.gpu_spin_us },
+        { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
     };
     int lineno = 0;
     char *line = txt;
@@ -783,7 +785,7 @@ void a9_main(int argc, char **argv)
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
-        u32 g[4] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us };
+        u32 g[6] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
     }
     if (!cfg.jump) {

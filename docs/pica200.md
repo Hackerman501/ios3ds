@@ -505,7 +505,8 @@ GL test runs on its own context, and every failure falls back to the CPU.
    (ARM9, before XNU): boot.cfg was read.
 2. `[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT …, GX clock …, GX stat …`:
    Luma's power state (§2). Anything but 0x1007F is followed by what the shim
-   did about it. `GX clock` should read 0x70100 on hardware (0 in QEMU).
+   did about it. `GX clock` read 0 on hardware in run12: Luma never sets it
+   (§12); the next line says what the shim set.
 3. `[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom
    0x18346500/0x18446500 (2 sets)`: Luma's layout as the mirror expects it.
    Otherwise `… is not where the mirror can write it` and the CPU copy stays.
@@ -545,3 +546,68 @@ altogether (GL then uses the CPU rasterizer). Commenting out the
 `load=0:/ios3ds/gpu.bin,…` line has the same effect as `gpu=0` (the shim
 then finds no GPU part); do not just delete the file: a `load=` entry whose
 file is missing stops the boot, as for any `load=` entry.
+
+## 12. Hardware run 12: what failed, and the staged diagnostics
+
+First hardware run of the GPU paths (`m1-21f26fc`, docs/hwlogs/run12.txt).
+Every fallback worked (ARM9 copy, CPU GL); the GPU did not:
+
+```
+[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT 0x00000000, GX clock 0x00000000, GX stat 0x0c000000
+[gpu] mirror self-test variant 0 (as modelled): 451182 of 518400 bytes differ, guard intact; GPU 635/635/579 ticks
+[gpu]   first difference at byte 14400 (top screen, fb row 20, pixel 0): expected 0x00, got 0x80   (0x40 with the read-out flip)
+[gl] pica: GPU self-check: memory fill left 4096 of 4096 words wrong (word 0: 0x5a5aa5a5): not using the GPU
+```
+
+What the lines say:
+- **PPF works**, FCRAM to FCRAM, in both directions (the GL self-check's
+  transfer round trip passed before the fill step), and so do the shim's
+  cache maintenance and the addresses (PA >> 3).
+- **The PSC fill into FCRAM did nothing**: after the fill the transfer
+  copied the *old* tiled pattern back (`0x5a5aa5a5` is word 0 of it). The
+  done bit still came on.
+- **The mirror's read-out ran** (the black margins of the output are right:
+  the first 14400 bytes match), but the render targets held something else
+  than the picture. Every stage took ~0.6 ms.
+- **`GX clock` (GX +0x004) reads 0.** Luma's screen init
+  (`arm11/source/main.c initScreens`) writes PDN_GPU_CNT and the PDC
+  registers only. libn3ds `hardwareReset()` and GSP write 0x70100 there
+  ("each bit seems to be a different clock setting"), clear the VRAM bank
+  disable bits in +0x030 and set the DMA priorities at +0x050/+0x054. Our
+  bring-up did none of that. Leading hypothesis: the fill engine and P3D
+  need those clocks; the PPF does not.
+
+**Changes for the next run.** Bring-up now does the rest of libn3ds'
+`hardwareReset()` without the PDN reset (the LCDs stay live): GX clock
+0x70100 if it reads 0, VRAM banks on, DMA priorities 0x22221200 / 0xFF2
+(boot.cfg `gpu_clk=0` skips this). Around it, `tools/ios3ds-pica/src/
+pica_diag.c` runs staged tests and logs `[gpu-diag]` lines (boot.cfg
+`gpu_diag=0` skips them):
+
+| step | what | tells |
+|---|---|---|
+| regs `as found` | GX +0x00..0x58, PSC, PPF, P3D IRQ registers, and the GPU's memory-traffic counters at +0x70..+0xBC (libn3ds `GxRegs`: external / VRAM A / VRAM B reads and writes, vertex, texture, colour, depth, PPF, fill0/1) | Luma's state |
+| fill `as found` | PSC fill of 4 KiB in VRAM (0x185C0000) and in FCRAM (arena), before any setup | does the fill engine work without the clock setup; counters say whether it wrote anything at all |
+| setup | the clock / VRAM / priority writes, logged old → new | |
+| regs + fill `after setup` | the same again | the clock hypothesis, directly |
+| PPF | 64x64 FCRAM → VRAM tiled → FCRAM | the known-good path, now with counters |
+| P3D solid → VRAM | constant-colour quad into a 64x64 VRAM target | command list, shader, rasteriser, colour write; counters vtx / col |
+| P3D solid → FCRAM | the same list with its target patched into FCRAM | can P3D render to FCRAM (the GL back end's targets live there) |
+| texture 64x64 / 48x40 | a texture written by the CPU into VRAM, drawn 1:1 with REPLACE | texture fetch, tiling, and NPOT textures (the mirror uses 320x480) |
+| summary | one line, ok/FAIL per step | |
+
+If the mirror self-test still fails, the shim also dumps the first texture
+tile and one tile of the top render target next to what they should hold
+(`[gpu-diag] mirror texture tile 0 / mirror top target`); the host test
+checks those expectations against a passing self-test.
+
+How to read the outcomes:
+- fill FAIL → ok across the setup, P3D ok: the clock was it; the mirror and
+  GL self-checks should pass in the same run.
+- fill VRAM ok but FCRAM FAIL after setup: the fill engine cannot reach
+  FCRAM. GL clears would have to go through P3D quads or VRAM targets.
+- P3D solid VRAM FAIL with `vtx +0`: the list never fetched vertices
+  (list/attribute setup); `col-wr +0` with vertices read: nothing reached
+  the colour buffer (shader output map, viewport, TEV, colour buffer setup).
+- solid ok, texture FAIL: texture unit (address, format, tiling); POT ok and
+  NPOT FAIL: the mirror needs a 512x512 texture instead.
