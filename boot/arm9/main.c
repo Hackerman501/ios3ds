@@ -19,6 +19,8 @@
 #include "display.h"
 #include "tsc.h"
 #include "swap.h"
+#include "wifi/wifi.h"
+#include "audio.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -55,6 +57,22 @@ static void status(int row, u32 color, const char *fmt, ...)
 
 static u32 a11_log_tail;
 
+/* copy ring bytes [*tail, head) to the log in chunks: one f_write per chunk,
+   not per byte (per-byte writes + syncs made real-SD console output crawl
+   and starved the md0 block server running on the same ARM9) */
+static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color)
+{
+    char chunk[512];
+    while (*tail != head) {
+        u32 n = 0;
+        while (*tail != head && n < sizeof(chunk)) {
+            chunk[n++] = buf[*tail % size];
+            (*tail)++;
+        }
+        log_raw(chunk, n, color);
+    }
+}
+
 static void drain_a11_log(void)
 {
     volatile shared_t *sh = SHARED;
@@ -63,11 +81,7 @@ static void drain_a11_log(void)
         log_warn("[a11] (log overrun, %u bytes lost)\n", head - a11_log_tail - SHARED_LOG_SIZE);
         a11_log_tail = head - SHARED_LOG_SIZE;
     }
-    while (a11_log_tail != head) {
-        char c = sh->log_buf[a11_log_tail % SHARED_LOG_SIZE];
-        log_raw(&c, 1, CON_CYAN);
-        a11_log_tail++;
-    }
+    drain_ring((const volatile char *)sh->log_buf, SHARED_LOG_SIZE, &a11_log_tail, head, CON_CYAN);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -83,6 +97,7 @@ typedef struct {
     u32 ba_revision, ba_version;
     u32 probes;
     u32 display_regs;
+    u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -90,6 +105,18 @@ typedef struct {
 } bootcfg_t;
 
 static bootcfg_t cfg;
+
+static const char *const screen_names[SCREEN_MODES] = { "top", "both", "bottom" };
+
+/* where iOS and the monitor log go (display.h SCREEN_*) */
+static void apply_screen_mode(int m)
+{
+    display_set_mode(m);
+    con_show(CON_TOP, m == SCREEN_BOTTOM);
+    con_show(CON_BOTTOM, m == SCREEN_TOP);
+    log_target(m == SCREEN_TOP ? CON_BOTTOM : m == SCREEN_BOTTOM ? CON_TOP : -1);
+    log_color(CON_CYAN, "[monitor] screen mode: %s (X = next)\n", screen_names[m]);
+}
 
 static int parse_bootcfg(char *txt)
 {
@@ -103,7 +130,8 @@ static int parse_bootcfg(char *txt)
     cfg.mem_size = FCRAM_SIZE;
     cfg.ba_revision = 1;
     cfg.probes = 1;
-    cfg.ba_version = 5;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
+    cfg.ba_version = 5;
+    cfg.screen = SCREEN_BOTH;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -115,6 +143,7 @@ static int parse_bootcfg(char *txt)
         { "video_height", &cfg.video_height }, { "video_depth", &cfg.video_depth },
         { "jump", &cfg.jump }, { "countdown_ms", &cfg.countdown_ms },
         { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
+        { "screen", &cfg.screen },
     };
     int lineno = 0;
     char *line = txt;
@@ -258,6 +287,122 @@ static void report_probes(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* hang probes: everything the shim recorded, written to log.txt once the     */
+/* ARM11 stops reading the clock, so no photo transcription is needed.       */
+
+static u32 fc_rd(u32 pa) { return in_fcram(pa, 4) ? *(vu32 *)pa : 0xBAD0BAD0u; }
+
+/* wall clock: ARM9 timer 2 at 67027964/1024 Hz cascading into timer 3 (32 bit,
+   wraps after ~18 h). Timer 0 is the Wi-Fi code's entropy source; 1 is free. */
+#define T9_VAL(n) (*(vu16 *)(0x10003000u + (n) * 4))
+#define T9_CNT(n) (*(vu16 *)(0x10003002u + (n) * 4))
+#define T9_HZ     65457u
+
+static void clk_start(void)
+{
+    T9_CNT(2) = 0;
+    T9_CNT(3) = 0;
+    T9_VAL(2) = 0;
+    T9_VAL(3) = 0;
+    T9_CNT(3) = 0x80 | 0x04;            /* enable, count-up (cascade) */
+    T9_CNT(2) = 0x80 | 0x03;            /* enable, prescaler 1024 */
+}
+
+static u32 clk_ticks(void)
+{
+    u16 hi, lo, hi2;
+    do {
+        hi = T9_VAL(3);
+        lo = T9_VAL(2);
+        hi2 = T9_VAL(3);
+    } while (hi != hi2);
+    return (u32)hi << 16 | lo;
+}
+
+static u32 clk_secs(void) { return clk_ticks() / T9_HZ; }
+
+/* heartbeat while the console is quiet: is the kernel alive (clock reads,
+   ticks), is md0 busy, and where does the ARM11 spend its time (IRQ-time PC
+   samples, shim+0x5F80, 16 x {pc, spsr}, newest = st_pc_idx - 1) */
+static void heartbeat(u32 quiet_s)
+{
+    vu32 *st = (vu32 *)cfg.shim_pa;
+    vu32 *ring = (vu32 *)(cfg.shim_pa + 0x5F80);
+    u32 bs, be, n = st[0x9C / 4];
+    blksrv_stats(&bs, &be);
+    logp("[hb] t=%us quiet %us | abs %u dec %u timer %u irq %u vbl %u | md0 %u req %u KiB %u err\n",
+         clk_secs(), quiet_s, (unsigned)st[0x80 / 4], (unsigned)st[0x8C / 4], (unsigned)st[0x4C / 4],
+         (unsigned)st[0x98 / 4], (unsigned)st[0x78 / 4], bs, blksrv_sectors() / 2, be);
+    char line[200];
+    int len = snprintf(line, sizeof(line), "[hb]  pc");
+    for (u32 i = 1; i <= 8 && i <= n; i++) {
+        u32 k = (n - i) & 15, pc = ring[k * 2], psr = ring[k * 2 + 1];
+        const char *m = (psr & 0x1F) == 0x10 ? "u" : (psr & 0x1F) == 0x13 ? "k" : "x";
+        len += snprintf(line + len, sizeof(line) - len, " %s%08x%s", m, pc, (psr & 0x20) ? "t" : "");
+        if (len >= (int)sizeof(line)) break;
+    }
+    logp("%s\n", line);
+}
+
+static void dump_probes(const char *why)
+{
+    vu32 *st = (vu32 *)cfg.shim_pa;
+    vu32 *g = (vu32 *)(cfg.shim_pa + 0x5F00);
+    u32 v[8];
+
+    log_warn("[probe] %s\n", why);
+    logp("[probe] shim init%u timer%u other%u last%u def%u vbl%u inj%u irq-entries%u\n",
+         (unsigned)st[0x40 / 4], (unsigned)st[0x4C / 4], (unsigned)st[0x50 / 4], (unsigned)st[0x54 / 4],
+         (unsigned)st[0x58 / 4], (unsigned)st[0x78 / 4], (unsigned)st[0x7C / 4], (unsigned)st[0x98 / 4]);
+    logp("[probe] abs %u raw %08x cpsr %08x | dec %u last %u caller %08x\n",
+         (unsigned)st[0x80 / 4], (unsigned)st[0x84 / 4], (unsigned)st[0x88 / 4],
+         (unsigned)st[0x8C / 4], (unsigned)st[0x90 / 4], (unsigned)st[0x94 / 4]);
+    logp("[probe] at the last clock read: ptimer count %08x ctrl %08x isr %x\n",
+         (unsigned)g[0], (unsigned)g[1], (unsigned)g[2]);
+    logp("[probe]  gicc ctrl %x pmr %x hppir %x | gicd ctrl %x en %08x/%08x pend %08x/%08x act %08x\n",
+         (unsigned)g[3], (unsigned)g[4], (unsigned)g[5], (unsigned)g[6], (unsigned)g[7],
+         (unsigned)g[10], (unsigned)g[8], (unsigned)g[9], (unsigned)g[11]);
+    logp("[probe]  sctlr %08x ttbr0 %08x ttbr1 %08x ttbcr %08x dacr %08x mpidr %08x\n",
+         (unsigned)g[12], (unsigned)g[13], (unsigned)g[14], (unsigned)g[15],
+         (unsigned)g[0x60 / 4], (unsigned)g[0x64 / 4]);
+    logp("[probe]  a11 walk stage %u: L1[fff] %08x L2[f0] %08x irq-literal %08x handler %08x %08x\n",
+         (unsigned)g[0x7C / 4], (unsigned)g[0x68 / 4], (unsigned)g[0x6C / 4],
+         (unsigned)g[0x70 / 4], (unsigned)g[0x74 / 4], (unsigned)g[0x78 / 4]);
+    for (int i = 0; i < 8; i++) v[i] = g[0x40 / 4 + i];
+    logp("[probe]  a11 vectors %08x %08x %08x %08x %08x %08x %08x %08x\n",
+         v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+
+    /* the same walk through physical memory (what the table walker and an
+       uncached instruction fetch see if the ARM11 did not clean its D-cache) */
+    u32 ttbr1 = g[14];
+    if (!ttbr1) {
+        log_warn("[probe] no TTBR1 recorded (snapshot never ran)\n");
+        return;
+    }
+    u32 l1 = fc_rd((ttbr1 & ~0x3FFFu) + 0xFFF * 4);
+    u32 l2 = (l1 & 3) == 1 ? fc_rd((l1 & ~0x3FFu) + 0xF0 * 4) : 0;
+    u32 vpa = (l2 & 2) ? (l2 & ~0xFFFu) : 0;
+    u32 w[8], lit = 0, h0 = 0, h1 = 0;
+    for (int i = 0; i < 8; i++) w[i] = vpa ? fc_rd(vpa + i * 4) : 0;
+    if ((w[6] >> 12) == 0xE59FFu) {
+        lit = fc_rd(vpa + 0x20 + (w[6] & 0xFFF));
+        u32 hpa = lit - cfg.virt_base + cfg.phys_base;
+        h0 = fc_rd(hpa);
+        h1 = fc_rd(hpa + 4);
+    }
+    logp("[probe]  a9  walk: L1[fff] %08x L2[f0] %08x vector page PA %08x irq-literal %08x handler %08x %08x\n",
+         l1, l2, vpa, lit, h0, h1);
+    logp("[probe]  a9  vectors %08x %08x %08x %08x %08x %08x %08x %08x\n",
+         w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+    bool same = l1 == g[0x68 / 4] && l2 == g[0x6C / 4];
+    for (int i = 0; i < 8; i++) same = same && w[i] == v[i];
+    if (g[0x7C / 4] >= 3) same = same && lit == g[0x70 / 4];
+    if (g[0x7C / 4] >= 4) same = same && h0 == g[0x74 / 4] && h1 == g[0x78 / 4];
+    if (same) log_ok("[probe]  ARM11 view == memory (vector page and tables are clean)\n");
+    else log_err("[probe]  ARM11 view != memory: stale D-cache or a different mapping\n");
+}
+
+/* ------------------------------------------------------------------------ */
 /* monitor                                                                  */
 
 static void __attribute__((noreturn)) monitor(const char *phase)
@@ -269,10 +414,25 @@ static void __attribute__((noreturn)) monitor(const char *phase)
     u32 *l1 = cfg.top_pa ? (u32 *)cfg.top_pa : NULL;
 
     log_color(CON_GREY, "[monitor] %s - ARM9 stays here forwarding logs.\n", phase);
-    log_sync_each(true);
+    clk_start();
+    /* sync the log every 0.5 s, not after every write: a power cut loses at
+       most 0.5 s, a hang loses nothing (the ARM9 keeps syncing) */
+    log_sync_each(false);
+    u32 last_sync = 0;
     for (;;) {
         bool busy = false;
-        for (int i = 0; i < 64 && blksrv_poll(); i++) busy = true;
+        /* md0 first: the ARM11 kernel spins (IRQs off) until its request is
+           served and usually posts the next one within microseconds while it
+           streams a file, so after serving one, linger up to 2 ms for the next
+           before running the rest of the loop */
+        if (blksrv_poll()) {
+            busy = true;
+            u32 start = clk_ticks(), t0 = start;     /* at most 100 ms: input, */
+            while (clk_ticks() - t0 < T9_HZ / 500 + 1 &&  /* log and screen run too */
+                   clk_ticks() - start < T9_HZ / 10) {
+                if (blksrv_poll()) t0 = clk_ticks();
+            }
+        }
         drain_a11_log();
         if (ring && ring->magic == XNU_RING_MAGIC && ring->size) {
             u32 head = ring->head;
@@ -280,11 +440,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 log_warn("[xnu] (ring overrun, %u bytes lost)\n", head - ring_tail - ring->size);
                 ring_tail = head - ring->size;
             }
-            while (ring_tail != head) {
-                char c = ring->buf[ring_tail % ring->size];
-                log_raw(&c, 1, CON_WHITE);
-                ring_tail++;
-            }
+            drain_ring((const volatile char *)ring->buf, ring->size, &ring_tail, head, CON_WHITE);
         }
         /* The entry stub zeroes 36 KiB at topOfKernelData and writes the L1
            entries for virtBase. We filled it with a pattern before the jump. */
@@ -298,15 +454,40 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         }
         /* 3DS pad + touch -> shim input ring (read by /usr/libexec/ios3ds-input) */
         input_poll(cfg.shim_pa);
-        static bool ios_display;
-        if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
+        /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
+        if (wifi_poll()) busy = true;
+        audio_poll(cfg.shim_pa);    /* docs/audio.md */
+        static bool ios_display, x_latched;
+        static int screen_mode;
+        /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
+           last 100 ms) only every 500 ms, because the ARM11 kernel stalls on
+           each block request until this loop serves it */
+        static u32 last_blit, last_io, last_served;
+        u32 nserved, nerr, tnow = clk_ticks();
+        blksrv_stats(&nserved, &nerr);
+        if (nserved != last_served) {
+            last_served = nserved;
+            last_io = tnow;
+        }
+        bool io_busy = tnow - last_io < T9_HZ / 10;
+        u32 blit_gap = io_busy ? T9_HZ / 2 : T9_HZ / 15;
+        if (cfg.display_regs && tnow - last_blit >= blit_gap && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;
                 log_color(CON_GREEN, "[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer\n");
-                log_to_bottom(true);
+                screen_mode = cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH;
+                apply_screen_mode(screen_mode);
             }
             display_blit(cfg.display_regs);
+            last_blit = clk_ticks();
         }
+        /* X: next screen mode (X is not forwarded to iOS as a button) */
+        bool xdown = !(HID_PAD & HID_X);
+        if (ios_display && xdown && !x_latched) {
+            screen_mode = (screen_mode + 1) % SCREEN_MODES;
+            apply_screen_mode(screen_mode);
+        }
+        x_latched = xdown;
         static bool combo_latched;
         bool combo = !(HID_PAD & HID_SELECT) && !(HID_PAD & HID_START);
         if (cfg.shim_pa && combo && !combo_latched) {
@@ -320,6 +501,55 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             status(27, CON_GREY, "monitor alive #%u a11=%s", tick / 64, stage_name(SHARED->a11_stage));
             status(28, CON_GREY, "xnu ring: %u bytes", ring ? (unsigned)ring->head : 0);
             status(29, CON_GREY, "md0: %u req, %u err", bs, be);
+            if (cfg.shim_pa) {          /* shim stats (kernel/shim/entry.S +0x40..) */
+                vu32 *st = (vu32 *)cfg.shim_pa;
+                status(26, CON_GREY, "shim i%u t%u o%u L%u d%u v%u j%u", (unsigned)st[0x40 / 4],
+                       (unsigned)st[0x4C / 4], (unsigned)st[0x50 / 4], (unsigned)st[0x54 / 4] & 0x3FF,
+                       (unsigned)st[0x58 / 4], (unsigned)st[0x78 / 4], (unsigned)st[0x7C / 4]);
+                /* clock probes: reads/raw watchdog/CPSR, deadline sets/last/caller */
+                status(24, CON_GREY, "abs %u w%08x c%03x", (unsigned)st[0x80 / 4],
+                       (unsigned)st[0x84 / 4], (unsigned)st[0x88 / 4] & 0x1FF);
+                status(25, CON_GREY, "dec %u l%u @%08x", (unsigned)st[0x8C / 4],
+                       (unsigned)st[0x90 / 4], (unsigned)st[0x94 / 4]);
+                /* timer + GIC snapshot from the last clock read (shim+0x5F00) */
+                vu32 *g = (vu32 *)(cfg.shim_pa + 0x5F00);
+                status(21, CON_GREY, "irq %u pt %x c%x s%x", (unsigned)st[0x98 / 4],
+                       (unsigned)g[0], (unsigned)g[1], (unsigned)g[2]);
+                status(22, CON_GREY, "cc%x pm%x hp%x dc%x act%x", (unsigned)g[3],
+                       (unsigned)g[4], (unsigned)g[5], (unsigned)g[6], (unsigned)g[11]);
+                status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
+                       (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
+                status(20, CON_GREY, "sctlr %08x stage %u", (unsigned)g[12], (unsigned)g[0x7C / 4]);
+                /* 5 s without a clock read or console output: dump once.
+                   10 s without console output: heartbeat every 10 s. */
+                static u32 last_abs, last_head, abs_since, head_since, next_hb;
+                static bool dumped;
+                u32 now = clk_secs();
+                u32 abs = st[0x80 / 4], hd = ring ? ring->head : 0;
+                if (abs != last_abs || hd != last_head) {
+                    abs_since = now;
+                    dumped = false;
+                }
+                if (hd != last_head) {
+                    head_since = now;
+                    next_hb = now + 10;
+                }
+                last_abs = abs;
+                last_head = hd;
+                if (st[0x40 / 4] && !dumped && now - abs_since >= 5) {
+                    dumped = true;
+                    dump_probes("ARM11 stalled: no clock read or console output for 5 s");
+                }
+                if (st[0x40 / 4] && (int)(now - next_hb) >= 0) {
+                    next_hb = now + 10;
+                    heartbeat(now - head_since);
+                }
+            }
+        }
+        u32 now_t = clk_ticks();
+        if (now_t - last_sync >= T9_HZ / 2) {
+            log_flush();
+            last_sync = now_t;
         }
         tick++;
         /* ~2 ms of mailbox polling instead of a blind delay: block requests
@@ -349,7 +579,7 @@ void a9_main(int argc, char **argv)
         bot1 = (u8 *)fbs[5];
     }
     con_init(top0, top1, bot0, bot1);
-    display_init(top0, top1);
+    display_init(top0, top1, bot0, bot1);
 
     status(0, CON_GREEN, "ios3ds %s", IOS3DS_VERSION);
     status(1, CON_GREY, "M1 loader - ARM9 monitor");
@@ -526,7 +756,10 @@ void a9_main(int argc, char **argv)
     }
     /* marker pattern in the page-table area: lets the monitor see the entry stub run */
     memset((void *)cfg.top_pa, 0xA5, 0x9000);
+    /* Wi-Fi: wifi.cfg, WPA2 key derivation, network mailbox (docs/wifi.md) */
+    wifi_init();
 
+    audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");

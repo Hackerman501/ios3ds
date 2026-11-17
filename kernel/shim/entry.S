@@ -10,6 +10,7 @@
 @   +0x18  b shim_set_decrementer cpu_data timer hook +0x68  (r0 = ticks, r3 = cpu_data)
 @   +0x1C  b shim_irq             kernel IRQ handler entry (IRQ mode)
 @   +0x20  b shim_mdevstrategy    bsd/dev/memdev.c mdevstrategy(buf_t) -> SD via ARM9
+@   +0x24  b shim_iic_transfer    AppleARMIICDevice transfer -> register file (audio codec/amp)
 @
 @ Time base: MPCore watchdog in timer mode = free-running 32-bit down-counter,
 @ extended to 64 bits here. Deadlines: MPCore private timer, one-shot, GIC
@@ -75,6 +76,7 @@ _shim_base:
     b shim_set_decrementer          @ +0x18
     b shim_irq                      @ +0x1C
     b shim_mdevstrategy             @ +0x20 (C, blk.c)
+    b shim_iic_transfer             @ +0x24 (C, kernel/shim/audio.c)
 
 @ ---------------------------------------------------------------------------
 @ statistics / state (read by the ARM9 via physical address = shim_pa + off)
@@ -95,6 +97,16 @@ cfg_vic0_pa:    .word 0             @ +0x70 fake VIC0 page PA (patched in by mkb
 cfg_clcd_pa:    .word 0             @ +0x74 fake CLCD page PA (patched in by mkboot)
 st_vblanks:     .word 0             @ +0x78
 st_injected:    .word 0             @ +0x7C
+@ hardware bring-up probes, one cache line, cleaned to RAM on every update so
+@ the ARM9 monitor can show them live (nothing else may move +0x00..+0x9F)
+st_abs_calls:   .word 0             @ +0x80 get_abstime calls after init
+st_abs_raw:     .word 0             @ +0x84 last watchdog up-count
+st_abs_cpsr:    .word 0             @ +0x88 CPSR at that read (I bit 7 = IRQs masked)
+st_dec_calls:   .word 0             @ +0x8C set_decrementer calls
+st_dec_last:    .word 0             @ +0x90 last deadline (ticks)
+st_dec_lr:      .word 0             @ +0x94 caller of the last set_decrementer
+st_irq_n:       .word 0             @ +0x98 IRQ vector entries (any ID)
+st_pc_idx:      .word 0             @ +0x9C IRQ PC samples taken (ring at shim+0x5F80, 16 x {pc, spsr})
 
 @ ---------------------------------------------------------------------------
 @ void shim_putc(int c): append to the log ring; clean the touched lines so
@@ -204,6 +216,27 @@ shim_init:
     str r1, [r0, #PT_ISR]
     @ GIC: priority 0 for IRQ 29, enable it, enable distributor + CPU interface
     add r2, r0, #GICD_CTRL           @ r2 = distributor base (offsets > 4 KiB)
+    @ real hardware: whatever boot ROM / Luma left enabled or pending must not
+    @ reach us (an enabled, still-asserted level IRQ = endless IRQ storm and a
+    @ silent hang; QEMU starts with everything off). Disable + unpend all
+    @ PPIs/SPIs (SGIs stay), then enable exactly ours below.
+    mvn r1, #0
+    str r1, [r2, #0x180]            @ ICENABLER0..7
+    str r1, [r2, #0x184]
+    str r1, [r2, #0x188]
+    str r1, [r2, #0x18C]
+    str r1, [r2, #0x190]
+    str r1, [r2, #0x194]
+    str r1, [r2, #0x198]
+    str r1, [r2, #0x19C]
+    str r1, [r2, #0x280]            @ ICPENDR0..7
+    str r1, [r2, #0x284]
+    str r1, [r2, #0x288]
+    str r1, [r2, #0x28C]
+    str r1, [r2, #0x290]
+    str r1, [r2, #0x294]
+    str r1, [r2, #0x298]
+    str r1, [r2, #0x29C]
     mov r1, #0
     strb r1, [r2, #(GICD_IPRIORITY - GICD_CTRL + IRQ_PTIMER)]
     mov r1, #(1 << IRQ_PTIMER)
@@ -232,12 +265,149 @@ shim_init:
 @ u64 get_abstime(cpu_data *r3) = ticks + cpu_data->abstime_offset(+0x50/+0x54)
 @ STACKLESS: the kernel's fast mach_absolute_time path (SWI handler, ~0x80066290)
 @ calls this hook with sp pointing at nothing usable. Only r0-r2, r12.
+@
+@ The clock must run from the first read: rtclock_init (0x80069936) stores
+@ mach_absolute_time() as the tick base (rtclock+0x30) before the first
+@ set_decrementer, and the calendar conversion (0x8006916c) spins with IRQs
+@ masked while that base is 0, waiting for a tick that cannot arrive. Returning
+@ 0 here before init hung real hardware right after "iBoot version" (plain
+@ QEMU hid it: its timer fired before the spin). So init lazily, stacklessly:
+@ shim_init clobbers r0-r3, r12, and bl clobbers lr; both are parked in
+@ pc-relative words with IRQ/FIQ masked.
 shim_get_abstime:
     ldr r2, st_inited
     cmp r2, #0
-    moveq r0, #0
-    moveq r1, #0
-    bxeq lr
+    bne 1f
+    mrs r12, cpsr
+    cpsid if
+    str r12, abs_init_cpsr
+    str r3, abs_init_r3
+    str lr, abs_init_lr
+    bl shim_init
+    ldr lr, abs_init_lr
+    ldr r3, abs_init_r3
+    ldr r12, abs_init_cpsr
+    msr cpsr_c, r12
+1:
+    @ bring-up snapshot (shim+0x5F00, 2 lines): timer + GIC state at every
+    @ clock read, so a hang shows whether the tick is pending/delivered
+    ldr r2, =PRIV_VA
+    ldr r1, =(_shim_base + 0x5F00)
+    ldr r0, [r2, #PT_COUNT]
+    str r0, [r1, #0x00]
+    ldr r0, [r2, #PT_CTRL]
+    str r0, [r1, #0x04]
+    ldr r0, [r2, #PT_ISR]
+    str r0, [r1, #0x08]
+    ldr r0, [r2, #GICC_CTRL]
+    str r0, [r1, #0x0C]
+    ldr r0, [r2, #GICC_PMR]
+    str r0, [r1, #0x10]
+    ldr r0, [r2, #0x118]            @ highest pending (does not acknowledge)
+    str r0, [r1, #0x14]
+    add r2, r2, #0x1000             @ distributor
+    ldr r0, [r2]
+    str r0, [r1, #0x18]
+    ldr r0, [r2, #0x100]            @ enabled 0-31
+    str r0, [r1, #0x1C]
+    ldr r0, [r2, #0x200]            @ pending 0-31
+    str r0, [r1, #0x20]
+    ldr r0, [r2, #0x204]            @ pending 32-63
+    str r0, [r1, #0x24]
+    ldr r0, [r2, #0x104]            @ enabled 32-63
+    str r0, [r1, #0x28]
+    ldr r0, [r2, #0x300]            @ active 0-31
+    str r0, [r1, #0x2C]
+    mrc p15, 0, r0, c1, c0, 0
+    str r0, [r1, #0x30]
+    @ MMU view of the IRQ vector (lines 2-4, +0x34..+0x7F): is the vector
+    @ page at 0xFFFF0000 mapped, and what does the ARM11 see there? The ARM9
+    @ walks the same tables in FCRAM after a hang and compares (monitor).
+    mrc p15, 0, r0, c2, c0, 0
+    str r0, [r1, #0x34]             @ TTBR0
+    mrc p15, 0, r0, c2, c0, 1
+    str r0, [r1, #0x38]             @ TTBR1
+    mrc p15, 0, r0, c2, c0, 2
+    str r0, [r1, #0x3C]             @ TTBCR
+    mrc p15, 0, r0, c3, c0, 0
+    str r0, [r1, #0x60]             @ DACR
+    mrc p15, 0, r0, c0, c0, 5
+    str r0, [r1, #0x64]             @ MPIDR
+    mov r0, #0
+    str r0, [r1, #0x7C]             @ walk stage reached (0 = nothing)
+    mrc p15, 0, r0, c2, c0, 1       @ L1 VA = (TTBR1 & ~0x3FFF) + VIRT - PHYS
+    bic r0, r0, #0xFF
+    bic r0, r0, #0x3F00
+    add r0, r0, #(VIRT_BASE - PHYS_BASE)
+    ldr r2, =(0xFFF << 2)
+    ldr r0, [r0, r2]                @ L1[0xFFF]
+    str r0, [r1, #0x68]
+    and r2, r0, #3
+    cmp r2, #1                      @ coarse page table?
+    bne 9f
+    mov r2, #1
+    str r2, [r1, #0x7C]
+    bic r0, r0, #0xFF
+    bic r0, r0, #0x300              @ L2 table PA
+    sub r2, r0, #PHYS_BASE
+    cmp r2, #0x08000000             @ inside FCRAM (linear map)?
+    bhs 9f
+    add r0, r0, #(VIRT_BASE - PHYS_BASE)
+    ldr r0, [r0, #(0xF0 << 2)]      @ L2[0xF0] = 0xFFFF0000
+    str r0, [r1, #0x6C]
+    tst r0, #2                      @ extended small page?
+    beq 9f
+    mov r2, #2
+    str r2, [r1, #0x7C]
+    mvn r0, #0
+    bic r0, r0, #0xFF00
+    bic r0, r0, #0xFF               @ r0 = 0xFFFF0000: the vector page, ARM11 view
+    ldr r2, [r0, #0x00]
+    str r2, [r1, #0x40]
+    ldr r2, [r0, #0x04]
+    str r2, [r1, #0x44]
+    ldr r2, [r0, #0x08]
+    str r2, [r1, #0x48]
+    ldr r2, [r0, #0x0C]
+    str r2, [r1, #0x4C]
+    ldr r2, [r0, #0x10]
+    str r2, [r1, #0x50]
+    ldr r2, [r0, #0x14]
+    str r2, [r1, #0x54]
+    ldr r2, [r0, #0x1C]
+    str r2, [r1, #0x5C]
+    ldr r2, [r0, #0x18]             @ IRQ vector
+    str r2, [r1, #0x58]
+    mov r12, r2, lsr #12
+    ldr r0, =0xE59FF                @ ldr pc, [pc, #+imm12]?
+    cmp r12, r0
+    bne 9f
+    mov r2, r2, lsl #20
+    mov r2, r2, lsr #20             @ imm12
+    mvn r0, #0
+    bic r0, r0, #0xFF00
+    bic r0, r0, #0xDF               @ r0 = 0xFFFF0020 = IRQ vector + 8 (pc)
+    ldr r2, [r0, r2]                @ the literal = IRQ handler address
+    str r2, [r1, #0x70]
+    mov r0, #3
+    str r0, [r1, #0x7C]
+    sub r0, r2, #VIRT_BASE
+    cmp r0, #0x08000000             @ in the kernel's linear map?
+    bhs 9f
+    ldr r0, [r2]                    @ first two words of the handler (patched
+    str r0, [r1, #0x74]             @ to ldr pc,[pc,#-4] + shim_irq)
+    ldr r0, [r2, #4]
+    str r0, [r1, #0x78]
+    mov r0, #4
+    str r0, [r1, #0x7C]
+9:
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
+    mcr p15, 0, r1, c7, c10, 1
     mrs r12, cpsr
     cpsid if
     ldr r2, =PRIV_VA
@@ -249,12 +419,23 @@ shim_get_abstime:
     addlo r1, r1, #1                @ wrapped since the last read
     strlo r1, st_ticks_hi
     str r0, st_last_up
+    str r0, st_abs_raw
+    str r12, st_abs_cpsr
+    ldr r2, st_abs_calls
+    add r2, r2, #1
+    str r2, st_abs_calls
+    ldr r2, =st_abs_calls
+    mcr p15, 0, r2, c7, c10, 1      @ clean the probe line
     msr cpsr_c, r12
     ldr r2, [r3, #0x50]
     adds r0, r0, r2
     ldr r2, [r3, #0x54]
     adc r1, r1, r2
     bx lr
+
+abs_init_cpsr:  .word 0             @ lazy-init scratch (shim_get_abstime)
+abs_init_r3:    .word 0
+abs_init_lr:    .word 0
 
 @ u32 get_decrementer(cpu_data *r3): ticks left until the deadline (stackless)
 shim_get_decrementer:
@@ -275,6 +456,16 @@ shim_set_decrementer:
     bl shim_init
     pop {r0, r3, r4, lr}
     str r0, [r3, #0x60]             @ cpu_data->decrementer, like the original
+    str r0, st_dec_last
+    str lr, st_dec_lr
+    ldr r2, st_dec_calls
+    add r2, r2, #1
+    str r2, st_dec_calls
+    ldr r2, =st_abs_calls
+    mcr p15, 0, r2, c7, c10, 1
+    push {r3, lr}
+    bl shim_audio_setdec            @ audio: wake earlier if an emulated DMA item ends first
+    pop {r3, lr}
     cmp r0, #0
     moveq r0, #1
     ldr r2, =PRIV_VA
@@ -305,9 +496,34 @@ shim_irq:
     str r0, irq_save0
     str r1, irq_save1
     str r2, irq_save2
+    @ PC sampler: where was the ARM11 when this IRQ (VBlank 60 Hz, ticks) hit?
+    @ lr_irq = interrupted pc + 4 (the kernel's "sub lr, lr, #4" is patched out)
+    ldr r0, st_pc_idx
+    and r1, r0, #15
+    add r0, r0, #1
+    str r0, st_pc_idx
+    ldr r2, =(_shim_base + 0x5F80)
+    add r2, r2, r1, lsl #3
+    sub r1, lr, #4
+    str r1, [r2]
+    mrs r1, spsr
+    str r1, [r2, #4]
+    mcr p15, 0, r2, c7, c10, 1      @ clean the sample's line for the ARM9
     ldr r0, =PRIV_VA
     ldr r1, [r0, #GICC_IAR]
     str r1, st_last_irq
+    ldr r2, st_irq_n
+    add r2, r2, #1
+    str r2, st_irq_n
+    ldr r2, =st_inited              @ make +0x40..+0x9F visible to the ARM9 now
+    mcr p15, 0, r2, c7, c10, 1
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
+    b shim_audio_hook               @ audio: PL080 emulation (kernel/shim/audio*); comes back
+    .global shim_irq_resume, irq_save0  @ to shim_irq_resume with r0/r1 intact, or ends the IRQ itself
+shim_irq_resume:
     mov r2, r1, lsl #22
     mov r2, r2, lsr #22             @ interrupt ID
     cmp r2, #IRQ_PTIMER
@@ -318,6 +534,10 @@ shim_irq:
     ldr r2, st_timer_irqs
     add r2, r2, #1
     str r2, st_timer_irqs
+    ldr r2, =st_inited              @ the ARM9 reads the stats from RAM: clean
+    mcr p15, 0, r2, c7, c10, 1      @ +0x40..+0x7F (2 lines) so they are live
+    add r2, r2, #32
+    mcr p15, 0, r2, c7, c10, 1
     mrs r2, spsr
     tst r2, #0x40                   @ FIQs masked where we interrupted?
     bne 3f
@@ -389,6 +609,15 @@ shim_irq:
     beq 9f                          @ spurious: no EOI
     ldr r0, =PRIV_VA
     str r1, [r0, #GICC_EOIR]
+    @ and switch it off for good (ICENABLER[id/32] = 1 << id%32): an unknown
+    @ level IRQ would otherwise fire again forever
+    ldr r0, =(PRIV_VA + 0x1180)
+    mov r1, r2, lsr #5
+    add r0, r0, r1, lsl #2
+    and r2, r2, #31
+    mov r1, #1
+    mov r1, r1, lsl r2
+    str r1, [r0]
     ldr r2, st_other_irqs
     add r2, r2, #1
     str r2, st_other_irqs

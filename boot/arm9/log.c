@@ -15,16 +15,40 @@ static bool log_open;
 static char pending[16384];
 static u32 pending_len;
 static bool sync_each = true;
+static bool dirty;
 static int con_target = CON_TOP;
 
 void log_to_bottom(bool on) { con_target = on ? CON_BOTTOM : CON_TOP; }
+void log_target(int which) { con_target = which; }   /* -1: SD only */
+
+static u32 log_errs, log_last_err;
+
+/* a failed f_write/f_sync leaves the FIL in an error state and FatFs drops
+   every later write silently: reopen in append mode and say so */
+static void log_recover(FRESULT r)
+{
+    log_errs++;
+    log_last_err = r;
+    f_close(&logf);
+    if (f_open(&logf, "0:/ios3ds/log.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK) {
+        log_open = false;
+        return;
+    }
+    char m[64];
+    int k = snprintf(m, sizeof(m), "\n[log] write error %d (#%u), reopened\n", (int)r, (unsigned)log_errs);
+    UINT bw;
+    f_write(&logf, m, k, &bw);
+    f_sync(&logf);
+}
 
 static void sd_write(const char *s, u32 n)
 {
     if (log_open) {
         UINT bw;
-        f_write(&logf, s, n, &bw);
-        if (sync_each) f_sync(&logf);
+        FRESULT r = f_write(&logf, s, n, &bw);
+        if (r == FR_OK && sync_each) r = f_sync(&logf);
+        else if (r == FR_OK) dirty = true;
+        if (r != FR_OK) log_recover(r);
     } else if (pending_len + n < sizeof(pending)) {
         memcpy(pending + pending_len, s, n);
         pending_len += n;
@@ -33,8 +57,10 @@ static void sd_write(const char *s, u32 n)
 
 void log_raw(const char *s, u32 n, u32 color)
 {
-    con_set_color(con_target, color);
-    for (u32 i = 0; i < n; i++) con_putc(con_target, s[i]);
+    if (con_target >= 0) {
+        con_set_color(con_target, color);
+        for (u32 i = 0; i < n; i++) con_putc(con_target, s[i]);
+    }
     sd_write(s, n);
 }
 
@@ -53,11 +79,18 @@ void log_sync_each(bool on)
 {
     sync_each = on;
     if (on && log_open) f_sync(&logf);
+    if (on) dirty = false;
 }
 
+/* sync only if something was written since the last sync: on real SD every
+   f_sync rewrites the data sector and the directory entry (milliseconds) */
 void log_flush(void)
 {
-    if (log_open) f_sync(&logf);
+    if (log_open && dirty) {
+        FRESULT r = f_sync(&logf);
+        if (r != FR_OK) log_recover(r);
+    }
+    dirty = false;
 }
 
 int log_mount_sd(char *why, u32 whylen)

@@ -51,7 +51,24 @@ python3 emu/run.py --time 10 --trace int,unimp,guest_errors   # exceptions -> bu
 python3 emu/run.py --regs                      # register dump of both CPUs at the end
 python3 emu/mon.py --boot 7 "info registers" "x/16wx 0x80251ef0"   # poke a stopped VM
 python3 emu/run.py --gdb     # waits for arm-none-eabi-gdb on :1234
+python3 emu/run.py --icount 2 --time 300   # real-hardware timing (see below)
 ```
+
+### Real-hardware timing: `--icount`
+By default QEMU's timers follow the host's wall clock while TCG runs the
+ARM11 far slower than the real 268 MHz part, so timer interrupts arrive
+"early" relative to the code. That hid a real-hardware deadlock (re-log §25).
+`--icount 2` (`-icount shift=2,sleep=off`, single-threaded TCG) ties time to
+the instruction count, ~250 MHz, which reproduces the hardware's ordering.
+Use it for any boot-time ordering question; the plain mode stays the default
+because it is faster for long boots.
+
+### Scripted debugging: `emu/gdb/`
+The Arm gdb 14.2 has no Python and the host gdb has no ARM target, so the
+scripts talk to QEMU's gdbstub directly through `emu/gdb/rsp.py`:
+- `reads.py`: start QEMU with `-s -S`; logs every clock read (`shim_get_abstime`) with CPSR, deadline and IRQ counters.
+- `panic.py`: start QEMU with `-s -S`; stops at `_panic`, prints the format string, its args and the stack.
+- `postmortem.py`: start QEMU with `-s` (running); attach after a hang, print registers, shim counters and the strings and code addresses on the stack.
 
 
 ## Interactive window: `emu/viewer.py`

@@ -1,0 +1,172 @@
+ios3ds m1-3c57ea7-20261117.1850  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0248 -> 0248
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+launcher swap: restoring Luma as sd:/boot.firm
+launcher swap: restored, next boot is Luma
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-3c57ea7-20261117.1850 ARM11 stub at 0x1ff9033c
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+running ARM11 instruction probes (boot.cfg probes=0 skips them)
+[a11] probes done
+Instruction probes (XNU uses these):
+ ee1f0f92 ok      -> 00000000
+ ee160f50 TRAPPED (slot 3 mode 1b)
+ ee1f0f1c ok      -> 0ffff009
+ ee100e10 ok      -> 15110005
+ eef00a10 ok      -> 410120b4
+ eef70a10 ok      -> 11111111
+ eef60a10 ok      -> 00000000
+ eef80a10 ok      -> 40000000
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 15088 bytes at 2081b000
+shim: 12936 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 15088
+[wifi] no 0:/ios3ds/wifi.cfg: networking off
+[audio] CODEC id 11 rev 16: DAC up, speaker, I2S1_CNT e820
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+AppleS5L8720XIO::start: chip-revision: A0
+IOSurfaceRoot::installMemoryRegions()
+AppleARMPL192VIC::start: _vicBaseAddress = 0xc38ab000
+AppleS5L8900XGPIOIC::start: gpioBaseAddress: 0xc38ad000  gpioicBaseAddress: 0xc38ae000
+AppleS5L8900XEdgeIC::start: _edgeicBaseAddress: 0xc38b5000
+AppleS5L8720XPowerController::start: _pcBaseAddress: 0xc38b6000
+AppleARMPerformanceController::traceBufferCreate: _pcTraceBuffer: 0xca8ea000  bufferSize: 0x00004000
+AppleS5L8720XClockController::start: _ccBaseAddress: 0xc38bd000 _ccBusBaseAddress: 0xc38be000
+AppleS5L8720XClockController::start: pcVoltageStateCount: 2
+	Voltage State 0 : .vsPerformanceLimit: 2 .vsDeviceConstraint: e00f7fff fd7fef07
+	Voltage State 1 : .vsPerformanceLimit: 1 .vsDeviceConstraint: e01fffff ffffff07
+AppleS5L8720XClockController::start: pcPerformanceStateCount: 4
+	Performance State 0 : .psPerformanceDivider: 1 .psVoltageRequired: 1 .psDeviceConstraint: e01fffff ffffff07
+	Performance State 1 : .psPerformanceDivider: 2 .psVoltageRequired: 0 .psDeviceConstraint: e01fffff fafcff07
+	Performance State 2 : .psPerformanceDivider: 5 .psVoltageRequired: 0 .psDeviceConstraint: a01f7fff fafcff07
+	Performance State 3 : .psPerformanceDivider: 11 .psVoltageRequired: 0 .psDeviceConstraint: 80177fff fa7cef07
+AppleS5L8720XClockController: Dynamic Performance State Management Enabled with 2 voltage and 4 perfomance states
+AppleARMPL080DMAC::start: dmac0: _dmacBaseAddress: 0xc38c5000
+AppleM2CLCD, fMapper: 0
+AppleM2CLCD (0x80c01000)
+AppleS5L8900XTimer::start: _timerBaseAddress: 0xc38c6000
+AppleS5L8900XWatchDogTimer::start: _wdtBaseAddress: 0xc38d5000
+AppleARMWatchDogTimer installing handlePEHaltRestart handler
+AppleS5L8900XI2SController::start: i2s0 i2sBaseAddress: 0xc98de000 i2sVersion: 0
+AppleS5L8900XI2CController::start: i2c0 _i2cBaseAddress: 0xc98e5000
+virtual bool AppleM2CLCD::start_hardware(IOService*): Couldn't allocate AppleARMFunction for function-lcd_enable
+AppleARMPL080DMAC::_initDMAChannel: index: 5, bufPA: 0x20bd5000, bufLA: 0xc98e6000
+AppleARMPL080DMAC::_initDMAChannel: index: 4, bufPA: 0x20bd6000, bufLA: 0xca8ee000
+AppleARMPL080DMAC::_initDMAChannel: index: 3, bufPA: 0x20bd8000, bufLA: 0xca905000
+AppleS5L8900XSerial: Identified Serial Port on ARM Device=uart0 at 0x1ffb9000(0xca906000)
+IOSurface: buffer allocation size is zero
+AppleCS42L58Audio::start: 0x80bdaf00, audio0 _wmIICNub: 0x807d3300, _wmIISNub: 0x80bd7f80
+ios3ds-audio: iic r dev=3300 reg=1 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=0 len=1 val=99
+ios3ds-audio: iic w dev=3300 reg=33 len=1 val=fd
+ios3ds-audio: iic w dev=3300 reg=32 len=1 val=27
+ios3ds-audio: iic w dev=3300 reg=0 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=3300 reg=4 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=4 len=1 val=20
+ios3ds-audio: iic r dev=3300 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=3300 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=3300 reg=5 len=1 val=cb
+ios3ds-audio: iic r dev=3300 reg=7 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=7 len=1 val=c
+ios3ds-audio: iic r dev=3300 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=f len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=f len=1 val=90
+ios3ds-audio: iic r dev=3300 reg=b len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=b len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=c len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=c len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=1a len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=3300 reg=1b len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=1b len=1 val=80
+ios3ds-audio: iic r dev=3300 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=3300 reg=1d len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=1d len=1 val=80
+ios3ds-audio: iic r dev=3300 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=aa
+ios3ds-audio: iic w dev=3300 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3300 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3300 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3300 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3300 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3300 reg=b len=1 val=3d
+ios3ds-audio: iic w dev=3300 reg=c len=1 val=3d
+ios3ds-audio: iic w dev=3300 reg=d len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=e len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=a len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=a len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=3300 reg=5 len=1 val=cb
+ios3ds-audio: iic w dev=3300 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=3300 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=3300 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=3300 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=3300 reg=2 len=1 val=c6
+ios3ds-audio: iic r dev=3300 reg=5 len=1 val=b
+ios3ds-audio: iic w dev=3300 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=3300 reg=f len=1 val=90
+ios3ds-audio: iic w dev=3300 reg=f len=1 val=90
+ios3ds-audio: iic w dev=3300 reg=18 len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=19 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3300 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3300 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3300 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=3300 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3300 reg=3 len=1 val=ff
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer
+[monitor] screen mode: both (X = next)
+AppleARMPE::getGMTTimeOfDay can not provide time of day RTC did not show up
+BSD root: md0, major 2, minor 0
+com.apple.AppleFSCompressionTypeZlib kmod start
+virtual bool AppleMobileFileIntegrity::start(IOService*): built Nov 16 2010 22:21:11
+L2TP domain init
+L2TP domain init complete
+PPTP domain init
+com.apple.AppleFSCompressionTypeZlib load succeeded
+com.apple.launchd 1	com.apple.launchd 1	*** launchd[1] has started up. ***
+

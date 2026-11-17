@@ -34,6 +34,11 @@ DELETE = [
     "arm-io/pke", "arm-io/mipi-dsim", "arm-io/swi", "arm-io/xmc",
     "buttons", "dock", "charger", "backlight",
 ]
+# audio (docs/audio.md): keep dmac0/i2c0/i2s0 on fake pages, see tools/ios3ds-audio/dt_audio.py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "ios3ds-audio"))
+import dt_audio  # noqa: E402
+DELETE = [p for p in DELETE if p not in dt_audio.KEEP] + dt_audio.DELETE
+FAKEIO = FAKEIO + dt_audio.FAKEIO
 # arm-io 'ranges' rewritten for the 3DS:
 #   child 0x00000000.. -> FAKEIO_BASE (fake S5L register pages)
 #   child 0x10000000.. -> PA 0x10000000 (identity: real 3DS IO, VRAM, AXI WRAM,
@@ -134,6 +139,8 @@ def generate(template, lay, phys_base, virt_base, mem_size, kernel_len, debug_en
         if child is None:
             raise KeyError("dtgen: no node /%s to delete" % path)
         parent.children.remove(child)
+
+    dt_audio.apply(root)
 
     # its target (mipi-dsim/lcd, Pinot panel) is deleted; AppleM2CLCD copes with NULL
     clcd = root.find("arm-io/clcd")

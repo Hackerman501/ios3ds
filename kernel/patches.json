@@ -119,6 +119,13 @@
   "why": "AppleARMPE::getGMTTimeOfDay waits 30 s for an RTC that doesn't exist yet (PMU/MCU driver TODO): timeout 0"
  },
  {
+  "name": "iortc-wait-0s",
+  "va": "0x801a800a",
+  "orig": "1e23",
+  "new": "0023",
+  "why": "IOKitInitializeTime (bsd_init, 0x8024a53e) waits 30 s for resourceMatching(\"IORTC\") before clock_initialize_calendar; nothing publishes IORTC yet (no RTC driver): timeout 0 (same as rtc-wait-0s, which proved 0 = no wait)"
+ },
+ {
   "name": "clcd-sync-swap",
   "va": "0x807a9b68",
   "orig": "0400000a",

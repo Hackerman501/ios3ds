@@ -137,12 +137,18 @@ static bool __attribute__((noinline)) send_command(mmcdevice *ctx, u32 cmd, u32 
         if ((ctl32 & 0x100) && readdata && rDataPtr) {
             mask16(REG_SDSTATUS1, TMIO_STAT1_RXRDY, 0);
             if (size > 0x1FF) {
-                for (int i = 0; i < 0x200; i += 4) {
-                    u32 data = rd32(REG_SDFIFO32);
-                    *rDataPtr++ = data;
-                    *rDataPtr++ = data >> 8;
-                    *rDataPtr++ = data >> 16;
-                    *rDataPtr++ = data >> 24;
+                if (((uintptr_t)rDataPtr & 3) == 0) {     /* md0 bounce, FatFs buffers */
+                    u32 *w = (u32 *)rDataPtr;
+                    for (int i = 0; i < 0x200 / 4; i++) w[i] = rd32(REG_SDFIFO32);
+                    rDataPtr += 0x200;
+                } else {
+                    for (int i = 0; i < 0x200; i += 4) {
+                        u32 data = rd32(REG_SDFIFO32);
+                        *rDataPtr++ = data;
+                        *rDataPtr++ = data >> 8;
+                        *rDataPtr++ = data >> 16;
+                        *rDataPtr++ = data >> 24;
+                    }
                 }
                 size -= 0x200;
             }

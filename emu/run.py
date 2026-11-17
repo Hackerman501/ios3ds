@@ -49,6 +49,9 @@ def main():
     ap.add_argument("--trace", default="", help="QEMU -d flags, e.g. unimp,guest_errors,int")
     ap.add_argument("--keys", default="", help="'t:key_down,t:key_up' e.g. 0.5:s_down (s = B button)")
     ap.add_argument("--extra", default="")
+    ap.add_argument("--icount", default="", metavar="SHIFT",
+                    help="instruction-clocked time (-icount shift=N,sleep=off; 2 = ~250 MHz, close to the "
+                         "Old 3DS ARM11): reproduces real-hardware timer ordering; single-threaded TCG")
     ap.add_argument("--regs", action="store_true", help="dump ARM11/ARM9 registers before quitting")
     a = ap.parse_args()
 
@@ -56,7 +59,8 @@ def main():
     mon = os.path.join(OUT, "monitor.sock")
     if os.path.exists(mon):
         os.remove(mon)
-    cmd = [QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=multi", "-kernel", a.firm, "-display", "none",
+    accel = "tcg,thread=single" if a.icount else "tcg,thread=multi"
+    cmd = [QEMU, "-M", "nintendo3ds", "-accel", accel, "-kernel", a.firm, "-display", "none",
            "-monitor", "unix:%s,server,nowait" % mon, "-serial", "none"]
     if os.path.exists(a.sd):
         cmd += ["-drive", "file=%s,if=sd,format=raw" % a.sd]
@@ -64,6 +68,8 @@ def main():
         cmd += ["-d", a.trace, "-D", os.path.join(OUT, "qemu.log")]
     if a.gdb:
         cmd += ["-s", "-S"]
+    if a.icount:
+        cmd += ["-icount", "shift=%s,sleep=off" % a.icount]
     if a.extra:
         cmd += a.extra.split()
     print("[run] " + " ".join(cmd))

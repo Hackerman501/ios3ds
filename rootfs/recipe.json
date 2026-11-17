@@ -57,7 +57,9 @@
   "tools/ios3ds-input/daemon/com.ios3ds.input.plist": "/System/Library/LaunchDaemons/com.ios3ds.input.plist",
   "build/rootfs-add/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine": "/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine",
   "build/rootfs-add/usr/libexec/ios3ds-gltest": "/usr/libexec/ios3ds-gltest",
-  "tools/ios3ds-gl/test/com.ios3ds.gltest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist"
+  "tools/ios3ds-gl/test/com.ios3ds.gltest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist",
+  "build/rootfs-add/usr/libexec/ios3ds-wifid": "/usr/libexec/ios3ds-wifid",
+  "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist"
  },
  "chmod": {
   "/usr/libexec/ios3ds-sample": "0755",
@@ -66,7 +68,9 @@
   "/System/Library/LaunchDaemons/com.ios3ds.input.plist": "0644",
   "/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine": "0755",
   "/usr/libexec/ios3ds-gltest": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist": "0644",
+  "/usr/libexec/ios3ds-wifid": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644"
  },
  "file_patches": [
   {

@@ -1,0 +1,9 @@
+[
+ {
+  "name": "iic-device-transfer",
+  "va": "0x802e4d1e",
+  "orig": "90b501af8ab0002a01d0002b2bd0",
+  "new": "c0467847c04604f01fe5@shim+0x24@",
+  "why": "AppleARMIICDevice transfer (vtable slot 0x35c: op, sub-address, data) -> shim_iic_transfer: a register file per I2C device instead of a bus that does not exist (Thumb: nop; bx pc; nop; ARM: ldr pc,[pc,#-4]; .word)"
+ }
+]

@@ -285,7 +285,7 @@ gltest: PICA200 PASS (0 failed)
 
 ## 7. Verification so far
 
-Commands and output are in `re-log.md`, entry 24.
+Commands and output are in `re-log.md`, entry 27.
 - **Host** (`make -C tools/ios3ds-pica test`, `make -C tools/ios3ds-gl host-test`):
   328 unit checks pass. gltest passes all 10 probes on both back ends. Of
   153,600 pixels, 10 differ by more than 24 between the two (triangle edges,
