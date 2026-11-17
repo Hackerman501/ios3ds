@@ -32,6 +32,9 @@ typedef struct PicaSimStats {
     uint32_t lists, commands, draws, vertices, triangles, pixels;
     uint32_t fills, transfers, texcopies;
     uint32_t errors;            /* things the model refused or does not implement */
+    /* behaviour copied from the real GPU (hardware runs 12/13, docs/pica200.md 12-13) */
+    uint32_t fills_outside_vram;    /* PSC fills of FCRAM: "done", nothing written */
+    uint32_t npot_draws;            /* draws sampling a non-power-of-two texture: garbage texels */
 } PicaSimStats;
 
 typedef struct PicaSim {
@@ -48,6 +51,7 @@ typedef struct PicaSim {
     uint32_t code_off, opdesc_off;
     PicaSimStats st;
     int logged;                     /* diagnostics printed so far (rate limit) */
+    int quirk_logged;               /* hardware-behaviour notes printed (once each) */
 } PicaSim;
 
 void picasim_init(PicaSim *s, const PicaSimHost *host);

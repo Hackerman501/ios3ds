@@ -25,7 +25,8 @@
 #define VRAM_SIZE 0x600000u
 #define CLCD_PA   0x1FFB0000u
 #define ARENA_PA  0x26000000u
-#define ARENA_SZ  0x200000u
+#define ARENA_SZ  0x400000u
+#define TEX_PA    (ARENA_PA + 0x200000u)      /* the mirror's 512x512 texture, as the shim takes it from the arena */
 #define DRV_PA    0x27000000u           /* the GL driver core's arena: pica_drv_init programs the GX block */
 #define DRV_SZ    0x40000u
 /* Luma's framebuffers (docs/hwlogs: "framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500") */
@@ -195,8 +196,8 @@ int main(int argc, char **argv)
         CHECK(pica_drv_init(&drv, &dplat, drv_arena, DRV_PA, DRV_SZ, 0x1007F) == PICA_OK, "pica_drv_init");
     }
 
-    CHECK(pm_init(&m, &plat, blob, GM_BLOB_PA) == 0, "pm_init rejects the blob");
-    CHECK(pm_init(&bad, &plat, blob, GM_BLOB_PA + 0x1000) != 0, "pm_init accepts a blob for another address");
+    CHECK(pm_init(&m, &plat, blob, GM_BLOB_PA, TEX_PA) == 0, "pm_init rejects the blob");
+    CHECK(pm_init(&bad, &plat, blob, GM_BLOB_PA + 0x1000, TEX_PA) != 0, "pm_init accepts a blob for another address");
 
     /* 1. self-test as the shim runs it */
     v = pm_selftest(&m, arena, ARENA_PA, arena + 0x100000, ARENA_PA + 0x100000, 4096, &bad0, fb);
@@ -204,8 +205,8 @@ int main(int argc, char **argv)
     printf("self-test: variant %d, %u bad bytes, %u GPU frames\n", v, bad0, m.frames);
     {   /* the failure dump's expectations are right: right after a passing self-test all 16 words match */
         pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
-        uint32_t same = pd_dump_mirror(&e);
-        CHECK(same == 16, "pd_dump_mirror after a good self-test: %u of 16 words as expected", same);
+        uint32_t same = pd_dump_mirror(&e, (const uint32_t *)(arena + (TEX_PA - ARENA_PA)));
+        CHECK(same == 24, "pd_dump_mirror after a good self-test: %u of 24 words as expected", same);
     }
 
     /* 2. a broken list must be caught: both lists = the half-texel one */
@@ -235,6 +236,23 @@ int main(int argc, char **argv)
     compare_with_cpu(&m, SCREEN_BOTTOM, "bottom");
     picture(7);
     compare_with_cpu(&m, SCREEN_BOTH, "both#2");
+    /* the CPU copy writes only the framebuffer set the LCDs show (PDC select,
+       published by the shim): set 1 stays untouched, set 0 is the same */
+    {
+        static uint8_t ref[FB_HI - FB_LO];
+        uint32_t d0 = 0, d1 = 0;
+        memcpy(ref, vram + (FB_LO - VRAM_PA), sizeof ref);      /* the GPU's frame, both sets */
+        memset(vram + (FB_LO - VRAM_PA), 0, FB_HI - FB_LO);
+        display_set_shown(1 | 4);
+        display_blit(CLCD_PA);
+        display_set_shown(0xF);
+        for (i = 0; i < GM_TOP_FB_BYTES + GM_BOT_FB_BYTES; i++) {
+            d0 += vram[TOP0 - VRAM_PA + i] != ref[TOP0 - FB_LO + i];
+            d1 += vram[TOP1 - VRAM_PA + i] != 0;
+        }
+        CHECK(d0 == 0 && d1 == 0, "shown = set 0: %u bytes of set 0 differ, %u bytes of set 1 written", d0, d1);
+        printf("CPU copy into the shown set only: set 0 %u bytes differ, set 1 %u bytes written\n", d0, d1);
+    }
 
     /* 4. the flip variants do what they say (under the model): read-out flip
        reverses each screen's framebuffer rows */
@@ -259,13 +277,14 @@ int main(int argc, char **argv)
     /* 4a. the staged hardware diagnostics (pica_diag.c) pass on the model */
     {
         pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
-        uint32_t r, all = PD_FILL_VRAM | PD_FILL_FCRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT |
-                          PD_TEX_NPOT;
+        /* what hardware run 13 reported, and what the model now does too:
+           everything but FCRAM fills and NPOT textures */
+        uint32_t r, all = PD_FILL_VRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT;
         pd_dump_regs(&e, "host");
         r = pd_fill_tests(&e, "host") | pd_gpu_tests(&e);
-        CHECK(r == all, "diagnostics on the model: 0x%x of 0x%x", r, all);
-        pd_dump_mirror(&e);
-        printf("diagnostics on the model: 0x%x (all = 0x%x)\n", r, all);
+        CHECK(r == all, "diagnostics on the model: 0x%x, hardware run 13 gave 0x%x", r, all);
+        pd_dump_mirror(&e, NULL);
+        printf("diagnostics on the model: 0x%x (hardware run 13: 0x%x)\n", r, all);
     }
 
     /* 4b. the same with a GPU that takes its time: frames need several steps */
@@ -292,7 +311,7 @@ int main(int argc, char **argv)
         pm_begin(&t, &f);
         for (r = 0, i = 0; i < 1000000 && (r = (uint32_t)pm_poll(&t, 0)) == PM_BUSY; i++)
             ;
-        CHECK(r == PM_TIMEOUT && t.cur == 1, "unreachable list: state %u at op %u", r, t.cur);
+        CHECK(r == PM_TIMEOUT && t.cur == 2, "unreachable list: state %u at op %u", r, t.cur);
         printf("unreachable command list: pm_poll -> %s at operation %u after %u polls\n",
                r == PM_TIMEOUT ? "TIMEOUT" : "?", t.cur + 1, i);
     }

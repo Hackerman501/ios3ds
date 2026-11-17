@@ -711,8 +711,26 @@ static void test_sim(void)
     CHECK_EQ(dev->write(info.arena_pa, vtx, 16), PICA_ERR_RANGE);       /* the driver's own block */
     CHECK_EQ(dev->write(info.arena_pa + info.arena_size - 8, vtx, 16), PICA_ERR_RANGE);
 
-    /* blue, alpha 255; depth 1.0 */
-    CHECK_EQ(dev->fill(color, 64 * 64 * 4, 0x0000FFFF, PSC_FILL_32, depth, 64 * 64 * 4, 0x00FFFFFF, PSC_FILL_32), PICA_OK);
+    /* The fill engine does not write FCRAM (hardware run 13; the model does
+       the same): the arena is FCRAM, so a fill is "done" and changes nothing */
+    {
+        static uint32_t pat[64 * 64];
+        for (unsigned i = 0; i < 64 * 64; i++)
+            pat[i] = 0x12345678u;
+        CHECK_EQ(dev->write(lin, pat, sizeof pat), PICA_OK);
+        CHECK_EQ(dev->fill(lin, 64 * 64 * 4, 0x0000FFFF, PSC_FILL_32, 0, 0, 0, 0), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, sizeof out), PICA_OK);
+        CHECK_EQ(out[0], 0x12345678u);
+        CHECK_EQ(out[64 * 64 - 1], 0x12345678u);
+        /* so: blue, alpha 255, and depth 1.0 are written by the CPU (constant
+           values look the same tiled or linear) */
+        for (unsigned i = 0; i < 64 * 64; i++)
+            pat[i] = 0x0000FFFFu;
+        CHECK_EQ(dev->write(color, pat, sizeof pat), PICA_OK);
+        for (unsigned i = 0; i < 64 * 64; i++)
+            pat[i] = 0x00FFFFFFu;
+        CHECK_EQ(dev->write(depth, pat, sizeof pat), PICA_OK);
+    }
 
     pica_cmd_init(&c, list, 2048);
     pica_emit_base_state(&c);

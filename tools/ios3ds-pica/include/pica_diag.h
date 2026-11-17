@@ -9,8 +9,8 @@
 #include <stdint.h>
 #include "pica_mirror.h"
 
-#define PD_VRAM_PA    GM_TEX_PA                 /* the window the CPU sees: mirror buffers + diag areas */
-#define PD_VRAM_SIZE  (0x18600000u - GM_TEX_PA)
+#define PD_VRAM_PA    GM_SCR_PA                 /* the window the CPU sees: mirror buffers + diag areas */
+#define PD_VRAM_SIZE  (0x18600000u - GM_SCR_PA)
 #define PD_FC_SIZE    0x10000u                  /* FCRAM scratch the caller provides */
 
 typedef struct {
@@ -30,5 +30,6 @@ enum {
 void pd_dump_regs(const pd_env_t *e, const char *when);
 uint32_t pd_fill_tests(const pd_env_t *e, const char *when);   /* PD_FILL_* */
 uint32_t pd_gpu_tests(const pd_env_t *e);                      /* PD_PPF .. PD_TEX_NPOT */
-/* words of the mirror texture / top target that hold what the self-test picture should give (of 16) */
-uint32_t pd_dump_mirror(const pd_env_t *e);
+/* words of the mirror's upload, texture and top target that hold what the
+   self-test picture should give (of 24); tex = CPU view of the texture */
+uint32_t pd_dump_mirror(const pd_env_t *e, const uint32_t *tex);

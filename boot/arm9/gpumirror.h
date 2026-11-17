@@ -6,4 +6,5 @@ void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[6], int mode);
 void gm_want(bool on);
 void gm_set_mode(int mode, u32 (*now)(void));
 bool gm_live(u32 now);
+u32 gm_shown(void);     /* display_set_shown() mask from the shim's PDC select readout */
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown);

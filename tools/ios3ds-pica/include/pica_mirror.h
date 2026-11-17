@@ -33,12 +33,13 @@ typedef struct {
 } pm_frame_t;
 
 enum { PM_IDLE = 0, PM_BUSY = 1, PM_DONE = 2, PM_TIMEOUT = 3 };
-enum { PM_OP_PPF = 0, PM_OP_P3D = 1 };
+enum { PM_OP_PPF = 0, PM_OP_P3D = 1, PM_OP_TEXCOPY = 2 };
 #define PM_MAX_OPS 8
 
 typedef struct pica_mirror {
     const pm_plat_t *p;
     uint32_t list_pa[2], list_bytes[2];     /* from gpumirror.bin */
+    uint32_t tex_pa;                        /* the 512x512 texture (FCRAM) */
     uint32_t variant;                       /* GM_VAR_* */
     uint32_t timeout_ticks;
     /* the frame in flight */
@@ -51,9 +52,11 @@ typedef struct pica_mirror {
     uint32_t why_timeout;                   /* GX register snapshot of the last timeout */
 } pica_mirror_t;
 
-/* Point the engine at a loaded gpumirror.bin (blob = its CPU view). Returns 0
-   when the blob is valid for this build's layout. */
-int pm_init(pica_mirror_t *m, const pm_plat_t *p, const void *blob, uint32_t blob_pa);
+/* Point the engine at a loaded gpumirror.bin (blob = its CPU view) and at
+   its texture (GM_TEX_BYTES, 8-byte aligned, GPU-reachable; the shim takes it
+   from the FCRAM arena): the two lists get the texture address patched in.
+   Returns 0 when the blob is valid for this build's layout. */
+int pm_init(pica_mirror_t *m, const pm_plat_t *p, void *blob, uint32_t blob_pa, uint32_t tex_pa);
 
 /* Black-fill both render targets (their margins are never drawn). Waits. */
 int pm_clear_targets(pica_mirror_t *m);

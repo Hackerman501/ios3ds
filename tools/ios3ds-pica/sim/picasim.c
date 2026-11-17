@@ -41,6 +41,17 @@ static void sim_log(PicaSim *s, const char *fmt, uint32_t a, uint32_t b)
     s->host.log(s->host.opaque, buf);
 }
 
+/* a note about modelled hardware behaviour: not an error, said once per kind */
+static void sim_quirk(PicaSim *s, int bit, const char *msg, uint32_t a)
+{
+    char buf[200];
+    if (!s->host.log || (s->quirk_logged & bit))
+        return;
+    s->quirk_logged |= bit;
+    snprintf(buf, sizeof buf, msg, a);
+    s->host.log(s->host.opaque, buf);
+}
+
 static uint8_t *mem(PicaSim *s, uint32_t pa, uint32_t len, int write)
 {
     uint8_t *p = (len && s->host.mem) ? s->host.mem(s->host.opaque, pa, len, write) : NULL;
@@ -128,7 +139,12 @@ static void psc_fill(PicaSim *s, int n)
     unsigned width = (r[3] >> 8) & 3;
     uint8_t *p;
     s->st.fills++;
-    if (end > start && (p = mem(s, start, end - start, 1))) {
+    /* Real hardware (run13 [gpu-diag]): a fill whose range is in FCRAM sets
+       its done bit and writes nothing; only VRAM gets filled. */
+    if (end > start && (start < 0x18000000u || end > 0x18600000u)) {
+        s->st.fills_outside_vram++;
+        sim_quirk(s, 1, "picasim: PSC fill at 0x%08x is outside VRAM: like the real GPU, nothing is written", start);
+    } else if (end > start && (p = mem(s, start, end - start, 1))) {
         uint32_t len = end - start;
         if (width == 2)
             for (i = 0; i + 4 <= len; i += 4)
@@ -296,6 +312,7 @@ typedef struct {
     const uint8_t *data;
     uint32_t w, h;
     unsigned fmt, wrap_s, wrap_t, linear;
+    int npot;                   /* not a power of two: the real GPU samples garbage */
     uint8_t border[4];
 } TexUnit;
 
@@ -358,6 +375,15 @@ static void tex_sample(const TexUnit *t, float u, float v, uint8_t c[4])
 {
     if (!t->data) {
         c[0] = c[1] = c[2] = 0; c[3] = 255;
+        return;
+    }
+    if (t->npot) {
+        /* Real hardware (run13 [gpu-diag], 48x40 drawn 1:1: 0 of 1920 texels
+           right; the mirror's 320x480 likewise): non-power-of-two textures
+           do not sample like the texel layout says. Model it as noise. */
+        uint32_t h = (uint32_t)(int)(u * 4096.0f) * 0x9E3779B1u ^ (uint32_t)(int)(v * 4096.0f) * 0x85EBCA77u;
+        h ^= h >> 15;
+        c[0] = h; c[1] = h >> 8; c[2] = h >> 16; c[3] = h >> 24;
         return;
     }
     if (!t->linear) {
@@ -777,6 +803,11 @@ static int bind_target(PicaSim *s, Target *t)
             continue;                           /* samples opaque black */
         }
         u->data = mem(s, addr, u->w * u->h * tex_bits[u->fmt] / 8, 0);
+        u->npot = (u->w & (u->w - 1)) || (u->h & (u->h - 1));
+        if (u->npot) {
+            s->st.npot_draws++;
+            sim_quirk(s, 2, "picasim: texture %08x is not a power of two: like the real GPU, it samples garbage", r[1]);
+        }
     }
     return 1;
 }

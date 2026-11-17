@@ -276,34 +276,41 @@ uint32_t pd_gpu_tests(const pd_env_t *e)
     return r;
 }
 
-/* After a failed mirror self-test: what is in the texture and the top target? */
-uint32_t pd_dump_mirror(const pd_env_t *e)
+/* After a failed mirror self-test (re-run as variant 0): what is in the
+   upload buffer, the texture and the top target? */
+static uint32_t dump8(const pm_plat_t *p, const char *what, const volatile uint32_t *w, const uint32_t *want)
+{
+    uint32_t i, same = 0;
+    p->log("[gpu-diag] mirror %s: %08x %08x %08x %08x %08x %08x %08x %08x\n", what, w[0], w[1], w[2], w[3], w[4],
+           w[5], w[6], w[7]);
+    p->log("[gpu-diag]   expected: %08x %08x %08x %08x %08x %08x %08x %08x\n", want[0], want[1], want[2], want[3],
+           want[4], want[5], want[6], want[7]);
+    for (i = 0; i < 8; i++)
+        same += w[i] == want[i];
+    return same;
+}
+
+uint32_t pd_dump_mirror(const pd_env_t *e, const uint32_t *tex)
 {
     const pm_plat_t *p = e->p;
-    uint32_t i, x, y, sx, sy, got[8], want[8], same = 0;
+    uint32_t i, x, y, sx, sy, want[8], same;
     for (i = 0; i < 8; i++) {
         demorton(i, &x, &y);
-        got[i] = VW(e, GM_TEX_PA)[i];
         want[i] = pm_pattern(x, y);
-        same += got[i] == want[i];
     }
-    p->log("[gpu-diag] mirror texture tile 0: %08x %08x %08x %08x %08x %08x %08x %08x\n", got[0], got[1], got[2],
-           got[3], got[4], got[5], got[6], got[7]);
-    p->log("[gpu-diag]   expected (raw copy): %08x %08x %08x %08x %08x %08x %08x %08x\n", want[0], want[1], want[2],
-           want[3], want[4], want[5], want[6], want[7]);
+    same = dump8(p, "upload (VRAM) tile 0", VW(e, GM_SCR_PA), want);
+    if (tex) {
+        p->from_gpu((void *)tex, 32);
+        same += dump8(p, "texture (FCRAM) tile 0", tex, want);
+    }
     for (i = 0; i < 8; i++) {
         demorton(i, &x, &y);
-        got[i] = VW(e, GM_RT_TOP_PA)[3 * GM_RT_W * 8 + i];         /* tile row 3: stored rows 24..31 */
         want[i] = 0;
         if (gm_map(0, x, 24 + y, &sx, &sy)) {
             uint32_t c = pm_pattern(sx, sy);
             want[i] = (c >> 16 & 0xFF) << 24 | (c >> 8 & 0xFF) << 16 | (c & 0xFF) << 8 | 0xFF;
         }
-        same += got[i] == want[i];
     }
-    p->log("[gpu-diag] mirror top target (rows 24-31, tile 0): %08x %08x %08x %08x %08x %08x %08x %08x\n", got[0],
-           got[1], got[2], got[3], got[4], got[5], got[6], got[7]);
-    p->log("[gpu-diag]   expected: %08x %08x %08x %08x %08x %08x %08x %08x\n", want[0], want[1], want[2], want[3],
-           want[4], want[5], want[6], want[7]);
+    same += dump8(p, "top target (rows 24-31, tile 0)", VW(e, GM_RT_TOP_PA) + 3 * GM_RT_W * 8, want);
     return same;
 }

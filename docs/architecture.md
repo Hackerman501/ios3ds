@@ -33,7 +33,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 | 0x1FFF0000 | ARM9 ↔ ARM11 mailbox |
 | 0x18000000 | `/vram`: iOS's framebuffer (window 1, 320×480, 32 bpp) |
 | 0x18300000 | Luma's LCD framebuffers (the ARM9 draws here): top/bottom 0x18300000/0x18346500 and 0x18400000/0x18446500 |
-| 0x18480000 | GPU display mirror: texture (320x480) and the two render targets, to 0x185BEC00 |
+| 0x18480000 | GPU display mirror: upload buffer (320x480) and the two render targets, to 0x185BEC00 (its 512x512 texture is in the FCRAM arena); GPU diagnostics scratch 0x185C0000-0x185D4000 |
 
 ## 3. Bridging S5L8720 to the 3DS
 

@@ -164,6 +164,26 @@ static void spot_check(u32 regs_pa, int mode, bool gpu)
              first >> 31 ? "bottom" : "top", (first >> 16) & 0x7FFF, first & 0xFFFF, exp1, got1);
 }
 
+/* Which framebuffer sets the LCDs show (bit mask for display_set_shown), as
+   the shim publishes them; 0xF (all) until it does. */
+u32 gm_shown(void)
+{
+    static u32 last = 0xF;
+    u32 m = 0;
+    if (!gm || gm->pdc_magic != GM_PDC_MAGIC)
+        return 0xF;
+    for (u32 n = 0; n < 2; n++) {
+        u32 v = gm->pdc_swap[n], next = v & 1, cur = v >> 4 & 1;
+        m |= (next == cur ? 1u << next : 3u) << (2 * n);
+    }
+    if (m != last) {
+        logp("[monitor] LCDs show framebuffer set %s on top, %s on the bottom: the CPU copy writes only those\n",
+             (m & 3) == 3 ? "0+1" : (m & 1) ? "0" : "1", (m & 12) == 12 ? "0+1" : (m & 4) ? "0" : "1");
+        last = m;
+    }
+    return m;
+}
+
 /* every 30 s: what the copy costs, GPU and CPU side by side */
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown)
 {
