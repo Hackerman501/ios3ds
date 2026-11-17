@@ -45,7 +45,18 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - `GX clock 0x00000000`: Luma never sets GX +0x004; libn3ds/GSP write 0x70100. PPF transfers worked, the fill did not. Analysis and the diagnostics of the next build: docs/pica200.md §12.
 - The ARM9 CPU copy costs 300-430 ms per frame on hardware (`41 copies in 30 s, 432.8 ms each`): VRAM access from the ARM9 is far slower than in QEMU, so the GPU mirror is the main performance fix.
 
-## run13 (`eab9618`, GPU diagnostics)
+## run12 (`21f26fc`, first GPU build) and run13 (`eab9618`, GPU diagnostics)
+- iOS boots normally in both runs. The GPU paths fail their self-tests, and the ARM9 CPU copy takes over, as designed.
+- The CPU screen copy costs **300–430 ms per frame on real hardware** (`[monitor] CPU screen copy`). That makes it the main reason the UI feels slow.
+- run13 `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL; PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL`:
+  - the GPU clock was 0, and our setup now sets `0x70100`;
+  - the PSC fill can't write FCRAM;
+  - textures that aren't a power of two sample garbage.
+
+  The mirror's 320x480 texture and GL's FCRAM fills therefore fail. Details: docs/pica200.md §12.
+- Clock: `gettimeofday` measured 1058/1063 ms for the gltest frame, while `mach_absolute_time` measured 495/412 ms. From the next build on, each `[hb]  clock:` line compares the ARM11 watchdog time base with the independent ARM9 timer. In QEMU the ratio is 1000/1000.
+
+### run13 in detail (analysis after the fact)
 - `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL`. The GX clock setup (0 -> 0x70100) changed nothing measurable.
 - PSC fills never write FCRAM (traffic counters: `ext-wr +0`); non-power-of-two textures sample wrongly (48x40: 0 of 1920). Those two facts explain both run12 failures. Analysis: docs/pica200.md §13.
 - CPU copy: 41-95 copies per ~30 s, 235-430 ms each.
