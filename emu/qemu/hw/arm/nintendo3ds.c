@@ -620,6 +620,9 @@ typedef struct {
     PicaSim pica;                  /* GX block: PSC, PPF, P3D */
     qemu_irq gx_irq[4];            /* GIC 40 PSC0, 41 PSC1, 44 PPF, 45 P3D */
     uint32_t gpu_cnt, gpuprot;     /* PDN_GPU_CNT, CFG11_GPUPROT */
+    struct { uint32_t off, val; int64_t due; } gx_q[8];   /* started GPU operations, not run yet */
+    int gx_nq;
+    QEMUTimer *gx_timer;
     QEMUTimer *vblank, *hblank;
     int64_t vblank_stamp;
     uint16_t hid_pad;            /* active low */
@@ -1567,6 +1570,7 @@ static void gx_reset(CtrMachine *s)
     PicaSimHost host = { .mem = gx_mem, .log = gx_log, .opaque = s };
     picasim_init(&s->pica, &host);
     s->gpu_cnt = 0x1007F;       /* Luma initialised the screens: clock on, nothing in reset */
+    s->gx_nq = 0;
     s->gpuprot = 0;
 }
 
@@ -1576,20 +1580,87 @@ static uint64_t gx_read(void *opaque, hwaddr addr, unsigned size)
     return picasim_read(&s->pica, addr);
 }
 
-static void gx_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+static void gx_update_irqs(CtrMachine *s)
 {
-    CtrMachine *s = opaque;
     uint32_t st;
-    if (!(s->gpu_cnt & 0x10000)) {
-        return;                 /* unclocked */
-    }
-    picasim_write(&s->pica, addr, v);
     /* level interrupts follow the status bits (GX +0x34) */
     st = picasim_read(&s->pica, 0x34);
     qemu_set_irq(s->gx_irq[0], (st >> 26) & 1);
     qemu_set_irq(s->gx_irq[1], (st >> 27) & 1);
     qemu_set_irq(s->gx_irq[2], (st >> 30) & 1);
     qemu_set_irq(s->gx_irq[3], (st >> 31) & 1);
+}
+
+/*
+ * The real GPU works in the background: a started operation finishes some
+ * time later and the driver polls (or would take an interrupt). The model
+ * itself is synchronous, so the write that starts an operation is held back
+ * by roughly the time hardware would take, in virtual time, and then run
+ * from a timer. Until then the engine reads as busy (its done bit is clear),
+ * which exercises the shim's interrupt-stepped GPU mirror and the driver's
+ * polling the way hardware will. The model's work also leaves the vCPU
+ * thread. Delays are guesses, not measurements (docs/pica200.md section 9).
+ */
+static int64_t gx_trigger_delay(uint32_t off, uint32_t v)
+{
+    if ((off == 0x01C || off == 0x02C) && (v & 1)) {
+        return 100 * SCALE_US;          /* PSC fill */
+    }
+    if (off == 0xC18 && (v & 1)) {
+        return 400 * SCALE_US;          /* PPF transfer / texture copy */
+    }
+    if (off == 0x1000 + 0x23C * 4 || off == 0x1000 + 0x23D * 4) {
+        return 1000 * SCALE_US;         /* P3D command list (CMDBUF_JUMPn) */
+    }
+    return 0;
+}
+
+static void gx_run_due(void *opaque)
+{
+    CtrMachine *s = opaque;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), next = INT64_MAX;
+    int i = 0;
+    while (i < s->gx_nq) {
+        if (s->gx_q[i].due <= now) {
+            uint32_t off = s->gx_q[i].off, val = s->gx_q[i].val;
+            memmove(&s->gx_q[i], &s->gx_q[i + 1], (s->gx_nq - i - 1) * sizeof s->gx_q[0]);
+            s->gx_nq--;
+            picasim_write(&s->pica, off, val);
+            gx_update_irqs(s);
+            i = 0;
+            continue;
+        }
+        if (s->gx_q[i].due < next) {
+            next = s->gx_q[i].due;
+        }
+        i++;
+    }
+    if (s->gx_nq) {
+        timer_mod(s->gx_timer, next);
+    }
+}
+
+static void gx_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+{
+    CtrMachine *s = opaque;
+    int64_t d;
+    if (!(s->gpu_cnt & 0x10000)) {
+        return;                 /* unclocked */
+    }
+    d = gx_trigger_delay(addr, v);
+    if (d && s->gx_nq < (int)ARRAY_SIZE(s->gx_q)) {
+        int64_t due = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + d;
+        s->gx_q[s->gx_nq].off = addr;
+        s->gx_q[s->gx_nq].val = v;
+        s->gx_q[s->gx_nq].due = due;
+        s->gx_nq++;
+        if (!timer_pending(s->gx_timer) || timer_expire_time_ns(s->gx_timer) > due) {
+            timer_mod(s->gx_timer, due);
+        }
+        return;
+    }
+    picasim_write(&s->pica, addr, v);
+    gx_update_irqs(s);
 }
 
 static const MemoryRegionOps gx_ops = {
@@ -2060,6 +2131,7 @@ static void ctr_init(MachineState *machine)
     s->gx_irq[3] = qdev_get_gpio_in(dev, 45 - 32);
     s->mcu_irq = qdev_get_gpio_in(dev, 113 - 32);
     s->hblank = timer_new_ns(QEMU_CLOCK_VIRTUAL, ctr_hblank, s);
+    s->gx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, gx_run_due, s);
     s->mcu.power_held = timer_new_ns(QEMU_CLOCK_VIRTUAL, mcu_power_held, s);
     s->vblank = timer_new_ns(QEMU_CLOCK_VIRTUAL, ctr_vblank, s);
     timer_mod(s->vblank, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 60);
