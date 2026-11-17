@@ -165,9 +165,11 @@ on hardware, libn3ds). Depth is D24S8, GPU-only, keyed by `rt->depth`.
   where the engine frees renderbuffer or texture storage) drops GPU copies of
   memory that is going away.
 
-**Clears.** A full clear is a PSC memory fill of the colour and/or depth
-buffer. A scissored or channel-masked clear is a quad at the clear depth with
-depth function ALWAYS.
+**Clears.** Every clear is a quad at the clear depth with depth function
+ALWAYS. (A full clear used to be a PSC memory fill; hardware run 13 showed
+the fill engine writes nothing into FCRAM, and the arena is FCRAM, §13.) A
+clear of all colour channels over the whole target skips the upload of the
+old picture. New depth buffers are initialised to "far" by a CPU write.
 
 **Textures.** Every texture is uploaded as tiled RGBA8, padded to a power of
 two (edge texels replicated), when its `be_seq` changes.
@@ -187,7 +189,8 @@ GL processes can share the GPU without tracking each other.
 
 **Self-check.** `pica_backend_init` (for `IOS3DS_GL=pica` and `auto`) first
 sends a 64x64 pattern through the whole path the frames depend on: WRITE,
-PPF linear→tiled, PPF tiled→linear, READ, then a PSC fill and back. Any
+PPF linear→tiled, PPF tiled→linear, READ, then a constant-colour P3D quad
+into the arena and back (it was a PSC fill until run 13). Any
 wrong word or failed operation is logged (`[gl] pica: GPU self-check: …: not
 using the GPU`) and the context gets the software rasterizer.
 
@@ -358,7 +361,9 @@ is `boot/common/gpu_mirror.h`.
 ### What the GPU does per frame
 
 ```
-PPF  iOS framebuffer (VRAM 0x18000000, linear BGRA)  -> texture 320x480 RGBA8, tiled   0x18480000
+PPF  iOS framebuffer (VRAM 0x18000000, linear BGRA)  -> upload 320x480 RGBA8, tiled    0x18480000
+PPF  texture copy: 60 tile rows of 10240 bytes       -> texture 512x512 RGBA8 in the FCRAM arena,
+     (output gap 6144 bytes: 512-wide tile rows)        rows 0..479 used (power of two: §13)
 P3D  gpumirror.bin list: two textured quads          -> RT top 240x400 RGBA8, tiled    0x18516000
                                                      -> RT bottom 240x320 RGBA8, tiled 0x18573C00
 PPF  RT top + bottom (one transfer when Luma's bottom framebuffer follows the top one,
@@ -366,7 +371,7 @@ PPF  RT top + bottom (one transfer when Luma's bottom framebuffer follows the to
      ... once per framebuffer set (Luma has two, the CPU copy wrote both too)
 ```
 
-Four GPU operations per frame in "both" mode (3 + 1 per set in the others).
+Five GPU operations per frame in "both" mode (4 + 1 per set in the others).
 
 **Why this is a plain scaling.** The 3DS framebuffers are column-major:
 framebuffer row j is screen column j, and its 240 pixels run from the bottom
@@ -456,7 +461,8 @@ Fallbacks to the ARM9 CPU copy, each logged:
 | shim+0x7F00 (PA 0x20847F00), 256 B | `gmbox_t` mailbox: lines 0-1 ARM9, lines 2-4 ARM11 |
 | PA 0x208B0000, 32 KiB | the shim's GPU part (pica.c, pica_drv.c, pica_mirror.c), from gpu.bin |
 | PA 0x208B8000, ≤ 32 KiB | gpumirror blob: command lists and vertex arrays, from gpu.bin |
-| VRAM 0x18480000-0x185BEC00 | texture and the two render targets |
+| VRAM 0x18480000-0x185BEC00 | upload buffer and the two render targets |
+| FCRAM arena, 1 MiB | the 512x512 texture (allocated at mirror start-up; its address is patched into both lists) |
 
 The shim's GPU code moved out of the main shim because the main shim must end
 below +0x5F00 (probe snapshot, mailboxes). `link.ld` places every object named
@@ -490,7 +496,7 @@ log will show it.
 | power/clock | Luma's state is kept: `PDN_GPU_CNT` must read 0x1007F (else clock on + resets released, logged); the block is never reset (the LCD controllers are in it); PSC/PPF control registers are zeroed, P3D gets IRQ_CMP/AUTOSTOP/config mode, one throw-away texture copy | Luma leaves PSC/PPF idle | `[pica] bring-up:` value; `[pica] TIMEOUT waiting for the first PPF texture copy` would deny |
 | completion | polled: PPF_CNT bit 8, PSC_FILLn bit 1, GX +0x34 bit 31 (P3D, after IRQ_ACK). No GIC line is enabled beyond main's 29 and 42; the mirror is stepped from those two | the bit positions (libn3ds/3dbrew) | self-test `GPU a/b/c ticks (upload/draw/read-out)` non-zero and sane; `did not finish` names the stage otherwise |
 | VRAM | mirror: 0x18480000-0x185BEC00 (above Luma's second framebuffer set, below 6 MiB); the shim refuses framebuffers inside it or inside /vram | Luma's framebuffer addresses (checked at run time) | `[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom 0x18346500/0x18446500 (2 sets)` |
-| texture | NPOT 320x480 RGBA8 texture, nearest, clamp | the PICA200 samples NPOT textures (Citra handles any size; libctru's docs ask for POT) | self-test variant result; an NPOT failure shows as garbage in every variant |
+| texture | NPOT 320x480 RGBA8 texture, nearest, clamp | the PICA200 samples NPOT textures (Citra handles any size; libctru's docs ask for POT) | **denied by run 13** (§13): now a 512x512 texture |
 | sampling | truncation (Citra) tried first, rounding second | — | `variant 0 (as modelled)` vs `variant 1 (sampling rounds)` |
 | row order | texture and render-target rows as Citra stores them tried first, flips after | — | the variant number (bits 2 and 4) |
 | GPU hang | every mirror operation has a 200 ms limit; a timeout switches the mirror off for good, the ARM9 notices within 1 s | — | `[gpu] display mirror FAILED (GPU timeout)` + `[gpu] screen copy: ARM9 CPU again` |
@@ -611,3 +617,79 @@ How to read the outcomes:
   the colour buffer (shader output map, viewport, TEV, colour buffer setup).
 - solid ok, texture FAIL: texture unit (address, format, tiling); POT ok and
   NPOT FAIL: the mirror needs a 512x512 texture instead.
+
+## 13. Hardware run 13: the diagnostics' answer, and what changed
+
+Run 13 (`eab9618` = §12's build, docs/hwlogs/run13.txt):
+
+```
+[pica] GX setup as libn3ds hardwareReset: clock 0x00000000 -> 0x00070100, … dma prio 0x1111ef00/0x00000112 -> 0x22221200/0x00000ff2
+[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL
+```
+
+- **The GX clock was not the cause.** Fills into VRAM worked before and
+  after the setup.
+- **PSC fills do not write FCRAM.** Done bit set after 1 tick, `fill0 +256`
+  (the engine ran), `ext-wr +0` (no external-memory write), 0 of 1024 words.
+  Into VRAM: `vramB-wr +266`, all words. Taken as a hardware rule.
+- **P3D works**, into VRAM and FCRAM (`col-wr +1088` / `ext-wr +2176`), with
+  a 64x64 texture (`tex +1024`). Command lists, the fixed-function shader,
+  vertex fetch, TEV and colour writes are right as encoded.
+- **NPOT textures are broken**: the 48x40 texture drawn 1:1 gave 0 of 1920
+  texels (`tex +256`: the unit fetched far less than the 1920-texel image).
+  The mirror's 320x480 texture is NPOT, which explains its failure.
+- **The texture tile dump** (run13 lines 288-291) is not a second bug: the
+  dump ran after the last self-test variant (7), which uploads with the PPF
+  flip flag. Decoded with the self-test pattern, texture word i of tile 0 is
+  iOS pixel (x, 479 - y) for its tile position (x, y) - exactly a flipped
+  upload of a correct linear→tiled transfer (`(0,479) (1,479) (0,478) …`).
+  The target tile then holds iOS pixels (128..130, 300) everywhere: NPOT
+  sampling. The dump now re-runs variant 0 before dumping, and shows the
+  upload buffer, the texture and the target.
+
+**Model.** picasim now does what the hardware did: a fill outside VRAM sets
+its done bit and writes nothing, and a non-power-of-two texture samples
+noise (each said once in the log, not counted as a model error). With that,
+the old mirror and the old GL self-check failed in the host tests and in
+QEMU exactly as on hardware (re-log 30), and the model reproduces run 13's
+diagnostic summary bit for bit (`test_mirror`).
+
+**Mirror.** The texture is 512x512 (power of two) in the FCRAM arena. The
+upload still goes linear → tiled into VRAM (320 wide), then a PPF texture
+copy moves the 60 tile rows (10240 bytes each) into the 512-wide texture
+(16384 bytes per tile row: output gap 6144 bytes). Texture coordinates: iOS
+x / 512 and (512 − iOS y) / 512, same 1/6-texel margins. Host test: byte-
+identical to display.c in all modes, also with a GPU that finishes late.
+
+**GL.** No more PSC fills: clears are quads, the depth buffer starts "far"
+through a CPU write, and the self-check draws a constant-colour quad into the
+arena instead of filling it.
+
+**Unverified on hardware:** the texture copy with an output gap (libn3ds'
+`GX_textureCopy` documents width and gap in 16-byte units; only a 16-byte
+copy without gaps has run so far, in `pica_drv_init`) and texture fetches
+from FCRAM (citro3d allocates textures in FCRAM by default, so very likely).
+The mirror self-test covers both: a wrong copy or fetch fails it.
+
+## 14. The CPU copy, faster
+
+On hardware the ARM9's copy took 313-433 ms per frame (run 12/13), and the
+GPU mirror has not passed its self-test on hardware yet, so the CPU copy is
+what users see. `boot/arm9/display.c` now:
+- reads every needed iOS row whole with 16-byte `LDM` bursts into ARM9 RAM
+  (the old code did one 32-bit VRAM read per used pixel);
+- packs each output column (240 BGR8 pixels) into 180 words in ARM9 RAM
+  (4 pixels = 3 words) and stores it with 16-byte `STM` bursts (the old code
+  wrote three single bytes per pixel);
+- writes only the framebuffer set each LCD shows. The shim reads the PDC
+  select registers (PDC0/PDC1 +0x78; the ARM9 cannot reach the GPU block)
+  on every VBlank and publishes them in the mailbox (`gmbox_t.pdc_swap`);
+  until then, or without gpu.bin, both sets are written as before. The old
+  code wrote set 0 and then copied it to set 1 by reading VRAM back.
+
+VRAM traffic per "both" frame: before, about 160k word reads + 490k byte
+writes + 122k word reads + 122k word writes (the second set), all single
+accesses; now about 217k word reads + 122k word writes, all in 4-word
+bursts. Results stay byte-identical (host test: CPU copy vs GPU model vs
+`gm_map`, all modes, and the shown-set-only case). QEMU cannot show bus
+costs; its instruction-clocked timing is in re-log 30.
