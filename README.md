@@ -9,6 +9,8 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 
 > **Status (2026-11-17):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS**. Touch, the Home, lock and volume buttons, and apps (Settings, Notes, Mail, App Store) work, and boot to a usable home screen takes about a minute. In the project's own QEMU model (`-M nintendo3ds`) the same build runs, including a PICA200 GPU path for GL and the screen mirror; that GPU path has not run on hardware yet. Hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
 
+> **Try it on your 3DS:** follow [docs/INSTALL.md](docs/INSTALL.md). Download a release, run one command on your PC with your own iPod touch firmware file, and copy the result to the SD card. No compilers needed.
+
 | Milestone | Goal | State |
 |---|---|---|
 | M0 | Research, kernel strategy, IPSW prep tool | done |
@@ -39,6 +41,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 See [docs/architecture.md](docs/architecture.md) for the full picture.
 
 ## Documentation
+- [docs/INSTALL.md](docs/INSTALL.md): install a release on your 3DS (for users)
 - [docs/architecture.md](docs/architecture.md): the boot chain end to end, memory map, every hardware bridge
 - [docs/research.md](docs/research.md): hardware and firmware facts, with sources
 - [docs/kernel-strategy.md](docs/kernel-strategy.md): why we patch Apple's kernel instead of using an open-source XNU port
@@ -47,6 +50,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
 - [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
+- [docs/release.md](docs/release.md): CI, the release zip, and why nothing in it is Apple's
 
 ## No Apple files in this repository
 
@@ -62,6 +66,8 @@ Requirements: Linux, Python 3 with `cryptography` (or the openssl CLI), an `arm-
 make toolchain                                          # check tools
 make fwprep IPSW=~/iPod2,1_4.2.1_8C148_Restore.ipsw      # decrypt kernel, device tree, rootfs -> build/staging
 scripts/build-hfsplus.sh                                # HFS+ image editor (xpwn) for the rootfs recipe
+scripts/build-ios-toolchain.sh                          # armv6 iOS Mach-O toolchain (ld64/cctools-port, ldid), once
+make userland                                           # our iOS programs -> build/rootfs-add/
 make sd                                                 # SD card tree -> build/sd/
 make test                                               # offline unit tests
 ```
@@ -73,7 +79,8 @@ Optional:
 ```sh
 make qemu      # build QEMU with the nintendo3ds machine (~10 min)
 make emu       # boot build/sd.img in it; prints sd:/ios3ds/log.txt, saves a screenshot
-scripts/build-ios-toolchain.sh   # armv6 iOS Mach-O toolchain (ld64/cctools-port, ldid) for userland tools
+make launcher  # sd:/3ds/ios3ds.3dsx (needs devkitARM + libctru); make sd picks it up
+make release VERSION=v0.1   # the release zip (docs/release.md); CI does this for tags v*
 ```
 
 ## Try it on a console (SD only, nothing touches NAND or FIRM)

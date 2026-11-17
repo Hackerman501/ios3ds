@@ -1,0 +1,149 @@
+# Build everything that is our own code, run the tests, and package the
+# release zip (docs/release.md). Nothing Apple-derived is built or downloaded
+# here: kernel, device tree and rootfs come from the user's IPSW at install time.
+#
+#   firm      devkitARM container: ios3ds.firm, shim.bin + gpu.bin, ios3ds.3dsx
+#   userland  armv6 iOS toolchain (cached): our binaries for the iOS rootfs
+#   test      make test
+#   package   ios3ds-<version>.zip + an installer smoke test (install.py --check)
+#
+# release.yml calls this workflow for tags (v*) and manual releases.
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "release name (default: git describe)"
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  firm:
+    runs-on: ubuntu-24.04
+    container: devkitpro/devkitarm:20260610
+    steps:
+      - name: Host tools (python3, a host cc for the PICA mirror command lists)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3 gcc libc6-dev make git ca-certificates >/dev/null
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mark the checkout safe for git (container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: ios3ds.firm (ARM9 monitor + ARM11 stub)
+        run: make firm
+      - name: Kernel shim (shim.bin + gpu.bin)
+        run: make shim
+      - name: Homebrew Launcher app (ios3ds.3dsx)
+        run: make launcher
+      - name: Summary
+        run: |
+          cat build/boot/VERSION
+          ls -l build/boot/ios3ds.firm build/shim/shim.bin build/shim/gpu.bin build/launcher/ios3ds.3dsx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firm
+          if-no-files-found: error
+          path: |
+            build/boot/ios3ds.firm
+            build/boot/VERSION
+            build/shim/shim.bin
+            build/shim/gpu.bin
+            build/launcher/ios3ds.3dsx
+
+  userland:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host packages for the toolchain build
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm cmake ninja-build libssl-dev uuid-dev zlib1g-dev >/dev/null
+      - name: Restore the armv6 iOS toolchain
+        id: tc
+        uses: actions/cache@v4
+        with:
+          path: build/toolchain
+          key: ios-toolchain-${{ runner.os }}-ubuntu-24.04-${{ hashFiles('scripts/build-ios-toolchain.sh') }}
+      - name: Build the toolchain (cctools/ld64, ldid, compiler-rt; stub SDK from scripts/ios-sdk-symbols.json)
+        run: |
+          scripts/build-ios-toolchain.sh
+          # keep the cache small: the stages only check the installed files
+          rm -rf build/toolchain/src build/toolchain/*-build build/toolchain/test
+      - name: Our iOS binaries (make userland)
+        run: make userland
+      - name: Summary
+        run: |
+          find build/rootfs-add -type f -exec ls -l {} +
+          for f in $(find build/rootfs-add -type f); do build/toolchain/bin/arm-apple-darwin10-otool -hv "$f" | tail -1; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-add
+          if-no-files-found: error
+          path: build/rootfs-add/
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-cryptography >/dev/null
+      - name: make test
+        run: make test
+
+  package:
+    needs: [firm, userland, test]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: firm
+          path: build/
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs-add
+          path: build/rootfs-add/
+      - name: hfsplus (xpwn), static, for the installer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zlib1g-dev >/dev/null
+          scripts/build-hfsplus.sh --static
+      - name: Release zip
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [ -n "$VERSION" ] || VERSION="$(git describe --always --tags)"
+          python3 scripts/mkrelease.py --version "$VERSION"
+          echo "ZIP=$(ls build/release/*.zip)" >> "$GITHUB_ENV"
+      - name: Smoke test the installer from the zip (no IPSW on CI)
+        run: |
+          mkdir -p "$RUNNER_TEMP/unzip" && cd "$RUNNER_TEMP/unzip"
+          unzip -q "$GITHUB_WORKSPACE/$ZIP"
+          cd ios3ds-*/
+          python3 install.py --check
+          python3 install.py 2>&1 | grep -q 'give the path' && echo "usage message OK"
+          if find . -type f \( -name '*.ipsw' -o -name '*.hfs' -o -name '*.img3' -o -name 'kernel*' \
+                 -o -name 'devtree*' -o -name 'boot.cfg' -o -name 'keys-*' \) | grep .; then
+            echo "Apple-derived file names in the release"; exit 1
+          fi
+          cat prebuilt/MANIFEST.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          if-no-files-found: error
+          path: build/release/*.zip
