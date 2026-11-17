@@ -73,4 +73,5 @@ ios3ds-<version>/
 - Installer from an unpacked zip (with `--staging build/staging`, because no IPSW was on the test machine; the `fwprep` step is unchanged from `make fwprep`) vs. `make sd` from the same commit:
   - `kernel.bin`, `devtree.bin`, `boot.cfg`, `shim.bin`, `gpu.bin`, `fakeio.bin`, both `ios3ds.firm`, `ios3ds.3dsx`: byte-identical;
   - `rootfs.hfs`: 95 bytes differ, all HFS+ dates. 19,291 catalog entries have identical modes/owners/sizes, and 13,560 files have identical data.
-- The installer-built card booted to the SpringBoard home screen in QEMU (`emu/run.py --sd`).
+- The installer-built card (as a 2 GiB image, `mksd.build_image`) booted in QEMU (`emu/run.py --firm <card>/luma/payloads/ios3ds.firm --sd <img>`) to the SpringBoard home screen (screenshot at 240 s), with `gltest: PASS` and `[input] connected to SpringBoard's HID event system`.
+- Installing into an existing card tree keeps unrelated files and `log.txt`, saves a changed `boot.cfg` as `boot.cfg.old`, and refuses a card with a pending launcher swap (`ios3ds/luma.firm`). Without the static `hfsplus`, the installer compiles it from `src/xpwn-hfsplus`.
