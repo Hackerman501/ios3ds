@@ -1,0 +1,561 @@
+ios3ds m1-9867d28-20261117.1949  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0248 -> 0248
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+launcher swap: restoring Luma as sd:/boot.firm
+launcher swap: restored, next boot is Luma
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-9867d28-20261117.1949 ARM11 stub at 0x1ff9033c
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+running ARM11 instruction probes (boot.cfg probes=0 skips them)
+[a11] probes done
+Instruction probes (XNU uses these):
+ ee1f0f92 ok      -> 00000000
+ ee160f50 TRAPPED (slot 3 mode 1b)
+ ee1f0f1c ok      -> 0ffff009
+ ee100e10 ok      -> 15110005
+ eef00a10 ok      -> 410120b4
+ eef70a10 ok      -> 11111111
+ eef60a10 ok      -> 00000000
+ eef80a10 ok      -> 40000000
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 15088 bytes at 2081b000
+shim: 12984 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 15088
+[wifi] no 0:/ios3ds/wifi.cfg: networking off
+[audio] CODEC id 11 rev 16: DAC up, speaker, I2S1_CNT e820
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+AppleS5L8720XIO::start: chip-revision: A0
+IOSurfaceRoot::installMemoryRegions()
+AppleARMPL192VIC::start: _vicBaseAddress = 0xc38ab000
+AppleS5L8900XGPIOIC::start: gpioBaseAddress: 0xc38ad000  gpioicBaseAddress: 0xc38ae000
+AppleS5L8720XPowerController::start: _pcBaseAddress: 0xc38b5000
+AppleARMPerformanceController::traceBufferCreate: _pcTraceBuffer: 0xca8ea000  bufferSize: 0x00004000
+AppleS5L8720XClockController::start: _ccBaseAddress: 0xc38b6000 _ccBusBaseAddress: 0xc38bd000
+AppleS5L8720XClockController::start: pcVoltageStateCount: 2
+	Voltage State 0 : .vsPerformanceLimit: 2 .vsDeviceConstraint: e00f7fff fd7fef07
+	Voltage State 1 : .vsPerformanceLimit: 1 .vsDeviceConstraint: e01fffff ffffff07
+AppleS5L8720XClockController::start: pcPerformanceStateCount: 4
+	Performance State 0 : .psPerformanceDivider: 1 .psVoltageRequired: 1 .psDeviceConstraint: e01fffff ffffff07
+	Performance State 1 : .psPerformanceDivider: 2 .psVoltageRequired: 0 .psDeviceConstraint: e01fffff fafcff07
+	Performance State 2 : .psPerformanceDivider: 5 .psVoltageRequired: 0 .psDeviceConstraint: a01f7fff fafcff07
+	Performance State 3 : .psPerformanceDivider: 11 .psVoltageRequired: 0 .psDeviceConstraint: 80177fff fa7cef07
+AppleS5L8720XClockController: Dynamic Performance State Management Enabled with 2 voltage and 4 perfomance states
+AppleARMPL080DMAC::start: dmac0: _dmacBaseAddress: 0xc38be000
+AppleM2CLCD, fMapper: 0
+AppleM2CLCD (0x80c05000)
+AppleS5L8900XI2CController::start: i2c0 _i2cBaseAddress: 0xc38cd000
+AppleS5L8900XTimer::start: _timerBaseAddress: 0xc38ce000
+AppleS5L8900XWatchDogTimer::start: _wdtBaseAddress: 0xc38d5000
+AppleARMWatchDogTimer installing handlePEHaltRestart handler
+AppleS5L8900XEdgeIC::start: _edgeicBaseAddress: 0xc38d6000
+AppleS5L8900XI2SController::start: i2s0 i2sBaseAddress: 0xc98e5000 i2sVersion: 0
+virtual bool AppleM2CLCD::start_hardware(IOService*): Couldn't allocate AppleARMFunction for function-lcd_enable
+AppleARMPL080DMAC::_initDMAChannel: index: 5, bufPA: 0x20c21000, bufLA: 0xc98e6000
+AppleARMPL080DMAC::_initDMAChannel: index: 4, bufPA: 0x20c22000, bufLA: 0xca8ee000
+AppleARMPL080DMAC::_initDMAChannel: index: 3, bufPA: 0x20c24000, bufLA: 0xca905000
+AppleS5L8900XSerial: Identified Serial Port on ARM Device=uart0 at 0x1ffb9000(0xca906000)
+IOSurface: buffer allocation size is zero
+AppleCS42L58Audio::start: 0x80c26f00, audio0 _wmIICNub: 0x807d3500, _wmIISNub: 0x80c23f80
+ios3ds-audio: iic r dev=3500 reg=1 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=0 len=1 val=99
+ios3ds-audio: iic w dev=3500 reg=33 len=1 val=fd
+ios3ds-audio: iic w dev=3500 reg=32 len=1 val=27
+ios3ds-audio: iic w dev=3500 reg=0 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=3500 reg=4 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=4 len=1 val=20
+ios3ds-audio: iic r dev=3500 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=3500 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=3500 reg=5 len=1 val=cb
+ios3ds-audio: iic r dev=3500 reg=7 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=7 len=1 val=c
+ios3ds-audio: iic r dev=3500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=f len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=f len=1 val=90
+ios3ds-audio: iic r dev=3500 reg=b len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=b len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=c len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=c len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=1a len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=1b len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=1b len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=1d len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=1d len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=aa
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=b len=1 val=3d
+ios3ds-audio: iic w dev=3500 reg=c len=1 val=3d
+ios3ds-audio: iic w dev=3500 reg=d len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=e len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=a len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=a len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=3500 reg=5 len=1 val=cb
+ios3ds-audio: iic w dev=3500 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=3500 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=3500 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=3500 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=3500 reg=2 len=1 val=c6
+ios3ds-audio: iic r dev=3500 reg=5 len=1 val=b
+ios3ds-audio: iic w dev=3500 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=3500 reg=f len=1 val=90
+ios3ds-audio: iic w dev=3500 reg=f len=1 val=90
+ios3ds-audio: iic w dev=3500 reg=18 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=19 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=ff
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer
+[monitor] screen mode: both (X = next)
+AppleARMPE::getGMTTimeOfDay can not provide time of day RTC did not show up
+BSD root: md0, major 2, minor 0
+com.apple.AppleFSCompressionTypeZlib kmod start
+virtual bool AppleMobileFileIntegrity::start(IOService*): built Nov 16 2010 22:21:11
+L2TP domain init
+L2TP domain init complete
+PPTP domain init
+com.apple.AppleFSCompressionTypeZlib load succeeded
+[hb] t=71s quiet 10s | abs 64202 dec 13654 timer 6641 irq 8617 vbl 1976 | md0 244 req 0 err
+[hb]  pc k80840be4 k80068010 k80840be4 k80840be4 k80840be4 k8005fee8 k8007d6aet k8007d384t
+[hb] t=81s quiet 20s | abs 67264 dec 13971 timer 6869 irq 8981 vbl 2111 | md0 436 req 0 err
+[hb]  pc k80068010 k80840be4 k80840be4 k80840be4 k80840be4 k8005e900t k801a5e4et k801a514et
+[hb] t=92s quiet 31s | abs 70321 dec 14294 timer 7096 irq 9343 vbl 2246 | md0 628 req 0 err
+[hb]  pc k80840be4 k80840be4 k80068010 k80840be4 k80840be4 k80068010 k80840be4 k80068010
+[hb] t=102s quiet 41s | abs 73310 dec 14605 timer 7318 irq 9698 vbl 2380 | md0 820 req 0 err
+[hb]  pc k80182e24t k801a5950t k80068010 k80840be4 k80840be4 k80068010 k80840be4 k8005e7cet
+[hb] t=112s quiet 51s | abs 76272 dec 14920 timer 7544 irq 10056 vbl 2511 | md0 1012 req 0 err
+[hb]  pc k80840be4 k80840be4 k80840be4 k80053618t k80028314t k80840be4 k80840be4 k80840be4
+com.apple.launchd 1	com.apple.launchd 1	*** launchd[1] has started up. ***
+Bug: launchctl.c:3599 (24307):17: ioctl(s6, SIOCAIFADDR_IN6, &ifra6) != -1
+Bug: launchctl.c:3805 (24307):2: sysctl(nbmib, 2, &nb, &nbsz, NULL, 0) == 0
+Running fsck on the boot volume...
+GetMasterBlock: Error 16 opening /dev/md0
+/dev/md0 on / (hfs, local, noatime)
+launchctl: Couldn't stat("/etc/mach_init.d"): No such file or directory
+[hb] t=147s quiet 10s | abs 102333 dec 19551 timer 9990 irq 13149 vbl 3159 | md0 1535 req 0 err
+[hb]  pc k8005442at k800497b4t k801856a8 u2fe2223c k8005e1dat k801a5480t k80840be4 k80840be4
+[hb] t=157s quiet 20s | abs 106788 dec 19995 timer 10344 irq 13625 vbl 3281 | md0 1718 req 0 err
+[hb]  pc k80840be4 k80068010 k80840be4 k80068010 k80840be4 k80840be4 u32ca0090 u30189894
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[smp 1] begin nproc=19 src=sysctl
+[smp 1] pid=21 amfid t=0/3 WAIT/swap susp=0 cpu=25 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe58 A sys=mach_msg(opt=0x3000002,rcv=0x1603,to=0) bt=0x32d32630,0x00001e9c,0x00001bc0
+[smp 1] pid=21 amfid t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=21 amfid t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=20 notifyd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 1] pid=20 notifyd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[wifid] waiting for the ARM9 network backend (state 0)
+AMFI: Invalid signature but permitting execution
+[smp 1] pid=19 CrashHousekeepin t=0/1 RUN susp=0 cpu=71 pc=0x32ca00b4 lr=0x30191274 sp=0x2fdfef48 A bt=0x30181560,0x30181424,0x30181b08,0x301944c4,0x301813d8,0x2fe06973,0x2fe06c89,0x2fe07837,0x32c9fb94,0x3018137c,0x2fe0c2c5,0x2fe0c455,0x2fe0a035,0x2fe09fd5,0x2fe09fd5,0x2fe0a48f
+[smp 1] pid=18 DumpPanic t=0/1 RUN/swap susp=0 cpu=0 pc=0x30182360 lr=0x30182254 sp=0x2fdfef18 A bt=0x3018a648,0x3018d110,0x3018cf10,0x3018cf00,0x3018264c,0x301825f0,0x35e690fb,0x35e65d1d,0x2fe0c3e1,0x2fe0c44d,0x2fe0a035,0x2fe09fd5,0x2fe09fd5,0x2fe0a48f,0x2fe01f35,0x2fe0652f
+[smp 1] pid=17 SpringBoard t=0/1 RUN/swap susp=0 cpu=36 pc=0x2fe15394 lr=0x2fe0bb15 sp=0x2fdff38c T bt=0x2fe16b3d,0x2fe09c5f,0x2fe0b62f,0x2fe05efd,0x2fe06491,0x2fe0128d,0x2fe01060
+[smp 1] pid=16 configd t=0/4 RUN/swap susp=0 cpu=22 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff02c A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 1] pid=16 configd t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=16 configd t=2/4 RUN susp=0 cpu=34 pc=0x32ca42d8 lr=0x35e7b615 sp=0x2ffe8974 A sys=read(0x2a7,0x0,0x2a7,0x0) bt=0x35e7a5ef,0x35e77f2b,0x35e77bfb,0x35e73b09,0x35e8fb2d,0x35ed982f,0x000048c8,0x32d27b4c,0x32d197ac
+[smp 1] pid=16 configd t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=15 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=1 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 1] pid=14 mDNSResponder t=0/2 WAIT/swap susp=0 cpu=4 pc=0x32d2654c lr=0x32c9f19f sp=0x2fe23b10 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00028597,0x0002839d,0x00027183,0x000499a8
+[smp 1] pid=14 mDNSResponder t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff09e40 A sys=kevent(0x7,0x0,0x0,0x2ff09f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[gl] context created (software rasterizer) (pid 9) from 0x34ff7438 0x34ff70d4 0x34ff7128 0x5648 0x7590
+gltest: EAGLContext 0x10d170
+gltest: offscreen 320x480 framebuffer status 0x8cd5
+[smp 1] pid=13 mediaserverd t=0/1 RUN susp=0 cpu=22 pc=0x301943f4 lr=0x2fe085c9 sp=0x2fdfea5c A bt=0x301813d8,0x2fe06973,0x2fe06c89,0x2fe07837,0x32c9fb94,0x3018137c,0x2fe0c2c5,0x2fe0c455,0x2fe0a035,0x2fe09fd5,0x2fe09fd5,0x2fe09fd5,0x2fe0a48f,0x2fe01f35,0x2fe0652f,0x2fe0128d
+[smp 1] pid=12 MobileStorageMou ERR task_for_pid=5
+[smp 1] pid=11 mtmergeprops t=0/1 RUN/swap susp=0 cpu=67 pc=0x33fba234 lr=0x33fbd99b sp=0x2fdff57c T bt=0x00001adc,0x00001ccc,0x000017d0
+[smp 1] pid=10 syslogd t=0/4 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 1] pid=10 syslogd t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000002,rcv=0x1103,to=0) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 1] pid=10 syslogd t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 1] pid=10 syslogd t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 1] pid=9 ios3ds-gltest t=0/2 RUN susp=0 cpu=100 pc=0x00066364 lr=0x00000000 sp=0x2fdffd24 A bt=0x0005b08c,0x00006dc4,0x000058a0,0x00007590
+[smp 1] pid=9 ios3ds-gltest t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=8 ios3ds-input t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffb48 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00006d00,0x00007af0
+[smp 1] pid=8 ios3ds-input t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=6 ios3ds-wifid t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffe68 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32ce31ef,0x00007418,0x00007c38
+[smp 1] pid=2 launchctl t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x0000ab44 sp=0x2fdfeb24 A sys=kevent(0x3,0x0,0x0,0x2fdffca8) bt=0x000025c0,0x00001cfc
+[smp 1] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x62e7,id=137100,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 1] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 1] pid=1 launchd t=2/3 RUN susp=0 cpu=48 pc=0x32cfdafc lr=0x0000a408 sp=0x2ff67fb4 A sys=bsd36(0x0,0x0,0x54485244,0x54485244) bt=0x32d27b4c,0x32d197ac
+[smp 1] end
+gltest: offscreen frame took 10064 ms
+gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds software rasterizer"
+gltest: clear colour                 (160,470) =  26  31  64 ok
+gltest: triangle centroid (grey)     ( 85,347) =  83  85  86 ok
+gltest: triangle red corner          ( 24,302) = 243   6   4 ok
+gltest: texture: white cell          (174,304) = 255 255 255 ok
+gltest: texture: orange cell         (182,304) = 255 128  32 ok
+gltest: drawtex: white cell          ( 11,203) = 255 255 255 ok
+gltest: blend over background        (305,260) = 139  15  32 ok
+gltest: scissored clear              (150,265) = 255 217   0 ok
+gltest: outside scissor              (150,285) =  26  31  64 ok
+gltest: cube centre is drawn         (160,105) = 255  95  95 ok
+gltest: glGetError = 0x0 ok
+gltest: PASS (0 failed)
+[hb] t=204s quiet 10s | abs 121458 dec 21616 timer 11686 irq 15374 vbl 3688 | md0 2153 req 0 err
+[hb]  pc k801a56a2t k801a55b6t k801a601et u3582ca40 k80068010 u32c9f822t k801562dat u32ca0642t
+[hb] t=214s quiet 20s | abs 127363 dec 22105 timer 12094 irq 15917 vbl 3823 | md0 2321 req 0 err
+[hb]  pc k800631a0 k80062d40 k8002932et k80185778 u32d4d898 k8018569c k8014551ct k801df226t
+systemShutdown false
+[hb] t=228s quiet 10s | abs 137010 dec 23271 timer 13079 irq 17135 vbl 4055 | md0 2480 req 0 err
+[hb]  pc k80840be4 k80840be4 k801a5060t k80068010 k80840be4 k80840be4 u32dab854 k801a5328t
+[hb] t=239s quiet 21s | abs 143450 dec 24176 timer 13828 irq 18075 vbl 4247 | md0 2606 req 0 err
+[hb]  pc u35e7cd80t u35e6b630t u32c9dd38 k80840be4 k80068010 k80840be4 k80840be4 k80068010
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=0
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=44
+booted from secure root: give device keybag access to everyone
+[smp 2] begin nproc=15 src=sysctl
+[smp 2] pid=26 securityd t=0/1 RUN/swap susp=0 cpu=229 pc=0x335a40c4 lr=0x335baee0 sp=0x2fdfe710 A bt=0x335bbacc,0x0000e0d8,0x0000f154,0x0000f814,0x32ca2ab8,0x0000ef58,0x000021e0,0x00002b30,0x0000299c,0x00001b10,0x35e9a5cb,0x35e9a589,0x35e8c835,0x35e8c50b,0x35e9ce71,0x00001cc4
+[smp 2] pid=25 profiled t=0/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfeee0 A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x000027d3,0x00002618
+[smp 2] pid=25 profiled t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=25 profiled t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff66dd4 A sys=mach_msg(opt=0x7000006,rcv=0x3503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35665eb0,0x35657534,0x3488759d,0x3488cdeb,0x3488d8ab,0x3488c9d7,0x34892d25,0x32da0978,0x3488fefb,0x3489038f,0x0001fb31,0x0000f105
+[smp 2] pid=25 profiled t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x2ffe9fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=23 profileInstallat t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffb1c A sys=mach_msg(opt=0x3,snd=0x2707,id=79001,rcv=0xe03,to=0) bt=0x35861669,0x3586043b,0x3585ffab,0x3585f0e9,0x3585f22d,0x348b338f,0x348b3207,0x00001b67,0x000018f8
+[smp 2] pid=23 profileInstallat t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=20 notifyd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 2] pid=20 notifyd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 2] pid=17 SpringBoard t=0/3 RUN susp=0 cpu=246 pc=0x3397bd38 lr=0x33862ddc sp=0x2fdffb04 A bt=0x0000399f,0x00003764
+[smp 2] pid=17 SpringBoard t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=17 SpringBoard t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=0/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff02c A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 2] pid=16 configd t=1/11 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=16 configd t=2/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8d9c A sys=mach_msg(opt=0x7000006,rcv=0x2503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=3/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004211a0 A sys=mach_msg(opt=0x7000006,rcv=0x3203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ce4c8,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=4/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004a31a4 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000e3643,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=5/11 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x12da80,0x12da70,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=6/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x00528d50 A sys=mach_msg(opt=0x7000006,rcv=0x7303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0036c910,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=7/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005ab1bc A sys=mach_msg(opt=0x7000006,rcv=0x7d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00086430,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=8/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0062d1c8 A sys=mach_msg(opt=0x7000006,rcv=0x9403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000b756c,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=9/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006af178 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 configd t=10/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007311d8 A sys=mach_msg(opt=0x7000006,rcv=0xc903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ee148,0x32d27b4c,0x32d197ac
+[smp 2] pid=15 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 2] pid=14 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe22f78 A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0002736d,0x000499a8
+[smp 2] pid=14 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff09e40 A sys=kevent(0x7,0x0,0x0,0x2ff09f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=14 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00031c7f sp=0x001794c0 A sys=kevent(0x4,0x0,0x0,0x179f84) bt=0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=0/11 RUN/swap susp=0 cpu=79 pc=0x010372e8 lr=0x0105eba8 sp=0x2fdfed34 A bt=0x0105eddc,0x01059dd4,0x0105b90c,0x0105b9dc,0x010607ac,0x010307d8,0x0103eb48,0x0103f15c,0x0103f488,0x334229e8,0x33418844,0x334182f0,0x37426524,0x32ca2ab8,0x373e0748,0x373e05bc
+[smp 2] pid=13 mediaserverd t=1/11 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=13 mediaserverd t=2/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=3/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670b4 A sys=mach_msg(opt=0x7000006,rcv=0x3707,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=4/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800a8 A sys=mach_msg(opt=0x7000006,rcv=0x3d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=5/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=6/11 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x00584d6c A sys=semwait_signal(0x4807,0x470b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=7/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x6f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=8/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006f6064 A sys=mach_msg(opt=0x7000006,rcv=0x7503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=9/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0133407c A sys=mach_msg(opt=0x7000006,rcv=0x7c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 mediaserverd t=10/11 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x013b6fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=10 syslogd t=0/4 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 2] pid=10 syslogd t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000002,rcv=0x1103,to=0) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 2] pid=10 syslogd t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 2] pid=10 syslogd t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 2] pid=8 ios3ds-input t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffb48 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00006d00,0x00007af0
+[smp 2] pid=8 ios3ds-input t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=6 ios3ds-wifid t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffe68 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32ce31ef,0x00007418,0x00007c38
+[smp 2] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x15e3,id=504,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 2] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 2] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=20 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 2] end
+Couldn't connect to migrator port (1102).
+Couldn't open shared capabilities memory GSCapabilities (No such file or directory)
+[hb] t=299s quiet 10s | abs 156347 dec 25650 timer 15022 irq 19639 vbl 4617 | md0 2975 req 0 err
+[hb]  pc k80840be4 u35e6ff80 k80840be4 k801687d8t u32c9ffb2t k80156934t k80840be4 k80840be4
+[input] connected to SpringBoard's HID event system
+[input] mailbox up: touch ok, flipx=1 flipy=0 stretch=0
+[hb] t=322s quiet 11s | abs 168685 dec 27159 timer 16297 irq 21203 vbl 4906 | md0 3342 req 0 err
+[hb]  pc k8008f310t k80019afat u32c9dc1c u35e6d976t u33fb64cat u35e6ab00 u32ca07eet u35e6f3bct
+[hb] t=333s quiet 22s | abs 176598 dec 28248 timer 17240 irq 22320 vbl 5080 | md0 3449 req 0 err
+[hb]  pc u32d2db84t u30184988 u32ca1cc0 u35e94036t u32da4ebc u3018aafc k801a5a40t u35e69f7c
+[smp 3] begin nproc=15 src=sysctl
+[smp 3] pid=29 lsd t=0/2 RUN susp=0 cpu=310 pc=0x32ca42d8 lr=0x359285ac sp=0x2fdfe8ac A sys=read(0x200,0x0,0x200,0x3592859c) bt=0x35928dbc,0x35914790,0x35908ea0,0x00001e60,0x359291d8,0x3591ce38,0x3591fcc8,0x3591f160,0x35929a74,0x35ea2e37,0x35e9a5cb,0x35e9a589,0x35e8c835,0x35e8c50b,0x35e9ce71,0x359299b4
+[smp 3] pid=29 lsd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=28 installd t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff014 A sys=mach_msg(opt=0x7000006,rcv=0x1803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00011fe0,0x00002e80,0x00002774
+[smp 3] pid=28 installd t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=28 installd t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff67398 A sys=mach_msg(opt=0x3,snd=0x2303,id=14007,rcv=0x2203,to=0) bt=0x3591e7f0,0x35920f54,0x35913b80,0x35928d90,0x35914790,0x35908ea0,0x0000c1c0,0x32d9f270,0x32d9f6dc,0x32d9fb68,0x32d9fd58,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=25 profiled t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfeee0 A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x000027d3,0x00002618
+[smp 3] pid=25 profiled t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=20 notifyd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 3] pid=20 notifyd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=0/9 RUN/swap susp=0 cpu=492 pc=0x30b2b7d4 lr=0x30b46c9c sp=0x2fdff454 A bt=0x30b46cbc,0x30b46ccc,0x30b47030,0x30b45ecc,0x30b56ea4,0x30b56424,0x3390505c,0x3385dbcc,0x3385da44,0x3385d918,0x33903e68,0x33824678,0x33a27894,0x000ce951,0x000cfedb,0x000cde0b
+[smp 3] pid=17 SpringBoard t=1/9 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=17 SpringBoard t=2/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=3/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff66f50 A sys=mach_msg(opt=0x7000006,rcv=0x3e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x33b731b4,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=4/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006c8168 A sys=mach_msg(opt=0x7000006,rcv=0x4803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=5/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x032c418c A sys=mach_msg(opt=0x7000006,rcv=0x7803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x337ff11c,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=6/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x033461b4 A sys=mach_msg(opt=0x7000006,rcv=0x8603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x000570ef,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=7/9 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x033c8dc4 A sys=semwait_signal(0x2603,0x2703,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=17 SpringBoard t=8/9 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03449f74 A sys=mach_msg(opt=0x7000006,rcv=0xab03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000856d9,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=0/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff02c A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 3] pid=16 configd t=1/11 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=16 configd t=2/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8d9c A sys=mach_msg(opt=0x7000006,rcv=0x2503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=3/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004211a0 A sys=mach_msg(opt=0x7000006,rcv=0x3203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ce4c8,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=4/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004a31a4 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000e3643,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=5/11 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x12da80,0x12da70,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=6/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x00528d50 A sys=mach_msg(opt=0x7000006,rcv=0x7303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0036c910,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=7/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005ab1bc A sys=mach_msg(opt=0x7000006,rcv=0x7d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00086430,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=8/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0062d1c8 A sys=mach_msg(opt=0x7000006,rcv=0x9403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000b756c,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=9/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006af178 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 configd t=10/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007311d8 A sys=mach_msg(opt=0x7000006,rcv=0xc903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ee148,0x32d27b4c,0x32d197ac
+[smp 3] pid=15 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 3] pid=14 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe22f78 A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0002736d,0x000499a8
+[smp 3] pid=14 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff09e40 A sys=kevent(0x7,0x0,0x0,0x2ff09f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=14 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00031c7f sp=0x001794c0 A sys=kevent(0x4,0x0,0x0,0x179f84) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=0/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef30 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003100,0x00002a3c
+[smp 3] pid=13 mediaserverd t=1/19 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=13 mediaserverd t=2/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=3/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670b4 A sys=mach_msg(opt=0x7000006,rcv=0x3707,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=4/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800a8 A sys=mach_msg(opt=0x7000006,rcv=0x3d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=5/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=6/19 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x00584d6c A sys=semwait_signal(0x4807,0x470b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=7/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x6f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=8/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006f6064 A sys=mach_msg(opt=0x7000006,rcv=0x7503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=9/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0133407c A sys=mach_msg(opt=0x7000006,rcv=0x7c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=10/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x013b60ac A sys=mach_msg(opt=0x7000006,rcv=0x9103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x342ea460,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=11/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014380b4 A sys=mach_msg(opt=0x7000006,rcv=0x9703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34337c0c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=12/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014ba0b4 A sys=mach_msg(opt=0x7000006,rcv=0x9d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34362038,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=13/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0153c0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34342900,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=14/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x015be0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34357b38,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=15/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016400b4 A sys=mach_msg(opt=0x7000006,rcv=0xaf03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x3436d79c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=16/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016c20b4 A sys=mach_msg(opt=0x7000006,rcv=0xb503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34368ba4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=17/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01744094 A sys=mach_msg(opt=0x7000006,rcv=0xbb03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x32e1b650,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 mediaserverd t=18/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x018480f4 A sys=mach_msg(opt=0x7000006,rcv=0xc303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x0000a440,0x0000a7c8,0x0000a7e8,0x0000fc4c,0x32d27b4c,0x32d197ac
+[smp 3] pid=10 syslogd t=0/4 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 3] pid=10 syslogd t=1/4 WAIT/swap susp=0 cpu=4 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000002,rcv=0x1103,to=0) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 3] pid=10 syslogd t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 3] pid=10 syslogd t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 3] pid=8 ios3ds-input t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffbf4 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00007140,0x00007af0
+[smp 3] pid=8 ios3ds-input t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=6 ios3ds-wifid t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffe68 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32ce31ef,0x00007418,0x00007c38
+[smp 3] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000002,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 3] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 3] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=5 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 3] end
+[hb] t=397s quiet 11s | abs 196920 dec 30789 timer 19424 irq 24940 vbl 5516 | md0 3706 req 0 err
+[hb]  pc k8011835et u32ca1b98 u35e6b632t u35e6b9d2t u35e74c1et u32ca1cc0 u35e67e58t u35e6b8fat
+[hb] t=407s quiet 21s | abs 205153 dec 31771 timer 20243 irq 25945 vbl 5702 | md0 3820 req 0 err
+[hb]  pc k80840be4 k80068010 k80840be4 k8005e7e0t k80068010 k8004bc00t k8003843ct u3037e608
+[hb] t=418s quiet 32s | abs 213181 dec 32828 timer 21072 irq 26945 vbl 5873 | md0 3937 req 0 err
+[hb]  pc u32ca0f56t u32ca6f30t u32d2dba2t u2fe06e24t k80041fa4t k80130a2at u2fe22aa8 u32c9e480t
+launchd[32] Builtin profile: MobileMail (sandbox)
+[input] down 58,326
+[input] up 58,328
+[hb] t=432s quiet 10s | abs 224945 dec 34536 timer 22500 irq 28645 vbl 6145 | md0 4077 req 0 err
+[hb]  pc k800534e8t u35e8b9e6t k80063004 k80068010 k80062e60 u35e7ea54t u35f26f84 k8003a740t
+[smp 4] begin nproc=17 src=sysctl
+[smp 4] pid=33 Preferences t=0/4 RUN/swap susp=0 cpu=274 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfd084 A sys=mach_msg(opt=0x3000003,rcv=0xe03,to=0) bt=0x32ca31b8,0x32ca2fac,0x32ca2e94,0x33311530,0x33312828,0x340fb544,0x340fa6ec,0x340efa78,0x35ea3f79,0x36234cf0,0x362349b0,0x3622864c,0x338a80a0,0x338a7dcc,0x338a5b84,0x338a4838
+[smp 4] pid=33 Preferences t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=33 Preferences t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004c8168 A sys=mach_msg(opt=0x7000006,rcv=0x2303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 4] pid=33 Preferences t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 4] pid=32 MobileMail t=0/6 WAIT/swap susp=0 cpu=33 pc=0x32c9d40c lr=0x32cd3450 sp=0x2fdfe984 A sys=semaphore_wait_signal(sem=0x2b03,0x2c03,0x3e1b5f98) bt=0x32c9f4f4,0x3792607b,0x37925e9f,0x37925d43,0x37924b29,0x379251cf,0x35ea9a8b,0x35ed2099,0x37924425,0x3792413d,0x37924083,0x37925187,0x3792360b,0x3792355d,0x379814c5,0x379829fd
+[smp 4] pid=32 MobileMail t=1/6 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=32 MobileMail t=2/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005c8168 A sys=mach_msg(opt=0x7000006,rcv=0x2903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 4] pid=32 MobileMail t=3/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f6c A sys=mach_msg(opt=0x7000006,rcv=0x4b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x0000322c,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 4] pid=32 MobileMail t=4/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x001e7f6c A sys=mach_msg(opt=0x7000006,rcv=0x5103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000035e8,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 4] pid=32 MobileMail t=5/6 RUN susp=0 cpu=486 pc=0x32cc9c6c lr=0x335a071c sp=0x007dc3f0 A sys=bsd95(0x0,0x0,0x0,0x2) bt=0x335a074c,0x3359f13c,0x335d2f0c,0x335d31a0,0x335d3bfc,0x335f2210,0x33591fbc,0x3359222c,0x379267b9,0x37926141,0x37925eb7,0x379631fb,0x3796c39f,0x35eb1704,0x35eb15dd,0x37922943
+[smp 4] pid=31 SCHelper t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff014 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00001ddc,0x00001ba4
+[smp 4] pid=31 SCHelper t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=29 lsd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff068 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x359299b4,0x00001d00,0x00001ce8
+[smp 4] pid=29 lsd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=28 installd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff014 A sys=mach_msg(opt=0x7000006,rcv=0x1803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00011fe0,0x00002e80,0x00002774
+[smp 4] pid=28 installd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=20 notifyd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 4] pid=20 notifyd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=0/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfecdc A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c,0x33862558,0x00004029,0x00003764
+[smp 4] pid=17 SpringBoard t=1/13 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=17 SpringBoard t=2/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=3/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff66f50 A sys=mach_msg(opt=0x7000006,rcv=0x3e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x33b731b4,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=4/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006c8168 A sys=mach_msg(opt=0x7000006,rcv=0x4803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=5/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x032c418c A sys=mach_msg(opt=0x7000006,rcv=0x7803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x337ff11c,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=6/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x033461b4 A sys=mach_msg(opt=0x7000006,rcv=0x8603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x000570ef,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=7/13 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x033c8dc4 A sys=semwait_signal(0x2603,0x2703,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=8/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03449f74 A sys=mach_msg(opt=0x7000006,rcv=0xab03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000856d9,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=9/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0398000c A sys=mach_msg(opt=0x7000006,rcv=0xf603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x307df054,0x33fc2551,0x33fc22af,0x33fd6b93,0x32d9f270,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=17 SpringBoard t=10/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03a02128 A sys=mach_msg(opt=0x7000006,rcv=0x11103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309fa829,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=11/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03a840f8 A sys=mach_msg(opt=0x7000006,rcv=0x11703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309f9aab,0x32d27b4c,0x32d197ac
+[smp 4] pid=17 SpringBoard t=12/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03b05f6c A sys=mach_msg(opt=0x7000006,rcv=0x11e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x309fb595,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=0/11 WAIT/swap susp=0 cpu=24 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff02c A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 4] pid=16 configd t=1/11 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=16 configd t=2/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8d9c A sys=mach_msg(opt=0x7000006,rcv=0x2503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=3/11 WAIT/swap susp=0 cpu=4 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004211a0 A sys=mach_msg(opt=0x7000006,rcv=0x3203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ce4c8,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=4/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004a31a4 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000e3643,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=5/11 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x12da80,0x12da70,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=6/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x00528d50 A sys=mach_msg(opt=0x7000006,rcv=0x7303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0036c910,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=7/11 WAIT/swap susp=0 cpu=30 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005ab1bc A sys=mach_msg(opt=0x7000006,rcv=0x7d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00086430,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=8/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0062d1c8 A sys=mach_msg(opt=0x7000006,rcv=0x9403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000b756c,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=9/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006af178 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 4] pid=16 configd t=10/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007311d8 A sys=mach_msg(opt=0x7000006,rcv=0xc903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ee148,0x32d27b4c,0x32d197ac
+[smp 4] pid=15 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 4] pid=14 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe22f78 A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0002736d,0x000499a8
+[smp 4] pid=14 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff09e40 A sys=kevent(0x7,0x0,0x0,0x2ff09f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=14 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00031c7f sp=0x001794c0 A sys=kevent(0x4,0x0,0x0,0x179f84) bt=0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=0/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef30 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003100,0x00002a3c
+[smp 4] pid=13 mediaserverd t=1/19 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=13 mediaserverd t=2/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=3/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670b4 A sys=mach_msg(opt=0x7000006,rcv=0x3707,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=4/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800a8 A sys=mach_msg(opt=0x7000006,rcv=0x3d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=5/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=6/19 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x00584d6c A sys=semwait_signal(0x4807,0x470b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=7/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x6f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=8/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006f6064 A sys=mach_msg(opt=0x7000006,rcv=0x7503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=9/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0133407c A sys=mach_msg(opt=0x7000006,rcv=0x7c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=10/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x013b60ac A sys=mach_msg(opt=0x7000006,rcv=0x9103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x342ea460,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=11/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014380b4 A sys=mach_msg(opt=0x7000006,rcv=0x9703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34337c0c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=12/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014ba0b4 A sys=mach_msg(opt=0x7000006,rcv=0x9d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34362038,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=13/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0153c0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34342900,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=14/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x015be0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34357b38,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=15/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016400b4 A sys=mach_msg(opt=0x7000006,rcv=0xaf03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x3436d79c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=16/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016c20b4 A sys=mach_msg(opt=0x7000006,rcv=0xb503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34368ba4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=17/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01744094 A sys=mach_msg(opt=0x7000006,rcv=0xbb03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x32e1b650,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 4] pid=13 mediaserverd t=18/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x018480f4 A sys=mach_msg(opt=0x7000006,rcv=0xc303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x0000a440,0x0000a7c8,0x0000a7e8,0x0000fc4c,0x32d27b4c,0x32d197ac
+[smp 4] pid=10 syslogd t=0/4 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 4] pid=10 syslogd t=1/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000002,rcv=0x1103,to=0) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 4] pid=10 syslogd t=2/4 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 4] pid=10 syslogd t=3/4 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 4] pid=8 ios3ds-input t=0/2 WAIT/swap susp=0 cpu=2 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffbf4 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00007140,0x00007af0
+[smp 4] pid=8 ios3ds-input t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 4] pid=6 ios3ds-wifid t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffe68 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32ce31ef,0x00007418,0x00007c38
+[smp 4] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x6aab,id=137100,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 4] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 4] pid=1 launchd t=2/3 RUN susp=0 cpu=73 pc=0x32cfdafc lr=0x0000a408 sp=0x2ff67fb4 A sys=bsd36(0x0,0x0,0x54485244,0x54485244) bt=0x32d27b4c,0x32d197ac
+[smp 4] end
+[hb] t=507s quiet 11s | abs 265891 dec 42509 timer 26545 irq 33409 vbl 6864 | md0 4234 req 0 err
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] down 137,349
+[input] up 137,350
+[input] down 46,240
+[input] up 58,248
+[input] down 72,254
+[input] up 74,253
+[input] down 64,315
+[input] up 62,321
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=44
+ios3ds-audio: iic w dev=3500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=6 len=1 val=20
+ios3ds-audio: iic w dev=3580 reg=0 len=1 val=73
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=3500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=3500 reg=3 len=1 val=af
+AppleEmbeddedAudioDevice: could not start DMA: device is not ready
+[input] key ea down @3407
+[input] key ea up @3407
+[smp 5] begin nproc=14 src=sysctl
+[smp 5] pid=32 MobileMail t=0/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef24 A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c,0x33862558,0x00002d34,0x00002c9c
+[smp 5] pid=32 MobileMail t=1/6 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=32 MobileMail t=2/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005c8168 A sys=mach_msg(opt=0x7000006,rcv=0x2903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 5] pid=32 MobileMail t=3/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f6c A sys=mach_msg(opt=0x7000006,rcv=0x4b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x0000322c,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 5] pid=32 MobileMail t=4/6 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x001e7f6c A sys=mach_msg(opt=0x7000006,rcv=0x5103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000035e8,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 5] pid=32 MobileMail t=5/6 WAIT/swap susp=0 cpu=0 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 5] pid=29 lsd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff068 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x359299b4,0x00001d00,0x00001ce8
+[smp 5] pid=29 lsd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=20 notifyd t=0/2 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 5] pid=20 notifyd t=1/2 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=0/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfecdc A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c,0x33862558,0x00004029,0x00003764
+[smp 5] pid=17 SpringBoard t=1/13 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=17 SpringBoard t=2/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=3/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff66f50 A sys=mach_msg(opt=0x7000006,rcv=0x3e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x33b731b4,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=4/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006c8168 A sys=mach_msg(opt=0x7000006,rcv=0x4803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=5/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x032c418c A sys=mach_msg(opt=0x7000006,rcv=0x7803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x337ff11c,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=6/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x033461b4 A sys=mach_msg(opt=0x7000006,rcv=0x8603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x000570ef,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=7/13 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x033c8dc4 A sys=semwait_signal(0x2603,0x2703,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=8/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03449f74 A sys=mach_msg(opt=0x7000006,rcv=0xab03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000856d9,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=9/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0398000c A sys=mach_msg(opt=0x7000006,rcv=0xf603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x307df054,0x33fc2551,0x33fc22af,0x33fd6b93,0x32d9f270,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=17 SpringBoard t=10/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03a02128 A sys=mach_msg(opt=0x7000006,rcv=0x11103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309fa829,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=11/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03a840f8 A sys=mach_msg(opt=0x7000006,rcv=0x11703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309f9aab,0x32d27b4c,0x32d197ac
+[smp 5] pid=17 SpringBoard t=12/13 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03b05f6c A sys=mach_msg(opt=0x7000006,rcv=0x11e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x309fb595,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=0/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff02c A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 5] pid=16 configd t=1/11 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=16 configd t=2/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8d9c A sys=mach_msg(opt=0x7000006,rcv=0x2503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=3/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004211a0 A sys=mach_msg(opt=0x7000006,rcv=0x3203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ce4c8,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=4/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004a31a4 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000e3643,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=5/11 WAIT/swap susp=0 cpu=0 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x12da80,0x12da70,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=6/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x00528d50 A sys=mach_msg(opt=0x7000006,rcv=0x7303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0036c910,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=7/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005ab1bc A sys=mach_msg(opt=0x7000006,rcv=0x7d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00086430,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=8/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0062d1c8 A sys=mach_msg(opt=0x7000006,rcv=0x9403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000b756c,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=9/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006af178 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 5] pid=16 configd t=10/11 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007311d8 A sys=mach_msg(opt=0x7000006,rcv=0xc903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000ee148,0x32d27b4c,0x32d197ac
+[smp 5] pid=15 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 5] pid=14 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe22f78 A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0002736d,0x000499a8
+[smp 5] pid=14 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff09e40 A sys=kevent(0x7,0x0,0x0,0x2ff09f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=14 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x00031c7f sp=0x001794c0 A sys=kevent(0x4,0x0,0x0,0x179f84) bt=0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=0/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef30 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003100,0x00002a3c
+[smp 5] pid=13 mediaserverd t=1/19 WAIT/swap susp=0 cpu=0 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 5] pid=13 mediaserverd t=2/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=3/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670b4 A sys=mach_msg(opt=0x7000006,rcv=0x3707,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=4/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800a8 A sys=mach_msg(opt=0x7000006,rcv=0x3d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=5/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=6/19 WAIT/swap susp=0 cpu=0 pc=0x32d2654c lr=0x32cd2f78 sp=0x00584d6c A sys=semwait_signal(0x4807,0x470b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=7/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x6f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=8/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006f6064 A sys=mach_msg(opt=0x7000006,rcv=0x7503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=9/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0133407c A sys=mach_msg(opt=0x7000006,rcv=0x7c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=10/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x013b60ac A sys=mach_msg(opt=0x7000006,rcv=0x9103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x342ea460,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=11/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014380b4 A sys=mach_msg(opt=0x7000006,rcv=0x9703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34337c0c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=12/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x014ba0b4 A sys=mach_msg(opt=0x7000006,rcv=0x9d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34362038,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=13/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0153c0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34342900,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=14/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x015be0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34357b38,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=15/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016400b4 A sys=mach_msg(opt=0x7000006,rcv=0xaf03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x3436d79c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 5] pid=13 mediaserverd t=16/19 WAIT/swap susp=0 cpu=0 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x016c20b4 A sys=mac

@@ -12,6 +12,7 @@
  */
 #include "display.h"
 #include "util.h"
+#include "blksrv.h"
 
 #define SCR_W 400
 #define SCR_H 240
@@ -40,30 +41,40 @@ void display_init(u8 *top0, u8 *top1, u8 *bot0, u8 *bot1)
 
 void display_set_mode(int m) { mode = m; }
 
+/* Cost matters: the ARM11 kernel spins on every md0 request until this ARM9
+   serves it, so the copy (a) checks the block mailbox every few columns,
+   (b) reads each source pixel once as a word (it sits in VRAM), (c) uses
+   precomputed column offsets, and (d) fills the second framebuffer of a
+   pair with memcpy instead of re-reading the source. */
+#define POLL_EVERY 8
+
 /* bottom LCD (320x240): column c <- iOS row c*3/2, memory row rr (from the
    bottom) <- iOS column (3*rr-40)/2; 13 px black margins top and bottom */
 static void blit_bottom(const u8 *src, u32 w, u32 h, u32 stride)
 {
-    for (int b = 0; b < 2; b++) {
-        u8 *fb = bot_fb[b];
-        if (!fb) continue;
-        for (u32 c = 0; c < 320; c++) {
-            u32 iy = c * 3 / 2;
-            const u8 *row = src + (iy < h ? iy : h - 1) * stride;
-            u8 *col = fb + c * SCR_H * 3;
-            for (u32 rr = 0; rr < SCR_H; rr++) {
-                u32 t = rr * 3;
-                u8 *d = col + rr * 3;
-                if (t < 40 || (t - 40) / 2 >= w) {
-                    d[0] = d[1] = d[2] = 0;
-                    continue;
-                }
-                const u8 *p = row + (t - 40) / 2 * 4;
-                d[0] = p[0];
-                d[1] = p[1];
-                d[2] = p[2];
-            }
+    static short ix[SCR_H];
+    static u32 ix_w;
+    u8 *fb0 = bot_fb[0] ? bot_fb[0] : bot_fb[1], *fb1 = bot_fb[0] ? bot_fb[1] : NULL;
+    if (!fb0) return;
+    if (ix_w != w) {
+        for (u32 rr = 0; rr < SCR_H; rr++) {
+            u32 t = rr * 3;
+            ix[rr] = (t < 40 || (t - 40) / 2 >= w) ? -1 : (short)((t - 40) / 2);
         }
+        ix_w = w;
+    }
+    for (u32 c = 0; c < 320; c++) {
+        if (c % POLL_EVERY == 0) blksrv_poll();
+        u32 iy = c * 3 / 2;
+        const u32 *row = (const u32 *)(src + (iy < h ? iy : h - 1) * stride);
+        u8 *d = fb0 + c * SCR_H * 3;
+        for (u32 rr = 0; rr < SCR_H; rr++, d += 3) {
+            u32 v = ix[rr] < 0 ? 0 : row[ix[rr]];
+            d[0] = v;
+            d[1] = v >> 8;
+            d[2] = v >> 16;
+        }
+        if (fb1) memcpy(fb1 + c * SCR_H * 3, fb0 + c * SCR_H * 3, SCR_H * 3);
     }
 }
 
@@ -92,23 +103,29 @@ void display_blit(u32 regs_pa)
     u32 outw = h * 3 / 4;                     /* 360 for h = 480 */
     if (outw > SCR_W) outw = SCR_W;
     u32 x0 = (SCR_W - outw) / 2;
-    for (int b = 0; b < 2; b++) {
-        u8 *fb = top_fb[b];
-        if (!fb) continue;
-        for (u32 c = 0; c < outw; c++) {
-            u32 iy = c * 4 / 3;
-            const u8 *row = src + iy * stride;
-            u8 *col = fb + (x0 + c) * SCR_H * 3;
-            for (u32 rr = 0; rr < SCR_H; rr++) {
-                /* memory goes bottom-to-top: source column 0 at the bottom
-                   (rotate the 3DS 90 deg clockwise to read it upright) */
-                u32 ix = rr * 4 / 3;
-                if (ix >= w) ix = w - 1;
-                const u8 *p = row + ix * 4;
-                col[rr * 3 + 0] = p[0];
-                col[rr * 3 + 1] = p[1];
-                col[rr * 3 + 2] = p[2];
-            }
+    static u16 ix[SCR_H];
+    static u32 ix_w;
+    if (ix_w != w) {
+        for (u32 rr = 0; rr < SCR_H; rr++) {
+            u32 x = rr * 4 / 3;
+            ix[rr] = x < w ? x : w - 1;
         }
+        ix_w = w;
+    }
+    u8 *fb0 = top_fb[0] ? top_fb[0] : top_fb[1], *fb1 = top_fb[0] ? top_fb[1] : NULL;
+    if (!fb0) return;
+    for (u32 c = 0; c < outw; c++) {
+        if (c % POLL_EVERY == 0) blksrv_poll();
+        /* memory goes bottom-to-top: source column 0 at the bottom
+           (rotate the 3DS 90 deg clockwise to read it upright) */
+        const u32 *row = (const u32 *)(src + (c * 4 / 3) * stride);
+        u8 *d = fb0 + (x0 + c) * SCR_H * 3;
+        for (u32 rr = 0; rr < SCR_H; rr++, d += 3) {
+            u32 v = row[ix[rr]];
+            d[0] = v;
+            d[1] = v >> 8;
+            d[2] = v >> 16;
+        }
+        if (fb1) memcpy(fb1 + (x0 + c) * SCR_H * 3, fb0 + (x0 + c) * SCR_H * 3, SCR_H * 3);
     }
 }

@@ -19,3 +19,10 @@ From the next build on, the monitor writes all probe values to `log.txt` (`[prob
 
 ## run7 (`3c57ea7`, clock-base fix)
 Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, and `launchd[1] has started up`. The log ends there, without a `[probe]` dump, so the kernel was still reading the clock. QEMU next prints launchctl's messages and `Running fsck on the boot volume...`. The next build logs a `[hb]` heartbeat every 10 s while the console is quiet: counters, md0 requests, and IRQ-time PC samples (`u`/`k` = user/kernel, `t` = Thumb).
+
+## run8 (`9867d28`, heartbeat): iOS boots to SpringBoard on the real 3DS
+- launchd starts at ~115 s, SpringBoard runs by ~200 s, the input daemon connects at ~320 s.
+- Taps arrive (`[input] down …`), Mail was opened (MobileMail pid 32), and volume-down reached iOS (`key ea`).
+- Audio: `AppleEmbeddedAudioDevice: could not start DMA: device is not ready`.
+- The last heartbeat shows the ARM11 idle at `k80067b34`.
+- md0 runs at ~19 requests/s. Every request stalls the kernel until the ARM9 serves it, and the ARM9 spent its time in SD transfers, screen copies, and per-byte, per-sync logging. The next build (run9) targets that.

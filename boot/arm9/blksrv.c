@@ -11,7 +11,7 @@
 static FIL f;
 static DWORD clmt[32768];   /* 128 KiB: a 1 GiB image copied onto a busy card can have ~15k fragments */
 static bool open_ok;
-static u32 served, errors;
+static u32 served, errors, sectors_moved;
 
 #define MBOX ((volatile blkmbox_t *)(SHIM_PA + SHIM_BLK_OFF))
 #define BOUNCE ((u8 *)(SHIM_PA + SHIM_BOUNCE_OFF))
@@ -61,10 +61,13 @@ bool blksrv_poll(void)
         log_err("[blk] %s lba %u x%u failed (%d)\n", op == BLK_READ ? "read" : "write", lba, cnt, st);
     }
     served++;
+    if (!st) sectors_moved += cnt;
     m->status = st;
     m->done_seq = seq;
     return true;
 }
+
+u32 blksrv_sectors(void) { return sectors_moved; }
 
 void blksrv_stats(u32 *nserved, u32 *nerr)
 {

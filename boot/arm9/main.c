@@ -57,6 +57,22 @@ static void status(int row, u32 color, const char *fmt, ...)
 
 static u32 a11_log_tail;
 
+/* copy ring bytes [*tail, head) to the log in chunks: one f_write per chunk,
+   not per byte (per-byte writes + syncs made real-SD console output crawl
+   and starved the md0 block server running on the same ARM9) */
+static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color)
+{
+    char chunk[512];
+    while (*tail != head) {
+        u32 n = 0;
+        while (*tail != head && n < sizeof(chunk)) {
+            chunk[n++] = buf[*tail % size];
+            (*tail)++;
+        }
+        log_raw(chunk, n, color);
+    }
+}
+
 static void drain_a11_log(void)
 {
     volatile shared_t *sh = SHARED;
@@ -65,11 +81,7 @@ static void drain_a11_log(void)
         log_warn("[a11] (log overrun, %u bytes lost)\n", head - a11_log_tail - SHARED_LOG_SIZE);
         a11_log_tail = head - SHARED_LOG_SIZE;
     }
-    while (a11_log_tail != head) {
-        char c = sh->log_buf[a11_log_tail % SHARED_LOG_SIZE];
-        log_raw(&c, 1, CON_CYAN);
-        a11_log_tail++;
-    }
+    drain_ring((const volatile char *)sh->log_buf, SHARED_LOG_SIZE, &a11_log_tail, head, CON_CYAN);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -318,9 +330,9 @@ static void heartbeat(u32 quiet_s)
     vu32 *ring = (vu32 *)(cfg.shim_pa + 0x5F80);
     u32 bs, be, n = st[0x9C / 4];
     blksrv_stats(&bs, &be);
-    logp("[hb] t=%us quiet %us | abs %u dec %u timer %u irq %u vbl %u | md0 %u req %u err\n",
+    logp("[hb] t=%us quiet %us | abs %u dec %u timer %u irq %u vbl %u | md0 %u req %u KiB %u err\n",
          clk_secs(), quiet_s, (unsigned)st[0x80 / 4], (unsigned)st[0x8C / 4], (unsigned)st[0x4C / 4],
-         (unsigned)st[0x98 / 4], (unsigned)st[0x78 / 4], bs, be);
+         (unsigned)st[0x98 / 4], (unsigned)st[0x78 / 4], bs, blksrv_sectors() / 2, be);
     char line[200];
     int len = snprintf(line, sizeof(line), "[hb]  pc");
     for (u32 i = 1; i <= 8 && i <= n; i++) {
@@ -403,7 +415,10 @@ static void __attribute__((noreturn)) monitor(const char *phase)
 
     log_color(CON_GREY, "[monitor] %s - ARM9 stays here forwarding logs.\n", phase);
     clk_start();
-    log_sync_each(true);
+    /* sync the log every 0.5 s, not after every write: a power cut loses at
+       most 0.5 s, a hang loses nothing (the ARM9 keeps syncing) */
+    log_sync_each(false);
+    u32 last_sync = 0;
     for (;;) {
         bool busy = false;
         for (int i = 0; i < 64 && blksrv_poll(); i++) busy = true;
@@ -414,11 +429,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 log_warn("[xnu] (ring overrun, %u bytes lost)\n", head - ring_tail - ring->size);
                 ring_tail = head - ring->size;
             }
-            while (ring_tail != head) {
-                char c = ring->buf[ring_tail % ring->size];
-                log_raw(&c, 1, CON_WHITE);
-                ring_tail++;
-            }
+            drain_ring((const volatile char *)ring->buf, ring->size, &ring_tail, head, CON_WHITE);
         }
         /* The entry stub zeroes 36 KiB at topOfKernelData and writes the L1
            entries for virtBase. We filled it with a pattern before the jump. */
@@ -437,7 +448,19 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
         static bool ios_display, x_latched;
         static int screen_mode;
-        if (cfg.display_regs && (tick & 15) == 0 && display_active(cfg.display_regs)) {
+        /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
+           last 100 ms) only every 500 ms, because the ARM11 kernel stalls on
+           each block request until this loop serves it */
+        static u32 last_blit, last_io, last_served;
+        u32 nserved, nerr, tnow = clk_ticks();
+        blksrv_stats(&nserved, &nerr);
+        if (nserved != last_served) {
+            last_served = nserved;
+            last_io = tnow;
+        }
+        bool io_busy = tnow - last_io < T9_HZ / 10;
+        u32 blit_gap = io_busy ? T9_HZ / 2 : T9_HZ / 15;
+        if (cfg.display_regs && tnow - last_blit >= blit_gap && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;
                 log_color(CON_GREEN, "[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer\n");
@@ -445,6 +468,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 apply_screen_mode(screen_mode);
             }
             display_blit(cfg.display_regs);
+            last_blit = clk_ticks();
         }
         /* X: next screen mode (X is not forwarded to iOS as a button) */
         bool xdown = !(HID_PAD & HID_X);
@@ -510,6 +534,11 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                     heartbeat(now - head_since);
                 }
             }
+        }
+        u32 now_t = clk_ticks();
+        if (now_t - last_sync >= T9_HZ / 2) {
+            log_flush();
+            last_sync = now_t;
         }
         tick++;
         /* ~2 ms of mailbox polling instead of a blind delay: block requests
