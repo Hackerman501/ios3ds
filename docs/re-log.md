@@ -411,3 +411,44 @@ Branch `agent/gpu` = `agent/pica` + main. Design: docs/pica200.md §9-11.
 - **Changes:** bring-up applies the clock/VRAM/priority setup (boot.cfg `gpu_clk`, default 1). `pica_diag.c` runs staged tests before and after it (fills to VRAM and FCRAM; PPF; P3D constant quad into VRAM and FCRAM; 64x64 and 48x40 textures drawn 1:1) with counter deltas (boot.cfg `gpu_diag`, default 1); docs/pica200.md §12 says how to read them. A failed mirror self-test also dumps a texture tile and a render-target tile with their expected values. The diagnostic lists are built by genmirror (blob version 2).
 - **Host:** the diagnostics pass on the model (`diagnostics on the model: 0x7f`); the dump's expectations equal what a passing self-test leaves (`16 of 16`). The model has no traffic counters (they read 0) and does not need the clock register.
 - **QEMU** (this build, `--time 450` and `--icount 2 --time 300`): `[pica] GX setup as libn3ds hardwareReset: clock 0x00000000 -> 0x00070100 …`, `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM ok->ok …; PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT ok` (the model fills and draws without the clock, so "as found" passes there), mirror self-test variant 0, `gltest: PICA200 PASS`, home screen; screenshots identical to the CPU-copy run in both modes; icount mirror 23.9 fps, spot checks 0/512.
+
+## 31. Stability soak; md0 no longer freezes the kernel (2026-11-18)
+- **`emu/soak.py`:** boots QEMU, waits for `[input] connected to SpringBoard`, then cycles through the page-1 icon grid and the dock:
+  - per cycle: tap, settle, Home, page swipes every 4th cycle, lock/wake/slide-to-unlock every 5th, a screenshot per step;
+  - recovery when a cycle doesn't end on the home screen (second Home, then Dismiss), recorded per cycle;
+  - afterwards the log is scanned for panics, `[probe]` stalls, md0/log errors, crashes, jetsam and SpringBoard restarts.
+
+  Output: `build/emu/soak*/report.md`.
+- **Soak 1** (main `15f2a30`, plain QEMU, 40 cycles, ~19 min): no panic, stall, I/O error, crash or memory warning, and SpringBoard never restarted.
+  - Cycles 13 and 33 "failed" only because the tap missed an icon and Home on page 1 opens Spotlight (correct iOS behaviour). Hence the recovery step.
+  - **Real bug, cycle 0:** the first app launch after boot (Game Center). The input daemon sent Home as down+up in the same poll (`key 40 down @1644` / `up @1644`), yet SpringBoard showed the "Edit Home Screen" alert, its reaction to a Home *hold*. The alert then blocked every tap for ~5 minutes.
+
+    It did not reproduce in 8 quiet Game Center cycles (`--targets 47,50 --settles 2,20`). It needs the busy first launch.
+- **Cause (by design reading):** `shim_mdevstrategy` waited for each md0 request with **IRQs off**:
+  - ~20 ms per request on hardware, thousands of requests for a cold app launch;
+  - meanwhile no timer, scheduler or VBlank ran anywhere in the kernel.
+
+  If SpringBoard handled the Home down, then page-faulted its own code from md0 before handling the up, its hold timer (`menuButtonDown:` → `menuButtonUp:`, re-log 20) could expire during the freeze.
+- **Fix (`kernel/shim/blk.c`):**
+  - md0 requests are serialized by a kernel mutex. The XNU KPIs come from the kernelcache symbol table:
+    - `lck_grp_attr_alloc_init` 0x8001ae22, `lck_grp_alloc_init` 0x8001ae00, `lck_attr_alloc_init` 0x8001ade8, `lck_mtx_alloc_init` 0x80062008 (Thumb);
+    - `lck_mtx_lock` 0x80063000 and `lck_mtx_unlock` 0x800631a0 (ARM);
+    - `assert_wait_timeout` 0x8001f02a and `thread_block` 0x8001edcc (Thumb).
+  - The wait for the ARM9 runs with interrupts on: it spins ~200 polls, then sleeps in 250 µs steps (`assert_wait_timeout` + `thread_block`).
+  - The whole buffer is faulted in **before** taking the lock, so no fault ever waits on md0 behind its own request.
+  - If the lock can't be allocated, the old IRQs-off path is used.
+- **QEMU `--icount 2`:** by the first heartbeat (t=36 s) md0 had served 3687 requests (78 MB), with launchd, gltest and the input daemon already up. Before: ~1100 requests and 32 MB by t≈120 s.
+  - Much of that gain is an emulation effect. Single-threaded icount TCG shares one virtual clock between the CPUs, so the spinning ARM11 used to burn the time the ARM9 needed.
+  - On hardware the gain is responsiveness: other threads, timers, VBlank and input keep running during disk reads.
+- **Soak 2** (this change, 40 cycles):
+  - **PASS:** no panic, stall, md0/log error, crash or jetsam; ~9,400 md0 requests served through the new lock/sleep path.
+  - Spotlight cases (13, 14, 33, 34) recovered with a second Home.
+  - The "Edit Home Screen" alert came back once, again on cycle 0, the first app launch after boot. So the IRQs-off freeze was not the cause.
+- **Why a Home tap can become a hold** (`SpringBoard` `-[SpringBoard menuButtonDown:]` 0x8bc0, `_menuButtonWasHeld` 0x8874, found through the objc method lists):
+  - The down schedules `scheduledTimerWithTimeInterval:… _menuButtonWasHeld` with one of three intervals:
+    - **2.0 s** normally;
+    - **1.0 s** when a SpringBoard flag is set and `allowAllInBackground` (0x3ff00000);
+    - **5.0 s** while a sheet `isOrderedFront` (0x40140000).
+  - `menuButtonUp:` cancels it. The daemon queues down and up together, so a hold only happens when SpringBoard needs more than 1–2 s between handling the two GSEvents. That happens on the busy first app launch after boot.
+  - The remedy is a faster SpringBoard (GPU compositing, re-log 30 / agent/gpu), not the input path.
+  - `emu/soak.py` allows one such "Dismiss + Home" recovery per run and fails on more, or on any "stuck" cycle.
