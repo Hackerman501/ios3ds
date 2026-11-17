@@ -9,7 +9,7 @@
 | run5 (SCU+SMP on) | `ACTLR 0000002f`, `abs 34 w00000ca4 c093`, `dec 1 l10473 @800695d3`, `shim i1 t0 o0 L0 d0 v0 j0` |
 | run6 (`cc0ccbd` probes) | `sctlr 00c5787d`, `irq 0 pt 1c29 c7f05 s0`, `cc1 pmf0 hp3ff dc1 act0`, `en2000ffff/00000400 pd00000000/00000000`, `abs 34 w00000cc4 c093`, `dec 1 l10473 @800695d3`, `shim i1 t0 o0 L0 d0 v0 j0` |
 
-The run6 log wasn't saved: the card went straight back to the reader for the next build.
+run6.txt was copied off the card on 2026-11-17, before the fixed build (`3c57ea7`) went on.
 
 `qemu-gdb/` contains the gdb scripts and output that stop QEMU at the same 34th/35th clock read, for comparison. Read 34 has CPSR `a0000093`; read 35 is in a new thread with IRQs enabled, and `dec` = 4 by then.
 
