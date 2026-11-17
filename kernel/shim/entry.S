@@ -265,12 +265,30 @@ shim_init:
 @ u64 get_abstime(cpu_data *r3) = ticks + cpu_data->abstime_offset(+0x50/+0x54)
 @ STACKLESS: the kernel's fast mach_absolute_time path (SWI handler, ~0x80066290)
 @ calls this hook with sp pointing at nothing usable. Only r0-r2, r12.
+@
+@ The clock must run from the first read: rtclock_init (0x80069936) stores
+@ mach_absolute_time() as the tick base (rtclock+0x30) before the first
+@ set_decrementer, and the calendar conversion (0x8006916c) spins with IRQs
+@ masked while that base is 0, waiting for a tick that cannot arrive. Returning
+@ 0 here before init hung real hardware right after "iBoot version" (plain
+@ QEMU hid it: its timer fired before the spin). So init lazily, stacklessly:
+@ shim_init clobbers r0-r3, r12, and bl clobbers lr; both are parked in
+@ pc-relative words with IRQ/FIQ masked.
 shim_get_abstime:
     ldr r2, st_inited
     cmp r2, #0
-    moveq r0, #0
-    moveq r1, #0
-    bxeq lr
+    bne 1f
+    mrs r12, cpsr
+    cpsid if
+    str r12, abs_init_cpsr
+    str r3, abs_init_r3
+    str lr, abs_init_lr
+    bl shim_init
+    ldr lr, abs_init_lr
+    ldr r3, abs_init_r3
+    ldr r12, abs_init_cpsr
+    msr cpsr_c, r12
+1:
     @ bring-up snapshot (shim+0x5F00, 2 lines): timer + GIC state at every
     @ clock read, so a hang shows whether the tick is pending/delivered
     ldr r2, =PRIV_VA
@@ -302,6 +320,91 @@ shim_get_abstime:
     str r0, [r1, #0x2C]
     mrc p15, 0, r0, c1, c0, 0
     str r0, [r1, #0x30]
+    @ MMU view of the IRQ vector (lines 2-4, +0x34..+0x7F): is the vector
+    @ page at 0xFFFF0000 mapped, and what does the ARM11 see there? The ARM9
+    @ walks the same tables in FCRAM after a hang and compares (monitor).
+    mrc p15, 0, r0, c2, c0, 0
+    str r0, [r1, #0x34]             @ TTBR0
+    mrc p15, 0, r0, c2, c0, 1
+    str r0, [r1, #0x38]             @ TTBR1
+    mrc p15, 0, r0, c2, c0, 2
+    str r0, [r1, #0x3C]             @ TTBCR
+    mrc p15, 0, r0, c3, c0, 0
+    str r0, [r1, #0x60]             @ DACR
+    mrc p15, 0, r0, c0, c0, 5
+    str r0, [r1, #0x64]             @ MPIDR
+    mov r0, #0
+    str r0, [r1, #0x7C]             @ walk stage reached (0 = nothing)
+    mrc p15, 0, r0, c2, c0, 1       @ L1 VA = (TTBR1 & ~0x3FFF) + VIRT - PHYS
+    bic r0, r0, #0xFF
+    bic r0, r0, #0x3F00
+    add r0, r0, #(VIRT_BASE - PHYS_BASE)
+    ldr r2, =(0xFFF << 2)
+    ldr r0, [r0, r2]                @ L1[0xFFF]
+    str r0, [r1, #0x68]
+    and r2, r0, #3
+    cmp r2, #1                      @ coarse page table?
+    bne 9f
+    mov r2, #1
+    str r2, [r1, #0x7C]
+    bic r0, r0, #0xFF
+    bic r0, r0, #0x300              @ L2 table PA
+    sub r2, r0, #PHYS_BASE
+    cmp r2, #0x08000000             @ inside FCRAM (linear map)?
+    bhs 9f
+    add r0, r0, #(VIRT_BASE - PHYS_BASE)
+    ldr r0, [r0, #(0xF0 << 2)]      @ L2[0xF0] = 0xFFFF0000
+    str r0, [r1, #0x6C]
+    tst r0, #2                      @ extended small page?
+    beq 9f
+    mov r2, #2
+    str r2, [r1, #0x7C]
+    mvn r0, #0
+    bic r0, r0, #0xFF00
+    bic r0, r0, #0xFF               @ r0 = 0xFFFF0000: the vector page, ARM11 view
+    ldr r2, [r0, #0x00]
+    str r2, [r1, #0x40]
+    ldr r2, [r0, #0x04]
+    str r2, [r1, #0x44]
+    ldr r2, [r0, #0x08]
+    str r2, [r1, #0x48]
+    ldr r2, [r0, #0x0C]
+    str r2, [r1, #0x4C]
+    ldr r2, [r0, #0x10]
+    str r2, [r1, #0x50]
+    ldr r2, [r0, #0x14]
+    str r2, [r1, #0x54]
+    ldr r2, [r0, #0x1C]
+    str r2, [r1, #0x5C]
+    ldr r2, [r0, #0x18]             @ IRQ vector
+    str r2, [r1, #0x58]
+    mov r12, r2, lsr #12
+    ldr r0, =0xE59FF                @ ldr pc, [pc, #+imm12]?
+    cmp r12, r0
+    bne 9f
+    mov r2, r2, lsl #20
+    mov r2, r2, lsr #20             @ imm12
+    mvn r0, #0
+    bic r0, r0, #0xFF00
+    bic r0, r0, #0xDF               @ r0 = 0xFFFF0020 = IRQ vector + 8 (pc)
+    ldr r2, [r0, r2]                @ the literal = IRQ handler address
+    str r2, [r1, #0x70]
+    mov r0, #3
+    str r0, [r1, #0x7C]
+    sub r0, r2, #VIRT_BASE
+    cmp r0, #0x08000000             @ in the kernel's linear map?
+    bhs 9f
+    ldr r0, [r2]                    @ first two words of the handler (patched
+    str r0, [r1, #0x74]             @ to ldr pc,[pc,#-4] + shim_irq)
+    ldr r0, [r2, #4]
+    str r0, [r1, #0x78]
+    mov r0, #4
+    str r0, [r1, #0x7C]
+9:
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
+    mcr p15, 0, r1, c7, c10, 1
+    add r1, r1, #32
     mcr p15, 0, r1, c7, c10, 1
     add r1, r1, #32
     mcr p15, 0, r1, c7, c10, 1
@@ -329,6 +432,10 @@ shim_get_abstime:
     ldr r2, [r3, #0x54]
     adc r1, r1, r2
     bx lr
+
+abs_init_cpsr:  .word 0             @ lazy-init scratch (shim_get_abstime)
+abs_init_r3:    .word 0
+abs_init_lr:    .word 0
 
 @ u32 get_decrementer(cpu_data *r3): ticks left until the deadline (stackless)
 shim_get_decrementer:

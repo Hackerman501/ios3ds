@@ -275,6 +275,70 @@ static void report_probes(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* hang probes: everything the shim recorded, written to log.txt once the     */
+/* ARM11 stops reading the clock, so no photo transcription is needed.       */
+
+static u32 fc_rd(u32 pa) { return in_fcram(pa, 4) ? *(vu32 *)pa : 0xBAD0BAD0u; }
+
+static void dump_probes(const char *why)
+{
+    vu32 *st = (vu32 *)cfg.shim_pa;
+    vu32 *g = (vu32 *)(cfg.shim_pa + 0x5F00);
+    u32 v[8];
+
+    log_warn("[probe] %s\n", why);
+    logp("[probe] shim init%u timer%u other%u last%u def%u vbl%u inj%u irq-entries%u\n",
+         (unsigned)st[0x40 / 4], (unsigned)st[0x4C / 4], (unsigned)st[0x50 / 4], (unsigned)st[0x54 / 4],
+         (unsigned)st[0x58 / 4], (unsigned)st[0x78 / 4], (unsigned)st[0x7C / 4], (unsigned)st[0x98 / 4]);
+    logp("[probe] abs %u raw %08x cpsr %08x | dec %u last %u caller %08x\n",
+         (unsigned)st[0x80 / 4], (unsigned)st[0x84 / 4], (unsigned)st[0x88 / 4],
+         (unsigned)st[0x8C / 4], (unsigned)st[0x90 / 4], (unsigned)st[0x94 / 4]);
+    logp("[probe] at the last clock read: ptimer count %08x ctrl %08x isr %x\n",
+         (unsigned)g[0], (unsigned)g[1], (unsigned)g[2]);
+    logp("[probe]  gicc ctrl %x pmr %x hppir %x | gicd ctrl %x en %08x/%08x pend %08x/%08x act %08x\n",
+         (unsigned)g[3], (unsigned)g[4], (unsigned)g[5], (unsigned)g[6], (unsigned)g[7],
+         (unsigned)g[10], (unsigned)g[8], (unsigned)g[9], (unsigned)g[11]);
+    logp("[probe]  sctlr %08x ttbr0 %08x ttbr1 %08x ttbcr %08x dacr %08x mpidr %08x\n",
+         (unsigned)g[12], (unsigned)g[13], (unsigned)g[14], (unsigned)g[15],
+         (unsigned)g[0x60 / 4], (unsigned)g[0x64 / 4]);
+    logp("[probe]  a11 walk stage %u: L1[fff] %08x L2[f0] %08x irq-literal %08x handler %08x %08x\n",
+         (unsigned)g[0x7C / 4], (unsigned)g[0x68 / 4], (unsigned)g[0x6C / 4],
+         (unsigned)g[0x70 / 4], (unsigned)g[0x74 / 4], (unsigned)g[0x78 / 4]);
+    for (int i = 0; i < 8; i++) v[i] = g[0x40 / 4 + i];
+    logp("[probe]  a11 vectors %08x %08x %08x %08x %08x %08x %08x %08x\n",
+         v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+
+    /* the same walk through physical memory (what the table walker and an
+       uncached instruction fetch see if the ARM11 did not clean its D-cache) */
+    u32 ttbr1 = g[14];
+    if (!ttbr1) {
+        log_warn("[probe] no TTBR1 recorded (snapshot never ran)\n");
+        return;
+    }
+    u32 l1 = fc_rd((ttbr1 & ~0x3FFFu) + 0xFFF * 4);
+    u32 l2 = (l1 & 3) == 1 ? fc_rd((l1 & ~0x3FFu) + 0xF0 * 4) : 0;
+    u32 vpa = (l2 & 2) ? (l2 & ~0xFFFu) : 0;
+    u32 w[8], lit = 0, h0 = 0, h1 = 0;
+    for (int i = 0; i < 8; i++) w[i] = vpa ? fc_rd(vpa + i * 4) : 0;
+    if ((w[6] >> 12) == 0xE59FFu) {
+        lit = fc_rd(vpa + 0x20 + (w[6] & 0xFFF));
+        u32 hpa = lit - cfg.virt_base + cfg.phys_base;
+        h0 = fc_rd(hpa);
+        h1 = fc_rd(hpa + 4);
+    }
+    logp("[probe]  a9  walk: L1[fff] %08x L2[f0] %08x vector page PA %08x irq-literal %08x handler %08x %08x\n",
+         l1, l2, vpa, lit, h0, h1);
+    logp("[probe]  a9  vectors %08x %08x %08x %08x %08x %08x %08x %08x\n",
+         w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+    bool same = l1 == g[0x68 / 4] && l2 == g[0x6C / 4];
+    for (int i = 0; i < 8; i++) same = same && w[i] == v[i];
+    if (g[0x7C / 4] >= 3) same = same && lit == g[0x70 / 4];
+    if (g[0x7C / 4] >= 4) same = same && h0 == g[0x74 / 4] && h1 == g[0x78 / 4];
+    if (same) log_ok("[probe]  ARM11 view == memory (vector page and tables are clean)\n");
+    else log_err("[probe]  ARM11 view != memory: stale D-cache or a different mapping\n");
+}
+
+/* ------------------------------------------------------------------------ */
 /* monitor                                                                  */
 
 static void __attribute__((noreturn)) monitor(const char *phase)
@@ -367,7 +431,17 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                        (unsigned)g[4], (unsigned)g[5], (unsigned)g[6], (unsigned)g[11]);
                 status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
                        (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
-                status(20, CON_GREY, "sctlr %08x", (unsigned)g[12]);
+                status(20, CON_GREY, "sctlr %08x stage %u", (unsigned)g[12], (unsigned)g[0x7C / 4]);
+                /* ~5 s without a clock read or console output: dump once */
+                static u32 last_abs, last_head, stalled;
+                u32 abs = st[0x80 / 4], hd = ring ? ring->head : 0;
+                if (st[0x40 / 4] && abs == last_abs && hd == last_head) {
+                    if (++stalled == 40) dump_probes("ARM11 stalled: no clock read or console output for ~5 s");
+                } else {
+                    stalled = 0;
+                }
+                last_abs = abs;
+                last_head = hd;
             }
         }
         tick++;

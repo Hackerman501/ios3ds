@@ -9,6 +9,6 @@ SECTIONS
     .data : { *(.data*) }
     .bss : { *(.bss* COMMON) }
     __shim_end = .;
-    ASSERT(__shim_end <= 0x80846000, "shim code overlaps the block mailbox")
+    ASSERT(__shim_end <= 0x80845F00, "shim code overlaps the probe snapshot (+0x5F00) / block mailbox (+0x6000)")
     /DISCARD/ : { *(.ARM.exidx*) *(.ARM.attributes) *(.comment) }
 }

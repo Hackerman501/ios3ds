@@ -13,4 +13,6 @@ The run6 log wasn't saved: the card went straight back to the reader for the nex
 
 `qemu-gdb/` contains the gdb scripts and output that stop QEMU at the same 34th/35th clock read, for comparison. Read 34 has CPSR `a0000093`; read 35 is in a new thread with IRQs enabled, and `dec` = 4 by then.
 
-Interpretation and next steps: [../../handoff.md](../../handoff.md).
+**Solved (2026-11-17):** QEMU with `--icount 2` reproduces these values exactly. The cause was the clock base `rtclock+0x30` = 0: `shim_get_abstime` returned 0 before the shim was initialised, and a calendar conversion then spun with IRQs masked. See [re-log §25](../re-log.md). The g34/g35 comparison below predates this: in plain QEMU the first tick fires before read 2, so it compared runs with different timing.
+
+From the next build on, the monitor writes all probe values to `log.txt` (`[probe]` lines) after ~5 s without a clock read or console output.

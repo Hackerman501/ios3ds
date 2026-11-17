@@ -1,4 +1,4 @@
-# Handoff (2026-11-17)
+# Handoff (2026-11-17, updated in the evening)
 
 Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md) first; [docs/re-log.md](docs/re-log.md) has every reverse-engineering step.
 
@@ -7,7 +7,7 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 | Area | QEMU board | Real Old 3DS |
 |---|---|---|
 | Monitor, SD, ARM11 bring-up, kernel load | works | works |
-| XNU early boot | to SpringBoard home screen | **hangs right after `iBoot version: ios3ds-loader`** |
+| XNU early boot | to SpringBoard home screen (also with `--icount 2`) | hung after `iBoot version` until the clock-base fix (§2); **fixed build not yet run on hardware** |
 | Buttons (Home, lock, volume via GraphicsServices) | works | not reached |
 | Touch (GS hand events, `flipx`) | works | not reached |
 | Screen modes (X: top / both / bottom) | works | works in the monitor |
@@ -16,65 +16,25 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 | Audio (shim PL080/I2S/I2C emulation → CSND) | kexts start | CODEC answers (id 11 rev 16) |
 | `.3dsx` launcher (rename swap + restore) | — | works (`launcher swap: restored`) |
 
-## 2. The current problem: hardware hang after "iBoot version"
+## 2. The hardware hang after "iBoot version": fixed, needs a hardware run
 
-Hardware logs and the transcribed probe values are in [docs/hwlogs/](docs/hwlogs/README.md).
+**Cause** (details in [docs/re-log.md §25](docs/re-log.md)):
+- `rtclock_init` stores `mach_absolute_time()` as the tick base (`rtclock+0x30`).
+- It runs before the first `set_decrementer`, and the shim used to initialise only there. Until then `shim_get_abstime` returned 0, so the base was 0.
+- The calendar conversion at `0x8006916c` then spins, with IRQs masked, until the first tick sets the base. That tick cannot arrive with IRQs masked.
+- Plain QEMU hid it: its wall-clock timer fired before the spin.
 
-Facts, from the latest probe build `cc0ccbd`:
+**Fix:** `shim_get_abstime` now initialises the shim on the first read.
 
-| Probe (monitor rows 20–26) | Value | Meaning |
-|---|---|---|
-| `sctlr` | `00c5787d` | MMU, caches, high vectors (V=1), XP=1 |
-| `irq` | `0` | **the shim's IRQ entry was never reached** |
-| `pt` count / ctrl / status | `1c29` / `7f05` / `0` | private timer counting down (one-shot, IT enabled, 3264 of 10473 ticks gone) |
-| GIC `cc pm hp dc act` | `1 f0 3ff 1 0` | CPU interface and distributor on, priority mask 0xF0, nothing pending or active |
-| `en` / `pd` | `2000ffff/00000400` / `0/0` | IRQ 29 (timer) and 42 (VBlank) enabled, nothing pending yet |
-| `abs` | 34 reads, last raw `0xcc4`, CPSR `0x93` | all 34 clock reads happen within ~3 ms; the last one has IRQs masked |
-| `dec` | 1 call, 10473 ticks, caller `0x800695d3` | one 10 ms deadline armed |
-| `shim` | `i1 t0 o0 L0 d0 v0 j0` | no timer IRQs, no other IRQs, no VBlanks |
+**Verified in QEMU:**
+- `python3 emu/run.py --icount 2` (instruction-clocked time, ~250 MHz) reproduced the exact hardware probe values before the fix: `abs 34 cpsr 93 | dec 1 l10473 @800695d3`.
+- With the fix, it boots through launchd to SpringBoard.
+- The plain-mode boot still reaches the home screen.
 
-The snapshot is taken at each clock read, so it shows the state just before the hang. The GIC and timer are configured correctly at that point.
-
-In QEMU, read 35 comes from a new thread with IRQs enabled, and by then `dec` = 4: timer IRQs have fired. On hardware, read 35 never happens and no IRQ is ever taken.
-
-Two hypotheses remain:
-- **A:** XNU enables IRQs and idles; the timer fires, but the IRQ never reaches `shim_irq`. Possible causes: the vector page at 0xFFFF0000 (page-table or cache coherency issue that QEMU doesn't model), the vector literal, or the patched `fleh_irq` at 0x8006648c.
-- **B:** XNU hangs between read 34 and the point where it enables IRQs: context switch, an MPCore vs ARM1176 instruction difference, VFP, or a spin with IRQs masked.
-
-Already ruled out:
-- an interrupt storm from leftover Luma IRQs (all other IRQs are disabled and cleared in `shim_init`);
-- AMP mode (the ARM11 stub now enables SCU+SMP, ACTLR reads `0x2f` on hardware).
-
-Neither changed the hang.
-
-**What was in progress:** `emu/gdb/t34.gdb` (run from the repo root): a gdb trace in QEMU that single-steps from read 34 until CPSR.I clears. It shows exactly which code runs on the way to "IRQs on", so that code can be checked for MPCore differences. The script is shown below; QEMU was started with `-s -S`.
-
-```
-# t34.gdb
-set pagination off
-target extended-remote :1234
-thread 1.1
-hbreak *0x80840010 thread 1.1
-condition 1 *(unsigned*)0x80840080 == 33
-continue
-delete
-set scheduler-locking step
-source emu/gdb/trace_irq_on.py   # loop: stepi, log pc/cpsr, stop when (cpsr & 0x80) == 0
-```
-
-Start QEMU with:
-
-```
-build/qemu/b/qemu-system-arm -M nintendo3ds -kernel build/boot/ios3ds.firm \
-  -drive file=build/sd.img,if=sd,format=raw -display none -serial none -s -S
-```
-
-The gdb binary is `arm-none-eabi-gdb` from arm-gnu-toolchain 14.2. Inferior 1 is the ARM11; attach inferior 2 (the ARM9) and use `set schedule-multiple on` if you need both.
-
-**Next probe build, to settle A vs B:**
-1. **ARM11 snapshot** (in `shim_get_abstime`): add TTBR0, TTBCR, DACR and MPIDR. Also read, through the kernel's linear map, the L1 entry for 0xFFF00000, its L2 entry for 0xFFFF0000, and the vector words at +0x18 and the literal they load.
-2. **ARM9, after the hang:** walk the same tables in FCRAM (physical memory) and show them. If the ARM11's cached view differs from the ARM9's memory view, the hardware walker or the IRQ fetch sees stale data, which QEMU can't reproduce.
-3. If the vectors check out: patch a counter at the instruction XNU uses to enable IRQs (found by the trace above). That tells whether it is reached (B vs A).
+**Next step: run this build on the 3DS.**
+- If it stops again, `log.txt` now ends with `[probe]` lines (written after ~5 s without a clock read or console output): shim counters, timer/GIC state, MMU registers, and the vector page as the ARM11 sees it vs. FCRAM.
+- Copy the log back as in §3. No photo needed.
+- Reproduce any new hardware-only behaviour with `--icount 2` first, then use `emu/gdb/postmortem.py` (attach to a running `-s` QEMU) to see where the ARM11 is.
 
 ## 3. Hardware workflow
 
@@ -112,7 +72,7 @@ The gdb binary is `arm-none-eabi-gdb` from arm-gnu-toolchain 14.2. Inferior 1 is
 | `main` | everything merged (GL software engine, Wi-Fi, audio, input, screen modes, launcher, HW probes) |
 | `agent/pica` | **not merged on purpose.** PICA200 GL back end: GPU service in the shim, GX model in QEMU, `IOS3DS_GL=pica\|auto`, `-ffixed-r9` in mkboot. Merge once the hardware boot works. Pushed to origin. |
 
-## 6. Backlog after the hang is fixed
+## 6. Backlog after the hardware boot works
 
 1. Real hardware, stages 2–4 in [docs/real-hardware.md](docs/real-hardware.md): root disk over real SD timing, SpringBoard, input.
 2. Merge `agent/pica`, then test PICA200 on hardware.
