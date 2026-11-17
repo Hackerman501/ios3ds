@@ -30,3 +30,8 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 ## run9 (`763f374`, ARM9 performance build)
 - SpringBoard and the input daemon are up before the first heartbeat at t=83 s (run8: input at ~320 s). md0 had read 75 MB by then, with no errors.
 - `gltest: PASS` on real hardware with the CPU rasterizer, but one offscreen 320x480 frame takes 1089 ms. That is the motivation for the PICA200 offload.
+
+## run10 (`24d2d1c`, IORTC wait 0 s + md0 linger)
+- `BSD root` right after the kernel starts. SpringBoard and input were up before the first heartbeat at t=66 s.
+- Settings, Notes and the App Store opened. Home (`key 40`) and lock (`key 30`) reached iOS.
+- Regression: `gltest: offscreen frame took 0 ms`. With timeout 0 the calendar can be initialised before AppleARMPE is up, and early `gettimeofday` deltas read 0. QEMU reproduced it intermittently. Fixed in the next build by `iortc-wait-2s` (re-log §26).
