@@ -141,7 +141,21 @@ def configure_shim(outdir, cfg):
     open(p, "wb").write(blob)
 
 
-def build(staging, outdir, cmdline=None, patches=True, verbose=True):
+def use_prebuilt_shim(outdir, prebuilt):
+    """Copy a released shim.bin + gpu.bin (as `--shim-only` writes them) instead of compiling."""
+    import shutil
+    for fn in ("shim.bin", "gpu.bin"):
+        shutil.copyfile(os.path.join(prebuilt, fn), os.path.join(outdir, fn))
+    blob = open(os.path.join(outdir, "shim.bin"), "rb").read()
+    if len(blob) > 0x6000 or blob[4:8] != b"SHIM":
+        raise SystemExit("bad prebuilt shim.bin (%d bytes)" % len(blob))
+    return blob
+
+
+def build(staging, outdir, cmdline=None, patches=True, verbose=True,
+          prebuilt=None, hfsplus=None, rootfs_add=None):
+    """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
+    hfsplus / rootfs_add: passed on to mkrootfs.build."""
     import dtgen
     import patcher
 
@@ -154,9 +168,10 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True):
     ramdisk_len = os.path.getsize(rootfs) & ~0xFFF if os.path.exists(rootfs) else 0
     if ramdisk_len:
         import mkrootfs
-        mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose)
+        mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose,
+                       hfsplus=hfsplus, rootfs_add=rootfs_add)
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
-    shim = build_shim(outdir)
+    shim = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
     # the DT size doesn't depend on the layout values, so two passes converge
     lay0 = layout(kva, len(kimg), len(template))
     lay0["ramdisk_len"] = ramdisk_len
@@ -256,7 +271,14 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds"))
     ap.add_argument("--cmdline", default=None)
     ap.add_argument("--no-patches", action="store_true")
+    ap.add_argument("--shim-only", metavar="DIR",
+                    help="only compile shim.bin + gpu.bin into DIR (unconfigured; for releases)")
     a = ap.parse_args()
+    if a.shim_only:
+        os.makedirs(a.shim_only, exist_ok=True)
+        build_shim(a.shim_only)
+        print("[mkboot] shim.bin + gpu.bin -> %s" % a.shim_only)
+        return
     build(a.staging, a.out, a.cmdline, patches=not a.no_patches)
 
 

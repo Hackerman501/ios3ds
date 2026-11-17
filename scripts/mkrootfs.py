@@ -15,6 +15,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HFS = os.path.join(ROOT, "build", "tools", "hfsplus")
+ADD_PREFIX = "build/rootfs-add/"      # recipe 'add' sources built by our userland Makefiles
 LD = "/System/Library/LaunchDaemons"
 LD_OFF = "/System/Library/LaunchDaemons-ios3ds-disabled"
 
@@ -39,10 +40,26 @@ def exists(img, path):
     return any(l.split()[-1:] == [name] for l in out.splitlines() if l.strip())
 
 
-def build(staging, out, recipe_path=None, verbose=True):
-    if not os.path.exists(HFS):
+def local_path(local, rootfs_add=None):
+    """Recipe source path -> file: repo-relative, except build/rootfs-add/ -> rootfs_add."""
+    if rootfs_add and local.startswith(ADD_PREFIX):
+        return os.path.join(rootfs_add, local[len(ADD_PREFIX):])
+    return os.path.join(ROOT, local)
+
+
+def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add=None):
+    """hfsplus: path of xpwn's hfsplus tool (default build/tools/hfsplus, built on
+    demand); rootfs_add: directory standing in for build/rootfs-add/ (release zip)."""
+    global HFS
+    if hfsplus:
+        HFS = hfsplus
+    elif not os.path.exists(HFS):
         subprocess.run([os.path.join(ROOT, "scripts", "build-hfsplus.sh")], check=True)
     recipe = json.load(open(recipe_path or os.path.join(ROOT, "rootfs", "recipe.json")))
+    missing = [l for l in recipe.get("add", {}) if not os.path.exists(local_path(l, rootfs_add))]
+    if missing:
+        raise SystemExit("[mkrootfs] missing files for the rootfs (build the userland tools: "
+                         "make userland):\n  " + "\n  ".join(missing))
     src = os.path.join(staging, "rootfs.hfs")
     if os.path.exists(out):
         os.remove(out)
@@ -72,7 +89,7 @@ def build(staging, out, recipe_path=None, verbose=True):
         for local, path in recipe.get("add", {}).items():
             if exists(out, path):
                 hfs(out, "rm", path)
-            hfs(out, "add", os.path.join(ROOT, local), path)
+            hfs(out, "add", local_path(local, rootfs_add), path)
             if verbose:
                 print("[mkrootfs] added %s -> %s" % (local, path))
         for path, keys in recipe.get("plist_set", {}).items():

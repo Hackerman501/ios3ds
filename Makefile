@@ -3,12 +3,17 @@
 #   make toolchain            check the cross compiler / python deps
 #   make fwprep IPSW=path     decrypt kernel, device tree, rootfs into build/staging
 #   make firm                 3DS payload  -> build/boot/ios3ds.firm
+#   make shim                 kernel shim  -> build/shim/{shim.bin,gpu.bin} (prebuilt for releases)
+#   make launcher             Homebrew Launcher app -> build/launcher/ios3ds.3dsx (devkitARM + libctru)
+#   make userland             our iOS binaries -> build/rootfs-add/ (scripts/build-ios-toolchain.sh)
+#   make hfsplus              xpwn's HFS+ editor -> build/tools/hfsplus
 #   make sd                   SD card tree -> build/sd/  (copy its contents to the card root)
 #   make sdimg                same, plus a 2 GiB raw SD image for the emulator (build/sd.img)
 #   make qemu                 build QEMU with the 'nintendo3ds' dev machine (build/qemu)
 #   make emu                  boot build/sd.img in the emulator, print the SD log
 #   make kscan                print kernel facts used by docs/research.md
 #   make test                 offline unit tests (no Apple files needed)
+#   make release VERSION=v1   release zip of our own builds -> build/release/ (docs/release.md)
 #
 # Nothing Apple-owned is ever written outside build/ (gitignored).
 
@@ -16,12 +21,14 @@ PYTHON  ?= python3
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
-.PHONY: all help toolchain fwprep firm sd sdimg qemu emu kscan test clean
+USERLAND := tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon
+
+.PHONY: all help toolchain fwprep firm shim launcher userland hfsplus sd sdimg qemu emu kscan test release clean
 
 all: firm
 
 help:
-	@sed -n '3,13p' Makefile | sed 's/^# //'
+	@sed -n '3,18p' Makefile | sed 's/^# //'
 
 toolchain:
 	@scripts/setup-toolchain.sh
@@ -32,6 +39,18 @@ fwprep:
 
 firm:
 	$(MAKE) -C boot
+
+shim:
+	$(PYTHON) scripts/mkboot.py --shim-only $(BUILD)/shim
+
+launcher:
+	$(MAKE) -C tools/ios3ds-launcher
+
+userland:
+	for d in $(USERLAND); do $(MAKE) -C $$d || exit 1; done
+
+hfsplus:
+	scripts/build-hfsplus.sh
 
 sd: firm
 	$(PYTHON) scripts/mksd.py $(MKSD_FLAGS)
@@ -56,6 +75,9 @@ test:
 	$(MAKE) -C tools/ios3ds-pica test
 	$(MAKE) -C tools/ios3ds-gl host-test
 	$(MAKE) -C tools/ios3ds-wifi test
+
+release:
+	$(PYTHON) scripts/mkrelease.py $(if $(VERSION),--version $(VERSION))
 
 clean:
 	rm -rf $(BUILD)/boot $(BUILD)/sd $(BUILD)/sd.img $(BUILD)/emu

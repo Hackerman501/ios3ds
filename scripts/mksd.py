@@ -3,8 +3,9 @@
 
   scripts/mksd.py [--image build/sd.img] [--size 2G] [--staging build/staging]
 
-Always writes the card tree to build/sd/ (copy its contents to the root of the
-real SD card):
+Always writes the card tree to build/sd/ (--out; copy its contents to the root
+of the real SD card). scripts/install.py calls this with a release's prebuilt
+files (--firm, --launcher, --prebuilt, --rootfs-add, --hfsplus) instead of build/:
   3ds/ios3ds.3dsx             Homebrew Launcher entry (if built): swaps boot.firm, reboots
   ios3ds/ios3ds.firm          the payload again, for the launcher
   luma/payloads/ios3ds.firm   the payload (hold START at boot for Luma's menu,
@@ -31,18 +32,18 @@ def run(cmd, **kw):
 
 
 def build_tree(args):
-    tree = os.path.join(ROOT, "build", "sd")
+    tree = args.out
     if os.path.isdir(tree):
         shutil.rmtree(tree)
     os.makedirs(os.path.join(tree, "luma", "payloads"))
     os.makedirs(os.path.join(tree, "ios3ds"))
-    firm = os.path.join(ROOT, "build", "boot", "ios3ds.firm")
+    firm = args.firm
     if not os.path.exists(firm):
         sys.exit("build the payload first: make -C boot")
     shutil.copy(firm, os.path.join(tree, "luma", "payloads", "ios3ds.firm"))
     # for the Homebrew Launcher route (tools/ios3ds-launcher, docs/real-hardware.md)
     shutil.copy(firm, os.path.join(tree, "ios3ds", "ios3ds.firm"))
-    launcher = os.path.join(ROOT, "build", "launcher", "ios3ds.3dsx")
+    launcher = args.launcher
     if os.path.exists(launcher):
         os.makedirs(os.path.join(tree, "3ds"), exist_ok=True)
         shutil.copy(launcher, os.path.join(tree, "3ds", "ios3ds.3dsx"))
@@ -50,7 +51,8 @@ def build_tree(args):
     if os.path.exists(kernel) and not args.no_kernel:
         import mkboot  # noqa: E402
         mkboot.build(args.staging, os.path.join(tree, "ios3ds"), cmdline=args.cmdline,
-                     patches=not args.no_patches)
+                     patches=not args.no_patches, prebuilt=args.prebuilt,
+                     hfsplus=args.hfsplus, rootfs_add=args.rootfs_add)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
     return tree
@@ -76,7 +78,7 @@ def build_image(tree, path, size):
     print("[mksd] image %s (%d MiB)" % (path, size >> 20))
 
 
-def main():
+def parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", help="also write a raw SD image for QEMU")
     ap.add_argument("--size", default="2G")
@@ -84,7 +86,18 @@ def main():
     ap.add_argument("--cmdline", default=None, help="override the XNU boot-args")
     ap.add_argument("--no-kernel", action="store_true")
     ap.add_argument("--no-patches", action="store_true", help="boot the unpatched kernel")
-    a = ap.parse_args()
+    # inputs/outputs; the defaults are the repo build, the installer passes the release's files
+    ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd"), help="card tree (replaced)")
+    ap.add_argument("--firm", default=os.path.join(ROOT, "build", "boot", "ios3ds.firm"))
+    ap.add_argument("--launcher", default=os.path.join(ROOT, "build", "launcher", "ios3ds.3dsx"))
+    ap.add_argument("--prebuilt", help="dir with a prebuilt shim.bin + gpu.bin (else compiled)")
+    ap.add_argument("--hfsplus", help="xpwn hfsplus tool (else build/tools/hfsplus)")
+    ap.add_argument("--rootfs-add", help="dir standing in for build/rootfs-add/")
+    return ap
+
+
+def main():
+    a = parser().parse_args()
     mult = {"M": 1 << 20, "G": 1 << 30}
     size = int(a.size[:-1]) * mult[a.size[-1].upper()] if a.size[-1].isalpha() else int(a.size)
     tree = build_tree(a)

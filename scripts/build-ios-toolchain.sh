@@ -8,10 +8,13 @@
 #   lib/libclang_rt.builtins-armv6.a   compiler-rt builtins (static, hidden)
 #   sdk/                           stub SDK: hand-written headers, crt1, and
 #                                  stub dylibs whose export lists are read
-#                                  from the user's own dyld_shared_cache
+#                                  from the user's own dyld_shared_cache, or,
+#                                  without an IPSW (CI), from the committed
+#                                  scripts/ios-sdk-symbols.json (only the
+#                                  symbols our own tools import)
 #
 # Needs: clang (>= 10, with the ARM backend), cmake, ninja, make, git, curl,
-# python3, libssl-dev, uuid-dev. For the stub dylibs it also needs
+# python3, libssl-dev, uuid-dev. For full stub dylibs it also needs
 # build/staging/rootfs.hfs + build/tools/hfsplus (from `make fwprep`).
 # No Apple SDK is downloaded.
 #
@@ -19,7 +22,9 @@
 #   scripts/build-ios-toolchain.sh sdk test   # only these stages
 #   scripts/build-ios-toolchain.sh --clean    # wipe build/toolchain first
 #
-# Stages: dispatch cctools ldid sdk builtins test
+# Stages: dispatch cctools ldid sdk builtins test  (default)
+#         symbols   regenerate scripts/ios-sdk-symbols.json (needs the IPSW's
+#                   dyld cache): the SDK source used where there is no IPSW (CI)
 # Use it through scripts/ios-cc.
 set -euo pipefail
 
@@ -32,6 +37,7 @@ CC_HOST="${CC_HOST:-clang}"
 CXX_HOST="${CXX_HOST:-clang++}"
 TRIPLE=armv6-apple-ios4.2
 TOOLPFX=arm-apple-darwin10
+SYMLIST="$ROOT/scripts/ios-sdk-symbols.json"
 
 # Pinned sources.
 DISPATCH_URL=https://github.com/tpoechtrager/apple-libdispatch.git
@@ -554,10 +560,16 @@ takes its install name, versions, re-exports and exported symbol *names*,
 and links an empty armv6 dylib exporting the same names into
 <sdk>/<install-name>. No Apple code is copied.
 
+Without a dyld cache (e.g. on CI), --symbols reads the same facts from a
+JSON list instead. scripts/ios-sdk-symbols.json is such a list, restricted to
+the symbols our own tools import (--write-list makes it from the cache).
+
   ios-mkstub [--cache F] [--sdk D] --list
   ios-mkstub [--cache F] [--sdk D] <install-name>...
+  ios-mkstub --symbols LIST.json [--sdk D] <install-name>...
+  ios-mkstub [--cache F] --write-list LIST.json --used BIN... -- <install-name>...
 """
-import argparse, os, struct, subprocess, sys, tempfile
+import argparse, json, os, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 TC = os.path.dirname(HERE)
@@ -632,6 +644,61 @@ def ver(v):
     return '%d.%d.%d' % (v >> 16, (v >> 8) & 0xFF, v & 0xFF)
 
 
+def unver(s):
+    a, b, c = (list(map(int, s.split('.'))) + [0, 0])[:3]
+    return a << 16 | b << 8 | c
+
+
+class SymbolList:
+    """The Cache interface, backed by a JSON symbol list (--symbols)."""
+    def __init__(self, path):
+        self.d = json.load(open(path))['dylibs']
+        self.images = {n: 0 for n in self.d}
+
+    def image(self, name):
+        e = self.d[name]
+        weak = set(e.get('weak', []))
+        syms = [(s, True, s in weak) for s in e.get('text', [])]
+        syms += [(s, False, s in weak) for s in e.get('data', [])]
+        return dict(name=name, cur=unver(e['current']), compat=unver(e['compat']),
+                    reexports=list(e.get('reexports', [])), syms=syms)
+
+
+def write_list(cache, path, used_bins, names):
+    """Symbol list for `names`, keeping only the symbols `used_bins` import."""
+    nm = os.path.join(TC, 'bin', 'arm-apple-darwin10-nm')
+    used = set()
+    for b in used_bins:
+        out = subprocess.check_output([nm, '-u', '-j', b], text=True)
+        used.update(l.strip() for l in out.splitlines() if l.strip())
+    dylibs, seen, todo = {}, set(), list(names)
+    while todo:
+        n = todo.pop(0)
+        if n in seen:
+            continue
+        seen.add(n)
+        info = cache.image(n)
+        keep = [s for s in info['syms'] if s[0] in used]
+        dylibs[info['name']] = {
+            'current': ver(info['cur']), 'compat': ver(info['compat']),
+            'reexports': info['reexports'],
+            'text': sorted(s for s, t, _ in keep if t),
+            'data': sorted(s for s, t, _ in keep if not t),
+            'weak': sorted(s for s, _, w in keep if w)}
+        todo += [r for r in info['reexports'] if r in cache.images]
+    found = {s for e in dylibs.values() for k in ('text', 'data') for s in e[k]}
+    missing = sorted(used - found)
+    with open(path, 'w') as f:
+        json.dump({'_comment': 'Link-time symbol list for the ios3ds stub SDK (scripts/build-ios-toolchain.sh, '
+                               'ios-mkstub --symbols): dylib install names and versions, and the names of only '
+                               'those symbols our own tools import. Regenerate: scripts/build-ios-toolchain.sh symbols',
+                   'dylibs': dylibs}, f, indent=1, sort_keys=True)
+        f.write('\n')
+    print('wrote %s: %d dylibs, %d imported symbols%s' % (
+        path, len(dylibs), len(found),
+        '' if not missing else '; not in these dylibs: ' + ' '.join(missing)))
+
+
 def mkstub(cache, sdk, name, done):
     if name in done:
         return done[name]
@@ -688,9 +755,16 @@ def main():
     ap.add_argument('--cache', default=os.path.join(TC, 'cache', 'dyld_shared_cache_armv6'))
     ap.add_argument('--sdk', default=os.path.join(TC, 'sdk'))
     ap.add_argument('--list', action='store_true')
+    ap.add_argument('--symbols', help='build the stubs from this JSON symbol list, not the cache')
+    ap.add_argument('--write-list', metavar='LIST', help='write a symbol list (needs the cache)')
+    ap.add_argument('--used', nargs='+', default=[], metavar='BIN',
+                    help='with --write-list: keep only symbols these binaries import')
     ap.add_argument('names', nargs='*')
     a = ap.parse_args()
-    cache = Cache(a.cache)
+    cache = SymbolList(a.symbols) if a.symbols else Cache(a.cache)
+    if a.write_list:
+        write_list(cache, a.write_list, a.used, a.names)
+        return
     if a.list:
         print('\n'.join(sorted(cache.images)))
         return
@@ -765,13 +839,33 @@ stage_sdk() {
     write_mkstub
     write_crt
     local cache="$TC/cache/dyld_shared_cache_armv6"
+    local hfs="$ROOT/build/tools/hfsplus" img="$ROOT/build/staging/rootfs.hfs"
+    local from="${IOS_SDK_FROM:-}"
+    if [[ -z "$from" ]]; then
+        if [[ -s "$cache" || ( -x "$hfs" && -s "$img" ) ]]; then from=cache; else from=list; fi
+    fi
+    if [[ "$from" == list ]]; then
+        # No IPSW here (CI): stubs from the committed list of the symbols our tools import.
+        echo "   stubs from $SYMLIST (no dyld cache; IOS_SDK_FROM=cache to force)"
+        "$TC/bin/ios-mkstub" --symbols "$SYMLIST" "${STUBS[@]}"
+        return
+    fi
     if [[ ! -s "$cache" ]]; then
-        local hfs="$ROOT/build/tools/hfsplus" img="$ROOT/build/staging/rootfs.hfs"
         [[ -x "$hfs" && -s "$img" ]] || die "need $hfs and $img (run 'make fwprep') to read the dyld shared cache"
         "$hfs" "$img" cat /System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6 > "$cache.tmp"
         mv "$cache.tmp" "$cache"
     fi
     "$TC/bin/ios-mkstub" "${STUBS[@]}"
+}
+
+stage_symbols() {   # regenerate $SYMLIST: full stubs from the cache, build our tools, keep what they import
+    say "symbol list ($SYMLIST)"
+    IOS_SDK_FROM=cache stage_sdk
+    [[ -x "$TC/test/hello" ]] || stage_test
+    make -C "$ROOT" -s -B userland
+    local bins=("$TC/test/hello" "$TC/test/testbundle.bundle" "$TC/test/libios3dstest.dylib")
+    while IFS= read -r f; do bins+=("$f"); done < <(find "$ROOT/build/rootfs-add" -type f | sort)
+    "$TC/bin/ios-mkstub" --write-list "$SYMLIST" --used "${bins[@]}" -- "${STUBS[@]}"
 }
 
 # --------------------------------------------------------------------------
