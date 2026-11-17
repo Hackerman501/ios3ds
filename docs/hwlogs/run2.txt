@@ -1,0 +1,54 @@
+ios3ds m1-4021689-dirty-20261116.2123  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0248 -> 0248
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+launcher swap: restoring Luma as sd:/boot.firm
+launcher swap: restored, next boot is Luma
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-nogit-20261116.1226 ARM11 stub at 0x1ff9033c
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+running ARM11 instruction probes (boot.cfg probes=0 skips them)
+[a11] probes done
+Instruction probes (XNU uses these):
+ ee1f0f92 ok      -> 00000000
+ ee160f50 TRAPPED (slot 3 mode 1b)
+ ee1f0f1c ok      -> 0ffff009
+ ee100e10 ok      -> 15110005
+ eef00a10 ok      -> 410120b4
+ eef70a10 ok      -> 11111111
+ eef60a10 ok      -> 00000000
+ eef80a10 ok      -> 40000000
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 15088 bytes at 2081b000
+shim: 12296 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 15088
+[wifi] no 0:/ios3ds/wifi.cfg: networking off
+[audio] CODEC id 11 rev 16: DAC up, speaker, I2S1_CNT e820
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)

@@ -18,7 +18,7 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 
 ## 2. The current problem: hardware hang after "iBoot version"
 
-Hardware logs and photos are in `build/hwlogs/`. That directory isn't in git; copy it over if you need it.
+Hardware logs and the transcribed probe values are in [docs/hwlogs/](docs/hwlogs/README.md).
 
 Facts, from the latest probe build `cc0ccbd`:
 

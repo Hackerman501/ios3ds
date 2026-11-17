@@ -1,0 +1,41 @@
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.
+0x1ff90000 in ?? ()
+[New inferior 2]
+Added inferior 2 on connection 1 (extended-remote :1234)
+[Switching to inferior 2 [<null>] (<noexec>)]
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.
+0x08000040 in ?? ()
+[Switching to inferior 1 [process 1] (<noexec>)]
+[Switching to thread 1.1 (Thread 1.1)]
+#0  0x1ff90000 in ?? ()
+[Switching to thread 1.1 (Thread 1.1)]
+#0  0x1ff90000 in ?? ()
+Hardware assisted breakpoint 1 at 0x80840010
+
+Thread 1.1 hit Breakpoint 1, 0x80840010 in ?? ()
+PRE34 lr=800694dd sp=c38b3f1c cpsr=a0000093 calls=33 dec=4
+0xc38b3f1c:	0xc38b3f44	0x8001ea71	0x00000000	0x00000000
+0xc38b3f2c:	0x00000000	0x8026fbb8	0x00000000	0xc01ca6d0
+0xc38b3f3c:	0x80284680	0x80284664	0xc38b3f84	0x8001ed67
+0xc38b3f4c:	0xc01ca6d0	0x00000000	0xc38b3f6c	0x8001efbf
+0xc38b3f5c:	0x80020055	0xc01ca6d0	0xc38b3f94	0x80020055
+0xc38b3f6c:	0x80020055	0x00000000	0x00000000	0x8026d0f8
+0xc38b3f7c:	0x00000000	0x80020055	0xc38b3f8c	0x8001edd9
+0xc38b3f8c:	0xc38b3f9c	0x8001ee05	0xc01ca6d0	0x8026fbb8
+
+Thread 1.1 hit Breakpoint 1, 0x80840010 in ?? ()
+PRE35 lr=800694dd sp=c38c3f88 cpsr=a0000013 calls=34 dec=4
+0xc38c3f88:	0xc38c3fa8	0x8001f887	0x8001f851	0x00000000
+0xc38c3f98:	0x00000000	0x8001f851	0x00000000	0x8001f851
+0xc38c3fa8:	0x00000000	0x800672bc	0x00000000	0x00000000
+0xc38c3fb8:	0x00000000	0x00000000	0x80284664	0xc01ca6d0
+0xc38c3fc8:	0x80255000	0xc38c3f18	0x00000000	0x00000000
+0xc38c3fd8:	0x80284708	0x80284680	0x20000093	0xc38c3f08
+0xc38c3fe8:	0x800690fd	0x00000000	0x00000093	0x00000000
+0xc38c3ff8:	0x00000000	0x00000000	/tmp/claude-1000/-home-devilapi-Documents-GitHub-reverse-engineer-thermal-printer/43829677-436f-49cb-b18b-75b06eb69f6f/scratchpad/g35.gdb:18: Error in sourced command file:
+Cannot access memory at address 0xc38c4000
+Thread-specific breakpoint 1 deleted - thread 1.1 no longer in the thread list.
+[Inferior 1 (process 1) detached]
+[Inferior 2 (process 2) detached]
