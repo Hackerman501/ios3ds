@@ -7,7 +7,7 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 | Area | QEMU board | Real Old 3DS |
 |---|---|---|
 | Monitor, SD, ARM11 bring-up, kernel load | works | works |
-| XNU early boot | to SpringBoard home screen (also with `--icount 2`) | hung after `iBoot version` until the clock-base fix (§2); **fixed build not yet run on hardware** |
+| XNU early boot | to SpringBoard home screen (also with `--icount 2`) | run7 (`3c57ea7`): past the old hang to `launchd[1] has started up`, then quiet with the kernel alive; run8 (`9867d28`) adds the `[hb]` heartbeat to tell slow from stuck |
 | Buttons (Home, lock, volume via GraphicsServices) | works | not reached |
 | Touch (GS hand events, `flipx`) | works | not reached |
 | Screen modes (X: top / both / bottom) | works | works in the monitor |
@@ -31,7 +31,19 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 - With the fix, it boots through launchd to SpringBoard.
 - The plain-mode boot still reaches the home screen.
 
-**Next step: run this build on the 3DS.**
+**Hardware run 7** (`docs/hwlogs/run7.txt`): got past the hang and reached `launchd[1] has started up`. The log ends there with no stall dump. QEMU next prints launchctl's messages and `Running fsck on the boot volume...`.
+
+**Run 8 build `9867d28` is on the card.** While the console is quiet, it logs `[hb]` lines every 10 s:
+- counters and md0 requests/errors;
+- the last 8 IRQ-time PC samples (`u`/`k` = user/kernel mode, `t` = Thumb).
+
+These tell slow from stuck, and where the ARM11 is. In QEMU with `--icount 2`:
+- md0 serves only ~8 requests/s;
+- launchd starts at t≈110 s.
+
+Known 30 s delay on every boot, QEMU included: `AppleARMPE::getGMTTimeOfDay` still waits for the RTC. The `rtc-wait-0s` patch zeroes the timeout passed to `waitForService` at 0x802e78c6, but the wait still happens.
+
+**Next step: run build 9867d28 on the 3DS and leave it running for at least 10 minutes.**
 - If it stops again, `log.txt` now ends with `[probe]` lines (written after ~5 s without a clock read or console output): shim counters, timer/GIC state, MMU registers, and the vector page as the ARM11 sees it vs. FCRAM.
 - Copy the log back as in §3. No photo needed.
 - Reproduce any new hardware-only behaviour with `--icount 2` first, then use `emu/gdb/postmortem.py` (attach to a running `-s` QEMU) to see where the ARM11 is.
