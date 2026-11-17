@@ -591,6 +591,7 @@ typedef struct {
     uint32_t irq, irq_mask;     /* regs 0x10-0x13 / 0x18-0x1B */
     time_t   rtc_offset;        /* guest RTC - host clock, seconds */
     QEMUTimer *power_held;
+    uint8_t  orient;            /* accelerometer pose ('[' / ']', qom mcu-orient), 0..3 */
 } CtrMcu;
 
 typedef struct {
@@ -641,6 +642,9 @@ typedef struct {
     CtrI2c i2c[3];
     CtrMcu mcu;
     qemu_irq mcu_irq;              /* GIC 113 (GPIO3 bit 9, falling edge) */
+    MemoryRegion lcd;              /* LCD registers 0x10202000 (backlight PWM) */
+    uint32_t lcd_abl[2];           /* top / bottom backlight level */
+    bool lcd_abl_set;              /* the guest wrote one: the display shows it */
 
     /* pointer + circle pad state from the QEMU console */
     int  ptr_x, ptr_y;             /* display pixels, 0..399 / 0..479 */
@@ -1152,6 +1156,31 @@ static const MemoryRegionOps nspi_ops = {
 #define MCU_IRQ_POWER_HELD   (1u << 1)
 #define MCU_IRQ_HOME_PRESS   (1u << 2)
 #define MCU_IRQ_HOME_RELEASE (1u << 3)
+#define MCU_IRQ_SHELL_CLOSE  (1u << 5)
+#define MCU_IRQ_SHELL_OPEN   (1u << 6)
+#define MCU_IRQ_VOL_CHANGE   (1u << 22)
+#define MCU_REG_ACC_CFG    0x40
+#define MCU_REG_ACC_DATA   0x45     /* x, y, z: s16 little endian, 0x45..0x4A */
+#define MCU_ACC_1G         0x4000   /* model choice: 1 g = 16384 (docs/mcu.md) */
+
+/*
+ * Accelerometer poses for the '[' / ']' keys and the mcu-orient property.
+ * Model axes (docs/mcu.md, unverified on hardware): x = towards the right
+ * side of the console, y = towards the hinge, z = out of the lower screen;
+ * the sensor reports +1 g against gravity. 0 = iOS upright (console turned
+ * 90 degrees clockwise: the left side is up), then 90 degree steps.
+ */
+static const int16_t mcu_poses[4][3] = {
+    { -MCU_ACC_1G, 0, 0 },          /* left side up: iOS portrait */
+    { 0, -MCU_ACC_1G, 0 },          /* hinge down: iOS landscape (home button left) */
+    { MCU_ACC_1G, 0, 0 },           /* right side up: iOS upside down */
+    { 0, MCU_ACC_1G, 0 },           /* hinge up (held normally, upright): iOS landscape */
+};
+
+static void mcu_set_pose(CtrMcu *m, int pose)
+{
+    m->orient = pose & 3;
+}
 
 static void mcu_raise(CtrMachine *s, uint32_t bits)
 {
@@ -1197,6 +1226,13 @@ static uint8_t mcu_read_reg(CtrMachine *s, uint8_t reg)
         }
         return to_bcd(v);
     }
+    if (reg >= MCU_REG_ACC_DATA && reg < MCU_REG_ACC_DATA + 6 && !(m->regs[MCU_REG_ACC_CFG] & 1)) {
+        return 0;                                             /* accelerometer off */
+    }
+    if (reg >= MCU_REG_ACC_DATA && reg < MCU_REG_ACC_DATA + 6) {
+        uint16_t v = mcu_poses[m->orient & 3][(reg - MCU_REG_ACC_DATA) / 2];
+        return (reg - MCU_REG_ACC_DATA) & 1 ? v >> 8 : v;
+    }
     if (reg == 0x3D || reg == 0x3E) {                         /* 32768 Hz tick counter */
         uint64_t t = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), 32768,
                               NANOSECONDS_PER_SECOND);
@@ -1209,7 +1245,8 @@ static void mcu_write_reg(CtrMachine *s, uint8_t reg, uint8_t v)
 {
     CtrMcu *m = &s->mcu;
 
-    if (reg < 0x02 || (reg >= 0x08 && reg < 0x18)) {
+    if (reg < 0x02 || (reg >= 0x08 && reg < 0x18) ||
+        (reg >= MCU_REG_ACC_DATA && reg < MCU_REG_ACC_DATA + 6)) {
         return;                                               /* read-only */
     }
     if (reg >= MCU_REG_IRQ_MASK && reg < MCU_REG_IRQ_MASK + 4) {
@@ -1282,6 +1319,8 @@ static void mcu_reset(CtrMachine *s)
     m->regs[0x0D] = 210;        /* battery voltage, 20 mV units */
     /* shell open, charger plugged, LCDs + both backlights on (Luma screen init) */
     m->regs[MCU_REG_EX_HW_STAT] = 0x02 | 0x08 | 0xE0;
+    m->regs[0x08] = 0;          /* 3D slider */
+    mcu_set_pose(m, 0);
     if (m->power_held) {
         timer_del(m->power_held);
     }
@@ -1384,6 +1423,81 @@ static const MemoryRegionOps i2c_ops = {
     .impl = { .min_access_size = 1, .max_access_size = 1 },
 };
 
+/* shell open (true) / closed: status bit 1 + the open/close IRQ */
+static void mcu_set_shell(CtrMachine *s, bool open)
+{
+    uint8_t *st = &s->mcu.regs[MCU_REG_EX_HW_STAT];
+    if (!!(*st & 0x02) == open) {
+        return;
+    }
+    *st = open ? (*st | 0x02) : (*st & ~0x02);
+    mcu_raise(s, open ? MCU_IRQ_SHELL_OPEN : MCU_IRQ_SHELL_CLOSE);
+}
+
+/*
+ * Runtime MCU state for tests (HMP: qom-set /machine mcu-battery 15):
+ *   mcu-battery 0..100, mcu-charging (charger plugged + charging),
+ *   mcu-volume 0..63, mcu-shell-open, mcu-orient 0..3 (accelerometer pose),
+ *   lcd-backlight (read only: the top screen's backlight register).
+ */
+static bool mcu_prop_get_charging(Object *obj, Error **errp)
+{
+    return (ctr->mcu.regs[MCU_REG_EX_HW_STAT] & 0x18) != 0;
+}
+
+static void mcu_prop_set_charging(Object *obj, bool on, Error **errp)
+{
+    uint8_t *st = &ctr->mcu.regs[MCU_REG_EX_HW_STAT];
+    *st = on ? (*st | 0x18) : (*st & ~0x18);
+}
+
+static bool mcu_prop_get_shell(Object *obj, Error **errp)
+{
+    return (ctr->mcu.regs[MCU_REG_EX_HW_STAT] & 0x02) != 0;
+}
+
+static void mcu_prop_set_shell(Object *obj, bool open, Error **errp)
+{
+    mcu_set_shell(ctr, open);
+}
+
+static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
+{
+    object_property_add_uint8_ptr(obj, "mcu-battery", &s->mcu.regs[0x0B], OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-volume", &s->mcu.regs[0x09], OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-orient", &s->mcu.orient, OBJ_PROP_FLAG_READWRITE);
+    object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
+    object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
+    object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);
+}
+
+/* --- LCD registers (backlight only; libn3ds lcd.h, 3dbrew LCD Registers) -- */
+static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
+{
+    CtrMachine *s = opaque;
+    if (addr == 0x240 || addr == 0xA40) {
+        return s->lcd_abl[addr == 0xA40];
+    }
+    return 0;
+}
+
+static void lcd_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+{
+    CtrMachine *s = opaque;
+    if (addr == 0x240 || addr == 0xA40) {
+        s->lcd_abl[addr == 0xA40] = v & 0x3FF;
+        s->lcd_abl_set = true;
+        qemu_log_mask(LOG_UNIMP, "nintendo3ds: LCD %s backlight = 0x%x\n",
+                      addr == 0xA40 ? "bottom" : "top", (unsigned)(v & 0x3FF));
+    }
+}
+
+static const MemoryRegionOps lcd_ops = {
+    .read = lcd_read, .write = lcd_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 4 },
+};
+
 /* --- Console input: buttons, circle pad, touch, HOME / POWER -------------- */
 /* 3DS HID bits: A B SELECT START RIGHT LEFT UP DOWN R L X Y */
 static int qcode_to_hid(int q)
@@ -1425,6 +1539,25 @@ static void ctr_key_event(CtrMachine *s, int q, bool down)
     case Q_KEY_CODE_J: s->cpad_x = down ? -1 : (s->cpad_x == -1 ? 0 : s->cpad_x); break;
     case Q_KEY_CODE_H:      /* HOME: MCU IRQ on press and on release */
         mcu_raise(s, down ? MCU_IRQ_HOME_PRESS : MCU_IRQ_HOME_RELEASE);
+        break;
+    case Q_KEY_CODE_MINUS:  /* volume slider down / up by 8 of 63 */
+    case Q_KEY_CODE_EQUAL:
+        if (down) {
+            int v = s->mcu.regs[0x09] + (q == Q_KEY_CODE_EQUAL ? 8 : -8);
+            s->mcu.regs[0x09] = MIN(MAX(v, 0), 0x3F);
+            mcu_raise(s, MCU_IRQ_VOL_CHANGE);
+        }
+        break;
+    case Q_KEY_CODE_C:      /* shell: close / open */
+        if (down) {
+            mcu_set_shell(s, !(s->mcu.regs[MCU_REG_EX_HW_STAT] & 0x02));
+        }
+        break;
+    case Q_KEY_CODE_BRACKET_LEFT:   /* turn the console 90 degrees (accelerometer) */
+    case Q_KEY_CODE_BRACKET_RIGHT:
+        if (down) {
+            mcu_set_pose(&s->mcu, s->mcu.orient + (q == Q_KEY_CODE_BRACKET_RIGHT ? 1 : 3));
+        }
         break;
     case Q_KEY_CODE_P:      /* POWER: press IRQ, "held" IRQ after 3 s */
         if (down) {
@@ -1787,6 +1920,12 @@ static const MemoryRegionOps pdc_ops = {
 static void ctr_draw_screen(CtrMachine *s, int n, uint32_t *dst, int dst_stride_px,
                             int width, int xoff, int yoff)
 {
+    /* backlight: full brightness until the guest programs it; then level
+       0x8F (ios3ds' brightest) = full, 0 = dark (docs/mcu.md) */
+    uint32_t bl = s->lcd_abl_set ? MIN(s->lcd_abl[n] * 256 / 0x8F, 256) : 256;
+    if (!(s->mcu.regs[MCU_REG_EX_HW_STAT] & (n ? 0x20 : 0x40))) {
+        bl = 0;      /* backlight switched off through the MCU (reg 0x22) */
+    }
     CtrPdc *p = &s->pdc_regs[n];
     uint32_t fb = p->cur_fb ? p->regs[PDC_FB_A1] : p->regs[PDC_FB_A0];
     unsigned fmt = p->regs[PDC_FORMAT] & 7;
@@ -1818,6 +1957,9 @@ static void ctr_draw_screen(CtrMachine *s, int n, uint32_t *dst, int dst_stride_
                       r = (v >> 11) << 3; g = ((v >> 6) & 31) << 3; b = ((v >> 1) & 31) << 3; break; }
             default: { uint16_t v = px[0] | px[1] << 8;                /* RGBA4 */
                       r = (v >> 12) << 4; g = ((v >> 8) & 15) << 4; b = ((v >> 4) & 15) << 4; break; }
+            }
+            if (bl < 256) {
+                r = r * bl >> 8; g = g * bl >> 8; b = b * bl >> 8;
             }
             dst[(size_t)(y + yoff) * dst_stride_px + x + xoff] = (r << 16) | (g << 8) | b;
         }
@@ -2205,12 +2347,16 @@ static void ctr_init(MachineState *machine)
     /* the rest of the GX block; the PDC registers above take precedence */
     memory_region_init_io(&s->gx, NULL, &gx_ops, s, "ctr.gx", 0x2000);
     memory_region_add_subregion_overlap(sys, 0x10400000, &s->gx, -1);
+    memory_region_init_io(&s->lcd, NULL, &lcd_ops, s, "ctr.lcd", 0x1000);
+    memory_region_add_subregion(sys, 0x10202000, &s->lcd);
+    s->lcd_abl[0] = s->lcd_abl[1] = 0x5F;          /* Luma's default brightness preset */
     ctr_add_unimp(sys, "ctr.io11.unimp", CTR_IO11_BASE, 0x400000);
 
     /* ---- display + input ---- */
     s->con = graphic_console_init(NULL, 0, &ctr_gfx_ops, s);
     qemu_console_resize(s->con, CTR_TOP_W, CTR_SCR_H * 2);
     qemu_input_handler_register(NULL, &ctr_input_handler);
+    ctr_add_mcu_props(s, OBJECT(machine));
 
     /* ---- payload ---- */
     if (!machine->kernel_filename) {
