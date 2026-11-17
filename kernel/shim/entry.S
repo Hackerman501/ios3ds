@@ -106,7 +106,7 @@ st_dec_calls:   .word 0             @ +0x8C set_decrementer calls
 st_dec_last:    .word 0             @ +0x90 last deadline (ticks)
 st_dec_lr:      .word 0             @ +0x94 caller of the last set_decrementer
 st_irq_n:       .word 0             @ +0x98 IRQ vector entries (any ID)
-st_dbg_pad:     .word 0             @ +0x9C
+st_pc_idx:      .word 0             @ +0x9C IRQ PC samples taken (ring at shim+0x5F80, 16 x {pc, spsr})
 
 @ ---------------------------------------------------------------------------
 @ void shim_putc(int c): append to the log ring; clean the touched lines so
@@ -496,6 +496,19 @@ shim_irq:
     str r0, irq_save0
     str r1, irq_save1
     str r2, irq_save2
+    @ PC sampler: where was the ARM11 when this IRQ (VBlank 60 Hz, ticks) hit?
+    @ lr_irq = interrupted pc + 4 (the kernel's "sub lr, lr, #4" is patched out)
+    ldr r0, st_pc_idx
+    and r1, r0, #15
+    add r0, r0, #1
+    str r0, st_pc_idx
+    ldr r2, =(_shim_base + 0x5F80)
+    add r2, r2, r1, lsl #3
+    sub r1, lr, #4
+    str r1, [r2]
+    mrs r1, spsr
+    str r1, [r2, #4]
+    mcr p15, 0, r2, c7, c10, 1      @ clean the sample's line for the ARM9
     ldr r0, =PRIV_VA
     ldr r1, [r0, #GICC_IAR]
     str r1, st_last_irq

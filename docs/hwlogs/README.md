@@ -16,3 +16,6 @@ run6.txt was copied off the card on 2026-11-17, before the fixed build (`3c57ea7
 **Solved (2026-11-17):** QEMU with `--icount 2` reproduces these values exactly. The cause was the clock base `rtclock+0x30` = 0: `shim_get_abstime` returned 0 before the shim was initialised, and a calendar conversion then spun with IRQs masked. See [re-log §25](../re-log.md). The g34/g35 comparison below predates this: in plain QEMU the first tick fires before read 2, so it compared runs with different timing.
 
 From the next build on, the monitor writes all probe values to `log.txt` (`[probe]` lines) after ~5 s without a clock read or console output.
+
+## run7 (`3c57ea7`, clock-base fix)
+Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, and `launchd[1] has started up`. The log ends there, without a `[probe]` dump, so the kernel was still reading the clock. QEMU next prints launchctl's messages and `Running fsck on the boot volume...`. The next build logs a `[hb]` heartbeat every 10 s while the console is quiet: counters, md0 requests, and IRQ-time PC samples (`u`/`k` = user/kernel, `t` = Thumb).

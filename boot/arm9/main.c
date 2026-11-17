@@ -280,6 +280,58 @@ static void report_probes(void)
 
 static u32 fc_rd(u32 pa) { return in_fcram(pa, 4) ? *(vu32 *)pa : 0xBAD0BAD0u; }
 
+/* wall clock: ARM9 timer 2 at 67027964/1024 Hz cascading into timer 3 (32 bit,
+   wraps after ~18 h). Timer 0 is the Wi-Fi code's entropy source; 1 is free. */
+#define T9_VAL(n) (*(vu16 *)(0x10003000u + (n) * 4))
+#define T9_CNT(n) (*(vu16 *)(0x10003002u + (n) * 4))
+#define T9_HZ     65457u
+
+static void clk_start(void)
+{
+    T9_CNT(2) = 0;
+    T9_CNT(3) = 0;
+    T9_VAL(2) = 0;
+    T9_VAL(3) = 0;
+    T9_CNT(3) = 0x80 | 0x04;            /* enable, count-up (cascade) */
+    T9_CNT(2) = 0x80 | 0x03;            /* enable, prescaler 1024 */
+}
+
+static u32 clk_ticks(void)
+{
+    u16 hi, lo, hi2;
+    do {
+        hi = T9_VAL(3);
+        lo = T9_VAL(2);
+        hi2 = T9_VAL(3);
+    } while (hi != hi2);
+    return (u32)hi << 16 | lo;
+}
+
+static u32 clk_secs(void) { return clk_ticks() / T9_HZ; }
+
+/* heartbeat while the console is quiet: is the kernel alive (clock reads,
+   ticks), is md0 busy, and where does the ARM11 spend its time (IRQ-time PC
+   samples, shim+0x5F80, 16 x {pc, spsr}, newest = st_pc_idx - 1) */
+static void heartbeat(u32 quiet_s)
+{
+    vu32 *st = (vu32 *)cfg.shim_pa;
+    vu32 *ring = (vu32 *)(cfg.shim_pa + 0x5F80);
+    u32 bs, be, n = st[0x9C / 4];
+    blksrv_stats(&bs, &be);
+    logp("[hb] t=%us quiet %us | abs %u dec %u timer %u irq %u vbl %u | md0 %u req %u err\n",
+         clk_secs(), quiet_s, (unsigned)st[0x80 / 4], (unsigned)st[0x8C / 4], (unsigned)st[0x4C / 4],
+         (unsigned)st[0x98 / 4], (unsigned)st[0x78 / 4], bs, be);
+    char line[200];
+    int len = snprintf(line, sizeof(line), "[hb]  pc");
+    for (u32 i = 1; i <= 8 && i <= n; i++) {
+        u32 k = (n - i) & 15, pc = ring[k * 2], psr = ring[k * 2 + 1];
+        const char *m = (psr & 0x1F) == 0x10 ? "u" : (psr & 0x1F) == 0x13 ? "k" : "x";
+        len += snprintf(line + len, sizeof(line) - len, " %s%08x%s", m, pc, (psr & 0x20) ? "t" : "");
+        if (len >= (int)sizeof(line)) break;
+    }
+    logp("%s\n", line);
+}
+
 static void dump_probes(const char *why)
 {
     vu32 *st = (vu32 *)cfg.shim_pa;
@@ -350,6 +402,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
     u32 *l1 = cfg.top_pa ? (u32 *)cfg.top_pa : NULL;
 
     log_color(CON_GREY, "[monitor] %s - ARM9 stays here forwarding logs.\n", phase);
+    clk_start();
     log_sync_each(true);
     for (;;) {
         bool busy = false;
@@ -432,16 +485,30 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
                        (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
                 status(20, CON_GREY, "sctlr %08x stage %u", (unsigned)g[12], (unsigned)g[0x7C / 4]);
-                /* ~5 s without a clock read or console output: dump once */
-                static u32 last_abs, last_head, stalled;
+                /* 5 s without a clock read or console output: dump once.
+                   10 s without console output: heartbeat every 10 s. */
+                static u32 last_abs, last_head, abs_since, head_since, next_hb;
+                static bool dumped;
+                u32 now = clk_secs();
                 u32 abs = st[0x80 / 4], hd = ring ? ring->head : 0;
-                if (st[0x40 / 4] && abs == last_abs && hd == last_head) {
-                    if (++stalled == 40) dump_probes("ARM11 stalled: no clock read or console output for ~5 s");
-                } else {
-                    stalled = 0;
+                if (abs != last_abs || hd != last_head) {
+                    abs_since = now;
+                    dumped = false;
+                }
+                if (hd != last_head) {
+                    head_since = now;
+                    next_hb = now + 10;
                 }
                 last_abs = abs;
                 last_head = hd;
+                if (st[0x40 / 4] && !dumped && now - abs_since >= 5) {
+                    dumped = true;
+                    dump_probes("ARM11 stalled: no clock read or console output for 5 s");
+                }
+                if (st[0x40 / 4] && (int)(now - next_hb) >= 0) {
+                    next_hb = now + 10;
+                    heartbeat(now - head_since);
+                }
             }
         }
         tick++;
