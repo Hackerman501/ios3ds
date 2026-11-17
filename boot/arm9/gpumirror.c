@@ -88,11 +88,16 @@ bool gm_live(u32 now)
         if (st == GM_ST_ACTIVE)
             log_ok("[gpu] display mirror %s: self-test variant %u, %u ms\n", s, (unsigned)gm->variant,
                    us(gm->selftest_ticks) / 1000);
-        else if (st == GM_ST_FAILED || st == GM_ST_DISABLED)
-            log_warn("[gpu] display mirror %s (%s); self-test: %u bytes differed, first at %u: %02x expected, "
-                     "%02x seen; the ARM9 keeps copying the screen\n", s,
-                     why < ARRAY_SIZE(why_name) ? why_name[why] : "?", (unsigned)gm->selftest_bad,
+        else if (st == GM_ST_FAILED && why == GM_WHY_SELFTEST)
+            log_warn("[gpu] display mirror %s (%s): %u bytes differed, first at %u: %02x expected, %02x seen; "
+                     "the ARM9 keeps copying the screen\n", s, why_name[why], (unsigned)gm->selftest_bad,
                      (unsigned)gm->first_bad[0], (unsigned)gm->first_bad[1], (unsigned)gm->first_bad[2]);
+        else if (st == GM_ST_FAILED && why == GM_WHY_TIMEOUT)
+            log_warn("[gpu] display mirror %s (%s, register 0x%08x); the ARM9 keeps copying the screen\n", s,
+                     why_name[why], (unsigned)gm->first_bad[3]);
+        else if (st == GM_ST_FAILED || st == GM_ST_DISABLED)
+            log_warn("[gpu] display mirror %s (%s); the ARM9 keeps copying the screen\n", s,
+                     why < ARRAY_SIZE(why_name) ? why_name[why] : "?");
         else
             logp("[gpu] display mirror: %s\n", s);
     }

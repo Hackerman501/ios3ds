@@ -22,6 +22,7 @@
 #include "wifi/wifi.h"
 #include "audio.h"
 #include "gpumirror.h"
+#include "gpu_mirror.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -722,6 +723,9 @@ void a9_main(int argc, char **argv)
         }
     }
 
+    /* the shim calls its GPU part only if gpu.bin put the part's magic there
+       (kernel/shim/gpu_glue.c): drop whatever a previous boot left in FCRAM */
+    *(vu32 *)GPU_PART_PA = 0;
     for (u32 i = 0; i < cfg.nloads; i++) {
         u32 sz = 0, pa = cfg.load_pa[i];
         bool ok_dst = (pa >= 0x1FF80000 && pa < 0x1FFF0000) || in_fcram(pa, 0x1000) ||
