@@ -343,6 +343,26 @@ static void heartbeat(u32 quiet_s)
     logp("[hb] t=%us quiet %us | abs %u dec %u timer %u irq %u vbl %u | md0 %u req %u KiB %u err\n",
          clk_secs(), quiet_s, (unsigned)st[0x80 / 4], (unsigned)st[0x8C / 4], (unsigned)st[0x4C / 4],
          (unsigned)st[0x98 / 4], (unsigned)st[0x78 / 4], bs, blksrv_sectors() / 2, be);
+    /* clock-rate check (hardware run12/13: gettimeofday and mach_absolute_time
+       disagree by 2-2.6x). The ARM11 time base is the MPCore watchdog as of the
+       last clock read (shim +0x44 high word, +0x48 low word, 1047311 Hz
+       nominal); the ARM9 timer is independent. In ms since the first heartbeat. */
+    {
+        static u64 a11_0;
+        static u32 a9_0;
+        static bool have0;
+        u64 a11 = (u64)st[0x44 / 4] << 32 | st[0x48 / 4];
+        u32 a9 = clk_ticks();
+        if (!have0) {
+            a11_0 = a11;
+            a9_0 = a9;
+            have0 = true;
+        }
+        u32 a11_ms = (u32)((a11 - a11_0) * 1000 / 1047311u);
+        u32 a9_ms = (u32)((u64)(a9 - a9_0) * 1000 / T9_HZ);
+        logp("[hb]  clock: arm11 watchdog +%u ms vs arm9 timer +%u ms (ratio %u/1000)\n",
+             a11_ms, a9_ms, a9_ms ? (u32)((u64)a11_ms * 1000 / a9_ms) : 0);
+    }
     char line[200];
     int len = snprintf(line, sizeof(line), "[hb]  pc");
     for (u32 i = 1; i <= 8 && i <= n; i++) {

@@ -44,3 +44,14 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - Boots as before. The GPU display mirror's self-test failed in all 8 variants (`451182 of 518400 bytes differ`, first byte 0x80 where 0x00 was expected) and the GL self-check failed at the memory fill (`4096 of 4096 words wrong (word 0: 0x5a5aa5a5)`); both fell back as designed (ARM9 copy, CPU GL).
 - `GX clock 0x00000000`: Luma never sets GX +0x004; libn3ds/GSP write 0x70100. PPF transfers worked, the fill did not. Analysis and the diagnostics of the next build: docs/pica200.md §12.
 - The ARM9 CPU copy costs 300-430 ms per frame on hardware (`41 copies in 30 s, 432.8 ms each`): VRAM access from the ARM9 is far slower than in QEMU, so the GPU mirror is the main performance fix.
+
+## run12 (`21f26fc`, first GPU build) and run13 (`eab9618`, GPU diagnostics)
+- iOS boots normally in both runs. The GPU paths fail their self-tests, and the ARM9 CPU copy takes over, as designed.
+- The CPU screen copy costs **300–430 ms per frame on real hardware** (`[monitor] CPU screen copy`). That makes it the main reason the UI feels slow.
+- run13 `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL; PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL`:
+  - the GPU clock was 0, and our setup now sets `0x70100`;
+  - the PSC fill can't write FCRAM;
+  - textures that aren't a power of two sample garbage.
+
+  The mirror's 320x480 texture and GL's FCRAM fills therefore fail. Details: docs/pica200.md §12.
+- Clock: `gettimeofday` measured 1058/1063 ms for the gltest frame, while `mach_absolute_time` measured 495/412 ms. From the next build on, each `[hb]  clock:` line compares the ARM11 watchdog time base with the independent ARM9 timer. In QEMU the ratio is 1000/1000.
