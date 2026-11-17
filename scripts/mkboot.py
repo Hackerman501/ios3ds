@@ -86,23 +86,48 @@ def build_shim(outdir):
              "-ffixed-r9",
              "-I" + os.path.join(ROOT, "boot", "common"),
              "-I" + os.path.join(ROOT, "tools", "ios3ds-pica", "include")]
+    srcs = [os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"), os.path.join(sd, "gpu_glue.c"),
+            os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
+            os.path.join(ROOT, "tools", "ios3ds-wifi", "shim", "net.c")]
+    srcs += sorted(__import__("glob").glob(os.path.join(sd, "audio*.[cS]")))     # docs/audio.md
+    # the GPU part: link.ld places every object named *pica*.o at GPU_PART_VA (gpu.bin)
+    srcs += [os.path.join(sd, "pica.c"),
+             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
+             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c")]
     with tempfile.TemporaryDirectory() as td:
         elf = os.path.join(td, "shim.elf")
-        subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld"),
-                        os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"),
-                        os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
-                        os.path.join(sd, "pica.c"),
-                        os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
-                        os.path.join(ROOT, "tools", "ios3ds-wifi", "shim", "net.c")]
-                       + sorted(__import__("glob").glob(os.path.join(sd, "audio*.[cS]")))   # docs/audio.md
-                       + ["-o", elf,
-                        "-Wl,--no-warn-rwx-segments"], check=True)
+        objs = []
+        for s in srcs:
+            o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
+            subprocess.run([gcc] + flags + ["-c", s, "-o", o], check=True)
+            objs.append(o)
+        subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +
+                       ["-o", elf, "-Wl,--no-warn-rwx-segments"], check=True)
         out = os.path.join(outdir, "shim.bin")
-        subprocess.run([objcopy, "-O", "binary", elf, out], check=True)
+        subprocess.run([objcopy, "-O", "binary", "-R", ".gpu", elf, out], check=True)
+        gpart = os.path.join(td, "gpu_part.bin")
+        subprocess.run([objcopy, "-O", "binary", "-j", ".gpu", elf, gpart], check=True)
+        gpu = open(gpart, "rb").read()
     blob = open(out, "rb").read()
     if len(blob) > 0x6000 or blob[4:8] != b"SHIM":
         raise SystemExit("bad shim build (%d bytes)" % len(blob))
+    build_gpu_bin(outdir, gpu)
     return blob
+
+
+GPU_PART_SIZE = 0x8000        # boot/common/gpu_mirror.h: GPU part at 0x208B0000, blob at 0x208B8000
+GPU_BIN_PA = 0x208B0000
+
+
+def build_gpu_bin(outdir, part):
+    """gpu.bin = the shim's GPU part (padded to 32 KiB) + the mirror's command lists."""
+    import subprocess
+    if len(part) > GPU_PART_SIZE or struct.unpack_from("<I", part, 0)[0] != 0x30555047:
+        raise SystemExit("bad shim GPU part (%d bytes)" % len(part))
+    subprocess.run(["make", "-s", "-C", os.path.join(ROOT, "tools", "ios3ds-pica"), "mirror"], check=True)
+    mirror = open(os.path.join(ROOT, "build", "pica-host", "gpumirror.bin"), "rb").read()
+    with open(os.path.join(outdir, "gpu.bin"), "wb") as f:
+        f.write(part + bytes(GPU_PART_SIZE - len(part)) + mirror)
 
 
 def configure_shim(outdir, cfg):
@@ -173,6 +198,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True):
         "# fake S5L CLCD registers: the ARM9 mirrors window 1 onto the top screen",
         "display_regs=0x%08x" % (dtgen.FAKEIO_BASE + dtgen.PAGE_MAP["clcd"][0] * 0x1000),
         "shim=0:/ios3ds/shim.bin",
+        "# the shim's GPU part + the display mirror's PICA200 command lists (boot/common/gpu_mirror.h)",
+        "load=0:/ios3ds/gpu.bin,0x%08x" % GPU_BIN_PA,
         ("rootfs=0:/ios3ds/rootfs.hfs" if ramdisk_len else "# no rootfs.hfs staged"),
         "shim_pa=0x%08x" % lay["shim_pa"],
         "ring_pa=0x%08x" % lay["ring_pa"],
@@ -198,6 +225,15 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True):
         "countdown_ms=2000",
         "# iOS screen mode, X cycles at run time: 0 = top (log on bottom), 1 = both (bottom = touch map), 2 = bottom only",
         "screen=1",
+        "# PICA200 GPU (docs/pica200.md): gpu=0 keeps the kernel away from the GPU entirely",
+        "# (GL falls back to the CPU rasterizer, the ARM9 copies the screen); gpu_mirror=0",
+        "# keeps only the screen copy on the ARM9. The mirror self-tests itself and falls back",
+        "# to the ARM9 copy on any mismatch or timeout. gpu_vbl_div: a GPU frame at most every",
+        "# Nth VBlank (2 = 30 fps). gpu_spin_us: IRQ-time wait for the GPU (0 = never wait)",
+        "gpu=1",
+        "gpu_mirror=1",
+        "gpu_vbl_div=2",
+        "gpu_spin_us=0",
         "# XNU boot-args (edit freely, max 255 chars)",
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",

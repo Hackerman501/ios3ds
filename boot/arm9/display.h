@@ -10,3 +10,4 @@ void display_set_mode(int mode);
 bool display_active(u32 regs_pa);
 void display_blit(u32 regs_pa);
 void display_arm(u32 regs_pa);
+void display_fbs(u32 out[4]);

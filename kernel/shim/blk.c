@@ -80,7 +80,7 @@ static int xfer(u32 op, u32 lba, u32 count)
 }
 
 void shim_input_register(void);
-void shim_pica_register(void);
+void shim_gpu_register(void);
 void shim_net_register(void);
 
 void shim_mdevstrategy(buf_t bp)
@@ -88,7 +88,7 @@ void shim_mdevstrategy(buf_t bp)
     /* first block I/O happens in a normal, blockable thread: register the
        kern.ios3ds_input sysctl here (idempotent) */
     shim_input_register();
-    shim_pica_register();           /* ios3ds_gpu (pica.c); the GPU itself is brought up on first use */
+    shim_gpu_register();            /* ios3ds_gpu (pica.c, if gpu.bin is loaded); the GPU itself is brought up on first use */
     shim_net_register();        /* kern.ios3ds_net (tools/ios3ds-wifi) */
     volatile blkmbox_t *m = MBOX;
     u32 total = buf_count(bp);

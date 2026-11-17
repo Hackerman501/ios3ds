@@ -59,8 +59,13 @@ static void input_dinval(volatile void *p, u32 len)
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
 
+void shim_gpu_poll(void);               /* kernel/shim/gpu_glue.c */
+
 static int input_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *req)
 {
+    /* the input daemon polls us all the time from a normal thread: the place
+       where the GPU display mirror gets brought up once the screen is on */
+    shim_gpu_poll();
     input_dinval(arg1, (u32)arg2);
     /* copyout straight from the mailbox: the reader re-checks `head`
        (inmbox_t is written sample-first, head-last), no kernel-side copy */

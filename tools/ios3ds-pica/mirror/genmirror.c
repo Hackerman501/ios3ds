@@ -1,0 +1,202 @@
+/*
+ * genmirror: build gpumirror.bin, the PICA200 command lists of the GPU
+ * display mirror (boot/common/gpu_mirror.h, docs/pica200.md section 9).
+ *
+ *   genmirror out.bin
+ *
+ * Runs on the build host with the same encoders the GL back end uses
+ * (pica_cmd/pica_state/pica_ff), so the kernel shim needs no floating point
+ * and no encoder of its own: it only points the GPU at these lists. The
+ * lists use fixed physical addresses (VRAM texture and render targets, the
+ * blob's own vertex arrays at GM_BLOB_PA), so they are complete as built.
+ *
+ * Two lists, identical except for their vertex arrays:
+ *   [0] texture coordinates for a GPU whose nearest sampling truncates
+ *       (texel = floor(s * width), what Citra/Azahar and our model do)
+ *   [1] the same shifted by -1/2 texel, for one that rounds (GM_VAR_SAMPLE_HALF)
+ * The shim's self-test picks the one that reproduces the CPU copy exactly.
+ *
+ * Geometry. In the render targets' own terms (column q from memory x = 0,
+ * stored row r from the first stored row) both screens are plain scalings
+ * of the iOS picture (gm_map):
+ *   top    240x400: q 0..240, r 20..380;  iOS x = 4/3 q - 1/2, iOS y = 4/3 (r - 20) - 1/2
+ *   bottom 240x320: q 14..227, r 0..320;  iOS x = 3/2 q - 41/2, iOS y = 3/2 r - 1/2
+ * At pixel centres (q, r = n + 1/2) those give floor() = the CPU copy's
+ * integer maths, with at least 1/6 texel to spare on either side. The
+ * margins are never drawn: the shim fills both targets with black once.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "pica.h"
+#include "gpu_mirror.h"
+
+typedef struct {                /* = struct Vtx of the GL engine: the ff shader's input */
+    float x, y, z, w;
+    float c[4];
+    float t0[2], t1[2];
+    float fog;
+} MVtx;
+_Static_assert(sizeof(MVtx) == 52, "vertex layout");
+
+static void quad(MVtx *v, float W, float H, float q0, float q1, float r0, float r1,
+                 float ax, float bx, float ay, float by, float shift)
+{
+    /* corners: clip x = 2q/W - 1, clip y = 1 - 2r/H (stored row 0 = top, +y) */
+    const float qs[6] = { q0, q1, q1, q0, q1, q0 }, rs[6] = { r0, r0, r1, r0, r1, r1 };
+    for (int i = 0; i < 6; i++) {
+        float X = ax * qs[i] + bx, Y = ay * rs[i] + by;     /* iOS pixel coordinates */
+        memset(&v[i], 0, sizeof v[i]);
+        v[i].x = 2.0f * qs[i] / W - 1.0f;
+        v[i].y = 1.0f - 2.0f * rs[i] / H;
+        v[i].z = 0.0f;
+        v[i].w = 1.0f;
+        v[i].c[0] = v[i].c[1] = v[i].c[2] = v[i].c[3] = 1.0f;
+        /* GL t runs from the last stored texture row (t = 0) to the first;
+           iOS row 0 is stored first, so t * 480 = 480 - Y */
+        v[i].t0[0] = (X + shift) / (float)GM_SRC_W;
+        v[i].t0[1] = ((float)GM_SRC_H - Y + shift) / (float)GM_SRC_H;
+        v[i].fog = 1.0f;
+    }
+}
+
+static uint32_t build_list(uint32_t *buf, uint32_t cap, uint32_t vtx_pa)
+{
+    static const float ident[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    pica_cmd_t c;
+    pica_tex_t t;
+    pica_tev_t tev[PICA_TEV_STAGES];
+    pica_raster_t rs;
+    pica_vtx_layout_t l;
+    pica_fb_t fb;
+    float clip[16];
+    int i;
+
+    pica_cmd_init(&c, buf, cap);
+    pica_emit_base_state(&c);
+    pica_ff_emit_program(&c);
+
+    memset(&t, 0, sizeof t);
+    t.pa = GM_TEX_PA;
+    t.width = GM_SRC_W;
+    t.height = GM_SRC_H;
+    t.fmt = PICA_TEX_RGBA8;
+    t.mag = t.min = PICA_NEAREST;
+    t.wrap_s = t.wrap_t = PICA_CLAMP_TO_EDGE;
+    pica_emit_texture(&c, 0, &t);
+    pica_emit_texunits(&c, 1);
+
+    /* The texture holds the iOS bytes B,G,R,A, read as RGBA8 (bytes A,B,G,R):
+       sample.a = B, .b = G, .g = R, .r = A. Rebuild the real colour:
+         stage 0: (sample.g) * (1,0,0)            -> (R, 0, 0)
+         stage 1: (sample.b) * (0,1,0) + previous -> (R, G, 0)
+         stage 2: (sample.a) * (0,0,1) + previous -> (R, G, B)
+       Multiplying by 0 or 255 and adding disjoint channels is exact. */
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_tev_passthrough(&tev[i]);
+    for (i = 0; i < 3; i++) {
+        static const uint8_t op[3] = { PICA_TEVOP_RGB_G, PICA_TEVOP_RGB_B, PICA_TEVOP_RGB_ALPHA };
+        static const uint32_t k[3] = { 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u };     /* R | G<<8 | B<<16 | A<<24 */
+        tev[i].src_rgb[0] = PICA_TEVSRC_TEXTURE0;
+        tev[i].src_rgb[1] = PICA_TEVSRC_CONSTANT;
+        tev[i].src_rgb[2] = i ? PICA_TEVSRC_PREVIOUS : PICA_TEVSRC_CONSTANT;
+        tev[i].op_rgb[0] = op[i];
+        tev[i].op_rgb[1] = PICA_TEVOP_RGB_COLOR;
+        tev[i].op_rgb[2] = PICA_TEVOP_RGB_COLOR;
+        tev[i].func_rgb = i ? PICA_TEV_MULT_ADD : PICA_TEV_MODULATE;
+        tev[i].src_a[0] = PICA_TEVSRC_CONSTANT;
+        tev[i].op_a[0] = PICA_TEVOP_A_ALPHA;
+        tev[i].func_a = PICA_TEV_REPLACE;
+        tev[i].color = k[i];
+    }
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_emit_tev(&c, (unsigned)i, &tev[i]);
+
+    pica_raster_defaults(&rs);
+    rs.write_mask = PICA_WRITE_COLOR;
+    pica_emit_raster(&c, &rs);
+    pica_ff_clip_matrix(clip, ident, ident);
+    pica_ff_emit_matrices(&c, clip, NULL, NULL, 1.0f);
+
+    memset(&l, 0, sizeof l);
+    l.count = 4;
+    l.attr[0].type = PICA_FLOAT; l.attr[0].size = 4;
+    l.attr[1].type = PICA_FLOAT; l.attr[1].size = 4;
+    l.attr[2].type = PICA_FLOAT; l.attr[2].size = 2;
+    l.attr[3].type = PICA_FLOAT; l.attr[3].size = 2;
+    l.nbuffers = 1;
+    l.buffer[0].stride = sizeof(MVtx);
+    l.base_pa = vtx_pa;
+    if (pica_emit_vtx_layout(&c, &l))
+        return 0;
+
+    memset(&fb, 0, sizeof fb);
+    fb.color_fmt = PICA_CB_RGBA8;
+    fb.width = GM_RT_W;
+    fb.color_pa = GM_RT_TOP_PA;
+    fb.height = GM_RT_TOP_H;
+    pica_emit_framebuffer(&c, &fb);
+    pica_emit_viewport(&c, 0, 0, GM_RT_W, GM_RT_TOP_H);
+    pica_emit_scissor(&c, 0, 0, 0, 0, 0);
+    pica_emit_draw_arrays(&c, PICA_TRIANGLES, 0, 6);
+    pica_emit_fb_flush(&c);
+
+    fb.color_pa = GM_RT_BOT_PA;
+    fb.height = GM_RT_BOT_H;
+    pica_emit_framebuffer(&c, &fb);
+    pica_emit_viewport(&c, 0, 0, GM_RT_W, GM_RT_BOT_H);
+    pica_emit_draw_arrays(&c, PICA_TRIANGLES, 6, 6);
+    pica_emit_fb_flush(&c);
+    return pica_cmd_finish(&c);
+}
+
+int main(int argc, char **argv)
+{
+    static uint8_t blob[GM_BLOB_MAX];
+    gm_blob_t *h = (gm_blob_t *)blob;
+    uint32_t off = (sizeof *h + 15) & ~15u, vtx_off[2], i;
+    FILE *f;
+
+    if (argc != 2) {
+        fprintf(stderr, "usage: genmirror out.bin\n");
+        return 2;
+    }
+    memset(blob, 0, sizeof blob);
+    /* vertex arrays first (fixed size), lists after */
+    for (i = 0; i < 2; i++) {
+        MVtx v[12];
+        float sh = i ? -0.5f : 0.0f;
+        quad(v, GM_RT_W, GM_RT_TOP_H, 0, GM_RT_W, 20, 380, 4.0f / 3, -0.5f, 4.0f / 3, -20 * 4.0f / 3 - 0.5f, sh);
+        quad(v + 6, GM_RT_W, GM_RT_BOT_H, 14, 227, 0, GM_RT_BOT_H, 1.5f, -20.5f, 1.5f, -0.5f, sh);
+        vtx_off[i] = off;
+        memcpy(blob + off, v, sizeof v);
+        off = (off + sizeof v + 15) & ~15u;
+    }
+    for (i = 0; i < 2; i++) {
+        uint32_t bytes = build_list((uint32_t *)(blob + off), (GM_BLOB_MAX - off) / 4, GM_BLOB_PA + vtx_off[i]);
+        if (!bytes) {
+            fprintf(stderr, "genmirror: list %u does not fit\n", i);
+            return 1;
+        }
+        h->list_off[i] = off;
+        h->list_bytes[i] = bytes;
+        off = (off + bytes + 15) & ~15u;
+    }
+    h->magic = GM_BLOB_MAGIC;
+    h->version = GM_BLOB_VERSION;
+    h->blob_pa = GM_BLOB_PA;
+    h->size = off;
+    h->tex_pa = GM_TEX_PA;
+    h->rt_top_pa = GM_RT_TOP_PA;
+    h->rt_bot_pa = GM_RT_BOT_PA;
+    h->src_wh = GM_SRC_H << 16 | GM_SRC_W;
+    f = fopen(argv[1], "wb");
+    if (!f || fwrite(blob, 1, off, f) != off || fclose(f)) {
+        perror(argv[1]);
+        return 1;
+    }
+    printf("genmirror: %s: %u bytes (lists %u + %u bytes) for PA 0x%08x\n", argv[1], off,
+           h->list_bytes[0], h->list_bytes[1], GM_BLOB_PA);
+    return 0;
+}

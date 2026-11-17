@@ -117,6 +117,61 @@ static uint32_t *scratch(size_t words)
     return P.scratch;
 }
 
+/* Before the first draw: one round trip through everything every frame
+   relies on and the model cannot vouch for on hardware - the transport, the
+   shim's cache maintenance, the PPF in both directions (8x8 tiling) and the
+   PSC fill. 64x64 RGBA8, a pattern up and back, then a fill and back.
+   0 = usable; otherwise logs what came back and the caller uses the CPU. */
+static int self_check(void)
+{
+    enum { N = 64 * 64 };
+    uint32_t a = 0, b = 0, st, i, *buf = malloc(N * 4), dim = 64u << 16 | 64u, bad = 0, first = 0;
+    const char *what = "allocating";
+    if (!buf)
+        return -1;
+    st = P.dev->alloc(N * 4, 0, &a);
+    if (st == PICA_OK)
+        st = P.dev->alloc(N * 4, 0, &b);
+    for (i = 0; i < N; i++)
+        buf[i] = i * 2654435761u ^ 0x5A5AA5A5u;
+    if (st == PICA_OK && (what = "upload", st = P.dev->write(a, buf, N * 4)) == PICA_OK &&
+        (what = "linear->tiled transfer", st = P.dev->transfer(a, dim, b, dim, PPF_OUT_TILED |
+            PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8))) == PICA_OK &&
+        (what = "tiled->linear transfer", st = P.dev->transfer(b, dim, a, dim,
+            PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8))) == PICA_OK &&
+        (what = "read-back", st = P.dev->read(a, buf, N * 4)) == PICA_OK) {
+        for (i = 0; i < N; i++)
+            if (buf[i] != (i * 2654435761u ^ 0x5A5AA5A5u) && !bad++)
+                first = i;
+        if (bad) {
+            gl_log("pica: GPU self-check: %u of %u words wrong after a transfer round trip (word %u: 0x%08x, "
+                   "expected 0x%08x): not using the GPU", bad, (unsigned)N, first, buf[first],
+                   first * 2654435761u ^ 0x5A5AA5A5u);
+            st = PICA_ERR_RANGE;
+            what = NULL;
+        } else if ((what = "memory fill", st = P.dev->fill(b, N * 4, 0x11223344u, PSC_FILL_32, 0, 0, 0, 0)) == PICA_OK &&
+                   (what = "tiled->linear transfer", st = P.dev->transfer(b, dim, a, dim,
+                       PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8))) == PICA_OK &&
+                   (what = "read-back", st = P.dev->read(a, buf, N * 4)) == PICA_OK) {
+            for (i = 0; i < N; i++)
+                if (buf[i] != 0x11223344u && !bad++)
+                    first = i;
+            if (bad) {
+                gl_log("pica: GPU self-check: memory fill left %u of %u words wrong (word %u: 0x%08x): "
+                       "not using the GPU", bad, (unsigned)N, first, buf[first]);
+                st = PICA_ERR_RANGE;
+                what = NULL;
+            }
+        }
+    }
+    if (st != PICA_OK && what)
+        gl_log("pica: GPU self-check: %s failed: %s: not using the GPU", what, pica_strerror(st));
+    if (a) P.dev->free(a);
+    if (b) P.dev->free(b);
+    free(buf);
+    return st == PICA_OK ? 0 : -1;
+}
+
 int pica_backend_init(void)
 {
     pica_info_t info;
@@ -140,6 +195,8 @@ int pica_backend_init(void)
         gl_log("pica: shim speaks protocol %u, this engine %u: not using the GPU", info.version, PICA_PROTO_VERSION);
         return 0;
     }
+    if (self_check())
+        return 0;
     P.vstage = malloc(sizeof(Vtx) * VTX_CAP);
     P.list = malloc(CMD_WORDS * 4);
     st = P.dev->alloc(sizeof(Vtx) * VTX_CAP, 0, &P.vbuf_pa);
@@ -148,7 +205,7 @@ int pica_backend_init(void)
         return 0;
     }
     P.state = 1;
-    gl_log("pica: GPU up: arena %u KiB at PA 0x%08x (%u KiB free), PDN_GPU_CNT 0x%x, %s",
+    gl_log("pica: GPU up (self-check passed): arena %u KiB at PA 0x%08x (%u KiB free), PDN_GPU_CNT 0x%x, %s",
            info.arena_size >> 10, info.arena_pa, info.arena_free >> 10, info.gpu_cnt, P.dev->name);
     return 1;
 }
