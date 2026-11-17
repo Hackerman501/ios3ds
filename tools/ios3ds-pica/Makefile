@@ -27,11 +27,11 @@ $(OUT)/gpumirror.bin: $(OUT)/genmirror
 
 # the mirror engine (src/pica_mirror.c) against the model, compared with the
 # ARM9's own CPU copy (boot/arm9/display.c, compiled for the host)
-$(OUT)/test_mirror: tests/test_mirror.c src/pica_mirror.c src/pica_drv.c sim/picasim.c $(ROOT)/boot/arm9/display.c \
+$(OUT)/test_mirror: tests/test_mirror.c src/pica_mirror.c src/pica_drv.c src/pica_diag.c sim/picasim.c $(ROOT)/boot/arm9/display.c \
 		$(wildcard include/*.h sim/*.h) $(ROOT)/boot/common/gpu_mirror.h
 	mkdir -p $(OUT)
 	cc -O2 -g -Wall -Wextra -Wno-int-to-pointer-cast $(INC) -I$(ROOT)/boot/arm9 tests/test_mirror.c \
-		src/pica_mirror.c src/pica_drv.c sim/picasim.c $(ROOT)/boot/arm9/display.c -lm -o $@
+		src/pica_mirror.c src/pica_drv.c src/pica_diag.c sim/picasim.c $(ROOT)/boot/arm9/display.c -lm -o $@
 
 $(OUT)/test_pica: $(SRC) tests/test_pica.c $(wildcard include/*.h sim/*.h src/*.h)
 	mkdir -p $(OUT)

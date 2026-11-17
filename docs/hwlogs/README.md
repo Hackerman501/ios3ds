@@ -39,3 +39,8 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 ## run11 (`9748841`, IORTC wait 2 s)
 - Healthy boot: the RTC line is back, SpringBoard and input are up before t=82 s, and Notes and search work.
 - gltest still reads `0 ms` on hardware, so the 2 s wait did not fix the early-boot `gettimeofday` problem there (it did in QEMU). The next build logs the raw `gettimeofday` result.
+
+## run12 (`21f26fc`, first run of the PICA200 paths)
+- Boots as before. The GPU display mirror's self-test failed in all 8 variants (`451182 of 518400 bytes differ`, first byte 0x80 where 0x00 was expected) and the GL self-check failed at the memory fill (`4096 of 4096 words wrong (word 0: 0x5a5aa5a5)`); both fell back as designed (ARM9 copy, CPU GL).
+- `GX clock 0x00000000`: Luma never sets GX +0x004; libn3ds/GSP write 0x70100. PPF transfers worked, the fill did not. Analysis and the diagnostics of the next build: docs/pica200.md §12.
+- The ARM9 CPU copy costs 300-430 ms per frame on hardware (`41 copies in 30 s, 432.8 ms each`): VRAM access from the ARM9 is far slower than in QEMU, so the GPU mirror is the main performance fix.

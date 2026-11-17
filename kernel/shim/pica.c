@@ -51,6 +51,7 @@
 #include "pica_drv.h"
 #include "pica_regs.h"
 #include "pica_mirror.h"
+#include "pica_diag.h"
 #include "gpu_mirror.h"
 
 struct sysctl_oid {
@@ -161,6 +162,10 @@ static int p_alive(uint32_t pid)
 
 static pica_plat_t plat;                /* filled at bring-up (k_printf is not a constant expression) */
 
+static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size);
+static void gpu_clock_fix(void);
+static void gpu_diag_after(void);
+
 static void bringup(void)
 {
     static const uint32_t sizes[] = { 0x800000, 0x400000, 0x200000 };
@@ -222,9 +227,16 @@ static void bringup(void)
        CPU access to the arena does its own line maintenance. QEMU has no
        caches, so only hardware can show this matters. */
     __asm__ volatile("mcr p15, 0, %0, c7, c14, 0\n\tmcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+    /* staged diagnostics on the GPU as Luma left it, then the part of
+       libn3ds' hardwareReset() Luma never does (GX clock, VRAM banks, DMA
+       priorities), then the same tests again (docs/pica200.md section 12) */
+    gpu_diag_before((uint8_t *)va, pa, size);
+    gpu_clock_fix();
     st = pica_drv_init(&drv, &plat, va, pa, size, cnt);
     k_printf("[pica] arena %u KiB at VA %p = PA 0x%08x; driver %s (state %u)\n",
              size >> 10, va, pa, st == PICA_OK ? "ready" : "FAILED", st);
+    if (st == PICA_OK)
+        gpu_diag_after();
 }
 
 static void run(pica_req_t *r, uint32_t pid)
@@ -327,6 +339,80 @@ static void m_from_gpu(void *p, uint32_t len) { dc_inval(p, len); }
 
 static pm_plat_t mplat;
 static pica_mirror_t mir;
+static pd_env_t denv;                       /* diagnostics; denv.vram = 0 when not mapped */
+static uint32_t d_before, d_on;
+
+static void mplat_init(void)
+{
+    mplat.rd = p_rd;
+    mplat.wr = p_wr;
+    mplat.ticks = m_ticks;
+    mplat.tick_hz = TICK_HZ;
+    mplat.to_gpu = m_to_gpu;
+    mplat.from_gpu = m_from_gpu;
+    mplat.log = k_printf;
+}
+
+/* bring-up, before pica_drv_init: diagnostics as Luma left the GPU. The
+   FCRAM scratch is the arena's last 64 KiB, unused until the driver runs. */
+static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size)
+{
+    mplat_init();
+    d_on = !gm_valid() || GM->gpu_diag;
+    if (!denv.vram)
+        denv.vram = (volatile uint8_t *)ml_io_map(PD_VRAM_PA, PD_VRAM_SIZE);
+    denv.p = &mplat;
+    denv.fc_va = va + size - PD_FC_SIZE;
+    denv.fc_pa = pa + size - PD_FC_SIZE;
+    denv.blob_va = (uint8_t *)GM_BLOB_VA;
+    denv.blob_pa = GM_BLOB_PA;
+    if (!d_on)
+        return;
+    if (!denv.vram) {
+        k_printf("[gpu-diag] cannot map VRAM 0x%08x: no diagnostics\n", PD_VRAM_PA);
+        d_on = 0;
+        return;
+    }
+    pd_dump_regs(&denv, "as found");
+    d_before = pd_fill_tests(&denv, "as found");
+}
+
+/* libn3ds hardwareReset() minus the reset: Luma's screen init never sets the
+   GX clock register (run12 read 0x00000000) and GSP/libn3ds always write
+   0x70100 there. boot.cfg gpu_clk=0 leaves it alone. */
+static void gpu_clock_fix(void)
+{
+    uint32_t clk = p_rd(0x004), vram = p_rd(0x030), pr0 = p_rd(0x050), pr1 = p_rd(0x054);
+    if (gm_valid() && !GM->gpu_clk) {
+        k_printf("[pica] GX clock 0x%08x left alone (boot.cfg gpu_clk=0)\n", clk);
+        return;
+    }
+    if (!clk)
+        p_wr(0x004, 0x70100);
+    if (vram & 0xF00)
+        p_wr(0x030, vram & ~0xF00u);                /* all VRAM banks on */
+    p_wr(0x050, 0x22221200u);                       /* libn3ds PSC_DMA_PRIO0(2,2,2,2,1,2,0,0) */
+    p_wr(0x054, 0x00000FF2u);                       /* PSC_DMA_PRIO1(15,15,2) */
+    k_printf("[pica] GX setup as libn3ds hardwareReset: clock 0x%08x -> 0x%08x, psc_vram 0x%08x -> 0x%08x, "
+             "dma prio 0x%08x/0x%08x -> 0x%08x/0x%08x\n", clk, p_rd(0x004), vram, p_rd(0x030), pr0, pr1,
+             p_rd(0x050), p_rd(0x054));
+}
+
+static void gpu_diag_after(void)
+{
+    uint32_t after, gpu;
+    if (!d_on)
+        return;
+    pd_dump_regs(&denv, "after setup");
+    after = pd_fill_tests(&denv, "after setup");
+    gpu = pd_gpu_tests(&denv);
+    k_printf("[gpu-diag] summary: fill VRAM %s->%s, fill FCRAM %s->%s (as found -> after setup); PPF %s; "
+             "P3D solid VRAM %s, FCRAM %s; texture POT %s, NPOT %s\n",
+             d_before & PD_FILL_VRAM ? "ok" : "FAIL", after & PD_FILL_VRAM ? "ok" : "FAIL",
+             d_before & PD_FILL_FCRAM ? "ok" : "FAIL", after & PD_FILL_FCRAM ? "ok" : "FAIL",
+             gpu & PD_PPF ? "ok" : "FAIL", gpu & PD_SOLID_VRAM ? "ok" : "FAIL", gpu & PD_SOLID_FCRAM ? "ok" : "FAIL",
+             gpu & PD_TEX_POT ? "ok" : "FAIL", gpu & PD_TEX_NPOT ? "ok" : "FAIL");
+}
 static volatile uint32_t m_state;           /* GM_ST_* (the IRQ side only acts on ACTIVE) */
 static uint32_t m_tried, m_vbl, m_fb[4], m_nsets;
 
@@ -381,13 +467,7 @@ void shim_gpu_thread_poll(void)
         m_set(GM_ST_FAILED, GM_WHY_NO_GPU);
         goto out;
     }
-    mplat.rd = p_rd;
-    mplat.wr = p_wr;
-    mplat.ticks = m_ticks;
-    mplat.tick_hz = TICK_HZ;
-    mplat.to_gpu = m_to_gpu;
-    mplat.from_gpu = m_from_gpu;
-    mplat.log = k_printf;
+    mplat_init();
     if (pm_init(&mir, &mplat, (const void *)GM_BLOB_VA, GM_BLOB_PA)) {
         k_printf("[gpu] display mirror: no valid gpumirror.bin at PA 0x%08x (magic 0x%08x): CPU copy stays\n",
                  GM_BLOB_PA, *(vu32 *)GM_BLOB_VA);
@@ -425,6 +505,8 @@ void shim_gpu_thread_poll(void)
         GM->first_bad[i] = fbad[i];
     if (v < 0) {
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
+        if (denv.vram)
+            pd_dump_mirror(&denv);
         m_set(GM_ST_FAILED, GM_WHY_SELFTEST);
         goto out;
     }

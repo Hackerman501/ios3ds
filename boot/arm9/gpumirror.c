@@ -25,7 +25,7 @@ static const char *const why_name[] = { "", "boot.cfg", "GPU bring-up failed", "
 /* watchdog ticks (1047311 Hz) -> microseconds */
 static u32 us(u32 ticks) { return ticks / 1047u * 1000u + ticks % 1047u * 1000u / 1047u; }
 
-void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[4], int mode)
+void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[6], int mode)
 {
     u32 fb[4];
     gm = (volatile gmbox_t *)(shim_pa + SHIM_GM_OFF);
@@ -42,10 +42,12 @@ void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[4], int mode)
     gm->mirror_enable = cfgv[1];
     gm->vbl_div = cfgv[2] ? cfgv[2] : 1;
     gm->spin_us = cfgv[3];
+    gm->gpu_clk = cfgv[4];
+    gm->gpu_diag = cfgv[5];
     gm->seq = 1;
     gm->magic = GM_MAGIC;
-    logp("[gpu] PICA200: gpu=%u gpu_mirror=%u (every %u. VBlank, spin %u us); mailbox at %08x\n",
-         cfgv[0], cfgv[1], (unsigned)gm->vbl_div, cfgv[3], shim_pa + SHIM_GM_OFF);
+    logp("[gpu] PICA200: gpu=%u gpu_mirror=%u (every %u. VBlank, spin %u us) gpu_clk=%u gpu_diag=%u; mailbox at %08x\n",
+         cfgv[0], cfgv[1], (unsigned)gm->vbl_div, cfgv[3], cfgv[4], cfgv[5], shim_pa + SHIM_GM_OFF);
 }
 
 void gm_want(bool on)
