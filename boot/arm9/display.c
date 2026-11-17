@@ -39,7 +39,29 @@ void display_init(u8 *top0, u8 *top1, u8 *bot0, u8 *bot1)
     bot_fb[1] = bot1 != bot0 ? bot1 : NULL;
 }
 
-void display_set_mode(int m) { mode = m; }
+/* A screen that starts showing iOS is cleared first: the copy never writes
+   the top screen's 20-column side margins, which would otherwise keep
+   whatever the console drew there. The GPU mirror (gpu_mirror.h) writes those
+   margins black every frame; this keeps the CPU copy pixel-identical to it. */
+void display_set_mode(int m)
+{
+    static int shown = -1;
+    bool top_was = shown >= 0 && shown != SCREEN_BOTTOM, bot_was = shown >= 0 && shown != SCREEN_TOP;
+    for (int i = 0; i < 2; i++) {
+        if (m != SCREEN_BOTTOM && !top_was && top_fb[i]) memset(top_fb[i], 0, SCR_W * SCR_H * 3);
+        if (m != SCREEN_TOP && !bot_was && bot_fb[i]) memset(bot_fb[i], 0, 320 * SCR_H * 3);
+    }
+    shown = mode = m;
+}
+
+/* the LCD framebuffers as Luma set them up: top 0/1, bottom 0/1 (0 if absent) */
+void display_fbs(u32 out[4])
+{
+    out[0] = (u32)(uintptr_t)top_fb[0];
+    out[1] = (u32)(uintptr_t)(top_fb[1] ? top_fb[1] : top_fb[0]);
+    out[2] = (u32)(uintptr_t)bot_fb[0];
+    out[3] = (u32)(uintptr_t)(bot_fb[1] ? bot_fb[1] : bot_fb[0]);
+}
 
 /* Cost matters: the ARM11 kernel spins on every md0 request until this ARM9
    serves it, so the copy (a) checks the block mailbox every few columns,

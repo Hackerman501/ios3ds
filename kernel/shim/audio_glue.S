@@ -49,4 +49,5 @@ shim_audio_hook:
     .balign 8
 aud_irq_stack:
     .space 2048
+    .global aud_irq_stack_top           @ entry.S: also the GPU mirror's IRQ-time stack
 aud_irq_stack_top:

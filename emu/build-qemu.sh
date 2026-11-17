@@ -14,8 +14,13 @@ for p in "$ROOT"/emu/qemu/patches/*.patch; do
 done
 # our machine: symlink so edits in emu/ are picked up by ninja
 ln -sf "$ROOT/emu/qemu/hw/arm/nintendo3ds.c" "$Q/hw/arm/nintendo3ds.c"
+# the software PICA200 model behind the machine's GX block (docs/pica200.md)
+ln -sf "$ROOT/tools/ios3ds-pica/sim/picasim.c" "$Q/hw/arm/picasim.c"
+ln -sf "$ROOT/tools/ios3ds-pica/sim/picasim.h" "$Q/hw/arm/picasim.h"
 grep -q nintendo3ds "$Q/hw/arm/meson.build" || \
     sed -i "2a arm_common_ss.add(when: 'CONFIG_NINTENDO3DS', if_true: files('nintendo3ds.c'))" "$Q/hw/arm/meson.build"
+grep -q picasim "$Q/hw/arm/meson.build" || \
+    sed -i "s/files('nintendo3ds.c')/files('nintendo3ds.c', 'picasim.c')/" "$Q/hw/arm/meson.build"
 grep -q NINTENDO3DS "$Q/hw/arm/Kconfig" || cat >> "$Q/hw/arm/Kconfig" <<'KC'
 
 config NINTENDO3DS

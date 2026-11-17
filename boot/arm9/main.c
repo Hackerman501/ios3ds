@@ -21,6 +21,8 @@
 #include "swap.h"
 #include "wifi/wifi.h"
 #include "audio.h"
+#include "gpumirror.h"
+#include "gpu_mirror.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -98,6 +100,7 @@ typedef struct {
     u32 probes;
     u32 display_regs;
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
+    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -132,6 +135,9 @@ static int parse_bootcfg(char *txt)
     cfg.probes = 1;
     cfg.ba_version = 5;
     cfg.screen = SCREEN_BOTH;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
+    cfg.gpu = 1;
+    cfg.gpu_mirror = 1;
+    cfg.gpu_vbl_div = 2;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -144,6 +150,8 @@ static int parse_bootcfg(char *txt)
         { "jump", &cfg.jump }, { "countdown_ms", &cfg.countdown_ms },
         { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
         { "screen", &cfg.screen },
+        { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
+        { "gpu_spin_us", &cfg.gpu_spin_us },
     };
     int lineno = 0;
     char *line = txt;
@@ -462,7 +470,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
            last 100 ms) only every 500 ms, because the ARM11 kernel stalls on
            each block request until this loop serves it */
-        static u32 last_blit, last_io, last_served;
+        static u32 last_blit, last_io, last_served, cpu_blits, cpu_ticks;
         u32 nserved, nerr, tnow = clk_ticks();
         blksrv_stats(&nserved, &nerr);
         if (nserved != last_served) {
@@ -471,20 +479,30 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         }
         bool io_busy = tnow - last_io < T9_HZ / 10;
         u32 blit_gap = io_busy ? T9_HZ / 2 : T9_HZ / 15;
+        /* the PICA200 copies the screen while its frames keep coming (gpumirror.c) */
+        bool gpu_copy = gm_live(tnow);
         if (cfg.display_regs && tnow - last_blit >= blit_gap && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;
                 log_color(CON_GREEN, "[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer\n");
                 screen_mode = cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH;
                 apply_screen_mode(screen_mode);
+                gm_set_mode(screen_mode, clk_ticks);
+                gm_want(true);
             }
-            display_blit(cfg.display_regs);
+            if (!gpu_copy) {
+                u32 t0 = clk_ticks();
+                display_blit(cfg.display_regs);
+                cpu_blits++;
+                cpu_ticks += clk_ticks() - t0;
+            }
             last_blit = clk_ticks();
         }
         /* X: next screen mode (X is not forwarded to iOS as a button) */
         bool xdown = !(HID_PAD & HID_X);
         if (ios_display && xdown && !x_latched) {
             screen_mode = (screen_mode + 1) % SCREEN_MODES;
+            gm_set_mode(screen_mode, clk_ticks);     /* GPU frames for the old mode finish first */
             apply_screen_mode(screen_mode);
         }
         x_latched = xdown;
@@ -497,6 +515,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         combo_latched = combo;
         if ((tick & 63) == 0) {
             u32 bs, be;
+            gm_report(clk_ticks(), cpu_blits, cpu_ticks, cfg.display_regs, screen_mode, ios_display);
             blksrv_stats(&bs, &be);
             status(27, CON_GREY, "monitor alive #%u a11=%s", tick / 64, stage_name(SHARED->a11_stage));
             status(28, CON_GREY, "xnu ring: %u bytes", ring ? (unsigned)ring->head : 0);
@@ -704,6 +723,9 @@ void a9_main(int argc, char **argv)
         }
     }
 
+    /* the shim calls its GPU part only if gpu.bin put the part's magic there
+       (kernel/shim/gpu_glue.c): drop whatever a previous boot left in FCRAM */
+    *(vu32 *)GPU_PART_PA = 0;
     for (u32 i = 0; i < cfg.nloads; i++) {
         u32 sz = 0, pa = cfg.load_pa[i];
         bool ok_dst = (pa >= 0x1FF80000 && pa < 0x1FFF0000) || in_fcram(pa, 0x1000) ||
@@ -760,6 +782,10 @@ void a9_main(int argc, char **argv)
     wifi_init();
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
+    if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
+        u32 g[4] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us };
+        gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
+    }
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");

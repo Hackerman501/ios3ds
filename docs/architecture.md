@@ -21,15 +21,19 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 |---|---|
 | 0x20001000 | kernelcache, flat image with patches applied (8.1 MB) |
 | after the kernel | device tree, then boot_args |
-| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): +0x6000 block mailbox, +0x8000 32 KB bounce buffer |
+| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
 | 0x20850000 | XNU log ring (256 KB) |
+| 0x208A0000 | network mailbox (docs/wifi.md) |
+| 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
+| 0x208C0000 | audio PCM ring (docs/audio.md) |
 | 0x20900000 | topOfKernelData (kernel page tables); XNU owns everything up to 0x28000000 |
 | 0x1FF90000 | ARM11 stub (AXI WRAM) |
 | 0x1FFA0000 | `/pram` (panic log area) |
 | 0x1FFB0000 | **fake S5L8720 register pages** (32 × 4 KB, `fakeio.bin`) |
 | 0x1FFF0000 | ARM9 ↔ ARM11 mailbox |
 | 0x18000000 | `/vram`: iOS's framebuffer (window 1, 320×480, 32 bpp) |
-| 0x18300000 | Luma's LCD framebuffers (the ARM9 draws here) |
+| 0x18300000 | Luma's LCD framebuffers (the ARM9 draws here): top/bottom 0x18300000/0x18346500 and 0x18400000/0x18446500 |
+| 0x18480000 | GPU display mirror: texture (320x480) and the two render targets, to 0x185BEC00 |
 
 ## 3. Bridging S5L8720 to the 3DS
 
@@ -69,7 +73,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 **Display:**
 - Apple's AppleM2CLCD driver runs against a fake register page that starts with iBoot's state (window 1 at 0x18000000).
 - QuartzCore finds the `AppleM2CLCD` service. With no MBX GPU it uses its **software compositor**, and rendering is paced by vsync notifications, i.e. the injected VBlank.
-- The ARM9 copies window 1 to the 3DS top LCD, rotated and scaled to 3/4 (360×240).
+- Window 1 goes to the 3DS LCDs (top: rotated and scaled to 3/4, 360×240; bottom: 2/3, the touch map). The ARM11 shim does it on the PICA200 once its self-test passed (the GPU display mirror, [pica200.md](pica200.md) §9); until then, or when it is switched off or fails, the ARM9 copies with the CPU.
 
 ## 4. Userland changes
 
@@ -85,6 +89,7 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
   - QuartzCore's display skips its ES1 probe, so SpringBoard keeps the software compositor;
   - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot.
+  - with `IOS3DS_GL=pica` the engine renders on the PICA200 through the shim's `ios3ds_gpu` service (`kernel/shim/pica.c`); see [pica200.md](pica200.md).
 - `ios3ds-sample` (`tools/ios3ds-sample`) prints every process's thread state to the console periodically. It is a debugging aid.
 
 ## 5. Debugging aids

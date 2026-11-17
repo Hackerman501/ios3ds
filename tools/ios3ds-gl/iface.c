@@ -266,8 +266,9 @@ static int glesCreateGC(void *sg, void **front, void **back, void **out)
     if (back)
         gl_install_dispatch(gc, back);
     *out = gc;
+    gl_log("context %p uses the %s", (void *)gc, gc->be->name);
     if (!said++)
-        log_callers("context created (" "software rasterizer" ")");
+        log_callers("context created");
     return 1;
 }
 

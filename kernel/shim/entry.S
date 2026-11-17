@@ -95,6 +95,7 @@ irq_save2:      .word 0             @ +0x68
 st_panic_req:   .word 0             @ +0x6C ARM9 sets 1: panic (dumps all thread backtraces)
 cfg_vic0_pa:    .word 0             @ +0x70 fake VIC0 page PA (patched in by mkboot)
 cfg_clcd_pa:    .word 0             @ +0x74 fake CLCD page PA (patched in by mkboot)
+    .global cfg_clcd_pa                 @ (kernel/shim/pica.c: the GPU mirror reads the CLCD page too)
 st_vblanks:     .word 0             @ +0x78
 st_injected:    .word 0             @ +0x7C
 @ hardware bring-up probes, one cache line, cleaned to RAM on every update so
@@ -538,6 +539,13 @@ shim_irq_resume:
     mcr p15, 0, r2, c7, c10, 1      @ +0x40..+0x7F (2 lines) so they are live
     add r2, r2, #32
     mcr p15, 0, r2, c7, c10, 1
+    @ GPU display mirror (pica.c): advance a frame in flight. C needs a stack
+    @ and XNU keeps none in IRQ mode: the audio glue's private one (free here).
+    ldr sp, =aud_irq_stack_top
+    push {r0, r1, r2, r3, r12, lr}
+    mov r0, #IRQ_PTIMER
+    bl shim_gpu_irq_hook
+    pop {r0, r1, r2, r3, r12, lr}
     mrs r2, spsr
     tst r2, #0x40                   @ FIQs masked where we interrupted?
     bne 3f
@@ -575,6 +583,12 @@ shim_irq_resume:
     ldr r2, st_vblanks
     add r2, r2, #1
     str r2, st_vblanks
+    @ GPU display mirror (pica.c): start / advance a frame (private stack, see above)
+    ldr sp, =aud_irq_stack_top
+    push {r0, r1, r2, r3, r12, lr}
+    mov r0, #IRQ_PDC0
+    bl shim_gpu_irq_hook
+    pop {r0, r1, r2, r3, r12, lr}
     ldr r0, cfg_clcd_pa
     cmp r0, #0
     beq 9f

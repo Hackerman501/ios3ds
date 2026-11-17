@@ -221,4 +221,10 @@ void drawable_detach(Rb *rb);
 void tex_release_surface(Tex *t);
 
 extern const Backend sw_backend;
+extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */
+int pica_backend_init(void);            /* 1 = the GPU is usable */
+void pica_forget(const void *mem);
+void pica_backend_stats(unsigned *lists, unsigned *draws);
+const Backend *gl_pick_backend(void);
+void gl_be_forget(const void *mem);
 #endif
