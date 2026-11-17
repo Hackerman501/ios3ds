@@ -494,6 +494,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             }
             if (!gpu_copy) {
                 u32 t0 = clk_ticks();
+                display_set_shown(gm_shown());
                 display_blit(cfg.display_regs);
                 cpu_blits++;
                 cpu_ticks += clk_ticks() - t0;

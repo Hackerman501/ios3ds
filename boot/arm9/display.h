@@ -11,3 +11,4 @@ bool display_active(u32 regs_pa);
 void display_blit(u32 regs_pa);
 void display_arm(u32 regs_pa);
 void display_fbs(u32 out[4]);
+void display_set_shown(u32 mask);   /* bit 0/1 top set 0/1, bit 2/3 bottom set 0/1 */
