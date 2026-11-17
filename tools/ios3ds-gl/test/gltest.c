@@ -503,11 +503,31 @@ extern id objc_msgSend(id, SEL, ...);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 
+/* armv6 Darwin timeval is {long, int}; filled with a marker so a failing
+   call (hardware run10/11: "frame took 0 ms") is visible as such */
+struct tv32 { long tv_sec; int tv_usec; };
+static struct tv32 last_tv;
+static int last_tv_rc, last_tv_errno;
+extern int *__error(void);
+extern unsigned long long mach_absolute_time(void);
+struct mtb { unsigned numer, denom; };
+extern int mach_timebase_info(struct mtb *);
+
 static double now(void)
 {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
+    struct tv32 tv = { 0x5a5a5a5a, 0x5a5a5a5a };
+    *__error() = 0;
+    last_tv_rc = gettimeofday((struct timeval *)(void *)&tv, NULL);
+    last_tv_errno = *__error();
+    last_tv = tv;
     return tv.tv_sec + tv.tv_usec / 1e6;
+}
+
+static double mach_ms(unsigned long long ticks)
+{
+    struct mtb tb = { 0, 0 };
+    mach_timebase_info(&tb);
+    return tb.denom ? (double)ticks * tb.numer / tb.denom / 1e6 : -1;
 }
 
 /* The main display's framebuffer IOSurface (what QuartzCore composites into). */
@@ -551,9 +571,16 @@ int main(int argc, char **argv)
         return 1;
     make_texture();
     t0 = now();
+    struct tv32 tv0 = last_tv;
+    int rc0 = last_tv_rc, e0 = last_tv_errno;
+    unsigned long long m0 = mach_absolute_time();
     draw_scene(0);
     glFinish();
+    unsigned long long m1 = mach_absolute_time();
     printf("gltest: offscreen frame took %.0f ms\n", (now() - t0) * 1000);
+    printf("gltest: timing: gettimeofday rc %d/%d errno %d/%d tv %ld.%06d -> %ld.%06d; "
+           "mach_absolute_time %llu ticks = %.0f ms\n", rc0, last_tv_rc, e0, last_tv_errno,
+           tv0.tv_sec, tv0.tv_usec, last_tv.tv_sec, last_tv.tv_usec, m1 - m0, mach_ms(m1 - m0));
     run_checks();
     if (argc > 3)
         write_ppm(argv[3]);
