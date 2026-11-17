@@ -26,3 +26,7 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - Audio: `AppleEmbeddedAudioDevice: could not start DMA: device is not ready`.
 - The last heartbeat shows the ARM11 idle at `k80067b34`.
 - md0 runs at ~19 requests/s. Every request stalls the kernel until the ARM9 serves it, and the ARM9 spent its time in SD transfers, screen copies, and per-byte, per-sync logging. The next build (run9) targets that.
+
+## run9 (`763f374`, ARM9 performance build)
+- SpringBoard and the input daemon are up before the first heartbeat at t=83 s (run8: input at ~320 s). md0 had read 75 MB by then, with no errors.
+- `gltest: PASS` on real hardware with the CPU rasterizer, but one offscreen 320x480 frame takes 1089 ms. That is the motivation for the PICA200 offload.

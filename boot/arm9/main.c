@@ -421,7 +421,18 @@ static void __attribute__((noreturn)) monitor(const char *phase)
     u32 last_sync = 0;
     for (;;) {
         bool busy = false;
-        for (int i = 0; i < 64 && blksrv_poll(); i++) busy = true;
+        /* md0 first: the ARM11 kernel spins (IRQs off) until its request is
+           served and usually posts the next one within microseconds while it
+           streams a file, so after serving one, linger up to 2 ms for the next
+           before running the rest of the loop */
+        if (blksrv_poll()) {
+            busy = true;
+            u32 start = clk_ticks(), t0 = start;     /* at most 100 ms: input, */
+            while (clk_ticks() - t0 < T9_HZ / 500 + 1 &&  /* log and screen run too */
+                   clk_ticks() - start < T9_HZ / 10) {
+                if (blksrv_poll()) t0 = clk_ticks();
+            }
+        }
         drain_a11_log();
         if (ring && ring->magic == XNU_RING_MAGIC && ring->size) {
             u32 head = ring->head;
