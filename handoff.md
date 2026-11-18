@@ -1,46 +1,31 @@
-# Handoff (2026-11-17, late evening)
+# Handoff (2026-11-18)
 
 Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md) first; [docs/re-log.md](docs/re-log.md) has every reverse-engineering step.
 
-## 1. Status
+## 1. Status (main `ee9dec0`, on the SD card as `m1-ee9dec0`)
 
-| Area | QEMU board | Real Old 3DS |
+The user is away. Everything after hardware run 13 is verified in QEMU only. The QEMU GPU model is now as strict as run 13's hardware. The next hardware run should read the log lines listed in docs/pica200.md §11–14, docs/mcu.md §7 and docs/audio.md.
+
+| Area | QEMU | Real Old 3DS |
 |---|---|---|
-| Monitor, SD, ARM11 bring-up, kernel load | works | works |
-| XNU boot to SpringBoard | works (also with `--icount 2`) | **works**: runs 8–11. SpringBoard + input before ~66–82 s (run8: ~320 s) |
-| Buttons (Home = START, lock = SELECT, volume = L/R) | works | works (run10/11: `key 40`, `key 30`, `key ea`) |
-| Touch (GS hand events, `flipx`) | works | works: Settings, Notes, Mail, App Store opened |
-| Swipes (paging/bounce end after lift) | fixed (re-log §29) | fix not yet run on hardware |
-| Screen modes (X: top / both / bottom) | works | works |
-| GL ES 1.1 software engine (`tools/ios3ds-gl`), gltest | PASS | PASS, 1089 ms per offscreen frame (run9) |
-| PICA200 GL back end + GPU display mirror | PASS, mirror pixel-identical to the CPU copy | **not yet run on hardware** (re-log §27–28) |
-| Wi-Fi (ARM9 AR6014 + `ios3ds-wifid`) | off cleanly without `wifi.cfg` | not tested |
-| Audio (shim PL080/I2S/I2C emulation → CSND) | kexts start | CODEC answers; `AppleEmbeddedAudioDevice: could not start DMA: device is not ready` |
-| `.3dsx` launcher (rename swap + restore) | — | works |
-| MCU ([docs/mcu.md](docs/mcu.md)): RTC/calendar, battery icon, HOME/POWER, shell, volume slider, brightness, shutdown → power off | works (branch `agent/mcu`) | not tested; §7 of mcu.md lists the log lines |
-| MCU accelerometer | samples reach ios3ds-mcud, SpringBoard ignores client IOHID events | not tested |
+| Boot to SpringBoard, touch, buttons, apps | works; soak 5: 40 cycles PASS | works (runs 8–13, ~66–82 s to input) |
+| md0 | waits with IRQs on under a kernel mutex (re-log 31) | old IRQs-off version tested |
+| Screen copy on the PICA200 (512x512 texture, clock setup) | ACTIVE, pixel-identical; one plain-QEMU timeout open (re-log 39) | run13: failed on the non-power-of-two texture, so CPU copy; the fix is not yet run |
+| ARM9 CPU screen copy (fallback) | bursts, displayed set only | 300–430 ms/frame (run 12/13); the faster version is not yet run |
+| GL on the PICA200 | gltest PASS (clears drawn, no FCRAM fills) | not yet run |
+| Audio output (I2S start patch, CSND) | bit-exact PCM, volume keys | not yet run (run 8–10: "could not start DMA") |
+| MCU: RTC (shown as the 3DS's local time), battery, HOME/POWER/shell, volume slider, brightness, shutdown | works ([docs/mcu.md](docs/mcu.md)) | not yet run |
+| `gettimeofday` | fixed (`commpage-gtod-off`, re-log 34) | run12/13 showed the bug |
+| Accelerometer | in progress (agent/mcu: Apple's LIS331DLH driver path) | — |
+| Microphone | in progress (agent/audio2) | — |
+| CoreAnimation compositing on the GPU | in progress (agent/gpu) | — |
+| Wi-Fi | off cleanly without `wifi.cfg` | not tested |
 
-## 2. Current work
-
-**Hardware history:** docs/hwlogs/README.md (run1–run11) and re-log §25–26.
-- **Old hang:** the clock base was 0. Fixed by the lazy shim init.
-- **Speed-ups:** chunked logging, md0 served during screen copies and with a 2 ms linger, and the 30 s IORTC wait cut to 2 s.
-
-**Solved (agent/mcu, re-log §31): `gettimeofday` early in boot.** The commpage fast path froze it for up to 1 s (usec divisor 1 → degenerate reciprocal); patch `commpage-gtod-off`. The notes below are the history.
-
-**Was open: `gettimeofday` early in boot.**
-- gltest's offscreen frame reads `0 ms` on hardware in run10 (IORTC wait 0 s) and run11 (2 s); run9 (30 s) read 1089 ms.
-- The 2 s wait fixed it in QEMU, but not on the 3DS.
-- The next build's gltest logs `gltest: timing: gettimeofday rc … errno … tv … -> …; mach_absolute_time … ms`. That line settles whether the call fails or the clock is frozen.
-- `wall_us()` in the input daemon's touch pacing also uses `gettimeofday`.
-
-**Next hardware run (build from `ios3ds-wt/rel`, branch state = main after this push):**
-- **Includes:** the GPU mirror and the PICA GL back end (agent/gpu), the swipe fix (fix/swipe), and the gltest timing line.
-- **The rootfs changed** (MBXGLEngine, gltest), so copy `rootfs.hfs` too.
-- **GPU:** read the log lines listed in docs/pica200.md §11.
-- **Kill switches in `sd:/ios3ds/boot.cfg`:** `gpu_mirror=0` (the ARM9 copies the screen again) or `gpu=0` (the kernel never touches the GPU).
-
-**Build hygiene:** card builds come from the clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (its `build/` symlinks staging, toolchain and qemu from the main checkout). Agents' uncommitted edits in the main checkout once leaked into a test build and broke it (re-log §26). The userland helpers are built separately: `make -C tools/ios3ds-{sample,gl} tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon`, then `make sdimg`.
+## 2. How work is organised now
+- **Release tree:** clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (branch `rel-main`, pushed to `main`). It has its own unified QEMU build (GPU + CSND + MCU models). Card builds come only from there.
+- **Agents** in their own worktrees: `ios3ds-wt/pica` (agent/gpu), `ios3ds-wt/mcu` (agent/mcu), `ios3ds-wt/audio2` (agent/audio2). Merge order and re-log numbering are resolved at merge time.
+- **Stability:** `python3 emu/soak.py --cycles 40` (re-log 31, 39). It boots, opens every icon, presses Home, swipes, locks and unlocks, then scans the log. Soaks 2–5 found no panics, stalls, I/O errors or crashes.
+- **Disk:** the machine is at ~97%. Remove worktrees' `build/sd.img` / `build/emu` when not testing.
 
 ## 3. Hardware workflow
 

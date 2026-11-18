@@ -7,7 +7,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 - A small set of binary patches and a "shim" bridges the hardware differences.
 - The 3DS's ARM9 acts as a monitor and I/O processor.
 
-> **Status (2026-11-17):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS**. Touch, the Home, lock and volume buttons, and apps (Settings, Notes, Mail, App Store) work, and boot to a usable home screen takes about a minute. In the project's own QEMU model (`-M nintendo3ds`) the same build runs, including a PICA200 GPU path for GL and the screen mirror; that GPU path has not run on hardware yet. Hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
+> **Status (2026-11-18):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS** (about a minute), with touch, Home/lock/volume buttons and apps. Since the last hardware run, the QEMU-verified work adds GPU (PICA200) screen copying and GL, audio output, the 3DS RTC/battery/HOME/POWER/volume slider/brightness through the MCU, and much less stalling during disk reads. Install guide: [docs/INSTALL.md](docs/INSTALL.md); hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
 
 > **Try it on your 3DS:** follow [docs/INSTALL.md](docs/INSTALL.md). Download a release, run one command on your PC with your own iPod touch firmware file, and copy the result to the SD card. No compilers needed.
 
