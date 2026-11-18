@@ -252,7 +252,7 @@ now removed (`SBDontLockAfterCrash` and `SBDisableAutoDim` stay). QEMU
 ```
 After the wake, iOS goes straight back to the home screen: no "slide to
 unlock" screen appears, so there is nothing to unlock and no keybag call can
-block. The device stays usable afterwards (taps, Safari). iOS'
+block. iOS'
 own auto-lock did not fire within 2 minutes of idling in QEMU; on hardware,
 if it does fire after the Settings → General → Auto-Lock delay, the
 backlights go off the same way (HOME or POWER wakes).
