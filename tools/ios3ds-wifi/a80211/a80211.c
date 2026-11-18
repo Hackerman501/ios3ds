@@ -231,6 +231,7 @@ static int power = 1;               /* soft radio switch (Settings > Wi-Fi on/of
 static unsigned scan_cursor;        /* next GET 11 entry */
 static int scan_wanted;             /* SET 10 posted, waiting for a new scan_seq */
 static uint32_t scan_seq_at_req;
+static time_t scan_since;
 static int assoc_result;            /* GET 21: 0 pending, 1 ok, 2.. failed */
 static int assoc_pending;
 static time_t assoc_since;
@@ -414,6 +415,7 @@ static int a80211_set(struct apple80211req *r)
         c.cmd = WLAN_CMD_SCAN;
         scan_seq_at_req = io.st.scan_seq;
         scan_wanted = 1;
+        scan_since = time(NULL);
         scan_cursor = 0;
         say("[a80211] scan requested");
         return wlan_post(&c) == 0 ? 0 : fail(6);
@@ -490,10 +492,15 @@ static void *watcher(void *arg)
         int ok = wlan_read() == 0;
         uint32_t ev[4], nev = 0;
         if (ok) {
-            if (scan_wanted && io.st.scan_seq != scan_seq_at_req) {
+            /* WiFiManager's synchronous scan waits for SCAN_DONE without a
+               timeout: always send one, after at most 8 s */
+            if (scan_wanted && (io.st.scan_seq != scan_seq_at_req || time(NULL) - scan_since > 8)) {
+                if (io.st.scan_seq == scan_seq_at_req)
+                    say("[a80211] scan timed out (ARM9 state %u): reporting the old list", io.st.state);
+                else
+                    say("[a80211] scan done: %u networks", io.st.nscan);
                 scan_wanted = 0;
                 scan_cursor = 0;
-                say("[a80211] scan done: %u networks", io.st.nscan);
                 ev[nev++] = EV_SCAN_DONE;
             }
             if (assoc_pending) {
