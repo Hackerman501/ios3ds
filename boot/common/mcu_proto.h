@@ -85,7 +85,9 @@ typedef struct {
     uint32_t _r4[4];
     /* line 5: ARM9 acknowledgements */
     uint32_t ack_seq;       /* == req_seq once the ARM9 acted on it */
-    uint32_t _r5[7];
+    uint32_t ps_on;         /* boot.cfg powersave: the shim may mask VBlank while the CLCD is off */
+    uint32_t screen_off;    /* 1 while the ARM9 sees iOS' screen off (power saving active) */
+    uint32_t _r5[5];
     uint32_t _r6[16];       /* lines 6-7: spare */
 } mcubox_t;
 

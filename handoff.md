@@ -21,6 +21,8 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 | Microphone | in progress (agent/audio2) | — |
 | CoreAnimation compositing on the GPU | in progress (agent/gpu) | — |
 | Wi-Fi | off cleanly without `wifi.cfg` | not tested |
+| Screen-off power saving (copies paused, ARM9 WFI, VBlank masked, no system sleep) | works: ARM9 39 % → 2 % host CPU while locked (re-log 43) | not tested; `powersave=0` |
+| Notification LED (low battery) | pattern written (model) | not tested; off by default, `notify_led=1` |
 
 ## 2. How work is organised now
 - **Release tree:** clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (branch `rel-main`, pushed to `main`). It has its own unified QEMU build (GPU + CSND + MCU models). Card builds come only from there.

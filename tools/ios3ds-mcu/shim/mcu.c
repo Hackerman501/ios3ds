@@ -425,6 +425,40 @@ int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
     return 0;
 }
 
+/* ---- power saving: no VBlank interrupts while iOS' screen is off ---------- */
+/* The ARM9 sets mcubox screen_off once iOS has switched its (fake) CLCD
+   controller off after having shown the display (boot/arm9/powersave.c).
+   Then the top-screen VBlank (GIC 42) only wakes the ARM11 60 times a second
+   for nothing: the CLCD frame IRQ is not injected while the controller is
+   off, and the GPU mirror has want = 0. It is masked at the distributor on
+   the next VBlank and unmasked from the timer interrupt or a sysctl call as
+   soon as the CLCD is on again (or the ARM9 says the screen is on).
+   Called from shim_gpu_irq_hook (kernel/shim/gpu_glue.c) for ids 29 / 42,
+   and with id 0 from thread context. */
+#define GIC_PDC0        42
+#define GICD_ISENABLER1 ((vu32 *)(0xBFF00000u + 0x1104u))
+#define GICD_ICENABLER1 ((vu32 *)(0xBFF00000u + 0x1184u))
+extern u32 cfg_clcd_pa;                 /* entry.S */
+static u32 vbl_masked, vbl_masks;
+
+void shim_mcu_irq_hook(u32 id)
+{
+    volatile mcubox_t *b = BOX;
+    if (!cfg_clcd_pa) return;
+    dinval(&b->ack_seq, 32);            /* line 5: ps_on, screen_off */
+    if (b->magic != MCU_MAGIC) return;
+    vu32 *clcd = (vu32 *)(cfg_clcd_pa - 0x1FF00000u + 0xBFD00000u);
+    int on = (clcd[0] & 1) || !b->screen_off || !b->ps_on;
+    if (id == GIC_PDC0 && !on && !vbl_masked) {
+        *GICD_ICENABLER1 = 1u << (GIC_PDC0 - 32);
+        vbl_masked = 1;
+        vbl_masks++;
+    } else if (vbl_masked && on) {
+        *GICD_ISENABLER1 = 1u << (GIC_PDC0 - 32);
+        vbl_masked = 0;
+    }
+}
+
 /* ---- sysctls ------------------------------------------------------------- */
 
 typedef struct {
@@ -439,6 +473,7 @@ static mcuctl_t ctl;
 static int mcu_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *req)
 {
     (void)arg1; (void)arg2;
+    shim_mcu_irq_hook(0);               /* VBlank back on if the screen is (thread context) */
     if (mcu_live()) ps_update();
     return sysctl_handle_opaque(oidp, (void *)BOX, sizeof(mcubox_t), req);
 }

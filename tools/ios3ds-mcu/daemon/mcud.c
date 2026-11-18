@@ -65,6 +65,8 @@ void CFRelease(CFTypeRef cf);
 #define kCFNumberFloatType    12
 
 IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(const void *allocator);
+int IOPMAssertionCreateWithName(CFStringRef type, uint32_t level, CFStringRef name, uint32_t *id);
+#define kIOPMAssertionLevelOn 255
 CFTypeRef IOHIDEventSystemClientCopyProperty(IOHIDEventSystemClientRef client, CFStringRef key);
 void IOHIDEventSystemClientDispatchEvent(IOHIDEventSystemClientRef client, IOHIDEventRef event);
 /* 0x337faca4 in the 4.2.1 dyld cache: (alloc r0, timestamp r1:r2, x r3,
@@ -80,7 +82,7 @@ extern SEL sel_registerName(const char *);
 extern id objc_msgSend(id, SEL, ...);
 #define MSG(type, obj, sel) ((type)objc_msgSend)(obj, sel_registerName(sel)
 
-static int opt_debug, opt_noacc = 1, opt_novol, opt_nobl;
+static int opt_debug, opt_noacc = 1, opt_novol, opt_nobl, opt_sleepok;
 static void say(const char *fmt, ...);
 
 /* Clock cross-check (the open "gettimeofday vs mach_absolute_time" question,
@@ -189,6 +191,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "acc")) opt_noacc = 0;
         else if (!strcmp(argv[i], "novol")) opt_novol = 1;
         else if (!strcmp(argv[i], "nobl")) opt_nobl = 1;
+        else if (!strcmp(argv[i], "sleepok")) opt_sleepok = 1;
         else if (!strncmp(argv[i], "acc=", 4)) {
             opt_noacc = 0;
             if (!parse_accmap(argv[i] + 4)) say("[mcud] bad %s (want e.g. acc=-y,x,-z); keeping the default", argv[i]);
@@ -234,6 +237,19 @@ int main(int argc, char **argv)
                 mach_port_deallocate(mach_task_self_, svc);
                 client = IOHIDEventSystemClientCreate(0);
                 if (client) say("[mcud] connected to SpringBoard's HID event system");
+                /* No system sleep: after a lock iOS would put the whole system
+                   to sleep ("System Sleep"), and nothing on the 3DS can wake it
+                   (the PMU interrupt that does on an iPod does not exist). The
+                   screen still goes off; the CPUs idle (docs/mcu.md section 9). */
+                if (client && !opt_sleepok) {
+                    uint32_t aid = 0;
+                    int r = IOPMAssertionCreateWithName(
+                        CFStringCreateWithCString(0, "NoIdleSleepAssertion", kCFStringEncodingUTF8),
+                        kIOPMAssertionLevelOn,
+                        CFStringCreateWithCString(0, "ios3ds: no wake source for system sleep", kCFStringEncodingUTF8),
+                        &aid);
+                    say("[mcud] NoIdleSleepAssertion %s (0x%x, id %u)", r ? "FAILED" : "held", (unsigned)r, (unsigned)aid);
+                }
             }
         }
 

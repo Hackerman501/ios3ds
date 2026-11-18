@@ -22,3 +22,5 @@ bool tsc_read(bool *pen, u16 *tx, u16 *ty, int16_t *cx, int16_t *cy);
 /* Monitor-loop hook: sample pad + touch and push changes into the shim's
    input mailbox. Call every ~8-16 ms; shim_pa = cfg.shim_pa (0 = no shim). */
 void input_poll(u32 shim_pa);
+/* iOS' screen is off: skip the touch ADC (buttons are still read) */
+void input_set_idle(bool idle);

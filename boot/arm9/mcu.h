@@ -8,6 +8,11 @@
 void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 hz);
 /* boot.cfg mcu_acc=0: the shim hides the accelerometer from iOS (after mcu_init) */
 void mcu_config_acc(bool on);
+/* power saving while iOS' screen is off (docs/mcu.md section 9) */
+void mcu_set_powersave(bool on);
+void mcu_screen_off(bool off);
+/* boot.cfg notify_led=1: low battery (<= 10 %, not charging) blinks the notification LED red */
+void mcu_set_led(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */

@@ -47,5 +47,12 @@
   "orig": "8c33d5e5000053e3f6ffff1a",
   "new": "0030a0e38c33c5e50000a0e1",
   "why": "AppleS5L8720XClockController (kext AppleS5L8720X+0x37cc): after starting a performance-state change it sleeps on its command gate (vtable +0x90) until byte +0x38c is cleared by the change-done interrupt, which the fake clock/power page never raises. Hit by IOPMrootDomain's halt broadcast (re-log 36) and by every display sleep (lock): the CLCD stayed off and the screen froze after the first wake. ldrb r3,[r5,#0x38c]; cmp r3,#0; bne wait -> mov r3,#0; strb r3,[r5,#0x38c]; nop: the change counts as done at once (docs/mcu.md 6.3)"
+ },
+ {
+  "name": "clcd-backlight-retry-off",
+  "va": "0x807a963c",
+  "orig": "18009fe518109fe518309fe5",
+  "new": "0030a0e3a03ec4e5000000ea",
+  "why": "AppleM2CLCD::safe_enable_backlight (0x807a95d0): without a backlight service (the n72 PMU backlight is not in our device tree) it logged 'Where is my backlight?' and left its pending flag (+0xea0) set, so it ran again on every frame after each wake (~3/s, re-log 41/42). ldr r0; ldr r1; ldr r3 (IOLog args) -> mov r3,#0; strb r3,[r4,#0xea0]; b to the epilogue: the enable counts as done, no retries, no log. The 3DS backlight is driven by ios3ds (MCU / LCD PWM) instead"
  }
 ]

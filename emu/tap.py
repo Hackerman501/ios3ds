@@ -30,6 +30,7 @@ ap.add_argument("--set", action="append", default=[])
 ap.add_argument("--get", action="append", default=[])
 ap.add_argument("--hmp", action="append", default=[], help="t:monitor command, output printed")
 ap.add_argument("--icount", default="", help="as emu/run.py --icount (2 = ~250 MHz, hardware ordering)")
+ap.add_argument("--extra", default="", help="more QEMU arguments, e.g. '-name x,debug-threads=on'")
 ap.add_argument("--sd", default=os.path.join(viewer.ROOT, "build", "sd.img"))
 ap.add_argument("--out", default=os.path.join(viewer.ROOT, "build", "emu"))
 a = ap.parse_args()
@@ -43,6 +44,7 @@ cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=%s" % ("single" i
        "-display", "none", "-qmp", "unix:%s,server,nowait" % sock]
 if a.icount:   # guest time = instruction count; the RTC follows it too
     cmd += ["-icount", "shift=%s,sleep=off" % a.icount, "-rtc", "clock=vm"]
+cmd += a.extra.split()
 proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 q = viewer.QMP(sock)
 ev = [(float(s), "shot", None) for s in filter(None, a.shots.split(","))]
