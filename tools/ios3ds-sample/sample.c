@@ -418,9 +418,9 @@ static void sample_thread(const struct pent *p, mach_port_t task,
     cnt = THREAD_BASIC_INFO_COUNT;
     kr = thread_info(th, THREAD_BASIC_INFO, (int *)&bi, &cnt);
     if (kr == 0)
-        lput(" %s%s susp=%d cpu=%d", run_state(bi.run_state),
+        lput(" %s%s susp=%d cpu=%d ut=%d.%03d st=%d.%03d", run_state(bi.run_state),
              (bi.flags & 2) ? "/idle" : (bi.flags & 1) ? "/swap" : "",
-             bi.suspend_count, bi.cpu_usage);
+             bi.suspend_count, bi.cpu_usage, bi.user_sec, bi.user_usec / 1000, bi.sys_sec, bi.sys_usec / 1000);
     else
         lput(" ERR thread_info=%d", kr);
 

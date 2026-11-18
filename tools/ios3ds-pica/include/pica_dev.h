@@ -22,6 +22,7 @@ typedef struct pica_dev {
     uint32_t (*fill)(uint32_t pa0, uint32_t len0, uint32_t val0, uint32_t width0,
                      uint32_t pa1, uint32_t len1, uint32_t val1, uint32_t width1);
     uint32_t (*transfer)(uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa, uint32_t dst_dim, uint32_t flags);
+    uint32_t (*config)(uint32_t *flags);            /* PICA_CFG_* */
 } pica_dev_t;
 
 const pica_dev_t *pica_dev_ios(void);

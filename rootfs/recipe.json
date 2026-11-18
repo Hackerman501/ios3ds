@@ -46,7 +46,9 @@
    "StandardOutPath": "/dev/console",
    "EnvironmentVariables": {
     "MBX2D_PAGE_FLIP": "0",
-    "CA_ENABLE_OGL": "0"
+    "CA_ENABLE_OGL": "1",
+    "IOS3DS_GL_TRACE": "1",
+    "IOS3DS_CA": "1"
    }
   }
  },
@@ -208,10 +210,10 @@
   },
   {
    "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
-   "offset": "0x46de620",
-   "orig": "600800eb",
-   "new": "0000a0e3",
-   "why": "QuartzCore CA::WindowServer::M2Display ctor: skip the ES1 eagl_context probe (bl -> mov r0,#0). With an EAGL engine present the display otherwise switches to CA's GL compositor (L565 surfaces) and the screen stays black; this keeps the software compositor (docs/gpu.md)"
+   "offset": "0x46de6a8",
+   "orig": "3536354c",
+   "new": "41524742",
+   "why": "QuartzCore CA::WindowServer::M2Display ctor: the display surface format for an ES1 (API 1) GL compositor is the literal 'L565' (16 bpp); make it 'BGRA' like API 2 so CA's GL compositor renders the 32 bpp format the CLCD scans out and the screen mirror reads (docs/gpu.md 7)"
   }
  ]
 }

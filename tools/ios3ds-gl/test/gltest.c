@@ -449,6 +449,53 @@ static int offscreen(void)
 void host_gl_init(void);
 extern int setenv(const char *, const char *, int);
 
+/* QuartzCore binds IOSurface images with target 0x84F5 (rectangle: texel
+   coordinates). The same texture drawn once as GL_TEXTURE_2D with 0..1 and
+   once as 0x84F5 with 0..64 must give the same pixels. */
+static void rect_texture_check(const char *backend)
+{
+    static const GLfloat tn[8] = { 0, 0, 1, 0, 0, 1, 1, 1 }, tr[8] = { 0, 0, 64, 0, 0, 64, 64, 64 };
+    GLubyte a[4 * 64 * 64], b[4 * 64 * 64];
+    int i, bad = 0;
+    glBindFramebufferOES(GL_FRAMEBUFFER, off_fb);
+    glViewport(0, 0, W, H);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrthof(0, W, 0, H, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glColor4f(1, 1, 1, 1);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexCoordPointer(2, GL_FLOAT, 0, tn);
+    quad(0, 0, 64, 64, 0);
+    glBindTexture(0x84F5, tex);
+    glTexCoordPointer(2, GL_FLOAT, 0, tr);
+    quad(100, 0, 164, 64, 0);
+    glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, a);
+    glReadPixels(100, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, b);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisable(GL_TEXTURE_2D);
+    for (i = 0; i < 4 * 64 * 64; i++)
+        bad += a[i] != b[i];
+    printf("gltest: %s: rectangle texture (0x84F5, texel coordinates) vs 2D: %d bytes differ %s\n", backend, bad,
+           bad || glGetError() ? "FAIL" : "ok");
+    if (bad)
+        fails++;
+}
+
 static void one_pass(const char *backend, const char *ppm, unsigned char *out[2])
 {
     char path[1024];
@@ -468,6 +515,7 @@ static void one_pass(const char *backend, const char *ppm, unsigned char *out[2]
         write_ppm(path);
     }
     out[1] = grab();
+    rect_texture_check(backend);
 }
 
 int main(int argc, char **argv)
@@ -484,6 +532,12 @@ int main(int argc, char **argv)
     } else if (sw[0] && hw[0] && sw[1] && hw[1]) {
         compare("scene 1", sw[0], hw[0]);
         compare("scene 2", sw[1], hw[1]);
+    }
+    {   /* the CoreAnimation gate (ca.c): config, back end, CA-like scene GPU vs CPU */
+        extern int pica_ca_gate(void);
+        int g = pica_ca_gate();
+        printf("gltest: CA compositor gate: %s %s\n", g ? "GPU" : "software", g ? "ok" : "FAIL");
+        fails += !g;
     }
     printf("gltest: %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
     return fails != 0;

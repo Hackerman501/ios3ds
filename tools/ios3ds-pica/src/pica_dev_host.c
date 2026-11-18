@@ -75,10 +75,17 @@ static uint32_t d_transfer(uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa, u
     return pica_drv_transfer(&drv, src_pa, src_dim, dst_pa, dst_dim, flags);
 }
 
+static uint32_t d_config(uint32_t *flags)
+{
+    const char *e = getenv("IOS3DS_HOST_CA_GPU");           /* tests: what boot.cfg would say */
+    *flags = e && *e == '0' ? 0 : PICA_CFG_CA_GPU;
+    return PICA_OK;
+}
+
 const pica_dev_t *pica_dev_host(void)
 {
     static const pica_dev_t dev = { "PICA200 software model (host)", d_info, d_alloc, d_free, d_write, d_read,
-                                    d_submit, d_fill, d_transfer };
+                                    d_submit, d_fill, d_transfer, d_config };
     return &dev;
 }
 
