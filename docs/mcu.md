@@ -239,30 +239,42 @@ working MCU it does the same.
 
 ### 6.3 Lock = screen off (SBDontLockEver removed)
 
-The rootfs used to set `SBDontLockEver` in com.apple.springboard.plist
-(an early guard against the keybag/lock-state problem). With it set,
-SpringBoard ignored the lock button: no screen change (re-log §21). It is
-now removed (`SBDontLockAfterCrash` and `SBDisableAutoDim` stay). QEMU
-(`build/emu-l1`, `build/emu-l2`):
+The rootfs used to set `SBDontLockEver` in com.apple.springboard.plist (an
+early guard against the keybag/lock-state problem). With it set, SpringBoard
+ignored the lock button and the screen stayed on (re-log §21).
+
+Removing it alone was **not** enough. The first lock blanked the screen,
+but after waking the picture stayed frozen on the old frame (status-bar clock
+stuck). The fake CLCD page read `+0x00 = 2` (controller off) after the wake.
+Cause: on display sleep the system lowers the CPU performance state, and
+`AppleS5L8720XClockController` then sleeps on its command gate waiting for a
+"change done" interrupt that the fake clock page never raises. It is the
+same wait that hung every shutdown (§6.1). Patch `s5l-perf-nowait` marks the
+change as done at once (re-log §40).
+
+With both changes, in QEMU (`build/emu-l6`):
 ```
 [input] key 30 down/up                                   (SELECT = lock)
 [mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000      (both screens black)
 [input] key 40 down/up                                   (3DS HOME)
 [mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
 ```
-After the wake, iOS goes straight back to the home screen: no "slide to
-unlock" screen appears, so there is nothing to unlock and no keybag call can
-block. iOS'
-own auto-lock did not fire within 2 minutes of idling in QEMU; on hardware,
-if it does fire after the Settings → General → Auto-Lock delay, the
-backlights go off the same way (HOME or POWER wakes).
+- After the wake the lock screen appears: "1:32, Wednesday, November 18",
+  the charging battery, "slide to unlock".
+- Sliding it unlocks back to the home screen, whose clock keeps running
+  (1:33, 1:34). The CLCD reads `+0x00 = 3` again.
+- Left alone on the lock screen, iOS turns the screen off again after about
+  10 s, as on an iPod.
+- Passcode-less unlock works; the stubbed keybag is not in the way.
 
-Trade-offs, if a future build shows trouble:
-- Restoring `SBDontLockEver` (rootfs/recipe.json) brings back the old
-  behaviour: the lock press is ignored, and only closing the shell darkens
-  the screens (through MCU reg 0x22).
-- With the screen off, iOS ignores touches; only HOME, POWER, START or
-  opening the shell wake it.
+Trade-offs:
+- After a lock the user has to slide to unlock (touch works on the lock
+  screen).
+- With the screen off, iOS ignores touches; HOME, POWER, START or opening
+  the shell wake it.
+- If a hardware run shows trouble, put `SBDontLockEver` back
+  (rootfs/recipe.json). The lock press is then ignored, and closing the
+  shell still darkens the screens through MCU reg 0x22.
 
 ## 7. Hardware assumptions (unverified) and the log lines that check them
 

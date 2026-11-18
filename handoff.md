@@ -18,7 +18,8 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 | Audio (shim PL080/I2S/I2C emulation → CSND) | kexts start | CODEC answers; `AppleEmbeddedAudioDevice: could not start DMA: device is not ready` |
 | `.3dsx` launcher (rename swap + restore) | — | works |
 | MCU ([docs/mcu.md](docs/mcu.md)): RTC/calendar, battery icon, HOME/POWER, shell, volume slider, brightness, shutdown → power off | works (branch `agent/mcu`) | not tested; §7 of mcu.md lists the log lines |
-| MCU accelerometer | samples reach ios3ds-mcud, SpringBoard ignores client IOHID events | not tested |
+| MCU accelerometer (Apple's LIS302DL driver on an emulated sensor) | works: Safari rotates with `mcu-orient` (docs/mcu.md §6.2) | not tested; kill switch `mcu_acc=0` |
+| Lock = screen off (SBDontLockEver removed, `s5l-perf-nowait`) | works: lock → backlight off, HOME → lock screen → slide to unlock (docs/mcu.md §6.3) | not tested |
 
 ## 2. Current work
 
@@ -86,5 +87,5 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
 4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
-6. RTC: done on `agent/mcu` (PEGetGMTTimeOfDay from the MCU RTC, no IORTC wait); hardware check pending. Accelerometer → SpringBoard needs a kernel IOHID service (docs/mcu.md §6.2).
+6. RTC: done on `agent/mcu` (PEGetGMTTimeOfDay from the MCU RTC, no IORTC wait); hardware check pending. Accelerometer done the same way (Apple's LIS302DL driver, docs/mcu.md §6.2).
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).
