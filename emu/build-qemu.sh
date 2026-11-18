@@ -20,12 +20,17 @@ ln -sf "$ROOT/tools/ios3ds-pica/sim/picasim.h" "$Q/hw/arm/picasim.h"
 # the CSND sound block model (docs/audio.md section 6)
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_csnd.c" "$Q/hw/arm/ctr_csnd.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_csnd.h" "$Q/hw/arm/ctr_csnd.h"
+# the Wi-Fi model: TMIO SDIO controller 2 + AR6014 + WPA2 access point (docs/wifi.md section 7)
+ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.c" "$Q/hw/arm/ctr_wifi.c"
+ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.h" "$Q/hw/arm/ctr_wifi.h"
 grep -q nintendo3ds "$Q/hw/arm/meson.build" || \
     sed -i "2a arm_common_ss.add(when: 'CONFIG_NINTENDO3DS', if_true: files('nintendo3ds.c'))" "$Q/hw/arm/meson.build"
 grep -q picasim "$Q/hw/arm/meson.build" || \
     sed -i "s/files('nintendo3ds.c')/files('nintendo3ds.c', 'picasim.c')/" "$Q/hw/arm/meson.build"
 grep -q ctr_csnd "$Q/hw/arm/meson.build" || \
     sed -i "s/'picasim.c')/'picasim.c', 'ctr_csnd.c')/" "$Q/hw/arm/meson.build"
+grep -q ctr_wifi "$Q/hw/arm/meson.build" || \
+    sed -i "s/'ctr_csnd.c')/'ctr_csnd.c', 'ctr_wifi.c')/" "$Q/hw/arm/meson.build"
 grep -q NINTENDO3DS "$Q/hw/arm/Kconfig" || cat >> "$Q/hw/arm/Kconfig" <<'KC'
 
 config NINTENDO3DS
@@ -36,11 +41,17 @@ config NINTENDO3DS
     select SD
     select UNIMP
 KC
+# user-mode networking (slirp; meson fetches libslirp as a subproject when
+# the host has none) for the Wi-Fi model's access point: a build configured
+# without it is redone once
+if [[ -f "$Q/b/build.ninja" ]] && ! grep -q "CONFIG_SLIRP" "$Q/b/config-host.h" 2>/dev/null; then
+    rm -rf "$Q/b"
+fi
 mkdir -p "$Q/b"
 if [[ ! -f "$Q/b/build.ninja" ]]; then
     (cd "$Q/b" && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
         --disable-kvm --disable-xen --disable-vnc --disable-sdl --disable-gtk --disable-opengl \
-        --disable-curl --disable-libssh --disable-capstone --disable-slirp --disable-brlapi \
+        --disable-curl --disable-libssh --disable-capstone --enable-slirp --disable-brlapi \
         --disable-tools --disable-guest-agent)
 fi
 ninja -C "$Q/b" qemu-system-arm

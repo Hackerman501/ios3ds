@@ -105,6 +105,7 @@ void wifi_init(void)
     be = want;
     net_mbox_init(m, be->id, mac);
     memcpy((void *)m->ssid, cfg.ssid, cfg.ssid_len);
+    memcpy((void *)m->nettest, cfg.nettest, sizeof(cfg.nettest));
     log_ok("[wifi] backend %s, mailbox at %08x\n", be->name, NET_PA);
 }
 
