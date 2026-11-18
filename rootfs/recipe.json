@@ -38,7 +38,8 @@
  ],
  "grow_bytes": 1073741824,
  "remove": [
-  "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db"
+  "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",
+  "/private/var/db/timezone/localtime"
  ],
  "plist_set": {
   "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
@@ -63,7 +64,8 @@
   "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
   "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
   "build/rootfs-add/usr/libexec/ios3ds-mcud": "/usr/libexec/ios3ds-mcud",
-  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist"
+  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist",
+  "rootfs/files/localtime-UTC": "/private/var/db/timezone/localtime"
  },
  "chmod": {
   "/usr/libexec/ios3ds-sample": "0755",
@@ -78,7 +80,8 @@
   "/usr/libexec/ios3ds-tone": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",
   "/usr/libexec/ios3ds-mcud": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644",
+  "/private/var/db/timezone/localtime": "0644"
  },
  "file_patches": [
   {
