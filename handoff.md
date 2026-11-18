@@ -2,7 +2,7 @@
 
 Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md) first; [docs/re-log.md](docs/re-log.md) has every reverse-engineering step.
 
-## 1. Status (main `ee9dec0`, on the SD card as `m1-ee9dec0`)
+## 1. Status (main `50ac259`, on the SD card as `m1-50ac259` with `powersave=0` and `ca_gpu=0` in its boot.cfg for a conservative first hardware run)
 
 The user is away. Everything after hardware run 13 is verified in QEMU only. The QEMU GPU model is now as strict as run 13's hardware. The next hardware run should read the log lines listed in docs/pica200.md §11–14, docs/mcu.md §7 and docs/audio.md.
 
@@ -19,8 +19,11 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 | Accelerometer (Apple's LIS302DL driver on a shim-emulated sensor, `mcu_acc=0` hides it) | works: Safari rotates (re-log 40) | not yet run |
 | Lock = screen off (`SBDontLockEver` removed, `s5l-perf-nowait`) | works: lock blanks, HOME wakes, slide to unlock (re-log 41) | not yet run |
 | Microphone | in progress (agent/audio2) | — |
-| CoreAnimation compositing on the GPU | in progress (agent/gpu) | — |
-| Wi-Fi | off cleanly without `wifi.cfg` | not tested |
+| Settings > Wi-Fi, status-bar bars (Apple80211 bridge dylib in configd) | in progress (agent/wifi3) | — |
+| CoreAnimation compositing on the PICA200 (`ca_gpu`, default 1; 3-step gate + software fallback) | works: home screen equal to the software compositor (≤1 level off); soak 10 PASS (re-log 46). Not cheaper in QEMU yet (per-frame read-back); zero-copy present in progress (agent/gpu) | not yet run; card has `ca_gpu=0`. On run 14 compare the `[gl] CA:` lines against a `ca_gpu=1` boot |
+| Wi-Fi | end to end against the `ctr-wifi` model: SDIO, BMI, HTC/WMI, WPA2 4-way, DHCP lease, default route, DNS, HTTP fetch (`emu/wifi_test.py`, re-log 45); off cleanly without `wifi.cfg` or firmware | not tested (docs/wifi.md §6 lists the log lines to read) |
+| Screen-off power saving (copies paused, ARM9 WFI, VBlank masked, no system sleep) | works: ARM9 39 % → 2 % host CPU while locked (re-log 43) | not tested; `powersave=0` |
+| Notification LED (low battery) | pattern written (model) | not tested; off by default, `notify_led=1` |
 
 ## 2. How work is organised now
 - **Release tree:** clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (branch `rel-main`, pushed to `main`). It has its own unified QEMU build (GPU + CSND + MCU models). Card builds come only from there.
@@ -70,7 +73,7 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 1. Hardware run of the GPU build: mirror self-test variant, fps, `[gl] pica: GPU up`, PICA vs software frame time (docs/pica200.md §11).
 2. `gettimeofday` early in boot (§2).
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
-4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
+4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK, `nettest=`) and the NWM firmware extraction; read the log against the checklist in [docs/wifi.md](docs/wifi.md) §6.
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
 6. RTC and accelerometer: done (re-log 33, 40); hardware check pending.
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).

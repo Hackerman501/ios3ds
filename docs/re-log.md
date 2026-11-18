@@ -604,7 +604,54 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
   - In QEMU, 70% of console lines are empty: 1,603 of them after t=111 s in soak 7, arriving in triples, starting right after `iBoot version`. Hardware logs (run9, run13) have none, so it is a QEMU-side artefact.
   - On top of that, the daemons now print real text every few seconds.
   - Fix: the monitor counts only non-whitespace console bytes as activity, and adds a heartbeat every 30 s regardless. QEMU: heartbeats at t=10, 20, 33, 61, 76, then every 30 s to the end.
-## 43. CoreAnimation's compositor on the PICA200 (2026-11-18)
+
+## 43. Screen-off power saving; no system sleep; the CLCD backlight retry (2026-11-18)
+- **System sleep with no way back:** after a lock without `SBDontLockEver`, iOS slept the whole system after ~60 s (`System Sleep`, then AppleARMPL192VIC's `vic[0] ena 00010000`); the HOME press later reached nobody (QEMU `build/emu-p1`). The iPod wakes from the PMU interrupt, which the 3DS does not have. `IOPMAssertionCreateWithName("NoIdleSleepAssertion", 255, …)` (IOKit 0x337f0d78; the type string occurs 6 times in the dyld cache) held by ios3ds-mcud prevents it (`[mcud] NoIdleSleepAssertion held`; 94 s locked, then wake fine).
+- **Where the screen-off cost was:** the ARM9 monitor loop ran ~1700 iterations/s with the screen on and ~4400/s with it off (no copies to do, so it spun faster), reading the touch ADC over SPI each time. The ARM11 still took the VBlank (GIC 42) at full rate, although nothing was injected with the CLCD off. Changes and numbers: docs/mcu.md §9.
+- **ARM9 WFI:** the monitor runs with CPSR I/F masked (`cpsr=600001d3` in every log). ARM9 timer 1 (prescaler 64, 2 ms) with IE bit 9 asserts the IRQ line; CP15 c7,c0,4 returns without taking the exception; IF is cleared by hand. QEMU's arm946 halts in WFI and `arm_cpu_has_work` wakes it on the pending line. Result: the ARM9 vCPU thread goes from 39 % to 2 % host CPU.
+- **`safe_enable_backlight`** (AppleM2CLCD, ARM, 0x807a95d0): `bl 0x807a9490` (find the backlight) → NULL → `IOLog("%s, Where is my backlight?", "void AppleM2CLCD::safe_enable_backlight()")` and return, leaving byte +0xea0 (enable pending) set; the success path clears it (0x807a9634). Called per frame while pending, i.e. ~3/s for the rest of the wake (soak 6). Patch `clcd-backlight-retry-off` at 0x807a963c: the three IOLog argument loads become `mov r3,#0; strb r3,[r4,#0xea0]; b epilogue` (the IOLog call at 0x807a9648 is skipped, so main's nop of that call can coexist).
+
+## 44. Notification LED (2026-11-18)
+- MCU register 0x2D takes a 100-byte pattern stream (3dbrew "MCU Services"; libn3ds `McuInfoLedPattern`, `MCU_REG_INFO_LED`): step time, smoothing, loop delay, unknown, red[32], green[32], blue[32]. The QEMU model already treated 0x2D as a stream register; it now records the pattern (`mcu-led-rgb0`, `mcu-led-steps`).
+- ARM9: boot.cfg `notify_led=1` → red blink at ≤ 10 % battery without charging, off otherwise and before a power-off. QEMU: `[mcu] notification LED blinking red: battery low` (16 of 32 steps lit, 0xA00000), `[mcu] notification LED off` once the charger is back. The timing bytes are unverified, so the default is off.
+
+## 45. Wi-Fi end to end in QEMU: an AR6014 + access point model (2026-11-18)
+- **Goal:** prove the whole chain (ARM9 driver → network mailbox → `kern.ios3ds_net` → ios3ds-wifid → iOS networking) without a console. Before this, Wi-Fi had only host unit tests.
+- **Model** (`emu/qemu/hw/arm/ctr_wifi.c`, docs/wifi.md §7): TMIO controller 2 at 0x10122000, an SDIO card (CCCR/FBR/CIS, function 1), the AR6014 BMI ROM and HTC/WMI firmware behaviour, and an access point with its own WPA2-PSK authenticator, bridged to `-nic user` (slirp). Power from CFG11_WIFICNT (mapped over the board's CFG11 page) and GPIO 2_2/3_12 (a small GPIO block at 0x10147000).
+- **Written from the references, not from our driver:**
+  - ath6kl `target.h`: function-1 addresses (`HOST_INT_STATUS` 0x400, `RX_LOOKAHEAD_VALID` 0x405, lookahead 0x408, `COUNT` 0x420, `COUNT_DEC` 0x440, window 0x474/0x478/0x47C). `htc.h`: `ENDPOINT1` = 0, so the BMI credit is `COUNT_DEC` + 4·4 = 0x450, the same register GBATEK calls COUNT4. `sdio.c`: one credit read before each BMI command, lookahead-valid wait before BMI reads, window address LSB written last.
+  - dsiwifi (runs on real DSi/3DS hardware): 2-byte WMI command header, enumerated auth/crypto values (WPA2-PSK = 5, AES = 4), BSSINFO/CONNECT/DISCONNECT layouts, `00 1C` data header, `0x4000 - len` mailbox addresses, `HTC_MSG_READY` handshake.
+  - IEEE 802.11i (PRF-384, EAPOL-Key, message checks), RFC 3394 key wrap, hostapd's RSN IE comparison.
+- **First boot against the model:** the unchanged driver went SDIO → BMI → upload → HTC → WMI → scan → associate → 4-way → keys → link up in 1.6 s of virtual time. Both installed keys were equal to the AP's (`WMI_ADD_CIPHER_KEY pairwise ... equals the AP's TK`, `group ... equals the AP's GTK`).
+- **Driver changes** (the model exposed some; the references require the others):
+  - WMI and data use the endpoints from the CONNECT_SERVICE responses (status checked), not fixed 1/2.
+  - The RX trailer is stripped only with `HTC_FLG_RX_TRAILER` (bit 1). Before, any flag counted.
+  - Time-outs on the monitor clock: firmware start 3 s, HTC_READY and WMI_READY 5 s, scan 10 s. A missing HTC_READY used to wait forever in state `htc`.
+  - A disconnect takes the link down and reconnects after 5 s. Before, it reconnected at once (a tight loop with a wrong PSK). Three failed handshakes log a psk hint.
+  - **FIFO self-test:** after "SDIO up" the driver writes a pattern into the function-1 scratch registers with CMD52 and reads it back with one CMD53. If that fails, the mailbox falls back to CMD52 per byte. Reason: dsiwifi's 3DS ARM11 build reads TMIO2's data FIFO at +0x200000, not +0x10C, and nobody has tried +0x10C from the ARM9.
+- **iOS side, seen in QEMU:**
+  - `IOEthernetControllerGetIONetworkInterfaceObject` + "BSD Name" gave nothing (`[wifid] interface ? up`). IONetworkStack names the interface 20+ s later (`still no BSD interface with our MAC after 20 s`, then `interface is en0`). The daemon now finds it by MAC in `getifaddrs` AF_LINK.
+  - **configd configures en0 by itself.** The default network set does DHCP, IPMonitor adds the default route and mDNSResponder gets the DHCP DNS server. In the first run the daemon never ran `ipconfig` (no name yet), yet en0 had 10.0.2.15. `ipconfig set` is now only a fallback after 15 s without an address.
+  - `ios3ds-nettest` (new; `nettest=` in wifi.cfg, passed through the mailbox, protocol version 2):
+    ```
+    [nettest] en0 address 10.0.2.15 netmask 255.255.255.0 (after 11 s)
+    [nettest] default route via 10.0.2.2 (interface index 2)
+    [nettest] dns example.com -> 172.66.147.243
+    [nettest] http 10.0.2.2:8080/ios3ds-nettest -> HTTP/1.0 200 OK | ios3ds-wifi-test-aa4ee772 path=/ios3ds-nettest (185 bytes, 0 s)
+    [nettest] all steps passed
+    ```
+    The host's HTTP server logged `GET /ios3ds-nettest`.
+- **Status-bar Wi-Fi icon: not reachable.** SpringBoard's Wi-Fi state comes from configd's `WiFiManager.bundle`. Its strings show it only drives an `IO80211Interface`/`IO80211Controller` through Apple80211 ("Could not obtain IO80211Interface bsd name"), so an IOUserEthernet `en0` stays invisible to it.
+- **Unverified on hardware** (docs/wifi.md §6 lists the log line that settles each):
+  - the ARM9 powering the chip and driving TMIO2;
+  - the ARM9 FIFO at 0x1012210C;
+  - the stub setting `hi_board_data_initialized`;
+  - Type4 firmware answering HTC/WMI as modelled;
+  - BSSINFO from an all-channel scan with BSS filter 1;
+  - capability bits 0 in the firmware's association RSN IE;
+  - dsiwifi's post-REG_DOMAIN host-interest write, which we skip.
+
+## 46. CoreAnimation's compositor on the PICA200 (2026-11-18)
 Design and RE notes: docs/gpu.md §7.
 - **RE (QuartzCore in the user's dyld cache, 8C148):** helper scripts resolved `__picsymbolstub4` stubs through the indirect symbol table and disassembled all of `__text` (ARM). `M2Display::M2Display` (0x346de5b8) probes `eagl_context(2)`, then `(1)`, storing the API at `+0x17c` and the surface format at `+0x180` from a literal pool: `'BGRA'` (0x346de6a4) for API 2, `'L565'` (0x346de6a8) for API 1. `GLESContext::make_buffer_current` (0x3470d274) binds the display IOSurface as a 0x84F5 texture via `attachImage:toCoreSurface:invertedRender:NO`, NEAREST/CLAMP, and attaches it to an FBO. `glGetString` is called with `GL_EXTENSIONS` and 0x8A1E (0x3470dd18/dd24).
 - **Runs (QEMU, plain):** (1) `glBindTexture(0x84F5)` and `glGetIntegerv(0x84F8)` errors, `CoreAnimation: rendering error 500`, black screen with one icon; (2) after accepting 0x84F5: GL error in `GetString` (traced with the new `IOS3DS_GL_TRACE`: `engine+0x49bc` → `_api_GetString`); (3) no errors, still black but one icon; (4) cause: `glFlush` was a no-op and `glFinish` synced only the bound framebuffer while CA flushes with FBO 0 bound — the GPU frames never reached the IOSurface; the one icon came from a draw that fell back to the CPU rasterizer. With `flush_all` the home screen appears.
@@ -613,8 +660,22 @@ Design and RE notes: docs/gpu.md §7.
 - **Cost (QEMU):** per CA frame on the GPU path, render thread CPU 9.7–15.2 ms (plain), 19–27 ms (`--icount 2`), with one read-back of the whole display surface (~616 KiB) per frame. SpringBoard CPU in 60 s sampler windows during page swipes: GPU 4.97 / 7.05 s, software 4.16 / 5.40 s, i.e. ~25 % more in QEMU. QEMU runs CA's software compositor at host speed and models GPU operations with fixed delays, so this says little about hardware; the per-frame read-back (PPF + copy-out + per-pixel byte rotation) is the known overhead and the next thing to remove (docs/gpu.md §7). The `[gl] CA:` lines measure it on hardware.
 - **App launch / exit:** my own scripted taps right after the home screen came up opened nothing in *either* compositor (identical behaviour, not a rendering issue). `emu/soak.py --cycles 6` on the GPU compositor (merged main): **PASS**, apps open (Game Center, Photos "Updating Library", Contacts, …; app-vs-home difference 39–99) and Home returns to an identical home screen (difference 0.0) every cycle; no panic, crash, stall or mirror failure; `[gl] CA: 600 frames; per frame … render thread CPU 8933 us, 1.0 command lists, 1.0 read-backs (604 KiB)`.
 
-## 44. Mirror self-test "mismatch" that was a timeout (soak 4) (2026-11-18)
+## 47. Mirror self-test "mismatch" that was a timeout (soak 4) (2026-11-18)
 - **Report (soak 4, plain MTTCG, main e9ddbba):** `[gpu] mirror self-test: GPU operation 4 of 4 (PPF transfer) did not finish, register 0x00000000`, then `self-test FAILED (0 bytes differ)` and `FAILED (self-test mismatch)`. The failure dump right after shows upload, texture and target exactly as expected: the read-out was late, not wrong. "4 of 4": the self-test mirrors one framebuffer set (upload, texture copy, draw, one read-out); live frames have 5 operations with two sets.
 - **Why late:** the QEMU GX model completes an operation from a virtual-time timer that needs the BQL; the shim's self-test polled GX registers in a tight loop (each MMIO read takes the BQL). On a busy host (several QEMUs) the timer can wait a long time. Measured with the merged (rel) QEMU on a loaded host: upload 44871 ticks, read-out 75494 ticks (~45/75 ms) for operations modelled at 0.4 ms — the 200 ms limit had a margin of ~3. Not reproduced as a failure in this worktree.
 - **Fixes:** 1 s per operation; thread-context waits poll in ~1 ms slices with a 10 µs `IODelay` between; the QEMU model runs due operations when a GX register is read; `pm_selftest` returns `PM_SELFTEST_TIMEOUT` with the operation and register, logged as `self-test aborted, GPU operation N did not finish` and reported as `GM_WHY_TIMEOUT` (ARM9: `display mirror FAILED (GPU timeout: operation N of a frame did not finish, register …)`). Host test: a hung GPU gives `PM_SELFTEST_TIMEOUT`, operation 3.
 - **After the fix (plain QEMU, this worktree, merged main):** self-test read-out ~55 ms → passes with margin; mirror active in plain and `--icount 2` boots.
+
+## 48. Timer interrupts while the screen is off (2026-11-18)
+- **Shim counters** (`xp /24wx 0x20840040`: +0x4C timer IRQs, +0x58 deferred FIQ retries, +0x78 VBlanks, +0x80 clock reads, +0x8C `set_decrementer` calls, +0x98 IRQs): with the screen on, 87 timer IRQs/s, 296 decrementer sets/s, 1363 clock reads/s. With it off, 140, 415 and 2055. No deferred retries in either.
+- **Sampling** (`set_decrementer` = shim+0x18, hardware breakpoint through QEMU's gdbstub, frame-pointer backtraces 18 deep):
+  - User frames end in `usleep` (dyld cache 0x32c9f117), called from ios3ds-input 0x70bc and ios3ds-mcud 0x7008 (both ARM `bl`, read with `llvm-objdump --macho`), or in `sleep` (0x32ce31ef, ios3ds-wifid).
+  - Kernel-only chains go through `thread_call_allocate+0x2bc` (0x80025019, the thread_call worker's block), through `assert_wait_deadline+0x212`, and through `STRDUP+0x764` (0x8005c52d).
+  - 0x8005c4f0 is XNU's `serial_keyboard_poll`: a loop calling the UART rx hook (0x8006b004 with 0,1,0,1), then `clock_interval_to_deadline(16, …)`, `assert_wait_deadline`, `thread_block`, i.e. 62.5 wakeups/s forever, with nothing to read (our rx-ready patch always says no). The boot-arg `serial=3` (bit 1 = keyboard) started it; `serial=1` keeps the serial console without it. After the change the chain is gone from the samples, and console output is unchanged.
+  - The thread_call worker's function call (`blx r8` at 0x80024fa6) is mostly BSD networking callouts: `ip_output+0x86f4`, `net_del_domain+0x5c` and `+0xb8`, `in6addr_local+…`, `sodisconnect+0xb9a`, `netboot_root+0x4` (nearest exported symbols). The mix is the same with the screen on and off; only their share of all timer arms doubles when off.
+- **No CoreAnimation:** no SpringBoard or QuartzCore user frames among the timer arms, so the guess in §43 was wrong.
+- **Changes:**
+  - `serial=1`;
+  - ios3ds-input at 10 Hz while `screen_off` (read from the MCU mailbox; samples queue in the ring, and hold timing now counts real sleep);
+  - ios3ds-mcud at 4 Hz while off.
+- **Result** (QEMU): off 146 IRQs/s (143 timer) instead of 245; on 127 instead of 144; ARM11 vCPU thread 10 % instead of 14 % host CPU while off. Table in docs/mcu.md §9.

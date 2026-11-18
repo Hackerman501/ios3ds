@@ -25,7 +25,7 @@
 #define NET_IO_OFF      0xE000u         /* netio_t scratch, owned by the ARM11 */
 
 #define NET_MAGIC       0x4D54454Eu     /* 'NETM' */
-#define NET_VERSION     1u
+#define NET_VERSION     2u      /* 2: ssid + nettest in netmbox_t / netio_t */
 #define NET_SLOTS       16u             /* frames per direction */
 #define NET_SLOT_SIZE   1536u           /* 48 cache lines */
 #define NET_FRAME_MAX   1514u           /* 14-byte header + 1500 MTU, no FCS */
@@ -88,6 +88,8 @@ typedef struct {
     uint32_t _r2[3];
     /* line 3: ARM9 */
     char     ssid[32];      /* for status display, not NUL-terminated at 32 */
+    /* lines 4-5: ARM9 */
+    char     nettest[64];   /* wifi.cfg nettest= ("<url> [dns name]"), NUL-terminated, "" = off */
     /* slots */
     netslot_t rx[NET_SLOTS];    /* writer: ARM9 */
     netslot_t tx[NET_SLOTS];    /* writer: ARM11 */
@@ -96,7 +98,7 @@ typedef struct {
 _Static_assert(sizeof(netslot_t) == NET_SLOT_SIZE, "netslot layout");
 _Static_assert(offsetof(netmbox_t, rx_tail) == 32, "netmbox line 1");
 _Static_assert(offsetof(netmbox_t, tx_tail) == 64, "netmbox line 2");
-_Static_assert(offsetof(netmbox_t, rx) == 128, "netmbox slots");
+_Static_assert(offsetof(netmbox_t, rx) == 192, "netmbox slots");
 _Static_assert(sizeof(netmbox_t) <= NET_IO_OFF, "netmbox overlaps the io buffer");
 
 /* ---- userland view: sysctl kern.ios3ds_net ---------------------------- */
@@ -120,7 +122,8 @@ _Static_assert(sizeof(netmbox_t) <= NET_IO_OFF, "netmbox overlaps the io buffer"
 #define NETIO_SIZE      4096u
 #define NETIO_MAGIC     0x4F49454Eu     /* 'NEIO': kernel -> user */
 #define NETIO_CMD       0x444D434Eu     /* 'NCMD': user -> kernel */
-#define NETIO_DATA      (NETIO_SIZE - 32u)
+#define NETIO_HDR       128u
+#define NETIO_DATA      (NETIO_SIZE - NETIO_HDR)
 #define NETIO_LINK_NONE 0xFFFFu         /* ARM9 is not serving the mailbox */
 #define NETIO_F_NOACK   1u              /* in (rx_pending field): rx_next is not an ack */
 
@@ -137,9 +140,12 @@ typedef struct {
     uint16_t tx_free;       /* out: free TX slots before this call's TX */
     uint32_t rx_pending;    /* out: frames still queued behind this batch;
                                in: NETIO_F_* flags */
+    char     ssid[32];      /* out: network name (not NUL-terminated at 32) */
+    char     nettest[64];   /* out: wifi.cfg nettest=, NUL-terminated ("" = none) */
     uint8_t  data[NETIO_DATA];  /* { u16 len (LE); u8 frame[len]; pad to even } ... */
 } netio_t;
 _Static_assert(sizeof(netio_t) == NETIO_SIZE, "netio layout");
+_Static_assert(offsetof(netio_t, data) == NETIO_HDR, "netio header");
 
 /* Append one frame to a packed buffer. Returns 0, or -1 if it does not fit
    or the length is not a valid Ethernet frame. *off is advanced on success. */

@@ -33,6 +33,10 @@ void waitcycles(u32 n);
 #define GPIO_WIFI_EN    (*(vu16 *)0x10147028u)  /* GPIO 3_12 (REG_GPIO3_DAT2): Atheros nRESET, 1 = run */
 #define REG_PRNG        (*(vu32 *)0x10011000u)  /* ARM9 PRNG source */
 #define REG_TIMER0      (*(vu16 *)0x10003000u)
+/* the monitor's free-running clock (boot/arm9/main.c clk_start(): timers 2+3
+   cascaded, prescaler 1024 = 65457 Hz), running before wifi_poll() is called */
+#define REG_T9_VAL2     (*(vu16 *)0x10003008u)
+#define REG_T9_VAL3     (*(vu16 *)0x1000300Cu)
 
 /* ---- AR6014 (GBATEK "Internal Memory Map") ------------------------------- */
 #define CHIP_ID_AR6014      0x0D000001u
@@ -52,6 +56,7 @@ void waitcycles(u32 n);
 #define F1_RX_LOOKAHEAD_VALID 0x405
 #define F1_RX_LOOKAHEAD0    0x408
 #define F1_INT_STATUS_EN    0x418
+#define F1_SCRATCH0         0x460
 #define F1_COUNT4           0x450
 #define F1_WINDOW_DATA      0x474
 #define F1_WINDOW_WRITE_ADDR 0x478
@@ -62,7 +67,11 @@ void waitcycles(u32 n);
 enum { BMI_DONE = 1, BMI_WRITE_MEMORY = 3, BMI_EXECUTE = 4, BMI_READ_SOC_REG = 6,
        BMI_WRITE_SOC_REG = 7, BMI_GET_TARGET_ID = 8, BMI_LZ_START = 0xD, BMI_LZ_DATA = 0xE };
 
-enum { PKT_HTC = 0, PKT_WMI = 1, PKT_DATA = 2 };
+/* HTC endpoint 0 is the control endpoint; the others are handed out by the
+   firmware in CONNECT_SERVICE responses (ath6kl htc_conn_service_resp), in
+   practice 1 = WMI control, 2..5 = data BE/BK/VI/VO */
+enum { PKT_HTC = 0 };
+#define HTC_FLG_RX_TRAILER 0x02
 enum { HTC_READY = 1, HTC_CONN_SVC = 2, HTC_SETUP_COMPLETE = 4 };
 enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
        WMI_START_SCAN = 0x0007, WMI_SET_BSS_FILTER = 0x0009, WMI_SET_PROBED_SSID = 0x000A,
@@ -93,13 +102,28 @@ static struct {
     const wifi_cfg_t *cfg;
     u8 mac[6], bssid[6];
     u32 step, part, part_off;       /* firmware upload cursor */
-    u32 waits;
     wpa2_t wpa;
     u16 channel;                    /* MHz of the AP found by the scan, 0 = unknown */
     u8 found, group_crypt;          /* scan result; WMI group crypto type */
     u8 rxframe[NET_FRAME_MAX];      /* one converted frame waiting for rx() */
     u32 rxlen;
+    u8 ep_wmi, ep_data;             /* endpoints the firmware assigned */
+    u32 t_state;                    /* now_ms() when the current wait started */
+    u32 reconnect_at;               /* now_ms() for the next WMI_CONNECT, 0 = none */
+    u8 scan_done, auth_fails;
+    u8 byte_mode;                   /* 1: mailbox through CMD52 (the FIFO self-test failed) */
 } A;
+
+static u32 now_ms(void)
+{
+    u16 hi, lo, hi2;
+    do {
+        hi = REG_T9_VAL3;
+        lo = REG_T9_VAL2;
+        hi2 = REG_T9_VAL3;
+    } while (hi != hi2);
+    return ((u32)hi << 16 | lo) / 65u;      /* 65.457 ticks per ms; 0.7% slow is fine here */
+}
 
 static u8 pkt[0x680] __attribute__((aligned(4)));   /* mailbox packet scratch */
 
@@ -237,6 +261,13 @@ static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len)
     pkt[2] = (u8)len; pkt[3] = (u8)(len >> 8);
     pkt[4] = (u8)ctl; pkt[5] = (u8)(ctl >> 8);
     if (len) memcpy(pkt + 6, body, len);
+    if (A.byte_mode) {                  /* last byte at the window end = end of message */
+        for (u32 i = 0; i < total; i++) {
+            int r = sdio_w8(1, F1_MBOX0_END - total + i, pkt[i]);
+            if (r < 0) return r;
+        }
+        return 0;
+    }
     return sdio_write_blocks(1, F1_MBOX0_END - total, pkt, total);
 }
 
@@ -246,7 +277,7 @@ static int wmi_send(u32 id, const void *params, u32 len)
     if (len + 2 > sizeof(b)) return SDIO_ERR_ARG;
     b[0] = (u8)id; b[1] = (u8)(id >> 8);
     if (len) memcpy(b + 2, params, len);
-    return mbox_send(PKT_WMI, 1, 0, b, len + 2);
+    return mbox_send(A.ep_wmi, 1, 0, b, len + 2);   /* flag 1: credit update wanted */
 }
 
 /* Read one packet into pkt[]. Returns the payload length (bytes after the
@@ -265,10 +296,18 @@ static int mbox_recv(u32 *type)
         log_warn("[wifi] oversized mailbox packet (lookahead %08x)\n", la);
         return SDIO_ERR_ARG;
     }
-    r = sdio_read_blocks(1, F1_MBOX0_END - total, pkt, total);
-    if (r < 0) return r;
+    if (A.byte_mode) {
+        for (u32 i = 0; i < total; i++) {
+            int b = sdio_r8(1, F1_MBOX0_END - total + i);
+            if (b < 0) return b;
+            pkt[i] = (u8)b;
+        }
+    } else if ((r = sdio_read_blocks(1, F1_MBOX0_END - total, pkt, total)) < 0) {
+        return r;
+    }
     *type = pkt[0];
-    u32 trailer = pkt[1] ? pkt[4] : 0;      /* credit/lookahead reports */
+    /* credit / lookahead records at the end (ath6kl HTC_FLG_RX_TRAILER) */
+    u32 trailer = (pkt[1] & HTC_FLG_RX_TRAILER) ? pkt[4] : 0;
     return trailer < len ? (int)(len - trailer) : 0;
 }
 
@@ -430,7 +469,7 @@ static void on_eapol(const u8 *eth, u32 len)
     memcpy(frame + 6, A.mac, 6);
     frame[12] = 0x88; frame[13] = 0x8E;
     u32 n = wifi_frame_to_wmi(frame, 14 + rlen, out, sizeof(out));
-    int r = n ? mbox_send(PKT_DATA, 0, 0, out, n) : SDIO_ERR_ARG;
+    int r = n ? mbox_send(A.ep_data, 0, 0, out, n) : SDIO_ERR_ARG;
     logp("[wifi] EAPOL event %d, reply %u bytes: %d\n", ev, rlen, r);
     if (ev == WPA2_EV_KEYS || ev == WPA2_EV_GTK) {
         if (ev == WPA2_EV_KEYS) wmi_add_key(0, 0, A.wpa.tk, 16, NULL);          /* pairwise */
@@ -456,7 +495,8 @@ static int scan_start(void)
     int r = wmi_send(WMI_SET_BSS_FILTER, &f, sizeof(f));
     if (r >= 0) r = wmi_send(WMI_SET_PROBED_SSID, &ps, sizeof(ps));
     if (r >= 0) r = wmi_send(WMI_START_SCAN, &sc, sizeof(sc));
-    A.waits = 0;
+    A.scan_done = 0;
+    A.t_state = now_ms();
     return r;
 }
 
@@ -489,7 +529,9 @@ static void do_connect(void)
          A.found ? "seen in scan" : "not seen in scan, firmware picks", r);
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_SCAN;
     A.err = r;
-    A.waits = 0xFFFF0000u;                      /* scan over: no rescan timer */
+    A.scan_done = 1;                            /* scan over: no scan timeout */
+    A.reconnect_at = 0;
+    A.t_state = now_ms();
 }
 
 static void on_wmi(const u8 *b, u32 len)
@@ -518,7 +560,7 @@ static void on_wmi(const u8 *b, u32 len)
         on_bssinfo(d, n);
         break;
     case WMI_EV_SCAN_COMPLETE:
-        if (A.state == NET_ST_SCAN && A.waits < 0xFFFF0000u) do_connect();
+        if (A.state == NET_ST_SCAN && !A.scan_done) do_connect();
         break;
     case WMI_EV_CONNECT:
         /* u16 channel; u8 bssid[6]; ... (ath6kl struct wmi_connect_event) */
@@ -536,8 +578,15 @@ static void on_wmi(const u8 *b, u32 len)
         }
         break;
     case WMI_EV_DISCONNECT:
-        log_warn("[wifi] disconnected (reason %u), reconnecting\n", n >= 9 ? d[8] : 0);
-        do_connect();
+        /* u16 802.11 reason/status, u8 bssid[6], u8 WMI reason (ath6kl) */
+        if (A.state == NET_ST_AUTH && ++A.auth_fails == 3)
+            log_err("[wifi] the WPA2 handshake failed 3 times: is psk= in wifi.cfg right?\n");
+        log_warn("[wifi] disconnected (WMI reason %u, 802.11 code %u), reconnecting in 5 s\n",
+                 n >= 9 ? d[8] : 0, n >= 2 ? d[0] | d[1] << 8 : 0);
+        A.state = NET_ST_SCAN;
+        A.scan_done = 1;
+        A.reconnect_at = now_ms() + 5000;
+        if (!A.reconnect_at) A.reconnect_at = 1;
         break;
     default:
         if (A.cfg->verbose) logp("[wifi] WMI event %04x, %u bytes\n", id, n);
@@ -557,20 +606,36 @@ static void on_htc(const u8 *b, u32 len)
         { HTC_CONN_SVC, 0, 4, 1, 5, 0, 0, 0 },
     };
     static const u8 done[2] = { HTC_SETUP_COMPLETE, 0 };
+    u8 eid[5] = { 0 };
     int r = 0;
+    logp("[wifi] HTC ready: %u credits of %u bytes\n", len >= 6 ? b[2] | b[3] << 8 : 0,
+         len >= 6 ? b[4] | b[5] << 8 : 0);
     for (int i = 0; i < 5 && r >= 0; i++) {
         u32 type;
         r = mbox_send(PKT_HTC, 0, 0, svc[i], 8);
-        for (int t = 0; r >= 0 && t < 2000; t++) {      /* its response */
+        int t;
+        for (t = 0; r >= 0 && t < 2000; t++) {          /* its response */
             int got = mbox_recv(&type);
-            if (got != 0) { r = got < 0 ? got : 0; break; }
-            waitcycles(3350);
+            if (got < 0) { r = got; break; }
+            /* CONNECT_SERVICE_RESP: id 3, service, status, endpoint, max size */
+            const u8 *q = pkt + 6;
+            if (got >= 6 && type == PKT_HTC && q[0] == 3 && q[2] == svc[i][2] && q[3] == svc[i][3]) {
+                if (q[4] != 0 || q[5] == 0 || q[5] > 7) r = -120 - q[4];
+                eid[i] = q[5];
+                break;
+            }
+            if (got == 0) waitcycles(3350);             /* nothing, or a credit report */
         }
+        if (r >= 0 && t >= 2000) r = SDIO_ERR_TIMEOUT;
     }
+    A.ep_wmi = eid[0];
+    A.ep_data = eid[1];
     if (r >= 0) r = mbox_send(PKT_HTC, 0, 0, done, 2);
     if (r >= 0) r = f1_w32(F1_INT_STATUS_EN, 0x010300D1);
-    logp("[wifi] HTC services connected: %d\n", r);
+    logp("[wifi] HTC services connected: %d (WMI endpoint %u, data %u/%u/%u/%u)\n", r,
+         eid[0], eid[1], eid[2], eid[3], eid[4]);
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_WMI;
+    A.t_state = now_ms();
     A.err = r;
 }
 
@@ -586,9 +651,9 @@ static void pump(void)
     const u8 *body = pkt + 6;
     if (type == PKT_HTC) {
         on_htc(body, (u32)n);
-    } else if (type == PKT_WMI) {
+    } else if (type == A.ep_wmi) {
         on_wmi(body, (u32)n);
-    } else {                                            /* 2..5: data endpoints */
+    } else if (A.ep_wmi) {                              /* the data endpoints */
         static u8 eth[NET_FRAME_MAX];
         u16 et = 0;
         u32 len = wifi_frame_from_wmi(body, (u32)n, eth, sizeof(eth), &et);
@@ -621,6 +686,27 @@ static int ar6k_init(const wifi_cfg_t *cfg, u8 mac[6])
     return 0;
 }
 
+/* Unverified on hardware: whether the ARM9 can use TMIO controller 2's 32-bit
+   FIFO at 0x1012210C (dsiwifi's 3DS ARM11 build uses a FIFO mirror at
+   +0x200000 instead). Write a pattern into the function-1 scratch registers
+   with CMD52, read it back with one CMD53; if that fails, move every mailbox
+   transfer to CMD52 (slow, but needs no FIFO). */
+static void fifo_selftest(void)
+{
+    static const u8 pat[4] = { 0x5A, 0xC3, 0x0F, 0x96 };
+    u8 got[4] __attribute__((aligned(4))) = { 0 };
+    int r = 0;
+    for (int i = 0; i < 4 && r >= 0; i++) r = sdio_w8(1, F1_SCRATCH0 + i, pat[i]);
+    if (r >= 0) r = sdio_read_bytes(1, F1_SCRATCH0, got, 4);
+    A.byte_mode = r < 0 || memcmp(got, pat, 4) != 0;
+    if (A.byte_mode)
+        log_warn("[wifi] TMIO2 32-bit FIFO check failed (%d, read %02x%02x%02x%02x, status %08x): "
+                 "mailbox falls back to CMD52 byte transfers\n", r, got[0], got[1], got[2], got[3],
+                 sdio_last_status());
+    else
+        logp("[wifi] TMIO2 32-bit FIFO works (CMD53 read back the scratch pattern)\n");
+}
+
 static u32 ar6k_poll(void)
 {
     u32 v = 0;
@@ -640,6 +726,7 @@ static u32 ar6k_poll(void)
         if ((r = sdio_init()) < 0) return fail(r, "SDIO enumeration");
         if ((r = soc_read(SOC_CHIP_ID, &v)) < 0) return fail(r, "chip id read");
         log_ok("[wifi] SDIO up, chip id %08x%s\n", v, v == CHIP_ID_AR6014 ? " (AR6014)" : " (unexpected)");
+        fifo_selftest();
         if ((r = soc_write(SOC_RESET_CONTROL, 0x100)) < 0) return fail(r, "warm reset");
         waitcycles(3350000);
         A.state = NET_ST_BMI;
@@ -672,7 +759,7 @@ static u32 ar6k_poll(void)
                 (r = bmi_cmd(BMI_DONE, 0, 0, 0)) < 0)
                 return fail(r, "BMI_DONE");
             logp("[wifi] firmware started, waiting for it to come up\n");
-            A.waits = 0;
+            A.t_state = now_ms();
             A.state = NET_ST_BOOT;
         }
         break;
@@ -681,17 +768,26 @@ static u32 ar6k_poll(void)
         if (v == 1) {
             log_ok("[wifi] firmware running (board data initialised)\n");
             A.state = NET_ST_HTC;
-        } else if (++A.waits > 3000) {
+            A.t_state = now_ms();
+        } else if (now_ms() - A.t_state > 3000) {
             return fail(-110, "firmware start (hi_board_data_initialized never set)");
         }
         break;
     case NET_ST_SCAN:
-        /* no SCAN_COMPLETE within ~4000 polls (several seconds): connect
-           with what we have and let the firmware search */
-        if (A.waits < 0xFFFF0000u && ++A.waits > 4000) do_connect();
+        /* no SCAN_COMPLETE within 10 s: connect with what we have and let
+           the firmware search; after a disconnect: reconnect when due */
+        if (!A.scan_done && now_ms() - A.t_state > 10000) do_connect();
+        if (A.reconnect_at && (int)(now_ms() - A.reconnect_at) >= 0) do_connect();
         if (!A.rxlen) pump();
         break;
-    case NET_ST_HTC: case NET_ST_WMI: case NET_ST_AUTH: case NET_ST_UP:
+    case NET_ST_HTC: case NET_ST_WMI:
+        /* the firmware announces itself (HTC_READY) and WMI (WMI_READY)
+           within milliseconds; give up after 5 s instead of waiting forever */
+        if (now_ms() - A.t_state > 5000)
+            return fail(-111, A.state == NET_ST_HTC ? "firmware start (no HTC_READY)" : "WMI start (no WMI_READY)");
+        if (!A.rxlen) pump();
+        break;
+    case NET_ST_AUTH: case NET_ST_UP:
         if (!A.rxlen) pump();       /* keep a data frame until rx() took it */
         break;
     default:
@@ -705,7 +801,7 @@ static int ar6k_tx(const u8 *eth, u32 len)
     static u8 out[2 + 14 + 8 + 1500];
     if (A.state != NET_ST_UP) return -1;
     u32 n = wifi_frame_to_wmi(eth, len, out, sizeof(out));
-    return n ? mbox_send(PKT_DATA, 0, 0, out, n) : -2;
+    return n ? mbox_send(A.ep_data, 0, 0, out, n) : -2;
 }
 
 static u32 ar6k_rx(u8 *eth, u32 cap)

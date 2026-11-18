@@ -54,7 +54,22 @@ int poll(struct pollfd *fds, unsigned nfds, int timeout);
 #endif
 #define EAGAIN_DARWIN 35
 int waitpid(int pid, int *status, int options);
+#include <sys/types.h>
+time_t time(time_t *);
 int execl(const char *path, const char *arg0, ...);
+struct sockaddr { uint8_t sa_len, sa_family; char sa_data[14]; };
+struct sockaddr_dl { uint8_t sdl_len, sdl_family; uint16_t sdl_index; uint8_t sdl_type, sdl_nlen, sdl_alen, sdl_slen; char sdl_data[12]; };
+struct ifaddrs {
+    struct ifaddrs *ifa_next;
+    char *ifa_name;
+    unsigned int ifa_flags;
+    struct sockaddr *ifa_addr, *ifa_netmask, *ifa_dstaddr;
+    void *ifa_data;
+};
+int getifaddrs(struct ifaddrs **);
+void freeifaddrs(struct ifaddrs *);
+#define AF_LINK 18
+#define WNOHANG 1
 
 /* ---- CoreFoundation / IOKit ------------------------------------------ */
 typedef const void *CFTypeRef;
@@ -123,6 +138,8 @@ static int xchg(const netio_t *out)
     return (len == sizeof io_in && io_in.magic == NETIO_MAGIC && io_in.version == NET_VERSION) ? 0 : -1;
 }
 
+static int find_ifname(const uint8_t mac[6]);
+
 static IOEthernetControllerRef make_controller(const uint8_t mac[6], int *fd)
 {
     CFDataRef macd = CFDataCreate(kCFAllocatorDefault, mac, 6);
@@ -146,9 +163,60 @@ static IOEthernetControllerRef make_controller(const uint8_t mac[6], int *fd)
         CFRelease(bsd);
     }
     CFRelease(key);
+    for (int i = 0; i < 100 && name[0] == '?'; i++) {     /* up to ~10 s */
+        if (find_ifname(mac)) break;
+        usleep(100000);
+    }
     say("[wifid] interface %s up, MAC %02x:%02x:%02x:%02x:%02x:%02x (socket fd %d)",
         name, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], *fd);
     return c;
+}
+
+/* The BSD name of the interface with our MAC (IONetworkStack names it a
+   moment after the controller appears, so the registry property may not be
+   there yet; the link-level address list always is once it is attached). */
+static int find_ifname(const uint8_t mac[6])
+{
+    struct ifaddrs *list = NULL, *i;
+    int found = 0;
+    if (getifaddrs(&list) != 0) return 0;
+    for (i = list; i && !found; i = i->ifa_next) {
+        const struct sockaddr_dl *dl = (const struct sockaddr_dl *)i->ifa_addr;
+        if (!dl || dl->sdl_family != AF_LINK || dl->sdl_alen != 6) continue;
+        if (memcmp(dl->sdl_data + dl->sdl_nlen, mac, 6) == 0) {
+            snprintf(ifname, sizeof ifname, "%s", i->ifa_name);
+            found = 1;
+        }
+    }
+    freeifaddrs(list);
+    return found;
+}
+
+static int has_ipv4(void)
+{
+    struct ifaddrs *list = NULL, *i;
+    int found = 0;
+    if (getifaddrs(&list) != 0) return 0;
+    for (i = list; i; i = i->ifa_next)
+        if (i->ifa_addr && i->ifa_addr->sa_family == 2 /* AF_INET */ && !strcmp(i->ifa_name, ifname))
+            found = 1;
+    freeifaddrs(list);
+    return found;
+}
+
+/* wifi.cfg "nettest=<url> [dns name]": run the self-test client once */
+static void start_nettest(const char *spec)
+{
+    char url[64], name[64];
+    name[0] = 0;
+    if (!spec[0] || sscanf(spec, "%63s %63s", url, name) < 1) return;
+    int pid = fork();
+    if (pid == 0) {
+        if (name[0]) execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, name, (char *)0);
+        else execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, (char *)0);
+        _exit(127);
+    }
+    say("[wifid] nettest started (pid %d): %s", pid, spec);
 }
 
 /* Ask configd's IPConfiguration agent to run DHCP on the new interface (the
@@ -233,8 +301,42 @@ int main(int argc, char **argv)
             link = io_in.link == 1;
             IOEthernetControllerSetLinkStatus(ctl, (Boolean)link);
             say("[wifid] link %s (ARM9 state %u)", link ? "up" : "down", io_in.state);
-            static int dhcp_started;
-            if (link && !dhcp_started) { dhcp_started = 1; start_dhcp(); }
+        }
+        /* IONetworkStack attaches (names) the interface asynchronously,
+           possibly only after the first link-up: look for it twice a second
+           until it is there, then configure it once */
+        static int configured;
+        static time_t last_look, first_look;
+        if (link == 1 && !configured) {
+            time_t now = time(NULL);
+            if (!first_look) first_look = now;
+            if (ifname[0] == '?' && now != last_look) {
+                last_look = now;
+                if (!find_ifname(io_in.mac) && now - first_look == 20)
+                    say("[wifid] still no BSD interface with our MAC after 20 s");
+            }
+            if (ifname[0] != '?') {
+                configured = 1;
+                say("[wifid] interface is %s", ifname);
+                start_nettest(io_in.nettest);
+            }
+        }
+        /* configd normally starts DHCP on a new Ethernet interface by itself
+           (its default network set); if there is still no address 15 s
+           after the link came up, ask IPConfiguration explicitly */
+        static int dhcp_asked;
+        static time_t configured_at;
+        static time_t last_check;
+        if (configured && !dhcp_asked && time(NULL) != last_check) {
+            time_t now = last_check = time(NULL);
+            if (!configured_at) configured_at = now;
+            if (has_ipv4()) {
+                dhcp_asked = 1;
+                say("[wifid] %s configured by configd", ifname);
+            } else if (now - configured_at >= 15) {
+                dhcp_asked = 1;
+                start_dhcp();
+            }
         }
         off = 0;
         uint32_t len;
@@ -246,6 +348,7 @@ int main(int argc, char **argv)
         delivered = io_in.rx_next;
         if (io_in.rx_pending || n || delivered != acked) continue;  /* more to do: go again now */
 
+        while (waitpid(-1, NULL, WNOHANG) > 0) { /* reap the self-test */ }
         /* idle: wait for iOS to send something, or the poll period */
         struct pollfd pfd = { fd, POLLIN, 0 };
         poll(&pfd, 1, opt_poll_ms);

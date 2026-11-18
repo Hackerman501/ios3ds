@@ -37,7 +37,7 @@ RING_BUF = 0x40000            # power of two; ring header (16 bytes) precedes it
 RING_SIZE = RING_BUF + 16
 SHIM_PA = 0x20840000          # fixed: the shim is linked at VA 0x80840000 (boot/common/ios3ds.h)
 SHIM_SIZE = 0x10000
-DEFAULT_CMDLINE = "rd=md0 debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+DEFAULT_CMDLINE = "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
 
 
 def align(x, a):
@@ -265,6 +265,10 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "mcu=1",
         "rtc_offset=0",
         "mcu_acc=1",
+        "# powersave=0: keep copying the screen and polling at full rate while iOS' screen is off",
+        "powersave=1",
+        "# notify_led=1: the notification LED blinks red at <= 10 % battery (pattern unverified on hardware)",
+        "notify_led=0",
         "# XNU boot-args (edit freely, max 255 chars)",
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",

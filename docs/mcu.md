@@ -322,3 +322,107 @@ then "1063 ms" while `mach_absolute_time` said 412 ms) is answered (re-log §34)
   gettimeofday +… ms, mach_absolute_time +… ms`, and gltest's timing line
   should show equal values.
 
+## 9. Power saving while iOS' screen is off
+
+"Off" = iOS has shown its display and AppleM2CLCD has switched the (fake) CLCD
+controller off again: lock, auto-lock, or the shell closed (which locks).
+`boot/arm9/powersave.c` and `shim_mcu_irq_hook` (tools/ios3ds-mcu/shim/mcu.c)
+then:
+- **pause the screen copy on both paths.** The ARM9 CPU copy already follows
+  the CLCD enable bit (`display_active()`). The GPU mirror gets `want = 0` in
+  its mailbox (`gm_want()`, gpu_mirror.h); the shim checks it before every
+  frame. No GPU code changed.
+- **stop reading the touch ADC.** Buttons, HOME/POWER and the shell are still
+  read every loop.
+- **let the ARM9 sleep.** Once md0 has been quiet for 200 ms, the monitor
+  loop waits for an interrupt between iterations. ARM9 timer 1 wakes it every
+  2 ms; IRQs stay masked in CPSR, so the pending IRQ only ends the wait. A
+  block request is served within 2 ms, then the loop stays busy for the next
+  200 ms.
+- **mask the VBlank interrupt on the ARM11.** GIC 42 is masked at the
+  distributor on the next VBlank. It is unmasked from the timer interrupt or
+  a `kern.ios3ds_mcu` read as soon as the CLCD is on again. The CLCD frame
+  IRQ is not injected while the controller is off anyway.
+- **wake:** everything is restored, and the next loop copies a fresh frame
+  (`last_blit` is reset).
+
+The ARM9 logs both transitions with the rates. `powersave=0` in boot.cfg
+turns all of it off; the rates are then still logged, for comparison.
+
+**No system sleep.** Without SBDontLockEver, iOS put the whole system to
+sleep about a minute after a lock ("System Sleep", "vic[0] ena 00010000"
+in the log). Nothing on the 3DS can wake it: on an iPod the PMU interrupt
+does. ios3ds-mcud therefore holds a `NoIdleSleepAssertion`
+(`IOPMAssertionCreateWithName`; argument `sleepok` disables it). The screen
+still goes off and the CPUs idle.
+
+**Fewer wakeups while off.**
+- **Input daemon:** `ios3ds-input` polls its mailbox at 10 Hz instead of
+  60 Hz while the screen is off. It reads `screen_off` from
+  `kern.ios3ds_mcu`; button samples queue in the 30-deep ring, so HOME and
+  POWER still arrive within 100 ms. Its hold timing now counts real sleep
+  time.
+- **ios3ds-mcud:** runs at 4 Hz instead of 10 Hz while the screen is off,
+  reading the brightness every loop so a wake turns the backlight on at
+  once.
+- **Kernel:** the boot-args now say `serial=1` instead of `serial=3`.
+  Bit 1 started XNU's serial keyboard thread, which polled the
+  (never-ready) UART every 16 ms, at 62.5 Hz with the screen on or off
+  (re-log 48). Console output is unchanged.
+
+**QEMU** (plain TCG; locked about 80 s; shim counters read with
+`xp /24wx 0x20840040`; host CPU from the vCPU threads):
+
+| | screen on | off, before (powersave only) | off, now |
+|---|---|---|---|
+| ARM9 monitor loops/s | 1837 | 520 (493 in WFI) | 530 (495 in WFI) |
+| ARM9 vCPU thread, host CPU | 42 % | 2 % | 2 % |
+| ARM11 IRQs/s | 127 (31 VBlank) | 245 (0 VBlank) | 146 (0 VBlank) |
+| ARM11 timer IRQs/s | ~96 | 243 | 143 |
+| ARM11 set_decrementer calls/s | 296 | — | 416 |
+| ARM11 vCPU thread, host CPU | 7 % | 14 % | 10 % |
+
+For comparison, powersave=0 while off: 4371 ARM9 loops/s, 304 ARM11 IRQs/s
+(59 of them VBlank).
+
+**Where the remaining ARM11 timer interrupts come from** (re-log 48):
+- Method: breakpoints in QEMU's gdbstub on the shim's `set_decrementer`
+  (backtraces including user frames) and on the `thread_call` worker's
+  function call.
+- What arms timers while the screen is off: `usleep` in ios3ds-mcud, in
+  ios3ds-input and (1 Hz) in ios3ds-wifid; kernel `thread_call` timers,
+  which are BSD networking callouts (resolved callees: `ip_output+0x86f4`,
+  `net_del_domain+0x5c/+0xb8`, and others); and the serial keyboard poll,
+  now gone.
+- The CoreAnimation guess was wrong: no SpringBoard or QuartzCore frames
+  show up among the timer arms.
+- The networking callouts' share of the timer arms doubles when the screen
+  goes off, with the same mix of functions. My guess: with the screen on,
+  the busy (emulated) CPU makes them fire less often. They are left alone
+  (they are XNU's own protocol timers); about 140 timer interrupts per
+  second on an idle ARM11 cost well under 1 % CPU.
+
+**"Where is my backlight?" ~3x/s after a wake:** AppleM2CLCD's
+`safe_enable_backlight` (0x807a95d0) finds no backlight service, logs, and
+keeps its pending flag (+0xea0). So it retries on every frame until the next
+sleep. Patch `clcd-backlight-retry-off` clears the flag instead: after a
+wake there are 0 such lines (`build/emu-p3`); one remains at the lock
+(`disable_backlight`).
+
+## 10. Notification LED (opt-in)
+
+`notify_led=1` in boot.cfg: at ≤ 10 % battery, not charging, the ARM9
+writes a red blink pattern to MCU register 0x2D. Otherwise it writes all
+zeros (off), and it switches the LED off before a power-off.
+- **Pattern** (3dbrew "MCU Services" / libn3ds `McuInfoLedPattern`): step
+  time 0x2F, smoothing 0x2F, loop delay 0, then 32 steps each of red (0xA0
+  for 8 steps, 0 for 8), green (0) and blue (0).
+- **Default is off:** the timing values are not verified on hardware.
+- **QEMU model:** captures the 100-byte stream (`qom-get /machine mcu-led-rgb0`,
+  `mcu-led-steps`). `build/emu-p3`: `mcu-battery 8` + charger off →
+  `[mcu] notification LED blinking red: battery low`, steps 16, step-0 colour
+  0xA00000; charger on → `[mcu] notification LED off`, steps 0.
+- **Hardware check:** whether the LED blinks red at ~1 Hz and goes dark
+  again. If the timing is wrong, adjust `p[0]`/`p[1]` in `led_update()`
+  (boot/arm9/mcu.c).
+

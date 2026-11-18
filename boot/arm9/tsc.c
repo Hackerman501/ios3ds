@@ -212,6 +212,9 @@ bool tsc_read(bool *pen, u16 *tx, u16 *ty, int16_t *cx, int16_t *cy)
 
 static u32 absdiff(u32 a, u32 b) { return a > b ? a - b : b - a; }
 
+static bool input_idle;
+void input_set_idle(bool idle) { input_idle = idle; }
+
 void input_poll(u32 shim_pa)
 {
     static int state;               /* 0 = not initialised, 1 = running */
@@ -237,7 +240,7 @@ void input_poll(u32 shim_pa)
         s.buttons &= (u16)~(HID_SELECT | HID_START);
     s.buttons |= mcu_buttons();     /* HOME / POWER from the MCU (mcu.c) */
 
-    if (m->tsc_ok) {
+    if (m->tsc_ok && !input_idle) {         /* screen off: no touches to read (docs/mcu.md section 9) */
         bool pen;
         u16 tx, ty;
         int16_t cx, cy;

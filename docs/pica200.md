@@ -450,7 +450,7 @@ Fallbacks to the ARM9 CPU copy, each logged:
 - boot.cfg `gpu=0` (nothing touches the GPU, GL included) or `gpu_mirror=0`;
 - no gpu.bin, GPU bring-up failure, framebuffers overlapping the mirror's VRAM;
 - self-test: no exact variant, sentinel overwritten, or an operation timing out;
-- at run time: an operation not finishing within 1 s (it was 200 ms until soak 4, re-log 44) → mirror off for good;
+- at run time: an operation not finishing within 1 s (it was 200 ms until soak 4, re-log 47) → mirror off for good;
 - iOS framebuffer not 320x480 32 bpp in /vram → frames skipped;
 - GL holding the GPU for over a second → the ARM9 copies until frames resume.
 

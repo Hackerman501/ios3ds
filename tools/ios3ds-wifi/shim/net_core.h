@@ -21,7 +21,7 @@
 static void net_core_fill(volatile netmbox_t *m, netio_t *io)
 {
     uint32_t off = 0, n = 0;
-    for (uint32_t i = 0; i < 32; i += 4) *(uint32_t *)((uint8_t *)io + i) = 0;
+    for (uint32_t i = 0; i < NETIO_HDR; i += 4) *(uint32_t *)((uint8_t *)io + i) = 0;
     io->magic = NETIO_MAGIC;
     io->version = NET_VERSION;
     NET_DINVAL(m, 32);                          /* line 0 */
@@ -54,6 +54,10 @@ static void net_core_fill(volatile netmbox_t *m, netio_t *io)
     io->backend = m->backend;
     io->state = (uint16_t)m->state;
     io->tx_free = (uint16_t)net_ring_free(m->tx_head, m->tx_tail);
+    NET_DINVAL(m->ssid, 32 + 64);               /* lines 3-5 */
+    for (int i = 0; i < 32; i++) io->ssid[i] = m->ssid[i];
+    for (int i = 0; i < 63; i++) io->nettest[i] = m->nettest[i];
+    io->nettest[63] = 0;
 }
 
 /* Apply a netio_t written by userland (magic == NETIO_CMD): ack + TX.

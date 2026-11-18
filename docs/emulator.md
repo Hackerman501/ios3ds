@@ -27,6 +27,7 @@ on the console.
 | LCD backlight | 0x10202240 / 0x10202A40; once written, the emulated screens are dimmed by it (and blacked out when the MCU switches a backlight off) |
 | CFG9 / CFG11 | SDMMCCTL is stored; SOCINFO reports an Old 3DS |
 | GPU (PICA200) | The GX block at 0x10400000: PSC memory fill, PPF display transfer / texture copy and the P3D command-list processor, rendered by a software model (`tools/ios3ds-pica/sim/picasim.c`, [pica200.md](pica200.md) §5). GIC 40/41/44/45 follow its status bits. `PDN_GPU_CNT` reads 0x1007F (clocked, out of reset), `CFG11_GPUPROT` is stored. Compared with hardware since run 13: like the real GPU, fills outside VRAM write nothing and non-power-of-two textures sample garbage; started operations finish later in virtual time ([pica200.md](pica200.md) §13). |
+| Wi-Fi | TMIO controller 2 at 0x10122000 with an AR6014-like SDIO card (BMI, HTC/WMI) and a WPA2 access point bridged to `-nic user,model=ctr-wifi` (slirp); CFG11_WIFICNT and GPIO 2_2/3_12 power it. `emu/wifi_test.py` runs the end-to-end test. [wifi.md](wifi.md) §7 |
 | Unmapped addresses | **external abort**, like a real bus. This is how the emulator caught XNU touching S5L8720 peripherals. Known IO windows are `unimplemented-device` (reads return 0, logged with `-d unimp`). |
 
 ## Known fidelity gaps (verify on hardware)

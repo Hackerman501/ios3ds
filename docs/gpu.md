@@ -277,14 +277,14 @@ into the CPU rasterizer for the rest of the run (`[gl] pica: … GPU rendering
 is OFF`): the screen keeps working, slower. Kill switch: boot.cfg `ca_gpu=0`
 (or `gpu=0`).
 
-### Results (QEMU, re-log 43)
+### Results (QEMU, re-log 46)
 
 - Home screen, Spotlight + keyboard, page swipes, and app launches and exits
   (`emu/soak.py`: PASS) render through the PICA200 model; screenshots against the software
   compositor at the same moments: 2181 of 192000 pixels differ, by at most 1
   (rounding), on still frames; animation frames differ where the two runs
   are at different animation times.
-- Cost: see re-log 43. In QEMU the GPU path is not cheaper for SpringBoard,
+- Cost: see re-log 46. In QEMU the GPU path is not cheaper for SpringBoard,
   because every frame writes the whole 320x480 display surface back through
   the arena (PPF tiled→linear, copy-out, a per-pixel byte rotation), and
   QEMU runs CA's software compositor at host speed. The engine logs

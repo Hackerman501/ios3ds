@@ -62,6 +62,7 @@
 #include "target/arm/cpu-qom.h"
 #include "picasim.h"
 #include "ctr_csnd.h"
+#include "ctr_wifi.h"
 
 /* ------------------------------------------------------------------------ */
 /* Memory map                                                               */
@@ -593,6 +594,10 @@ typedef struct {
     time_t   rtc_offset;        /* guest RTC - host clock, seconds */
     QEMUTimer *power_held;
     uint8_t  orient;            /* accelerometer pose ('[' / ']', qom mcu-orient), 0..3 */
+    uint8_t  led[100];          /* notification LED pattern (reg 0x2D stream) */
+    uint32_t led_idx;
+    uint32_t led_rgb0;          /* qom mcu-led-rgb0: first step's colour, 0xRRGGBB */
+    uint32_t led_lit;           /* qom mcu-led-steps: steps (of 32) with any colour */
 } CtrMcu;
 
 typedef struct {
@@ -1271,6 +1276,22 @@ static void mcu_write_reg(CtrMachine *s, uint8_t reg, uint8_t v)
         m->rtc_offset = qemu_timedate_diff(&tm);
         return;
     }
+    if (reg == 0x2D) {                                        /* notification LED pattern */
+        if (m->led_idx < sizeof(m->led)) {
+            m->led[m->led_idx++] = v;
+        }
+        if (m->led_idx == sizeof(m->led)) {
+            m->led_rgb0 = m->led[4] << 16 | m->led[36] << 8 | m->led[68];
+            m->led_lit = 0;
+            for (int i = 0; i < 32; i++) {
+                m->led_lit += (m->led[4 + i] | m->led[36 + i] | m->led[68 + i]) != 0;
+            }
+            qemu_log_mask(LOG_UNIMP, "nintendo3ds: MCU LED pattern: delay %u smoothing %u loop %u, "
+                          "step 0 = #%06x, %u of 32 steps lit\n", m->led[0], m->led[1], m->led[2],
+                          m->led_rgb0, m->led_lit);
+        }
+        return;
+    }
     switch (reg) {
     case MCU_REG_SYS_PWR:
         if (v & 1) {
@@ -1358,6 +1379,7 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             if (!s->mcu.got_reg) {
                 s->mcu.reg = b->data;
                 s->mcu.got_reg = true;
+                s->mcu.led_idx = 0;             /* a new write transfer: LED pattern restarts */
             } else {
                 mcu_write_reg(s, s->mcu.reg, b->data);
                 if (!mcu_reg_is_stream(s->mcu.reg)) {
@@ -1470,6 +1492,8 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
     object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
     object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "mcu-led-rgb0", &s->mcu.led_rgb0, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "mcu-led-steps", &s->mcu.led_lit, OBJ_PROP_FLAG_READ);
 }
 
 /* --- LCD registers (backlight only; libn3ds lcd.h, 3dbrew LCD Registers) -- */
@@ -2299,6 +2323,8 @@ static void ctr_init(MachineState *machine)
     memory_region_add_subregion(&s->io_shared, 0x10141000 - CTR_IO_SHARED_BASE, &s->pdn);
     /* CSND sound block: plays from FCRAM, records the mix (ctr_csnd.c) */
     ctr_csnd_init(&s->io_shared, 0x10103000 - CTR_IO_SHARED_BASE, &s->fcram, CTR_FCRAM_BASE);
+    /* Wi-Fi: TMIO2 + AR6014 + access point -> -nic user,model=ctr-wifi (ctr_wifi.c) */
+    ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };
