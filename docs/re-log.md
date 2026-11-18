@@ -600,3 +600,7 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
 
   Each looks up the backlight service (`bl 0x807a9490`). When there is none, which is always on the 3DS, each only `IOLog`s (0x801a6be9) and returns. The flow is otherwise harmless; the cost was console/SD traffic. The 3DS backlight is driven by ios3ds-mcud through the MCU (§36, §41).
 - **Patches** `clcd-backlight-log-set` / `-disable` / `-enable`: the `blx r3` (IOLog) at 0x807a9558, 0x807a95b0 and 0x807a9648 becomes `nop`.
+- **The heartbeat stopped after ~100 s in every soak.**
+  - In QEMU, 70% of console lines are empty: 1,603 of them after t=111 s in soak 7, arriving in triples, starting right after `iBoot version`. Hardware logs (run9, run13) have none, so it is a QEMU-side artefact.
+  - On top of that, the daemons now print real text every few seconds.
+  - Fix: the monitor counts only non-whitespace console bytes as activity, and adds a heartbeat every 30 s regardless. QEMU: heartbeats at t=10, 20, 33, 61, 76, then every 30 s to the end.

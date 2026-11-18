@@ -63,13 +63,21 @@ static u32 a11_log_tail;
 /* copy ring bytes [*tail, head) to the log in chunks: one f_write per chunk,
    not per byte (per-byte writes + syncs made real-SD console output crawl
    and starved the md0 block server running on the same ARM9) */
+/* console bytes other than whitespace: "activity" for the stall dump and
+   the heartbeat. In QEMU the kernel console carries a steady stream of empty
+   lines (70% of all lines in a soak, none on hardware), which kept the
+   heartbeat from ever seeing a quiet console. */
+static u32 text_bytes;
+
 static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color)
 {
     char chunk[512];
     while (*tail != head) {
         u32 n = 0;
         while (*tail != head && n < sizeof(chunk)) {
-            chunk[n++] = buf[*tail % size];
+            char c = buf[*tail % size];
+            chunk[n++] = c;
+            if (c != '\n' && c != '\r' && c != ' ' && c != '\t') text_bytes++;
             (*tail)++;
         }
         log_raw(chunk, n, color);
@@ -574,12 +582,13 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
                        (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
                 status(20, CON_GREY, "sctlr %08x stage %u", (unsigned)g[12], (unsigned)g[0x7C / 4]);
-                /* 5 s without a clock read or console output: dump once.
-                   10 s without console output: heartbeat every 10 s. */
+                /* 5 s without a clock read or console text: dump once.
+                   10 s without console text: heartbeat every 10 s; otherwise
+                   one every 30 s. */
                 static u32 last_abs, last_head, abs_since, head_since, next_hb;
                 static bool dumped;
                 u32 now = clk_secs();
-                u32 abs = st[0x80 / 4], hd = ring ? ring->head : 0;
+                u32 abs = st[0x80 / 4], hd = text_bytes;
                 if (abs != last_abs || hd != last_head) {
                     abs_since = now;
                     dumped = false;
@@ -594,8 +603,12 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                     dumped = true;
                     dump_probes("ARM11 stalled: no clock read or console output for 5 s");
                 }
-                if (st[0x40 / 4] && (int)(now - next_hb) >= 0) {
+                /* also every 30 s regardless: the daemons now log real text
+                   every few seconds, so the console is rarely quiet for 10 s */
+                static u32 last_hb;
+                if (st[0x40 / 4] && ((int)(now - next_hb) >= 0 || now - last_hb >= 30)) {
                     next_hb = now + 10;
+                    last_hb = now;
                     heartbeat(now - head_since);
                 }
             }
