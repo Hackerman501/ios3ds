@@ -727,7 +727,7 @@ Design and RE notes: docs/gpu.md §7.
   - Page-in runs from the VM pre-heat reach 1.7 MiB. The 800 KiB read at launchd start is the shared cache's code signature (cache offset 0x9ee4000, after LINKEDIT 0x8646000+0x189e000).
 - **Numbers:** docs/boot-perf.md §2. Rebased on 13ee8ec (microphone): settled at 26.5 s. soak.py with 20 cycles in plain QEMU, including the 130 s lock: PASS.
 
-## 50. CoreAnimation frames without the CPU read-back (2026-11-18)
+## 51. CoreAnimation frames without the CPU read-back (2026-11-18)
 Design: docs/gpu.md §7 ("Presenting without the read-back"), docs/pica200.md §15.
 - **Before:** each GPU-composited CA frame was copied back by the CPU: PPF tiled→linear into arena scratch, `READ` into the IOSurface, per-pixel A,B,G,R → B,G,R,A rotation; ~616 KiB per frame (§46).
 - **Now:** a swizzle pass on the GPU (one quad, three TEV stages: `tex.a·(1,0,0) + tex.r·(0,1,0) + tex.g·(0,0,1)`, alpha `tex.b`) writes iOS BGRA byte order into an arena buffer, and the new shim op `PICA_OP_PRESENT` (protocol 3) PPF-transfers it straight into the caller's IOSurface. Surface render targets get a power-of-two colour buffer (run 13: NPOT textures sample garbage on hardware) so the swizzle pass can sample it.

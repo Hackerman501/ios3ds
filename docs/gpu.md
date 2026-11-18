@@ -284,11 +284,11 @@ is OFF`): the screen keeps working, slower. Kill switch: boot.cfg `ca_gpu=0`
   compositor at the same moments: 2181 of 192000 pixels differ, by at most 1
   (rounding), on still frames; animation frames differ where the two runs
   are at different animation times.
-- Cost: see re-log 46 (with the read-back) and 49 (without).
+- Cost: see re-log 46 (with the read-back) and 51 (without).
 
-### Presenting without the read-back (re-log 49)
+### Presenting without the read-back (re-log 51)
 
-Until re-log 49 every CA frame was rendered into an arena target and then
+Until re-log 51 every CA frame was rendered into an arena target and then
 copied back: PPF tiled→linear into arena scratch, `READ` into the IOSurface,
 and a per-pixel byte rotation (RGBA8 in the PICA200's byte order A,B,G,R →
 iOS BGRA) on the ARM11, ~616 KiB per frame. Now the final frame never passes
@@ -351,7 +351,7 @@ composites into is AppleM2CLCD's scan-out framebuffer at the start of `/vram`,
 physically contiguous. The GPU writes the picture the LCD path (ARM9 copy or
 GPU mirror) reads, so a frame costs one P3D quad and one PPF transfer.
 
-Results (QEMU, re-log 49): CA frames have 0 read-backs; render thread CPU per
+Results (QEMU, re-log 51): CA frames have 0 read-backs; render thread CPU per
 frame under `--icount 2` dropped from 19–27 ms to about 8 ms; screenshots
 match the software compositor except for the status-bar clock and moments
 where the runs are at different animation times.
