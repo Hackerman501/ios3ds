@@ -482,7 +482,9 @@ Screenshots: `build/emu-wifi-ui/0*.png`. With the change in place,
 `emu/wifi_test.py --case ok` (preset network in `wifi.cfg`, HTTP fetch
 through iOS) and `--case nocfg` (no `wifi.cfg`, no firmware: one line, chip
 never powered, full boot) still PASS; in the `nocfg` case WiFiManager simply
-never gets an interface and Settings shows "No Wi-Fi".
+never gets an interface and Settings shows "No Wi-Fi". `make test` and
+`emu/soak.py --cycles 10` (configd and securityd with the inserted
+libraries, 10 app cycles and a long lock) PASS.
 
 ### 10.6 Unverified on hardware
 
