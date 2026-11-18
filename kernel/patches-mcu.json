@@ -1,0 +1,44 @@
+[
+ {
+  "name": "pe-get-gmt",
+  "va": "0x801c84d8",
+  "orig": "80b500af04480068",
+  "new": "004b1847@shim+0x30@",
+  "why": "PEGetGMTTimeOfDay -> shim_mcu_get_gmt (Thumb: ldr r3,[pc]; bx r3): Unix time from the 3DS MCU RTC (ARM9 mailbox, docs/mcu.md); without an RTC the shim runs the original body (gIOPlatform->getGMTTimeOfDay(), vtable +0x390)"
+ },
+ {
+  "name": "iortc-wait-mcu",
+  "va": "0x801a8030",
+  "orig": "f1181b80",
+  "new": "@shim+0x34@",
+  "why": "IOKitInitializeTime (0x801a8004): literal of its waitForService(resourceMatching(\"IORTC\"), {2 s}) call -> shim_mcu_wait_rtc: no wait when the MCU RTC is known (the calendar no longer depends on AppleARMPE), else the original call with iortc-wait-2s' 2 s timeout"
+ },
+ {
+  "name": "pe-set-gmt",
+  "va": "0x801c84f4",
+  "orig": "80b500af011c0548",
+  "new": "004b1847@shim+0x3c@",
+  "why": "PESetGMTTimeOfDay -> shim_mcu_set_gmt: AppleARMPE::setGMTTimeOfDay (0x802e7834) waits 30 s for an IORTC that never appears; the shim keeps iOS' time as an offset to the RTC instead (the 3DS RTC is not written)"
+ },
+ {
+  "name": "pe-halt-mcu",
+  "va": "0x801c98f6",
+  "orig": "0268e2239b00291cd358",
+  "new": "291c004b01e0@shim+0x38@",
+  "why": "PEHaltRestart: gIOPlatform->haltRestart(type) (ldr r2,[r0]; movs r3,#0xe2; lsls; adds r1,r5,#0; ldr r3,[r2,r3]) -> adds r1,r5,#0; ldr r3,[pc,#0]; b +2; .word shim_mcu_halt_restart; the blx r3 at 0x801c9900 stays. Halt/restart power the console off through the MCU (ARM9), other types go to the platform as before"
+ },
+ {
+  "name": "commpage-gtod-off",
+  "va": "0x8006adfc",
+  "orig": "66d0",
+  "new": "66e0",
+  "why": "commpage_set_timestamp (0x8006ade0): beq -> b, the gettimeofday timestamp is never published. Userland __commpage_gettimeofday (dyld cache 0x32d4b748) adds (now - base) / usec_divisor via a reciprocal the kernel computes here; our timebase is 1047311 Hz, so usec_divisor = 1 and the reciprocal degenerates (M = 0, add = 1, shift = 0 -> a shift by -1): elapsed time always reads 0 and gettimeofday() stays frozen at the last syscall refresh for up to 1 s (gltest '0 ms', '1063 ms vs mach 412 ms', docs/mcu.md section 8). With the base left at 0 userland always takes the gettimeofday syscall, which is exact"
+ },
+ {
+  "name": "pe-halt-skip-pm",
+  "va": "0x801c98ec",
+  "orig": "9847",
+  "new": "c046",
+  "why": "PEHaltRestart: skip the IOPMrootDomain halt/restart broadcast (blx r3 -> 0x801db12b). It messages IOMobileGraphicsFamily -> AppleM2CLCD (disable_backlight) -> AppleARMPlatform function -> AppleS5L8720X's SWI backlight function, which sleeps on a command gate (AppleS5L8720X+0x37cc) for an interrupt the 3DS never raises: every iOS shutdown hung there forever (QEMU, SELECT+START thread dump, re-log 33). File systems are already unmounted and md0 writes are synchronous; the platform call that follows (pe-halt-mcu) powers the console off"
+ }
+]

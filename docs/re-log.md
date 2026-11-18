@@ -403,7 +403,7 @@ Branch `agent/gpu` = `agent/pica` + main. Design: docs/pica200.md §9-11.
 - **Result (`emu/tap.py --drag 450:280,240:40,240 --drag 462:40,240:280,240 --tap 475:47,320`):** the page snaps back after the swipe and the tap opens Settings. A 240 pt right swipe in 0.4 s did not page to Spotlight (open).
 - `emu/viewer.py`: a mouse release outside the views used to be dropped (pen stuck down); drags now stay in the view they started in and always end. `emu/tap.py` gained `--drag`.
 
-## 29. Hardware run 12: the PICA200 does not fill or draw; GX clock was never set (2026-11-17)
+## 29b. Hardware run 12: the PICA200 does not fill or draw; GX clock was never set (2026-11-17)
 - **run12** (`m1-21f26fc`, docs/hwlogs/run12.txt): mirror self-test wrong in every variant (first byte 0x80, 0x40 with the read-out flip; ~451k of 518k bytes), GL self-check: `memory fill left 4096 of 4096 words wrong (word 0: 0x5a5aa5a5)`. Fallbacks fine. ARM9 CPU copy: 313-433 ms per frame.
 - **Reading the failure:** the GL self-check's transfer round trip passed first, so PPF, addresses (PA>>3) and the cache maintenance work. The fill left the old data, yet its done bit came on. The mirror's read-out produced correct black margins (first 14400 bytes), so its last stage ran; the render targets held wrong data.
 - **GX clock:** `GX clock 0x00000000`. Compared the register sequences with libn3ds (`source/arm11/drivers/gfx.c hardwareReset`, `include/arm11/drivers/gx.h`) and Luma (`arm11/source/main.c initScreens`): libn3ds writes `gpu_clk = 0x70100`, clears the VRAM bank-disable bits (+0x030 bits 8-11), sets `psc_dma_prio0/1` (+0x050/+0x054); Luma writes none of them, only PDN_GPU_CNT and the PDC registers. Our bring-up skipped them because "Luma leaves the GPU running" was only checked through PDN_GPU_CNT.
@@ -421,3 +421,150 @@ Branch `agent/gpu` = `agent/pica` + main. Design: docs/pica200.md §9-11.
 - **QEMU `--icount 2`, CPU copy only (`gpu_mirror=0`), same boot phases, old (c0ee62e) → new:** 126.4 → 48.1 ms, 181.0 → 54.6 ms, 194.3 → 65.3 ms, 51.5 → 14.4 ms per copy (instruction-clocked: fewer instructions; the hardware gain from bursts and from writing one set instead of two plus a read-back is not visible in QEMU). Screenshots of the three icount runs differ only in the status-bar clock.
 - **QEMU with the fixes:** plain 450 s and `--icount 2` 300 s: diagnostics summary as on hardware, `[gpu] display mirror: self-test passed (variant 0)`, `screen copy: PICA200`, `[gl] pica: GPU up (self-check passed)`, `gltest: PICA200 PASS (0 failed)`, spot checks 0/512; icount mirror ~20 fps. Plain 449 s screenshot identical to the CPU-copy run's.
 - **Open on hardware:** the PPF texture copy with an output gap and texture fetches from FCRAM. Both are covered by the mirror self-test (failure → CPU copy, logged with a dump).
+
+## 31. Stability soak; md0 no longer freezes the kernel (2026-11-18)
+- **`emu/soak.py`:** boots QEMU, waits for `[input] connected to SpringBoard`, then cycles through the page-1 icon grid and the dock:
+  - per cycle: tap, settle, Home, page swipes every 4th cycle, lock/wake/slide-to-unlock every 5th, a screenshot per step;
+  - recovery when a cycle doesn't end on the home screen (second Home, then Dismiss), recorded per cycle;
+  - afterwards the log is scanned for panics, `[probe]` stalls, md0/log errors, crashes, jetsam and SpringBoard restarts.
+
+  Output: `build/emu/soak*/report.md`.
+- **Soak 1** (main `15f2a30`, plain QEMU, 40 cycles, ~19 min): no panic, stall, I/O error, crash or memory warning, and SpringBoard never restarted.
+  - Cycles 13 and 33 "failed" only because the tap missed an icon and Home on page 1 opens Spotlight (correct iOS behaviour). Hence the recovery step.
+  - **Real bug, cycle 0:** the first app launch after boot (Game Center). The input daemon sent Home as down+up in the same poll (`key 40 down @1644` / `up @1644`), yet SpringBoard showed the "Edit Home Screen" alert, its reaction to a Home *hold*. The alert then blocked every tap for ~5 minutes.
+
+    It did not reproduce in 8 quiet Game Center cycles (`--targets 47,50 --settles 2,20`). It needs the busy first launch.
+- **Cause (by design reading):** `shim_mdevstrategy` waited for each md0 request with **IRQs off**:
+  - ~20 ms per request on hardware, thousands of requests for a cold app launch;
+  - meanwhile no timer, scheduler or VBlank ran anywhere in the kernel.
+
+  If SpringBoard handled the Home down, then page-faulted its own code from md0 before handling the up, its hold timer (`menuButtonDown:` → `menuButtonUp:`, re-log 20) could expire during the freeze.
+- **Fix (`kernel/shim/blk.c`):**
+  - md0 requests are serialized by a kernel mutex. The XNU KPIs come from the kernelcache symbol table:
+    - `lck_grp_attr_alloc_init` 0x8001ae22, `lck_grp_alloc_init` 0x8001ae00, `lck_attr_alloc_init` 0x8001ade8, `lck_mtx_alloc_init` 0x80062008 (Thumb);
+    - `lck_mtx_lock` 0x80063000 and `lck_mtx_unlock` 0x800631a0 (ARM);
+    - `assert_wait_timeout` 0x8001f02a and `thread_block` 0x8001edcc (Thumb).
+  - The wait for the ARM9 runs with interrupts on: it spins ~200 polls, then sleeps in 250 µs steps (`assert_wait_timeout` + `thread_block`).
+  - The whole buffer is faulted in **before** taking the lock, so no fault ever waits on md0 behind its own request.
+  - If the lock can't be allocated, the old IRQs-off path is used.
+- **QEMU `--icount 2`:** by the first heartbeat (t=36 s) md0 had served 3687 requests (78 MB), with launchd, gltest and the input daemon already up. Before: ~1100 requests and 32 MB by t≈120 s.
+  - Much of that gain is an emulation effect. Single-threaded icount TCG shares one virtual clock between the CPUs, so the spinning ARM11 used to burn the time the ARM9 needed.
+  - On hardware the gain is responsiveness: other threads, timers, VBlank and input keep running during disk reads.
+- **Soak 2** (this change, 40 cycles):
+  - **PASS:** no panic, stall, md0/log error, crash or jetsam; ~9,400 md0 requests served through the new lock/sleep path.
+  - Spotlight cases (13, 14, 33, 34) recovered with a second Home.
+  - The "Edit Home Screen" alert came back once, again on cycle 0, the first app launch after boot. So the IRQs-off freeze was not the cause.
+- **Correction (soak 4, §39):** the alert is **not** a hold. It is SpringBoard's one-time `REORDER_INFO` tip, remembered in the default `SBDidShowReorderText`, which a fresh rootfs (every QEMU soak) doesn't have. The timer analysis below is still accurate, but it wasn't what happened here.
+- **Why a Home tap can become a hold** (`SpringBoard` `-[SpringBoard menuButtonDown:]` 0x8bc0, `_menuButtonWasHeld` 0x8874, found through the objc method lists):
+  - The down schedules `scheduledTimerWithTimeInterval:… _menuButtonWasHeld` with one of three intervals:
+    - **2.0 s** normally;
+    - **1.0 s** when a SpringBoard flag is set and `allowAllInBackground` (0x3ff00000);
+    - **5.0 s** while a sheet `isOrderedFront` (0x40140000).
+  - `menuButtonUp:` cancels it. The daemon queues down and up together, so a hold only happens when SpringBoard needs more than 1–2 s between handling the two GSEvents. That happens on the busy first app launch after boot.
+  - The remedy is a faster SpringBoard (GPU compositing, re-log 30 / agent/gpu), not the input path.
+  - `emu/soak.py` allows one such "Dismiss + Home" recovery per run and fails on more, or on any "stuck" cycle.
+
+## 32. Audio: "could not start DMA: device is not ready", fixed; PCM reaches CSND (2026-11-18)
+- **Symptom (hardware runs 8-11):** each UI sound (a tap, the Home key) logged `AppleEmbeddedAudioDevice: could not start DMA: device is not ready` and no stream ever started. Reproduced in QEMU: two Home presses, two errors (agent/audio2 `build/evidence/run1-before.txt`).
+- **Where the message comes from:**
+  - The format string `%s: could not start DMA: %s` is in AppleARMIISAudio (0x80612e0c), printed by `startDMA` (0x80611b48) when 0x80611584 fails. The text "device is not ready" is IOKit's string for kIOReturnNotReady (0xE00002D8).
+  - The call chain is 0x80611474 → 0x806113c8 → I2S controller vtable 0x358.
+- **The PL080 is not the culprit:**
+  - `startDMACommand` (vtable 0x354, 0x807d00e4) does return NotReady for channel state ≤ 1.
+  - But `_initDMAChannel` leaves channels at state 2, and the boot log shows channels 3, 4 and 5 initialised.
+  - State map: 1 = allocated, 2 = ready, 3 = running.
+- **The I2S controller's DMA start (AppleS5L8900X kext, 0x8066d448):**
+  - For `i2s-version` 0 (the DT has no such property, so the boot log reads "i2sVersion: 0") with frame sync requested, it sets state 1 (0x8066d490), enables its interrupt and arms a timeout.
+  - It then sleeps on the state.
+  - The interrupt action (0x8066caf0) moves the state 1 → 2 on one edge and 2 → 3 on the next. The timeout (0x8066cb84) sets 4.
+  - Anything but 3 returns NotReady; a timeout returns 0xE00002EB.
+- **That interrupt is GPIO pin 44:**
+  - i2s0's `interrupts` is the string `','` = 0x2c, and its `interrupt-parent` 0x0090c9a0 is `/arm-io/gpio`, not the VIC.
+  - So the driver waits for two edges of a pin (presumably the word clock) to start DMA on a frame boundary.
+  - The 3DS has no such pin, and the GPIO block is a fake page.
+- **Fix:** kernel patch `i2s-start-no-lrck-sync` (`kernel/patches-audio.json`): `mov r3,#1` → `mov r3,#3` at 0x8066d490.
+  - The wait loop falls through as if synced. The interrupt is disabled and the timeout cancelled as on success.
+  - A DT `i2s-version` ≥ 3 would also skip the wait, but it changes register and clock programming. Not taken.
+- **QEMU CSND model** (`emu/qemu/hw/arm/ctr_csnd.c`): plays channels from FCRAM on the virtual clock, ST_ADDR reads the play position, and a stereo mix sink logs `[csnd]` statistics and writes a WAV with `IOS3DS_CSND_WAV`.
+- **Test client:** `ios3ds-tone` (AudioQueue via dlopen; left = tone, right = half amplitude).
+- **Run 2 (plain TCG):** no more NotReady. The tone stream started (`tx start ch5`) and CSND played L/R at the exact amplitudes, but only 1,914 of 17,640 frames were tone.
+  - The fragments are whole 1,024-frame AudioQueue buffers: underruns.
+  - QEMU's guest runs about 3x slower than the 3DS (home screen at ~200 s vs ~70 s) while the audio clock is real time.
+- **Run 3 (`--icount 2`):** after the first seconds of boot, every 1 s tone is 44,099 frames, gap-free, 999 Hz, peak 5999 L / 2999 R: bit-exact.
+- **Volume is not applied in the PCM:**
+  - Volume keys change neither the samples nor the codec level.
+  - Each press writes one byte to the LM48821 speaker amp: `ab a3 9b 8b 83` down, `8b … c3` up.
+  - AppleLM48821Amp setGain (0x807b8108) maps whole dB to a 5-bit step (19 = 0 dB, 31 = +18 dB) and writes `step << 3 | 3`.
+  - Its mute (0x807b8048) writes `0x04`; its range is −38..+18 dB (0x807b800c).
+  - Run 4: volume-up stops at step 31, volume-down goes 31 … 11 and then mute (`0x04`, plus CS42L58 regs 6 = 0, 0x1a = 0x80).
+- **Shim volume mapping:** a step becomes the CSND channel volume `10^((dB − 18)/20)` (step 31 = unity) and `0x04` becomes 0.
+  - It is applied to the running channels at the next service.
+  - Run 4's recording follows it exactly: step 16 → peak 3007 = 6000 × 16422/32768; step 11 → 239.
+- **Headphones:**
+  - iOS stays on its speaker route (no `function-hp_detect`), so its volume always arrives as amp steps.
+  - The CSND volume is digital, so it applies to either 3DS output.
+  - The ARM9 now polls the jack (GPIO2 bit 0, debounced) and repeats the init's `HEADSET_SEL` routing on a change.
+- **Run 5 (final code, `--icount 2`, 85 tones):**
+  - Home pressed twice: 0 NotReady errors.
+  - Volume swept up to step 31, down to mute and back up. Every recorded tone plays at exactly dB(step) − 18: step 22 → −12.0 dB, step 31 → 0.0 dB, step 11 → −34.0 dB.
+  - While muted, 28.2 s of digital silence although tones kept playing; the level returned on the next step.
+  - The ARM9 logs `[audio] iOS volume: amp step N -> CSND volume V/32768`.
+- **Hardware safety:** the patch only skips a wait for a pin the 3DS does not have. The volume path only writes CSND channel VOL. The tone client logs and exits on any AudioToolbox error. Jack polling only runs when the CODEC answered at boot.
+
+## 33. RTC: the calendar from the 3DS MCU (2026-11-18)
+Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlearm --change-addresses 0x80001000`), `llvm-objdump-18 --triple=thumbv6k-none-eabi`, the LC_SYMTAB dump (`scripts/ksym.py`).
+- **Who asks for the time.** `IOKitInitializeTime` (0x801a8004, from bsd_init) = `waitForService(resourceMatching("IORTC"), {t, 0})` (literals 0x801a8028 `resourceMatching` 0x801ae02d, 0x801a8030 `waitForService` 0x801b18f1), then `clock_initialize_calendar` (0x80014ba0, literal 0x801a8034).
+- **`clock_initialize_calendar`** (0x80014ba0): `secs = PEGetGMTTimeOfDay()` (bl 0x801c84d8), `commpage_set_timestamp(0, …)` (0x8006ade0, see §31), boot time at 0x80283e40 set once, `clock_get_system_microtime` (0x80069818), epoch at 0x80283dc8 = secs − uptime, offset via `nanoseconds_to_absolutetime`, adjustments cleared (0x80283de8), then `host_notify_calendar_change` (0x80016dcc).
+- **`PEGetGMTTimeOfDay`** (0x801c84d8, Thumb): `gIOPlatform` (0x8029d490) ? vtable +0x390 : 0. `PESetGMTTimeOfDay` (0x801c84f4): vtable +0x394. AppleARMPE's vtable (pointer to it + 8 = 0x802f483c): +0x390 = `getGMTTimeOfDay` 0x802e78ad (found by searching the image for that word: one hit, 0x802f4bcc), +0x394 = `setGMTTimeOfDay` 0x802e7835, +0x388 = haltRestart 0x801c8645 (IOPlatformExpert's).
+- **AppleARMPE::getGMTTimeOfDay** (0x802e78ac): `waitForService(resourceMatching("IORTC"), {30 s})` (the `rtc-wait-0s` patch), `getProperty("IORTC")` (vtable +0x9c), `OSDynamicCast(IOService)`, then `callPlatformFunction("getGMTTimeOfDay", false, &t, 0, 0, 0)` (vtable +0x1f8). So iOS expects a PMU driver to publish an `IORTC` resource whose value answers that platform function. **setGMTTimeOfDay** (0x802e7834) has the same 30 s wait and was never patched: a `settimeofday()` would have blocked for 30 s.
+- **Chosen design:** not a fake IORTC provider (a C++ object with a hand-made vtable in the shim), but the two C entry points: `PEGetGMTTimeOfDay` → `shim_mcu_get_gmt` and `PESetGMTTimeOfDay` → `shim_mcu_set_gmt` (Thumb `ldr r3,[pc,#0]; bx r3; .word`, as for mdevstrategy). The time comes from the ARM9's MCU mailbox (docs/mcu.md), filled before XNU starts. Without a valid RTC the shim runs the original body, so the fallback is unchanged.
+- **The IORTC wait:** the literal 0x801a8030 now points at `shim_mcu_wait_rtc`. With an RTC it releases the matching dictionary (vtable +0x14) and returns at once; else it calls `waitForService` with the 2 s of `iortc-wait-2s`. The reason for the 2 s (§26: calendar before AppleARMPE) is gone: the calendar no longer goes through the platform expert. The "0 ms" symptom it was blamed for was something else (§31).
+- **QEMU** (plain, `build/emu-r2`): `[mcu] version 13/38: RTC 2026-11-17 23:21:31 Tue (offset 0 s) = Unix 1794957691`, then `ios3ds-mcu: 3DS RTC present: not waiting for IORTC`, `ios3ds-mcu: calendar from the 3DS RTC: 1794957691`; no "RTC did not show up" line any more. SpringBoard shows 3:26 PM and the calendar icon "Tuesday 17" (host clock 23:26 UTC, iOS time zone US/Pacific).
+
+## 34. gettimeofday() froze for up to a second: the commpage reciprocal (2026-11-18)
+- **Symptom:** gltest's first QEMU run with the RTC: `gettimeofday … tv 1794957716.452931 -> 1794957716.452931; mach_absolute_time 221564 ticks = 212 ms`, i.e. "frame took 0 ms" again although the calendar was now initialised early with a real time. So neither the IORTC wait nor `secs = 0` was the cause (§26).
+- **Userland:** `gettimeofday` (libSystem, dyld cache 0x32ca92c4) calls `__commpage_gettimeofday` (0x32d4b748) first and only falls back to the syscall when it returns non-zero. That reads the commpage at 0x40000040: base abstime (+0), seconds (+8), microseconds (+0xc), limit (+0x10), divisor (+0x14), reciprocal M (+0x18), "add" flag (+0x20), shift (+0x24). Base 0 or `now - base >= limit` → syscall; else `usec += q(now - base)` with `q = umulhi(d, M)`, `add ? ((d - q) >> 1 + q) >> (shift - 1) : q >> shift`.
+- **Kernel:** `commpage_set_timestamp` (0x8006ade0) recomputes M/add/shift (Hacker's Delight "magicu") whenever the divisor changes. Its caller `clock_gettimeofday_set_commpage` (0x8006948c) passes `rtclock+0` (ticks per second) as the limit and `rtclock+4` (ticks per µs) as the divisor. Read from QEMU (`xp /16wx 0x20255128`): `0x000ffb0f 0x00000001 0x3b9aca00 0x000ffb0f` = 1047311 ticks/s, **divisor 1**, timebase 10^9/1047311.
+- **Divisor 1:** the algorithm overflows: M = 0, add = 1, shift = 0 (Python transcription; for 2 or 24 it is fine). Confirmed in QEMU (`emu/tap.py --hmp "245:x /12wx 0x40000040"`): `0x0f012b4f 0x00000000 0x6afce4c6 0x0002ba6f | 0x000ffb0f 0x00000001 0 0 | 0x00000001 0`. Userland then shifts by −1, i.e. by 255: elapsed time is always 0. gettimeofday returns the value of the last syscall refresh until a second of ticks has passed. Every earlier symptom fits: "0 ms" frames, hardware run12/13 `1063 ms` vs `mach_absolute_time 412 ms` (the first sample was ~650 ms stale), and the QEMU differences between the 2 s and 0 s IORTC waits (just where the frame fell relative to a refresh).
+- **Fix** (`commpage-gtod-off`, kernel/patches-mcu.json): the `beq` at 0x8006adfc that skips the update when there is no commpage becomes `b`, so the timestamp is never published, the base stays 0 and userland always uses the (exact) syscall. Cost: one syscall per gettimeofday.
+- **After the fix:** plain QEMU `gltest: timing: … tv 1794958858.470788 -> 1794958858.651883; mach_absolute_time 190712 ticks = 182 ms` (181 vs 182 ms); `--icount 2`: 2254 ms both. ios3ds-mcud's cross-check: `RTC +118 s, gettimeofday +117610 ms, mach_absolute_time +117613 ms` (plain), `RTC +153 s, gettimeofday +154086 ms, mach_absolute_time +154084 ms` (icount, `-rtc clock=vm`).
+- **mach_absolute_time is right:** the timebase is consistent (10^9 / 1047311), and the shim's clock follows the MPCore watchdog.
+- **Still inexact, but bounded:** the kernel's own microtime path (0x8006916c) also adds raw ticks as microseconds inside a one-second window (`rtclock+0x30` base): up to 4.7 % fast for under a second, corrected at the next full conversion.
+
+## 35. Battery: an IOPMPowerSource from the shim (2026-11-18)
+- **What SpringBoard reads:** `strings` on SpringBoard (from the rootfs with `build/tools/hfsplus … cat`) shows `IOPMPowerSource`, `CurrentCapacity`, `MaxCapacity`, `ExternalConnected`, `FullyCharged`, `IsCharging`, `ExternalChargeCapable`, `AppleRawBatteryVoltage`, `kIOPMPSAtCriticalLevelKey` ("Shutting down immediately …"); its imports (`arm-apple-darwin10-nm -u`) include `IOServiceGetMatchingService`, `IOServiceMatching`, `IORegistryEntryCreateCFProperty`. The kernelcache has no battery driver the 3DS could use (the n72 PMU is a D1759 on I2C, deleted from our device tree).
+- **Kernel KPI (LC_SYMTAB):** `IOPMPowerSource::powerSource()` 0x801bb624 (`new` 0xa8 bytes + `init()` via vtable +0x44), setters `setCurrentCapacity` 0x801bb3fc, `setMaxCapacity` 0x801bb3d0, `setIsCharging` 0x801bb1f8, `setExternalConnected` 0x801bb288, `setExternalChargeCapable` 0x801bb258, `setBatteryInstalled` 0x801bb228, `setVoltage` 0x801bb348, `setPSProperty` 0x801bb0dc, `updateStatus` 0x801bb428 (copies the PS dictionary at +0x54 into the registry with `setProperty` (vtable +0x6c) when +0x50 is set, then `messageClients(0xe0024100)` = kIOPMMessageBatteryStatusHasChanged, vtable +0x238); `IOService::attach` 0x801adc54, `registerService` 0x801b0844, `getPlatform` 0x801ac744; `OSSymbol::withCStringNoCopy` 0x8019a5d0, `OSNumber::withNumber(u64, bits)` 0x80197684; `release` = vtable +0x14.
+- **Gotcha:** `kOSBooleanTrue` / `kOSBooleanFalse` (0x80232e4c / 0x80232e50) are C++ *references*: the words hold `&gOSBooleanTrue` (0x8029d168). Passing the word itself made `OSDictionary::setObject` call through a vtable at 0: `sleh_abort: prefetch abort in kernel mode: fault_addr=0x0`, `lr 0x8018e521` (= `OSDictionary::setObject+0x68`), r0 0x8029d168 (QEMU run 1). Fixed by dereferencing twice.
+- **QEMU** (`build/emu-r2`, `build/emu-r3`): `ios3ds-mcu: battery 100%, charger, 4200 mV: IOPMPowerSource registered`; the status bar shows a full battery with the charging bolt; after `qom-set /machine mcu-charging off` + `mcu-battery 50` a half-full battery without the bolt; with `mcu-battery 15` SpringBoard's own "Low Battery — 20% of battery remaining" alert.
+
+## 36. HOME, POWER, shell and shutdown (2026-11-18)
+- **Input path:** `input_proto.h` already reserved `INBTN_HOME` / `INBTN_POWER`, and ios3ds-input maps them to the Menu (0x40) and Power (0x30) usages. The ARM9 now ORs the MCU state into each input sample (`mcu_buttons()` in `input_poll`).
+- **MCU IRQs** (regs 0x10–0x13, clear on read; mask 0x18–0x1B, 1 = masked; libn3ds `mcu.h`): bit 0 POWER press, 1 POWER held, 2/3 HOME press/release, 5/6 shell close/open. POWER has no release IRQ, hence the tap/long-hold scheme (docs/mcu.md §3).
+- **Halt:** `PEHaltRestart` (0x801c98b0) waits (30 s deadline, 0x801c98d2) for the shutdown handlers for types 0/1/3, then `gIOPlatform->haltRestart(type)` (vtable +0x388 → IOPlatformExpert's 0x801c8645). The call site at 0x801c98f6 becomes `adds r1,r5,#0; ldr r3,[pc,#0]; b +2; .word shim+0x38`, keeping the original `blx r3` at 0x801c9900; the shim forwards every other type to the platform.
+- **Shutdown hang:** sliding "slide to power off" logged `launchd: System: About to call: reboot(RB_HALT).`, then the CPU idled forever (heartbeat PCs all 0x80067b34, the idle WFI). SELECT+START dump, launchd's thread (annotated with `scripts/btmap.py`): `_boot+0x7a` → `PEHaltRestart+0x3e` (the `blx` at 0x801c98ec to 0x801db12b, IOPMrootDomain's halt/restart broadcast) → `messageClient` → IOMobileGraphicsFamily+0x2738 → AppleM2DisplayDrivers+0x4c40 (AppleM2CLCD `disable_backlight`) → AppleARMPlatform+0x4895/+0x6019 → AppleS5L8720X+0x17f0 → `IOCommandGate::runAction` → AppleS5L8720X+0x37cc → `commandSleep`. The S5L SWI backlight function waits for an interrupt that never comes. Patch `pe-halt-skip-pm` (0x801c98ec `blx r3` → `nop`). Then: `[mcu] iOS shut down: log synced, powering off through the MCU`, and QEMU exits.
+- **QEMU** (`build/emu-r3`): `h` → `[input] key 40 down/up` and SpringBoard opens Spotlight (Home on page 1); `c` → `[mcu] shell closed: locking iOS (POWER tap)` → `[input] key 30 down/up`; `c` again → `[mcu] shell opened`. The lock press does not blank the screen in this build (SBDontLockEver; re-log §21 saw the same with SELECT), so the shell now also switches the LCD backlights off/on through MCU reg 0x22 (0x14 / 0x28, libn3ds `MCU_LCD_PWR_*`).
+
+## 37. Volume, brightness, accelerometer (2026-11-18)
+- **Volume:** Celestial's `AVSystemController` (SpringBoard imports its notifications); selectors present in the dyld cache: `sharedAVSystemController`, `setActiveCategoryVolumeTo:`, `getActiveCategoryVolume:andName:`.
+- **Brightness:** SpringBoard's strings `DisplayBrightness`, `DisplayBrightnessFactor`, `…FactorWithFade`, `…Auto`; imports `IOHIDEventSystemSetProperty`. The keys occur once more in the dyld cache (IOKit's HID event system), so SpringBoard keeps its backlight state as HID event system properties; `IOHIDEventSystemClientCopyProperty` (0x337fce40) exists for clients. Kernel side: `AppleARMPWMBacklight` / `AppleARMBacklight` drive the n72 PMU through `function-backlight_*`, which our device tree does not have.
+- **Accelerometer:** the kernelcache has `AppleEmbeddedAccelerometer` (LIS302DL / LIS331DLH on I2C, IOHID event service); SpringBoard has `SBAccelerometerInterface` and `com.apple.springboard.rawOrientation`. `IOHIDEventCreateAccelerometerEvent` (0x337faca4): `(alloc, timestamp r1:r2, x r3, y [sp], z [sp+4], options [sp+8])` → the common 3-axis creator with type 13.
+- **QEMU** (`build/emu-r2/3`): `[mcud] volume slider 40/63 -> iOS volume 0.63`; `[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000` → `qom-get lcd-backlight` 79 (0x4F) and the dimmed screenshots; accelerometer `raw -16384 0 0 -> iOS 0 -1 0 g` (portrait) and `16384 0 0 -> iOS 0 1 0` after `]` `]`.
+- **Accelerometer events are ignored by SpringBoard.** Its HID callback's type switch (0x51b1c: `IOHIDEventGetType` − 3, jump table; type 3 → 0x5028c keyboard, type 13 → 0x4fb44) and the accelerometer handler 0x4fb44 (reads fields 0xd0000–0xd0003; flag 0x18d3d1 = `CFPreferencesGetAppBooleanValue("SBIgnoreAccelerometerEvents")`, set at 0x50bf8; posts `com.apple.springboard.rawOrientation` at 0x4fef8, the name resolved from the literal at 0x4fed4) were never hit in 30 s of events: hardware breakpoints through QEMU's gdbstub (`-gdb tcp::12347`, `emu/gdb/rsp.py`). Same as keyboard/digitizer events in §19/§22. The handler is also reached from 0x50054, which polls accelerometer *services* with `IOHIDServiceCopyEvent(service, 13, …)`; the way in is therefore a kernel service (Apple's LIS331DLH driver on an emulated I2C device), not a client. The daemon keeps the accelerometer off unless started with `acc`.
+
+## 38. iOS shows the 3DS clock's time (2026-11-18)
+- The 3DS RTC keeps **local** time (it's set in the 3DS System Settings). The MCU driver (§33) hands it to XNU as UTC, and iOS then displayed it in its default zone, `/private/var/db/timezone/localtime` → US Pacific: RTC 00:27 Wednesday showed as 4:29 PM Tuesday.
+- rootfs/recipe.json now replaces that symlink with `rootfs/files/localtime-UTC`, a 54-byte TZif v1 file generated for this project (one ttinfo: offset 0, "UTC"; no Apple data).
+- iOS now shows exactly the 3DS clock: QEMU RTC 00:38 → status bar "12:38 AM", calendar "Wednesday".
+- To get a true UTC epoch plus a real zone instead, set `rtc_offset=` in boot.cfg and pick a zone in Settings (docs/mcu.md).
+
+## 39. The "Edit Home Screen" alert was iOS's one-time tip (2026-11-18)
+- **Soak 4** (main `e9ddbba`, all drivers merged, 40 cycles):
+  - no panic, stall, md0/log error (19,008 md0 requests), crash or jetsam;
+  - again only cycle 0 showed "Edit Home Screen" after leaving the first app.
+- **Cause:** the alert's strings are `REORDER_INFO_TITLE` / `REORDER_INFO_BODY` (SpringBoard.app English.lproj), and SpringBoard keeps the default **`SBDidShowReorderText`** next to them.
+  - iOS shows the tip once, on the first Home out of an app on a fresh device, then sets the key.
+  - QEMU soaks always start with a fresh rootfs, hence cycle 0 every time. On a real card it shows once and is remembered.
+  - The §31 "Home seen as a hold" explanation was wrong.
+- **Fix:** rootfs/recipe.json's com.apple.springboard.plist now sets `SBDidShowReorderText = true`.
+- **Soak recovery** is now second Home, then Dismiss alone, then Dismiss + Home. Pressing Home after Dismiss on page 1 opens Spotlight, which soak 4 recorded as "stuck".
+- **The same soak showed a GPU problem:** `mirror self-test: GPU operation 4 of 4 (PPF transfer) did not finish, register 0x00000000` in plain (MTTCG) QEMU. It was later reported as "self-test mismatch: 0 bytes differed". The CPU copy carried on correctly. Handed to the GPU work (agent/gpu).

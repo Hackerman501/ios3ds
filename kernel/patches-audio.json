@@ -5,5 +5,12 @@
   "orig": "90b501af8ab0002a01d0002b2bd0",
   "new": "c0467847c04604f01fe5@shim+0x24@",
   "why": "AppleARMIICDevice transfer (vtable slot 0x35c: op, sub-address, data) -> shim_iic_transfer: a register file per I2C device instead of a bus that does not exist (Thumb: nop; bx pc; nop; ARM: ldr pc,[pc,#-4]; .word)"
+ },
+ {
+  "name": "i2s-start-no-lrck-sync",
+  "va": "0x8066d490",
+  "orig": "0130a0e3b03080e5",
+  "new": "0330a0e3b03080e5",
+  "why": "AppleS5L8900XI2SController DMA start (0x8066d448): for i2s-version 0 with frame sync it sets state 1, enables its GPIO interrupt (i2s0 'interrupts' 0x2c on the GPIO controller) and sleeps until two edges took the state 1->2->3 (action 0x8066caf0) or the timeout set 4 (0x8066cb84) -> kIOReturnNotReady, 'could not start DMA: device is not ready'. Nothing raises that GPIO interrupt on the 3DS: start in state 3 (synced), so the wait loop falls through and the interrupt is disabled and the timeout cancelled as on success (mov r3,#1 -> mov r3,#3)"
  }
 ]

@@ -1,11 +1,12 @@
 # Audio: iOS 4.2.1 sound out of the 3DS speaker
 
-Status: **implemented, boot-tested in QEMU, not yet run on hardware**. In
-QEMU the kexts start (PL080, I2S, CS42L58 with 78 I2C register accesses) and
-the home screen renders as before. No output stream has been started yet
-(volume/lock key presses did not start one), so the DMA → CSND path is so far
-covered only by the host test `tests/test_audio.py`. QEMU has no CSND or
-CODEC model, so nothing would be heard there anyway (section 6).
+Status: **plays in QEMU, bit-exact; not yet heard on hardware**. On the 3DS
+(runs 8-11) every sound failed with `AppleEmbeddedAudioDevice: could not start
+DMA: device is not ready`: the I2S controller waits for a GPIO edge nobody
+raises (section 3, re-log section 32). With that fixed, an AudioQueue tone goes
+through mediaserverd, IOAudio2, the emulated PL080/I2S and the shim into CSND,
+and the QEMU board's CSND model records it sample for sample. Volume keys set
+the CSND volume (they drive iOS's speaker amp, which the shim translates).
 
 ## 1. Summary
 
@@ -74,6 +75,12 @@ starts CSND, in case the ARM9 cannot reach those registers.
 | LLIs: 16-byte items in a driver-owned page, ≤ 0xE00 transfers each, I bit on the last item of a ring command; channels stay enabled across chained commands | 0x807d1ba4.., 0x807d01c4 |
 | `AppleARMFunction` lookups `waitForService` with no timeout, so DT `function-*` pointing at a deleted node hangs `start` | AppleARMPlatform 0x802e4698 |
 | Without `function-hp_detect` AppleEmbeddedAudio skips headphone detection and stays on the speaker route | 0x806533a4..c0 |
+| `startDMA` of AppleARMIISAudio (0x80611b48) prints "could not start DMA" when the per-direction start (0x80611474 -> 0x806113c8 -> I2S controller vtable 0x358) fails | 0x80611c54 |
+| AppleS5L8900XI2SController DMA start (0x8066d448): with `i2s-version` 0 (no such DT property: version 0, as the boot log says) and frame sync requested, it sets state 1, enables its interrupt, arms a timeout and sleeps until the state is 3 or 4; it returns kIOReturnNotReady unless it reached 3 | 0x8066d490..0x8066d52c |
+| That interrupt is GPIO pin 44: i2s0 `interrupts` = 0x2c with `interrupt-parent` = the GPIO controller (phandle 0x0090c9a0). Its action (0x8066caf0) moves state 1 -> 2 on the first edge and 2 -> 3 on the second (then disables itself and wakes the starter); the timeout (0x8066cb84) sets 4 | devicetree.txt, disassembly |
+| PL080 channel states: 1 allocated (0x807d08c0), 2 ready (`_initDMAChannel` 0x807d1130, `stopDMACommand` path 0x807d0a38), 3 running (0x807d03c8); `startDMACommand` (vtable 0x354, 0x807d00e4) returns NotReady for state <= 1 | 0x807d0140 |
+| Speaker volume is not in the PCM and not in the CS42L58: AppleLM48821Amp's setGain (0x807b8108) maps whole dB to a 5-bit step (0 below -62 dB, 19 = 0 dB, 31 = +18 dB) and writes one byte `step << 3 \| 3` with no sub-address; its mute (0x807b8048) writes `0x04`; its reported range is -38..+18 dB (0x807b800c). The codec's HP output feeds the amp (DT `audio0` `hpout-spkr`) | disassembly, QEMU runs 3-5 |
+| iOS writes: media playback at the default volume step 22 (+6 dB), UI sounds step 14 (-10 dB; hardware run10 `val=73`), loudest step 31; the quietest step before mute was 11 (-16 dB) | QEMU runs 3-5 |
 
 ## 4. What ios3ds changes
 
@@ -89,6 +96,12 @@ I2C SDA/SCL) stay: the GPIO block is already a fake page.
 `iic-device-transfer` → `shim+0x24` → `shim_iic_transfer`: one 256-byte
 register file per I2C device (writes stored, reads return them; CS42L58 MAP
 auto-increment bit masked). The I2C controller itself is never used.
+
+**Kernel patch** `i2s-start-no-lrck-sync` (same file): at 0x8066d490 the I2S
+controller's DMA start enters state 3 (synced) instead of 1 (`mov r3,#1` ->
+`mov r3,#3`), so it never waits for the GPIO 44 edges that only an S5L8720
+board produces; the interrupt is still disabled and the timeout cancelled as
+after a real sync. Without it every output stream fails with kIOReturnNotReady.
 
 **Kernel shim** (`kernel/shim/audio.c`, `audio_glue.S`, `audio.h`):
 
@@ -115,12 +128,32 @@ auto-increment bit masked). The I2C controller itself is never used.
   register (once it is seen moving) drifts outside [1/16, 1/2] of the ring;
   after 3 s of silence CSND is stopped. 1 MiB device section 0x10100000 →
   VA 0xBFC00000 is added on first use.
+- Volume: `shim_iic_transfer` recognises the amp's one-byte writes (no
+  sub-address): `step << 3 | 3` sets the CSND volume of both channels to
+  `10^((dB(step) - 18) / 20)` (table `amp_gain`, step 31 = iOS's loudest =
+  unity), `0x04` (the driver's mute) sets 0. `aud_service` applies a change to
+  the running CSND channels; `csnd_start` starts with the current value. Being
+  digital (before the CODEC), it applies to speaker and headphones alike.
 - `aud_cfg_t` / `aud_stat_t` in the shim's `.data` (magic `AUD0cfg!`); mkboot
-  writes the fake dmac0/i2s0 page addresses, the ARM9 reads the statistics.
+  writes the fake dmac0/i2s0 page addresses, the ARM9 reads the statistics
+  (`amp_step`, `volume` added for the volume mapping).
+- I2C log: the first 300 accesses, then only writes that change a register.
 
 **ARM9** (`boot/arm9/audio.c`): CODEC sound init before the jump, and
-`audio_poll` in the monitor loop logs stream starts/stops (`[audio] ...` in
-`sd:/ios3ds/log.txt`). The shim logs `ios3ds-audio: ...` lines (stream start
+`audio_poll` in the monitor loop logs stream starts/stops and iOS volume
+changes (`[audio] ...` in `sd:/ios3ds/log.txt`). It also polls the headphone
+jack (GPIO2 bit 0, debounced over 32 polls) and repeats the init's
+`CDC_REG_HEADSET_SEL` routing when it changes (`[audio] headphones plugged
+in/unplugged`), only if the CODEC answered at init. iOS keeps its speaker
+route either way (no `function-hp_detect`), so its volume steps keep coming
+from the amp.
+
+**Test client** `tools/ios3ds-audio/tone` (`/usr/libexec/ios3ds-tone`,
+launchd job `com.ios3ds.tone`): plays a test tone through AudioQueue (left =
+tone, right = half amplitude) 30 s after launch; default once, 400 ms, 1 kHz,
+amplitude 6000. Arguments: `count interval_s ms hz amplitude delay_s`.
+AudioToolbox is loaded with dlopen; every failure is logged once
+(`tone: ...`) and the program exits. The shim logs `ios3ds-audio: ...` lines (stream start
 with the first LLI, I2C traffic) into the XNU log ring.
 
 Memory: CSND rings at PA 0x208C0000..0x208C8000, between the XNU log ring and
@@ -135,33 +168,46 @@ Memory: CSND rings at PA 0x208C0000..0x208C8000, between the XNU log ring and
 | `scripts/mkboot.py` | build `kernel/shim/audio*.[cS]`; write dmac0/i2s0 page PAs into `aud_cfg_t` |
 | `boot/arm9/main.c`, `boot/Makefile` | `audio_init()` before the jump, `audio_poll()` in the monitor loop; `arm9/audio.c` |
 | `boot/arm9/tsc.c`, `tsc.h` | CODEC SPI helpers made public, bus init split out (`cdc_bus_init`) |
+| `kernel/patches-audio.json` | `i2s-start-no-lrck-sync` |
+| `rootfs/recipe.json`, `Makefile` | `ios3ds-tone` + its launchd plist; `tools/ios3ds-audio/tone` in `USERLAND` |
+| `emu/qemu/hw/arm/nintendo3ds.c`, `emu/build-qemu.sh` | `ctr_csnd_init()` at 0x10103000; build `ctr_csnd.c` |
 
 ## 6. QEMU
 
-The `nintendo3ds` QEMU board has no CSND, I2S or CODEC model: writes go to
-unimplemented IO and reads return 0, so CSND's position never moves (the shim
-then never resyncs) and nothing is audible; the SPI stub makes `audio_init`
-log "no CODEC". Everything above CSND (kexts, DT, I2C register files, PL080
-emulation, VIC injection) runs as on hardware. A minimal CSND model for the
-board would be: a 0x1000-byte register page at 0x10103000; per channel, when
-CNT bit 15 and bit 14 are set, advance ST_ADDR by `2 * Fs * dt` bytes
-(`Fs = 67027964 / (0x10000 - SR)`) through `[LP_ADDR, ST_ADDR0 + SIZE)` in
-loop mode, clear bit 15 at the end in one-shot mode; optionally mix the PCM16
-samples (VOL halves as gains) into a QEMU audio backend at the I2S1 rate.
+`emu/qemu/hw/arm/ctr_csnd.c` models CSND (0x10103000) enough to check the
+whole path: per channel, CNT bits 15+14 start playback of PCM16/PCM8 from
+FCRAM at `67027964 / (0x10000 - SR)` on QEMU's virtual clock, ST_ADDR reads
+back the play position (so the shim's resync runs as on hardware), loop mode
+wraps to LP_ADDR, one-shot clears bit 15 at the end. Playing channels are
+mixed with their VOL halves and MASTER_VOL into a stereo sink that prints
+`[csnd]` lines (channel start/stop, every 5 s: frames, non-silent frames,
+peak, RMS) and, with `IOS3DS_CSND_WAV=/path.wav` in QEMU's environment,
+records the mix. Not modelled: ADPCM, capture, I2S1, the CODEC (the SPI stub
+still makes `audio_init` read id 00 and carry on).
+
+```
+IOS3DS_CSND_WAV=$PWD/build/out.wav python3 emu/run.py --icount 2 --time 500 \
+    --keys "420:w_down,420.3:w_up"        # R = volume up, Q (L) = volume down
+```
+
+Use `--icount 2`. Without it QEMU's guest runs about 3x slower than the 3DS
+while the virtual (audio) clock runs in real time, so mediaserverd misses its
+deadlines and only fragments of a sound reach the ring (run 2: 1,914 of
+17,640 frames of a 400 ms tone). With icount every 1 s tone after boot is
+complete (44,099 frames), gap-free, 999 Hz, peak 5999/2999 = exactly the
+tone's 6000/3000 at unity volume (run 3, re-log section 32).
 
 ## 7. Open points / next steps
 
-1. Hardware: confirm CSND output is audible with I2S1 DSP volume 32 and that
-   the ARM9 may write PDN_I2S_CNT/I2S1_CNT (else the shim's writes cover it).
-2. Volume keys / mute switch: iOS sets the CS42L58 volume over I2C into the
-   register file; mapping those registers (or the CS42L58 master volume) onto
-   CSND channel volume is not done yet.
-3. Headphone switching at run time (GPIO2 IRQ) and a real
-   `function-hp_detect`.
+1. Hardware: listen for the boot tone (`tone: #1 ...` in the log, the shim's
+   `ios3ds-audio: tx start` and the ARM9 `[audio] iOS output stream #1
+   started`). If the stream starts but nothing is heard: confirm CSND is heard
+   with I2S1 DSP volume 32 and that PDN_I2S_CNT/I2S1_CNT are set (the shim
+   writes them again from the ARM11).
+2. Hardware: the speaker level. iOS's loudest step is CSND unity; the
+   CODEC's speaker gains are libn3ds' `hw_cal` defaults. The 3DS volume
+   slider is not read.
+3. Hardware: headphone jack polling reads GPIO2 bit 0 from the ARM9
+   (unverified there; QEMU has no GPIO2 model).
 4. Microphone: RX DMA currently delivers silence; CSND capture units could
    feed it.
-5. Start a real stream in QEMU: a small userland tool (AudioQueue or
-   `AudioServicesPlaySystemSound`) under `tools/ios3ds-audio/`, then look for
-   the shim's `ios3ds-audio: tx start` line and the ARM9 `[audio] stream` lines.
-   Volume keys gave no HUD in QEMU; find out why (no route? mediaserverd waiting
-   on something?).

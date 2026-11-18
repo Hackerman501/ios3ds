@@ -88,7 +88,8 @@ def build_shim(outdir):
              "-I" + os.path.join(ROOT, "tools", "ios3ds-pica", "include")]
     srcs = [os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"), os.path.join(sd, "gpu_glue.c"),
             os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
-            os.path.join(ROOT, "tools", "ios3ds-wifi", "shim", "net.c")]
+            os.path.join(ROOT, "tools", "ios3ds-wifi", "shim", "net.c"),
+            os.path.join(ROOT, "tools", "ios3ds-mcu", "shim", "mcu.c")]
     srcs += sorted(__import__("glob").glob(os.path.join(sd, "audio*.[cS]")))     # docs/audio.md
     # the GPU part: link.ld places every object named *pica*.o at GPU_PART_VA (gpu.bin)
     srcs += [os.path.join(sd, "pica.c"),
@@ -257,6 +258,11 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "# ca_gpu=1: SpringBoard's CoreAnimation composites on the PICA200 when the GPU self-checks pass",
         "# (else its software compositor, as with ca_gpu=0; docs/gpu.md section 7)",
         "ca_gpu=1",
+        "# system controller (docs/mcu.md): RTC, battery, HOME/POWER, sliders, accelerometer.",
+        "# mcu=0 never touches it (clock at 1970, no battery). rtc_offset: seconds added to the",
+        "# 3DS RTC to get UTC, e.g. -3600 if the RTC runs on CET (UTC+1)",
+        "mcu=1",
+        "rtc_offset=0",
         "# XNU boot-args (edit freely, max 255 chars)",
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",

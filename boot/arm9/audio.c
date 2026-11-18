@@ -44,6 +44,18 @@ static bool wait_clear(u8 page, u8 reg, u8 mask, u32 tries)  /* until (~reg & ma
     return false;
 }
 
+static bool codec_ok;   /* audio_init found the CODEC: jack polling may write its registers */
+static u8 jack;         /* headphone state the CODEC is routed for */
+
+/* speaker or headphones, as libn3ds soundInit selects them (CDC_REG_HEADSET_SEL) */
+static void route(u8 hp)
+{
+    cdc_mask(P100, 69, (u8)(hp << 4 | 0x20), 0x30);
+    cdc_mask(P100, 67, 0, 0x80);
+    cdc_mask(P100, 67, 0x80, 0x80);
+    jack = hp;
+}
+
 bool audio_init(void)
 {
     cdc_bus_init();
@@ -65,11 +77,10 @@ bool audio_init(void)
     cdc_write(P101, 122, 1);                    /* VREF */
     cdc_mask(P100, 34, 0x18, 0x18);             /* PLL */
 
-    /* headphone/speaker selection follows the jack (CDC_REG_HEADSET_SEL) */
+    /* headphone/speaker selection follows the jack (CDC_REG_HEADSET_SEL);
+       audio_poll repeats it when the jack changes */
     u8 hp = GPIO2_DAT & 1;
-    cdc_mask(P100, 69, (u8)(hp << 4 | 0x20), 0x30);
-    cdc_mask(P100, 67, 0, 0x80);
-    cdc_mask(P100, 67, 0x80, 0x80);
+    route(hp);
 
     /* CODEC-side I2S dividers: I2S1 47.6 kHz (NDAC 0x85), I2S2 47.6 kHz */
     cdc_write(P0, 11, 0x85);
@@ -107,17 +118,42 @@ bool audio_init(void)
     cdc_write(P101, 28, 7);
     ms(38);
 
+    codec_ok = true;
     log_ok("[audio] CODEC id %02x rev %02x: DAC %s, %s, I2S1_CNT %04x\n", id, rev,
            dac ? "up" : "not confirmed", hp ? "headphones" : "speaker", *(vu16 *)I2S1_CNT_PA);
     return true;
+}
+
+/* Headphones plugged or pulled while iOS runs: switch the CODEC's output the
+   same way audio_init chose it (iOS itself always stays on its speaker route,
+   docs/audio.md; its volume is CSND's, so it applies to both outputs). The
+   jack must read the same for JACK_STABLE polls in a row before it counts. */
+#define JACK_STABLE 32
+static void jack_poll(void)
+{
+    static u32 same;
+    static u8 last;
+    u8 hp;
+    if (!codec_ok || cdc_bus_dead()) return;
+    hp = GPIO2_DAT & 1;
+    if (hp != last) {
+        last = hp;
+        same = 0;
+        return;
+    }
+    if (hp == jack || ++same < JACK_STABLE) return;
+    route(hp);
+    log_ok("[audio] headphones %s: CODEC output -> %s\n", hp ? "plugged in" : "unplugged",
+           hp ? "headphones" : "speaker");
 }
 
 void audio_poll(u32 shim_pa)
 {
     static volatile aud_blk_t *b;
     static bool searched;
-    static u32 starts, stops, csnd;
+    static u32 starts, stops, csnd, step = ~0u;
 
+    jack_poll();
     if (!shim_pa) return;
     if (!searched) {                            /* aud_blk_t lives in the shim's .data */
         searched = true;
@@ -137,6 +173,11 @@ void audio_poll(u32 shim_pa)
         log_ok("[audio] stream stopped: %u words, peak %u, TC IRQs %u (%u injected), bad addr %u\n",
                (unsigned)s->tx_words, (unsigned)s->peak, (unsigned)s->tc_irqs, (unsigned)s->injected,
                (unsigned)s->bad_addr);
+    }
+    if (s->amp_step != step && s->amp_step != AUD_AMP_NONE) {
+        step = s->amp_step;
+        if (step == AUD_AMP_OFF) log_ok("[audio] iOS volume: muted (amp off) -> CSND volume 0\n");
+        else log_ok("[audio] iOS volume: amp step %u -> CSND volume %u/32768\n", (unsigned)step, (unsigned)s->volume);
     }
     if (s->csnd_starts != csnd) {
         csnd = s->csnd_starts;

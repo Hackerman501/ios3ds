@@ -2,6 +2,8 @@
 """Run the ios3ds payload in the QEMU 'nintendo3ds' machine, headless.
 
   emu/run.py [--time 8] [--shots 2,8] [--gdb] [--trace] [--keys "1.0:s_down"]
+             [--hmp "300=qom-set /machine mcu-battery 15;310=qom-get /machine lcd-backlight"]
+             [--out build/emu-x]
 
 Takes screenshots (PNG, top screen above bottom screen) at the given times,
 quits, then prints sd:/ios3ds/log.txt from the SD image. Artifacts go to
@@ -48,15 +50,19 @@ def main():
     ap.add_argument("--gdb", action="store_true", help="-s -S: wait for gdb on :1234")
     ap.add_argument("--trace", default="", help="QEMU -d flags, e.g. unimp,guest_errors,int")
     ap.add_argument("--keys", default="", help="'t:key_down,t:key_up' e.g. 0.5:s_down (s = B button)")
+    ap.add_argument("--hmp", default="",
+                    help="'t=command;t=command': HMP commands at given times, output printed "
+                         "(e.g. qom-set /machine mcu-battery 15, see docs/mcu.md)")
+    ap.add_argument("--out", default=OUT, help="artifact directory (default build/emu)")
     ap.add_argument("--extra", default="")
     ap.add_argument("--icount", default="", metavar="SHIFT",
                     help="instruction-clocked time (-icount shift=N,sleep=off; 2 = ~250 MHz, close to the "
                          "Old 3DS ARM11): reproduces real-hardware timer ordering; single-threaded TCG")
     ap.add_argument("--regs", action="store_true", help="dump ARM11/ARM9 registers before quitting")
     a = ap.parse_args()
-
-    os.makedirs(OUT, exist_ok=True)
-    mon = os.path.join(OUT, "monitor.sock")
+    out_dir = a.out
+    os.makedirs(out_dir, exist_ok=True)
+    mon = os.path.join(out_dir, "monitor.sock")
     if os.path.exists(mon):
         os.remove(mon)
     accel = "tcg,thread=single" if a.icount else "tcg,thread=multi"
@@ -65,7 +71,7 @@ def main():
     if os.path.exists(a.sd):
         cmd += ["-drive", "file=%s,if=sd,format=raw" % a.sd]
     if a.trace:
-        cmd += ["-d", a.trace, "-D", os.path.join(OUT, "qemu.log")]
+        cmd += ["-d", a.trace, "-D", os.path.join(out_dir, "qemu.log")]
     if a.gdb:
         cmd += ["-s", "-S"]
     if a.icount:
@@ -94,6 +100,9 @@ def main():
         up = [u for u, k2, ud in keys if k2 == key and ud == "up" and u > t]
         hold = int(round(((min(up) - t) if up else 3.0) * 1000))
         events.append((t, "key", (key, max(hold, 50))))
+    for h in filter(None, a.hmp.split(";")):
+        t, c = h.split("=", 1)
+        events.append((float(t), "hmp", c.strip()))
     events.append((a.time, "quit", None))
     events.sort(key=lambda e: e[0])
 
@@ -105,19 +114,22 @@ def main():
         if proc.poll() is not None:
             break
         if kind == "shot":
-            png = os.path.join(OUT, "screen_%05.1fs.png" % t)
+            png = os.path.join(out_dir, "screen_%05.1fs.png" % t)
             hmp(mon, "screendump %s -f png" % png)
             print("[run] screenshot %s" % png)
         elif kind == "key":
             key, hold = arg
             # HMP has no key-down/up: sendkey with the down->up time as hold
             hmp(mon, "sendkey %s %d" % (key.replace("+", "-"), hold))
+        elif kind == "hmp":
+            r = hmp(mon, arg)
+            print("[run] %.1fs hmp %s -> %s" % (t, arg, " ".join(r.replace("(qemu)", "").split()[-12:])))
         elif kind == "quit":
             if a.regs:
                 for cpu in (0, 1):
                     hmp(mon, "cpu %d" % cpu)
                     r = hmp(mon, "info registers")
-                    with open(os.path.join(OUT, "regs_cpu%d.txt" % cpu), "w") as f:
+                    with open(os.path.join(out_dir, "regs_cpu%d.txt" % cpu), "w") as f:
                         f.write(r)
                     print("[run] cpu%d registers:\n%s" % (cpu, r))
             hmp(mon, "quit")
@@ -132,7 +144,7 @@ def main():
         r = subprocess.run(["mtype", "-i", "%s@@%d" % (a.sd, 2048 * 512), "::/ios3ds/log.txt"],
                            capture_output=True)
         log = r.stdout.decode(errors="replace")
-        with open(os.path.join(OUT, "log.txt"), "w") as f:
+        with open(os.path.join(out_dir, "log.txt"), "w") as f:
             f.write(log)
         print("----- sd:/ios3ds/log.txt -----")
         print(log if log else "(missing: %s)" % r.stderr.decode().strip())

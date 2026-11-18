@@ -4,7 +4,7 @@
   "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
   "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
   "/var/log/syslog": "",
-  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDontLockEver</key>\n\t<true/>\n</dict>\n</plist>\n",
+  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDontLockEver</key>\n\t<true/>\n\t<key>SBDidShowReorderText</key>\n\t<true/>\n</dict>\n</plist>\n",
   "/System/Library/Caches/com.apple.dyld/enable-dylibs-to-override-cache": ""
  },
  "disable_daemons": [
@@ -38,7 +38,8 @@
  ],
  "grow_bytes": 1073741824,
  "remove": [
-  "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db"
+  "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",
+  "/private/var/db/timezone/localtime"
  ],
  "plist_set": {
   "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
@@ -61,7 +62,12 @@
   "build/rootfs-add/usr/libexec/ios3ds-gltest": "/usr/libexec/ios3ds-gltest",
   "tools/ios3ds-gl/test/com.ios3ds.gltest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist",
   "build/rootfs-add/usr/libexec/ios3ds-wifid": "/usr/libexec/ios3ds-wifid",
-  "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist"
+  "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist",
+  "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
+  "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
+  "build/rootfs-add/usr/libexec/ios3ds-mcud": "/usr/libexec/ios3ds-mcud",
+  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist",
+  "rootfs/files/localtime-UTC": "/private/var/db/timezone/localtime"
  },
  "chmod": {
   "/usr/libexec/ios3ds-sample": "0755",
@@ -72,7 +78,12 @@
   "/usr/libexec/ios3ds-gltest": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist": "0644",
   "/usr/libexec/ios3ds-wifid": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644",
+  "/usr/libexec/ios3ds-tone": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",
+  "/usr/libexec/ios3ds-mcud": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644",
+  "/private/var/db/timezone/localtime": "0644"
  },
  "file_patches": [
   {

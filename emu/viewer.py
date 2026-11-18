@@ -11,6 +11,8 @@ Keys (3DS button):  Enter / H = START (iOS Home)   Backspace / K = SELECT (iOS l
                     A = A   S = B   X = X (screen mode: top/both/bottom)   Y = Y
                     Q = L (vol -)   W = R (vol +)
                     arrow keys = D-pad   (SELECT+START together = XNU panic dump)
+      3DS MCU (docs/mcu.md): F1 = HOME   F2 = POWER (hold 3 s = "held")   - / = = volume slider
+                    C = close/open the shell   [ / ] = turn the console 90 degrees (accelerometer)
 Close the window to quit QEMU; the SD log stays in sd:/ios3ds/log.txt.
 """
 import argparse
@@ -32,10 +34,13 @@ QEMU = os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
 KEYS = {"Return": "ret", "KP_Enter": "ret", "h": "ret",
         "BackSpace": "backspace", "k": "backspace",
         "a": "a", "s": "s", "x": "x", "y": "y", "q": "q", "w": "w",
-        "Up": "up", "Down": "down", "Left": "left", "Right": "right"}
+        "Up": "up", "Down": "down", "Left": "left", "Right": "right",
+        "F1": "h", "F2": "p", "minus": "minus", "equal": "equal", "c": "c",
+        "bracketleft": "bracket_left", "bracketright": "bracket_right"}
 
 HELP = ("Mouse = touch (iOS view or bottom screen)   Enter/H = Home   Backspace/K = Lock   Q/W = Volume -/+   "
-        "X = screen mode   A S Y = A B Y   Arrows = D-pad   (iOS needs ~7 min to boot)")
+        "X = screen mode   A S Y = A B Y   Arrows = D-pad   F1/F2 = HOME/POWER   -/= = volume slider   "
+        "C = shell   [/] = turn   (iOS needs ~7 min to boot)")
 
 
 def ios_to_display(nx, ny):

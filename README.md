@@ -7,7 +7,7 @@ ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU ke
 - A small set of binary patches and a "shim" bridges the hardware differences.
 - The 3DS's ARM9 acts as a monitor and I/O processor.
 
-> **Status (2026-11-17):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS**. Touch, the Home, lock and volume buttons, and apps (Settings, Notes, Mail, App Store) work, and boot to a usable home screen takes about a minute. In the project's own QEMU model (`-M nintendo3ds`) the same build runs, including a PICA200 GPU path for GL and the screen mirror; that GPU path has not run on hardware yet. Hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
+> **Status (2026-11-18):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS** (about a minute), with touch, Home/lock/volume buttons and apps. Since the last hardware run, the QEMU-verified work adds GPU (PICA200) screen copying and GL, audio output, the 3DS RTC/battery/HOME/POWER/volume slider/brightness through the MCU, and much less stalling during disk reads. Install guide: [docs/INSTALL.md](docs/INSTALL.md); hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
 
 > **Try it on your 3DS:** follow [docs/INSTALL.md](docs/INSTALL.md). Download a release, run one command on your PC with your own iPod touch firmware file, and copy the result to the SD card. No compilers needed.
 
@@ -48,6 +48,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/m1-design.md](docs/m1-design.md): the 3DS payload, mailbox protocol, `boot.cfg`
 - [docs/m2-first-panic.md](docs/m2-first-panic.md): first kernel output and panic
 - [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
+- [docs/mcu.md](docs/mcu.md): the 3DS system controller (RTC, battery, HOME/POWER, sliders, accelerometer) in iOS
 - [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
 - [docs/release.md](docs/release.md): CI, the release zip, and why nothing in it is Apple's
@@ -100,7 +101,8 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
 - **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. The `ios3ds.3dsx` launcher swaps `boot.firm` on the SD card and reboots instead. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
 - **Missing hardware support:**
   - touch is untested (buttons work in the emulator);
-  - no audio, Wi-Fi or real-time clock (the clock shows 1969/1970 time);
+  - no audio or Wi-Fi yet;
+  - the system controller (date and time, battery, HOME/POWER, sliders, brightness, accelerometer) is implemented but has only run in QEMU ([docs/mcu.md](docs/mcu.md));
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);
   - OpenGL ES 1.1 is CPU-rendered (`tools/ios3ds-gl`): no PVRTC textures, no mipmaps or stencil yet, and no ES 2.0 (the MBX engine slot is ES1 only).

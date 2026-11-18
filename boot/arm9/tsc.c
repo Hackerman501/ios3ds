@@ -30,6 +30,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "tsc.h"
+#include "mcu.h"
 
 typedef struct {
     vu32 cnt;        /* 0x00 */
@@ -234,6 +235,7 @@ void input_poll(u32 shim_pa)
     /* SELECT+START stays the monitor's panic combo: do not forward it */
     if ((s.buttons & (HID_SELECT | HID_START)) == (HID_SELECT | HID_START))
         s.buttons &= (u16)~(HID_SELECT | HID_START);
+    s.buttons |= mcu_buttons();     /* HOME / POWER from the MCU (mcu.c) */
 
     if (m->tsc_ok) {
         bool pen;

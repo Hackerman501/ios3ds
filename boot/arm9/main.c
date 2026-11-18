@@ -23,6 +23,7 @@
 #include "audio.h"
 #include "gpumirror.h"
 #include "gpu_mirror.h"
+#include "mcu.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -101,6 +102,8 @@ typedef struct {
     u32 display_regs;
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
     u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag, ca_gpu;  /* PICA200 (gpumirror.c, docs/pica200.md) */
+    u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
+    int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -141,6 +144,7 @@ static int parse_bootcfg(char *txt)
     cfg.gpu_clk = 1;
     cfg.gpu_diag = 1;
     cfg.ca_gpu = 1;
+    cfg.mcu = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -156,6 +160,7 @@ static int parse_bootcfg(char *txt)
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
+        { "mcu", &cfg.mcu },
     };
     int lineno = 0;
     char *line = txt;
@@ -197,6 +202,10 @@ static int parse_bootcfg(char *txt)
                     known = true;
                 } else if (!strncmp(key, "shim", 5)) {
                     strlcpy_(cfg.shim, val, sizeof(cfg.shim));
+                    known = true;
+                } else if (!strncmp(key, "rtc_offset", 11)) {
+                    cfg.rtc_offset = *val == '-' ? -(int32_t)parse_u32(val + 1, NULL)
+                                                 : (int32_t)parse_u32(val + (*val == '+'), NULL);
                     known = true;
                 } else if (!strncmp(key, "devtree", 8)) {
                     strlcpy_(cfg.devtree, val, sizeof(cfg.devtree));
@@ -489,6 +498,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
         if (wifi_poll()) busy = true;
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
+        mcu_poll(clk_ticks());      /* RTC, battery, sliders, HOME/POWER (docs/mcu.md) */
         static bool ios_display, x_latched;
         static int screen_mode;
         /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
@@ -807,6 +817,7 @@ void a9_main(int argc, char **argv)
     wifi_init();
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
+    mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
