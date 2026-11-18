@@ -59,6 +59,7 @@ def main():
     ap.add_argument("--boot-timeout", type=float, default=1200)
     ap.add_argument("--settle", type=float, default=15, help="seconds an app gets after its tap")
     ap.add_argument("--icount", default="")
+    ap.add_argument("--long-lock", type=float, default=130, help="seconds locked on every 10th cycle")
     ap.add_argument("--targets", default="", help="x,y;x,y;... iOS points to tap instead of the icon grid + dock")
     ap.add_argument("--settles", default="", help="comma list of per-cycle settle seconds (cycled)")
     a = ap.parse_args()
@@ -174,7 +175,10 @@ def main():
                 time.sleep(4)
             if i % 5 == 4:                      # lock, wake, slide to unlock
                 key("backspace")
-                time.sleep(4)
+                # every 10th cycle a long lock: iOS used to put the whole
+                # system to sleep ~1 min after a lock with no way to wake it
+                c["lock_seconds"] = a.long_lock if i % 10 == 9 else 4
+                time.sleep(c["lock_seconds"])
                 key("ret")
                 time.sleep(3)
                 drag(40, 420, 300, 420, 0.8)
@@ -212,6 +216,11 @@ def main():
     stuck = rec.get("stuck", [])
     if stuck or len(rec.get("Dismiss + Home", [])) > 1:
         failed = True
+    # a lock round must end on the home screen (after a long lock too)
+    bad_unlock = [c["cycle"] for c in results["cycles"] if c.get("after_unlock_diff", 0) > 12]
+    results["unlock_not_home"] = bad_unlock
+    if bad_unlock:
+        failed = True
     results["failed"] = failed
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(results, f, indent=1)
@@ -219,6 +228,7 @@ def main():
              ("%.0f s" % booted if booted else "**not reached**"),
              "- cycles run: %d" % len(results["cycles"]),
              "- not home after Home (cycle lists by what it took to recover): %s" % (rec or "never"),
+             "- lock rounds not ending on the home screen (cycles 9, 19, ... lock for %g s): %s" % (a.long_lock, bad_unlock or "none"),
              "- last heartbeat: `%s`" % results["last_heartbeat"], "", "| check | count | first |", "|---|---|---|"]
     for name, r in results["checks"].items():
         lines.append("| %s%s | %d | %s |" % (name, " (failure)" if r["failure"] else "", r["count"],
