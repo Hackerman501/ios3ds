@@ -684,4 +684,5 @@ const Backend sw_backend = {
     NULL,
     NULL,
     NULL,
+    NULL,
 };

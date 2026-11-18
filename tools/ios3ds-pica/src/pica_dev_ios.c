@@ -83,9 +83,18 @@ static uint32_t d_transfer(uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa, u
     return call(&r);
 }
 
+static uint32_t d_config(uint32_t *flags)
+{
+    pica_req_t r = { PICA_OP_CONFIG, 0, { 0 } };
+    uint32_t st = call(&r);
+    *flags = st == PICA_OK ? r.a[0] : 0;
+    return st;
+}
+
 const pica_dev_t *pica_dev_ios(void)
 {
-    static const pica_dev_t dev = { "PICA200", d_info, d_alloc, d_free, d_write, d_read, d_submit, d_fill, d_transfer };
+    static const pica_dev_t dev = { "PICA200", d_info, d_alloc, d_free, d_write, d_read, d_submit, d_fill, d_transfer,
+                                    d_config };
     return &dev;
 }
 

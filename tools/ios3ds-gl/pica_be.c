@@ -84,6 +84,7 @@ static struct {
     size_t scratch_words;
     unsigned tick, warned;
     unsigned lists, draws;
+    unsigned readbacks, readback_kb, uploads, upload_kb;
 } P;
 
 enum { WARN_FOG = 1, WARN_TEXENV = 2, WARN_BIG = 4, WARN_MEM = 8, WARN_TEXBIG = 16 };
@@ -316,6 +317,8 @@ static void sync_target(PTarget *t)
     if (!lin)
         return;
     st = P.dev->transfer(t->color_pa, dim, t->lin_pa, dim, PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
+    P.readbacks++;
+    P.readback_kb += (uint32_t)t->pw * t->ph * 4 >> 10;
     if (st == PICA_OK)
         st = P.dev->read(t->lin_pa, lin, (uint32_t)t->pw * t->ph * 4);
     if (st != PICA_OK) {
@@ -599,6 +602,8 @@ static PTex *use_texture(Tex *t)
     if ((uint32_t)t->w != pw || (uint32_t)t->h != ph)
         pica_tex_pad_edges(tiled, PICA_TEX_RGBA8, pw, ph, (uint32_t)t->w, (uint32_t)t->h);
     st = P.dev->write(p->pa, tiled, bytes);
+    P.uploads++;
+    P.upload_kb += bytes >> 10;
     if (st != PICA_OK) {
         gpu_fail("uploading a texture", st);
         return NULL;
@@ -944,6 +949,17 @@ static void pica_finish(GC *gc, RT *rt)
         }
 }
 
+static void pica_flush_all(GC *gc)
+{
+    int i;
+    (void)gc;
+    if (P.state != 1)
+        return;
+    for (i = 0; i < MAX_TARGETS; i++)
+        if (P.target[i].key && P.target[i].dirty)
+            sync_target(&P.target[i]);
+}
+
 const Backend pica_backend = {
     "ios3ds PICA200",
     pica_clear,
@@ -951,7 +967,57 @@ const Backend pica_backend = {
     pica_tex_changed,
     pica_tex_deleted,
     pica_finish,
+    pica_flush_all,
 };
+
+/* CoreAnimation's compositor (SpringBoard, IOS3DS_CA=1): it may only run on
+   our engine when the GPU does the work - CA's own software compositor beats
+   GL on the CPU rasterizer. Decided once per process: boot.cfg (ca_gpu, gpu)
+   through the GPU service, then the back end's bring-up and self-check.
+   0 = refuse: QuartzCore's display probe fails and CA composites in software. */
+int pica_ca_gate(void)
+{
+    static int decided = -1;
+    uint32_t flags = 0, st;
+    const pica_dev_t *dev;
+    if (decided >= 0)
+        return decided;
+    decided = 0;
+#ifdef GL_HOST
+    dev = pica_dev_host();
+#else
+    dev = pica_dev_ios();
+#endif
+    if ((st = dev->config(&flags)) != PICA_OK) {
+        gl_log("CA compositor: software (GPU service: %s)", pica_strerror(st));
+        return 0;
+    }
+    if (!(flags & PICA_CFG_CA_GPU)) {
+        gl_log("CA compositor: software (boot.cfg ca_gpu=0 or gpu=0)");
+        return 0;
+    }
+    if (!pica_backend_init()) {
+        gl_log("CA compositor: software (the PICA200 back end is not usable, see the pica lines above)");
+        return 0;
+    }
+    if (!ca_scene_check()) {
+        gl_log("CA compositor: software (the GPU does not draw a CA-like scene like the CPU rasterizer)");
+        return 0;
+    }
+    gl_log("CA compositor: OpenGL ES on the PICA200 (GPU self-check and scene check passed)");
+    decided = 1;
+    return 1;
+}
+
+void pica_backend_stats2(PicaStats *s)
+{
+    s->lists = P.lists;
+    s->draws = P.draws;
+    s->readbacks = P.readbacks;
+    s->readback_kb = P.readback_kb;
+    s->uploads = P.uploads;
+    s->upload_kb = P.upload_kb;
+}
 
 void pica_backend_stats(unsigned *lists, unsigned *draws)
 {

@@ -77,7 +77,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 
 **Display:**
 - Apple's AppleM2CLCD driver runs against a fake register page that starts with iBoot's state (window 1 at 0x18000000).
-- QuartzCore finds the `AppleM2CLCD` service. With no MBX GPU it uses its **software compositor**, and rendering is paced by vsync notifications, i.e. the injected VBlank.
+- QuartzCore finds the `AppleM2CLCD` service. It composites with OpenGL ES through our engine on the PICA200 when the GPU passes its checks ([gpu.md](gpu.md) §7), else with its **software compositor**; either way rendering is paced by vsync notifications, i.e. the injected VBlank.
 - Window 1 goes to the 3DS LCDs (top: rotated and scaled to 3/4, 360×240; bottom: 2/3, the touch map). The ARM11 shim does it on the PICA200 once its self-test passed (the GPU display mirror, [pica200.md](pica200.md) §9); until then, or when it is switched off or fails, the ARM9 copies with the CPU.
 
 ## 4. Userland changes
@@ -88,11 +88,11 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
 - The dyld shared cache gets small byte patches:
   - liblockdown is stubbed, reporting "Activated" and BrickState = false;
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
-- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0` and `CA_ENABLE_OGL=0`, and `com.apple.springboard.plist` sets `SBDontLockAfterCrash` and `SBDisableAutoDim` (`SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
+- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash` and `SBDisableAutoDim` (`SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
 - OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:
   - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
-  - QuartzCore's display skips its ES1 probe, so SpringBoard keeps the software compositor;
+  - QuartzCore's ES1 display surface format is patched from 16 to 32 bpp, so its GL compositor can run on our engine (SpringBoard only, GPU only, [gpu.md](gpu.md) §7);
   - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot.
   - with `IOS3DS_GL=pica` the engine renders on the PICA200 through the shim's `ios3ds_gpu` service (`kernel/shim/pica.c`); see [pica200.md](pica200.md).
 - `ios3ds-sample` (`tools/ios3ds-sample`) prints every process's thread state to the console periodically. It is a debugging aid.

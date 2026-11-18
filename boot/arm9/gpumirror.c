@@ -25,7 +25,7 @@ static const char *const why_name[] = { "", "boot.cfg", "GPU bring-up failed", "
 /* watchdog ticks (1047311 Hz) -> microseconds */
 static u32 us(u32 ticks) { return ticks / 1047u * 1000u + ticks % 1047u * 1000u / 1047u; }
 
-void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[6], int mode)
+void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[7], int mode)
 {
     u32 fb[4];
     gm = (volatile gmbox_t *)(shim_pa + SHIM_GM_OFF);
@@ -44,10 +44,12 @@ void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[6], int mode)
     gm->spin_us = cfgv[3];
     gm->gpu_clk = cfgv[4];
     gm->gpu_diag = cfgv[5];
+    gm->ca_gpu = cfgv[6];
     gm->seq = 1;
     gm->magic = GM_MAGIC;
-    logp("[gpu] PICA200: gpu=%u gpu_mirror=%u (every %u. VBlank, spin %u us) gpu_clk=%u gpu_diag=%u; mailbox at %08x\n",
-         cfgv[0], cfgv[1], (unsigned)gm->vbl_div, cfgv[3], cfgv[4], cfgv[5], shim_pa + SHIM_GM_OFF);
+    logp("[gpu] PICA200: gpu=%u gpu_mirror=%u (every %u. VBlank, spin %u us) gpu_clk=%u gpu_diag=%u ca_gpu=%u; "
+         "mailbox at %08x\n", cfgv[0], cfgv[1], (unsigned)gm->vbl_div, cfgv[3], cfgv[4], cfgv[5], cfgv[6],
+         shim_pa + SHIM_GM_OFF);
 }
 
 void gm_want(bool on)
@@ -95,8 +97,9 @@ bool gm_live(u32 now)
                      "the ARM9 keeps copying the screen\n", s, why_name[why], (unsigned)gm->selftest_bad,
                      (unsigned)gm->first_bad[0], (unsigned)gm->first_bad[1], (unsigned)gm->first_bad[2]);
         else if (st == GM_ST_FAILED && why == GM_WHY_TIMEOUT)
-            log_warn("[gpu] display mirror %s (%s, register 0x%08x); the ARM9 keeps copying the screen\n", s,
-                     why_name[why], (unsigned)gm->first_bad[3]);
+            log_warn("[gpu] display mirror %s (%s: operation %u of a frame did not finish, register 0x%08x); "
+                     "the ARM9 keeps copying the screen\n", s, why_name[why], (unsigned)gm->first_bad[0],
+                     (unsigned)gm->first_bad[3]);
         else if (st == GM_ST_FAILED || st == GM_ST_DISABLED)
             log_warn("[gpu] display mirror %s (%s); the ARM9 keeps copying the screen\n", s,
                      why < ARRAY_SIZE(why_name) ? why_name[why] : "?");

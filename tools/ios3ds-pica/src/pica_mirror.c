@@ -19,7 +19,10 @@ int pm_init(pica_mirror_t *m, const pm_plat_t *p, void *blob, uint32_t blob_pa, 
     for (i = 0; i < sizeof *m; i++)
         z[i] = 0;
     m->p = p;
-    m->timeout_ticks = p->tick_hz / 5;          /* 200 ms per operation */
+    /* 1 s per operation. Hardware needs ~0.6 ms (run12/13); a busy emulator
+       can need far more (soak4: a PPF read-out of the self-test missed the
+       old 200 ms limit). Only a GPU that has really stopped takes this long. */
+    m->timeout_ticks = p->tick_hz;
     if (b->magic != GM_BLOB_MAGIC || b->version != GM_BLOB_VERSION || b->blob_pa != blob_pa ||
         b->size > GM_BLOB_MAX || b->scr_pa != GM_SCR_PA || b->rt_top_pa != GM_RT_TOP_PA ||
         b->rt_bot_pa != GM_RT_BOT_PA || b->src_wh != (GM_SRC_H << 16 | GM_SRC_W))
@@ -185,12 +188,15 @@ int pm_poll(pica_mirror_t *m, uint32_t spin_ticks)
     }
 }
 
+/* thread context: poll in short slices, letting the platform breathe in
+   between (the shim: a 10 us delay; hammering the GX registers without a
+   pause can starve the emulator's GPU model of its lock) */
 static int wait_frame(pica_mirror_t *m)
 {
     int st;
-    do
-        st = pm_poll(m, m->timeout_ticks);
-    while (st == PM_BUSY);
+    while ((st = pm_poll(m, m->timeout_ticks >> 10)) == PM_BUSY)     /* ~1 ms slices */
+        if (m->p->relax)
+            m->p->relax();
     return st;
 }
 
@@ -246,7 +252,7 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
     if (pm_clear_targets(m)) {
         p->log("[gpu] mirror self-test: memory fill of the render targets timed out (PSC0 0x%08x PSC1 0x%08x)\n",
                p->rd(GXO(GX_PSC_FILL0) + 12), p->rd(GXO(GX_PSC_FILL1) + 12));
-        return -1;
+        return PM_SELFTEST_TIMEOUT;
     }
     f.src_pa = src_pa;
     f.mode = 1;
@@ -261,11 +267,17 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
         m->variant = v;
         pm_begin(m, &f);
         if (wait_frame(m) != PM_DONE) {
-            p->log("[gpu] mirror self-test: GPU operation %u of %u (%s) did not finish, register 0x%08x\n",
-                   m->cur + 1, m->nops, m->op[m->cur].kind == PM_OP_P3D ? "P3D list" :
+            p->log("[gpu] mirror self-test: GPU operation %u of %u (%s) did not finish within %u ticks (1 s), "
+                   "register 0x%08x\n", m->cur + 1, m->nops, m->op[m->cur].kind == PM_OP_P3D ? "P3D list" :
                    m->op[m->cur].kind == PM_OP_PPF ? "PPF transfer" : "PPF texture copy",
-                   m->why_timeout);
-            return -1;
+                   m->timeout_ticks, m->why_timeout);
+            if (bad0)
+                *bad0 = 0;
+            if (first_bad) {
+                first_bad[0] = m->cur + 1;
+                first_bad[3] = m->why_timeout;
+            }
+            return PM_SELFTEST_TIMEOUT;
         }
         p->from_gpu(out_va, total);
         for (i = 0; i < guard; i++)

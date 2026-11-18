@@ -14,7 +14,7 @@ ENGINE := $(ADD)/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle
 GLTEST := $(ADD)/usr/libexec/ios3ds-gltest
 HOSTDIR := $(ROOT)/build/gl-host
 
-CORE  := api.c draw.c raster.c pica_be.c
+CORE  := api.c draw.c raster.c pica_be.c ca.c
 HDRS  := engine.h gl_defs.h gl_slots.h
 # PICA200 back end (docs/pica200.md): command encoders shared with the tests;
 # the GPU itself is the kernel shim on iOS and the software model on the host

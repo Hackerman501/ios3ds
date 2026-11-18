@@ -35,7 +35,13 @@ typedef struct Tex {
     int gen_mipmap;
     void *be_priv;              /* back end's copy (PICA200: texture in linear memory) */
     unsigned be_seq;            /* bumped whenever px changes */
+    int rect;                   /* last bound as GL_TEXTURE_RECTANGLE (0x84F5): texcoords in texels */
 } Tex;
+
+/* QuartzCore binds IOSurface-backed images and its display surface with
+   0x84F5 (GL_TEXTURE_RECTANGLE_ARB / _NV): same object namespace as 2D */
+#define GL_TEXTURE_RECTANGLE_IOS 0x84F5
+#define IS_TEX_TARGET(t) ((t) == GL_TEXTURE_2D || (t) == GL_TEXTURE_RECTANGLE_IOS)
 
 typedef struct Buf {
     GLuint name;
@@ -136,6 +142,10 @@ typedef struct Backend {
     void (*tex_deleted)(Tex *);
     /* make sure everything drawn so far is in rt->color (optional) */
     void (*finish)(GC *, RT *);
+    /* glFlush / glFinish / CA's swap: write every target the back end holds
+       newer than its memory back (optional; QuartzCore flushes with FBO 0
+       bound and expects its IOSurfaces to be current) */
+    void (*flush_all)(GC *);
 } Backend;
 
 struct GC {
@@ -223,6 +233,11 @@ void tex_release_surface(Tex *t);
 extern const Backend sw_backend;
 extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */
 int pica_backend_init(void);            /* 1 = the GPU is usable */
+int pica_ca_gate(void);
+typedef struct { unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb; } PicaStats;
+void pica_backend_stats2(PicaStats *s);
+int ca_scene_check(void);               /* ca.c: GPU vs CPU on a CA-like scene, 1 = close enough */
+void ca_frame(void);                    /* ca.c: one CA swap (statistics) */                 /* 1 = CoreAnimation may composite with this engine (on the GPU) */
 void pica_forget(const void *mem);
 void pica_backend_stats(unsigned *lists, unsigned *draws);
 const Backend *gl_pick_backend(void);

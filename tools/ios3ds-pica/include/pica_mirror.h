@@ -23,6 +23,7 @@ typedef struct pm_plat {
     void (*to_gpu)(void *p, uint32_t len);  /* self-test buffers: clean / invalidate */
     void (*from_gpu)(void *p, uint32_t len);
     void (*log)(const char *fmt, ...);      /* thread context only (self-test) */
+    void (*relax)(void);                    /* thread context: pause between polls (may be NULL) */
 } pm_plat_t;
 
 typedef struct {
@@ -75,11 +76,13 @@ int pm_poll(pica_mirror_t *m, uint32_t spin_ticks);
  * GM_BOT_FB_BYTES, with `guard` bytes of sentinel before and after) and
  * compare every byte with gm_map(). Tries the GM_VAR_* variants in order
  * and keeps the first exact one in m->variant.
- * Returns the variant, or -1. bad0 / first_bad[4] describe the default
+ * Returns the variant, or PM_SELFTEST_MISMATCH / PM_SELFTEST_TIMEOUT. bad0 / first_bad[4] describe the default
  * variant's result (mismatching bytes; offset, expected, got, ops).
  */
 int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out_va, uint32_t out_pa,
                 uint32_t guard, uint32_t *bad0, uint32_t first_bad[4]);
+#define PM_SELFTEST_MISMATCH (-1)   /* no variant matched (or the guard was hit) */
+#define PM_SELFTEST_TIMEOUT  (-2)   /* a GPU operation did not finish: first_bad[0] = operation, [3] = register */
 
 /* The self-test picture: unique per pixel, alpha deliberately not 0xFF. */
 static inline uint32_t pm_pattern(uint32_t x, uint32_t y)

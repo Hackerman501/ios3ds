@@ -256,6 +256,10 @@ static int glesCreateGC(void *sg, void **front, void **back, void **out)
     static int said;
     if (!sg)
         return 0;
+#ifdef GL_PICA
+    if (getenv("IOS3DS_CA") && !pica_ca_gate())
+        return 0;                       /* QuartzCore falls back to its software compositor */
+#endif
     gc = gl_gc_new(sg);
     if (!gc)
         return 0;
@@ -427,9 +431,12 @@ static int glesSwapNotification(void *gc, uint32_t fb_id, uint32_t transaction, 
 {
     static void *fb;
     static unsigned calls;
-    (void)gc; (void)fb_id;
+    (void)fb_id;
     if (!calls++)
         log_callers("first SwapNotification");
+    if (gc && ((GC *)gc)->be->flush_all)
+        ((GC *)gc)->be->flush_all(gc);      /* the display surface must be current before the swap */
+    ca_frame();
     io_init();
     if (!fb && io.fb_main)
         io.fb_main(&fb);

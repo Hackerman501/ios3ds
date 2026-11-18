@@ -450,7 +450,7 @@ Fallbacks to the ARM9 CPU copy, each logged:
 - boot.cfg `gpu=0` (nothing touches the GPU, GL included) or `gpu_mirror=0`;
 - no gpu.bin, GPU bring-up failure, framebuffers overlapping the mirror's VRAM;
 - self-test: no exact variant, sentinel overwritten, or an operation timing out;
-- at run time: an operation not finishing within 200 ms → mirror off for good;
+- at run time: an operation not finishing within 1 s (it was 200 ms until soak 4, re-log 47) → mirror off for good;
 - iOS framebuffer not 320x480 32 bpp in /vram → frames skipped;
 - GL holding the GPU for over a second → the ARM9 copies until frames resume.
 
@@ -499,7 +499,7 @@ log will show it.
 | texture | NPOT 320x480 RGBA8 texture, nearest, clamp | the PICA200 samples NPOT textures (Citra handles any size; libctru's docs ask for POT) | **denied by run 13** (§13): now a 512x512 texture |
 | sampling | truncation (Citra) tried first, rounding second | — | `variant 0 (as modelled)` vs `variant 1 (sampling rounds)` |
 | row order | texture and render-target rows as Citra stores them tried first, flips after | — | the variant number (bits 2 and 4) |
-| GPU hang | every mirror operation has a 200 ms limit; a timeout switches the mirror off for good, the ARM9 notices within 1 s | — | `[gpu] display mirror FAILED (GPU timeout)` + `[gpu] screen copy: ARM9 CPU again` |
+| GPU hang | every mirror operation has a 1 s limit (200 ms until soak 4); a timeout switches the mirror off for good, the ARM9 notices within 1 s | — | `[gpu] display mirror FAILED (GPU timeout: operation N of a frame did not finish, register …)` or, in the self-test, `self-test aborted, GPU operation N did not finish` + `[gpu] screen copy: ARM9 CPU again` |
 
 ## 11. First hardware run of `agent/gpu`: what to look at
 

@@ -47,7 +47,7 @@ and numbers.
 |---|---|
 | file patch, cache file offset 0x4ff9458 (OpenGLES `__cstring`, VA 0x34ff9458): `"AppleMBXDevice\0"` → `"IOResources\0\0\0\0"` | Step 2 now matches the always-registered `IOResources` nub. No kernel or device-tree change is needed. Only OpenGLES's copy of the string changes; the copies in MBX2D and MBXGLEngine are untouched. |
 | write `/System/Library/Caches/com.apple.dyld/enable-dylibs-to-override-cache` | `MBXGLEngine` is in the shared cache. With this switch, dyld (`sDylibsOverrideCache`) loads the on-disk file at the same path instead. The rootfs keeps no other cached dylibs on disk (only 12 symlinks into frameworks that exist only in the cache), so nothing else changes. |
-| file patch, cache file offset 0x46de620 (QuartzCore `CA::WindowServer::M2Display::M2Display`, VA 0x346de620): `bl Display::eagl_context` → `mov r0,#0` | The display constructor probes `eagl_context(2)` and then `eagl_context(1)`. If either one succeeds, the display is marked GL-capable (`+0x17c` = API) and SpringBoard's render server stops software-compositing. It never calls the engine either, so the screen stays black (seen in QEMU even with `CA_ENABLE_OGL=0`). Skipping the ES1 probe keeps the software compositor, while every other process still gets EAGL. |
+| file patch, cache file offset 0x46de6a8 (QuartzCore `CA::WindowServer::M2Display::M2Display` literal pool, VA 0x346de6a8): `'L565'` → `'BGRA'` | The display constructor probes `eagl_context(2)`, then `eagl_context(1)`; on success it stores the API at `+0x17c` and the display surface format at `+0x180`: `'BGRA'` for API 2, `'L565'` (16 bpp) for API 1. With this patch an ES1 compositor renders the 32 bpp surfaces the CLCD scans out and the screen mirror reads. (Until 2026-11-18 a patch at 0x46de620 skipped the ES1 probe instead, keeping CA's software compositor; §7.) |
 | add `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine` (0755) | Our engine, ad-hoc signed. The bundle's stock `Info.plist` already names `MBXGLEngine` as its executable. |
 | add `/usr/libexec/ios3ds-gltest` and `com.ios3ds.gltest.plist` | The test program (§5). |
 
@@ -207,11 +207,89 @@ Verified in QEMU (`-M nintendo3ds`, 450 s boot, gltest args `360 60`):
 
 Screenshots aren't committed (iOS artwork); rerun the commands above to reproduce them.
 
-**Verified only by RE, not exercised yet:** `BindView`/`PresentView` (the CAEAGLLayer path of a UIKit GL app), texture-from-IOSurface, and `SwapNotification`. Running CA's own GL compositor (dropping the QuartzCore patch, `CA_ENABLE_OGL=1`) would also need 16-bit `'L565'` surfaces, which `M2Display` chooses for API 1 (`+0x180`). `BindCoreSurface` currently rejects those. A 32-bit shadow converted at flush/swap would do.
+**Verified only by RE, not exercised yet:** `BindView`/`PresentView` (the CAEAGLLayer path of a UIKit GL app). Texture-from-IOSurface and `SwapNotification` now run in CA's compositor (§7).
 
 **Next:**
-- Run QuartzCore's GL compositor on it: drop the M2Display patch, set
-  `CA_ENABLE_OGL=1`, and support L565 render targets;
+- CA compositor without the per-frame read-back of the display surface (§7);
 - a UIKit GL app through CAEAGLLayer;
 - PVRTC decode and mipmaps;
 - the PICA200 back end on real hardware ([pica200.md](pica200.md) §8).
+
+## 7. CoreAnimation's compositor on the engine (and on the PICA200)
+
+SpringBoard is the render server: QuartzCore's `CA::WindowServer` composites
+every app's layers into the display surface. Without an EAGL engine it does
+that in software on the ARM11; with one it uses `CA::OGL::GLESContext`, i.e.
+OpenGL ES 1.1 through our engine, and with the PICA back end the per-pixel
+work (blending, texture sampling, transforms) moves to the GPU.
+
+### How CA drives the engine (RE of 8C148's QuartzCore)
+
+- **Display probe** (`M2Display::M2Display`, 0x346de5b8): `eagl_context(2)`,
+  then `eagl_context(1)` (= `-[EAGLContext initWithAPI:]`, i.e. our
+  `CreateSharegroup`/`CreateGC`). The first that succeeds selects GL
+  compositing; API 1 picks the surface format `'L565'`, patched to `'BGRA'`.
+- **Display surface as render target** (`GLESContext::make_buffer_current`,
+  0x3470d274): `glGenTextures`, `glBindTexture(0x84F5, …)` (0x84F5 =
+  GL_TEXTURE_RECTANGLE), NEAREST/CLAMP parameters, then
+  `-[EAGLContext attachImage:toCoreSurface:invertedRender:NO]` with target
+  0x84F5 = our `BindCoreSurface` (the texture's pixels are the IOSurface),
+  then an FBO with that texture as `GL_COLOR_ATTACHMENT0`.
+- **GL usage**: the 44 imported `gl*` functions (§3), all implemented. Per
+  call site (disassembly of the whole `__text`, imports resolved through
+  `__picsymbolstub4` + the indirect symbol table): textures bound with a
+  per-image target (2D or 0x84F5), `glTexEnvfv(GL_TEXTURE_ENV_COLOR)` and
+  `GL_COMBINE` tables, `glTexImage2D`/`SubImage2D` uploads,
+  `glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE)` (only with
+  APPLE_client_storage, not advertised), `glGetString(0x8A1E)` after
+  `GL_EXTENSIONS` (an Apple-private second list), `glGetIntegerv(0x84F8)`
+  (max rectangle texture size), and `glFlush` with FBO 0 bound before the swap.
+- **Present**: `SwapNotification` → `IOMobileFramebufferSwapSignal`.
+
+### What the engine needed
+
+| first run's symptom | fix |
+|---|---|
+| `glBindTexture(0x84F5)` → GL_INVALID_ENUM | 0x84F5 accepted wherever GL_TEXTURE_2D is (bind, parameters, images, enable); a texture last bound as 0x84F5 takes texel coordinates (host test: same pixels as 2D with 0..1) |
+| `[gl] Get: unknown pname 0x84f8` | max rectangle size = 1024 |
+| `GL error 0x500` in `GetString` → `CoreAnimation: rendering error 500` | `glGetString(0x8A1E)` returns "" |
+| screen black except for one icon | `glFlush` did nothing and `glFinish` only synced the *bound* framebuffer; CA flushes with FBO 0 bound. Now `glFlush`/`glFinish`/`SwapNotification` write every GPU target back (`Backend.flush_all`) |
+
+`IOS3DS_GL_TRACE=1` (set for SpringBoard) logs the first GL error of every
+call site as `[gl] trace: GL error 0x… at engine+0x…` (look it up with `nm`).
+
+### Switching it on, and falling back
+
+SpringBoard's environment (rootfs/recipe.json) has `CA_ENABLE_OGL=1` and
+`IOS3DS_CA=1`. In a process with `IOS3DS_CA`, the first `CreateGC` decides
+once (`tools/ios3ds-gl/ca.c`, `pica_ca_gate`):
+1. boot.cfg `ca_gpu` (and `gpu`) through the GPU service (`PICA_OP_CONFIG`);
+2. the PICA200 back end's bring-up and self-check;
+3. a CA-like scene (clear, premultiplied textured quad, rotated translucent
+   fill) drawn on the CPU rasterizer and on the GPU and compared (≤ 2 % of
+   pixels may differ by more than 24, polygon edges).
+
+If any step fails the context is refused: QuartzCore's probe fails and CA
+composites in software exactly as before (one `[gl] CA compositor: software
+(…)` line). CA on our *CPU* rasterizer is never used, it would be slower than
+CA's own software path. A GPU failure later in the run turns the back end
+into the CPU rasterizer for the rest of the run (`[gl] pica: … GPU rendering
+is OFF`): the screen keeps working, slower. Kill switch: boot.cfg `ca_gpu=0`
+(or `gpu=0`).
+
+### Results (QEMU, re-log 46)
+
+- Home screen, Spotlight + keyboard, page swipes, and app launches and exits
+  (`emu/soak.py`: PASS) render through the PICA200 model; screenshots against the software
+  compositor at the same moments: 2181 of 192000 pixels differ, by at most 1
+  (rounding), on still frames; animation frames differ where the two runs
+  are at different animation times.
+- Cost: see re-log 46. In QEMU the GPU path is not cheaper for SpringBoard,
+  because every frame writes the whole 320x480 display surface back through
+  the arena (PPF tiled→linear, copy-out, a per-pixel byte rotation), and
+  QEMU runs CA's software compositor at host speed. The engine logs
+  `[gl] CA: … per frame: render thread CPU … us, … read-backs (… KiB)` every
+  300 frames, so a hardware run measures it directly.
+- Next: present without the CPU read-back (render the final frame through a
+  GPU swizzle pass and PPF it straight into the display surface's physical
+  memory, which is VRAM), and read back only the rows CA changed.

@@ -5,11 +5,15 @@
  * in core registers). gl_install_dispatch() puts them into the framework's
  * __GLIFunctionDispatchRec by slot number (gl_slots.h).
  * SPDX-License-Identifier: GPL-3.0-or-later */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE             /* dladdr on the build host */
+#endif
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -41,8 +45,26 @@ void gl_log(const char *fmt, ...)
     write(fd, buf, n);
 }
 
+/* IOS3DS_GL_TRACE=1: log the first error of every call site (address
+   relative to the engine's load address: look it up with nm) */
 void gl_set_error(GC *gc, GLenum e)
 {
+    static int trace = -1, n;
+    static const void *seen[64];
+    if (trace < 0)
+        trace = getenv("IOS3DS_GL_TRACE") != NULL;
+    if (trace && n < 64) {
+        const void *ra = __builtin_return_address(0);
+        Dl_info di;
+        int k;
+        for (k = 0; k < n && seen[k] != ra; k++)
+            ;
+        if (k == n) {
+            seen[n++] = ra;
+            gl_log("trace: GL error 0x%x at engine+0x%lx", e,
+                   dladdr(ra, &di) ? (unsigned long)((const char *)ra - (const char *)di.dli_fbase) : 0ul);
+        }
+    }
     if (gc->error == GL_NO_ERROR)
         gc->error = e;
 }
@@ -124,6 +146,8 @@ const Backend *gl_pick_backend(void)
 {
 #ifdef GL_PICA
     const char *e = getenv("IOS3DS_GL");
+    if (getenv("IOS3DS_CA"))
+        e = "pica";                     /* CoreAnimation's compositor: only on the GPU (pica_ca_gate) */
     if (e && (!strcmp(e, "pica") || !strcmp(e, "auto"))) {
         if (pica_backend_init())
             return &pica_backend;
@@ -583,6 +607,8 @@ static void api_ClipPlanex(GC *gc, GLenum plane, const GLfixed *eq)
 
 static void api_PixelStorei(GC *gc, GLenum pname, GLint v)
 {
+    if (pname == 0x85B2)                /* GL_UNPACK_CLIENT_STORAGE_APPLE: we always copy */
+        return;
     if (v != 1 && v != 2 && v != 4 && v != 8)
         gl_set_error(gc, GL_INVALID_VALUE);
     else if (pname == GL_UNPACK_ALIGNMENT)
@@ -597,7 +623,8 @@ static int *cap_ptr(GC *gc, GLenum cap)
 {
     static int dummy;
     switch (cap) {
-    case GL_TEXTURE_2D:         return &gc->tu[gc->active_tex].enabled;
+    case GL_TEXTURE_2D:
+    case GL_TEXTURE_RECTANGLE_IOS: return &gc->tu[gc->active_tex].enabled;
     case GL_CULL_FACE:          return &gc->cull;
     case GL_SCISSOR_TEST:       return &gc->scissor_on;
     case GL_ALPHA_TEST:         return &gc->alpha_test;
@@ -867,14 +894,17 @@ static void api_DeleteTextures(GC *gc, GLsizei n, const GLuint *names)
 
 static void api_BindTexture(GC *gc, GLenum target, GLuint name)
 {
-    if (target != GL_TEXTURE_2D) {
+    Tex *t;
+    if (!IS_TEX_TARGET(target)) {
         gl_set_error(gc, GL_INVALID_ENUM);
         return;
     }
-    if (!tex_lookup(gc, name, 1)) {
+    if (!(t = tex_lookup(gc, name, 1))) {
         gl_set_error(gc, GL_OUT_OF_MEMORY);
         return;
     }
+    if (name)
+        t->rect = target == GL_TEXTURE_RECTANGLE_IOS && !getenv("IOS3DS_GL_RECT_NORMALIZED");
     gc->tu[gc->active_tex].bound = name;
 }
 
@@ -1016,7 +1046,7 @@ static void api_TexImage2D(GC *gc, GLenum target, GLint level, GLint ifmt, GLsiz
     GLenum base = base_format(format);
     int bpp = src_bpp(format, type), y, row;
     (void)ifmt;
-    if (target != GL_TEXTURE_2D) {
+    if (!IS_TEX_TARGET(target)) {
         gl_set_error(gc, GL_INVALID_ENUM);
         return;
     }
@@ -1048,7 +1078,7 @@ static void api_TexSubImage2D(GC *gc, GLenum target, GLint level, GLint x, GLint
 {
     Tex *t;
     int bpp = src_bpp(format, type), j, row;
-    if (target != GL_TEXTURE_2D || !bpp) {
+    if (!IS_TEX_TARGET(target) || !bpp) {
         gl_set_error(gc, GL_INVALID_ENUM);
         return;
     }
@@ -1114,7 +1144,7 @@ static void api_CompressedTexSubImage2D(GC *gc, GLenum target, GLint level, GLin
 static void texparam(GC *gc, GLenum target, GLenum pname, GLint v)
 {
     Tex *t = gl_bound_tex(gc, gc->active_tex);
-    if (target != GL_TEXTURE_2D || !t) {
+    if (!IS_TEX_TARGET(target) || !t) {
         gl_set_error(gc, GL_INVALID_ENUM);
         return;
     }
@@ -1125,7 +1155,11 @@ static void texparam(GC *gc, GLenum target, GLenum pname, GLint v)
     case GL_TEXTURE_WRAP_T:     t->wrap_t = v; break;
     case GL_GENERATE_MIPMAP:    t->gen_mipmap = v; break;
     case GL_TEXTURE_MAX_ANISOTROPY_EXT: break;
-    default: gl_set_error(gc, GL_INVALID_ENUM); return;
+    case 0x813C: case 0x813D:   break;                           /* GL_TEXTURE_BASE/MAX_LEVEL_APPLE: one level */
+    default:
+        gl_log("TexParameter: unknown pname %#x (value %d)", pname, v);
+        gl_set_error(gc, GL_INVALID_ENUM);
+        return;
     }
     gl_tex_dirty(gc, t);
 }
@@ -1172,7 +1206,10 @@ static void api_GetTexParameteriv(GC *gc, GLenum target, GLenum pname, GLint *ou
     case GL_TEXTURE_WRAP_T:     *out = t->wrap_t; break;
     case GL_GENERATE_MIPMAP:    *out = t->gen_mipmap; break;
     case GL_TEXTURE_CROP_RECT_OES: memcpy(out, t->crop, sizeof t->crop); break;
-    default: gl_set_error(gc, GL_INVALID_ENUM);
+    case 0x84FE:                *out = 1; break;                /* GL_TEXTURE_MAX_ANISOTROPY_EXT */
+    default:
+        gl_log("GetTexParameter: unknown pname %#x", pname);
+        gl_set_error(gc, GL_INVALID_ENUM);
     }
 }
 static void api_GetTexParameterfv(GC *gc, GLenum target, GLenum pname, GLfloat *out)
@@ -1192,7 +1229,10 @@ static void texenv_fv(GC *gc, GLenum target, GLenum pname, const GLfloat *v)
     GLenum iv = (GLenum)v[0];
     if (target == GL_POINT_SPRITE_OES)
         return;                 /* GL_COORD_REPLACE_OES: sprites always replace */
+    if (target == 0x8500 && pname == 0x8501)
+        return;                 /* GL_TEXTURE_LOD_BIAS_EXT: there are no mipmaps to bias */
     if (target != GL_TEXTURE_ENV) {
+        gl_log("TexEnv: unknown target %#x (pname %#x)", target, pname);
         gl_set_error(gc, GL_INVALID_ENUM);
         return;
     }
@@ -1207,7 +1247,9 @@ static void texenv_fv(GC *gc, GLenum target, GLenum pname, const GLfloat *v)
     case GL_SRC0_ALPHA: case GL_SRC1_ALPHA: case GL_SRC2_ALPHA: e->src_a[pname - GL_SRC0_ALPHA] = iv; break;
     case GL_OPERAND0_RGB: case GL_OPERAND1_RGB: case GL_OPERAND2_RGB: e->op_rgb[pname - GL_OPERAND0_RGB] = iv; break;
     case GL_OPERAND0_ALPHA: case GL_OPERAND1_ALPHA: case GL_OPERAND2_ALPHA: e->op_a[pname - GL_OPERAND0_ALPHA] = iv; break;
-    default: gl_set_error(gc, GL_INVALID_ENUM);
+    default:
+        gl_log("TexEnv: unknown pname %#x (value %g)", pname, v[0]);
+        gl_set_error(gc, GL_INVALID_ENUM);
     }
 }
 static void api_TexEnvfv(GC *gc, GLenum t, GLenum p, const GLfloat *v) { texenv_fv(gc, t, p, v); }
@@ -1767,12 +1809,17 @@ static void api_DrawTexiv(GC *gc, const GLint *c) { gl_draw_tex(gc, c[0], c[1], 
 static void api_DrawTexsv(GC *gc, const GLshort *c) { gl_draw_tex(gc, c[0], c[1], c[2], c[3], c[4]); }
 static void api_DrawTexxv(GC *gc, const GLfixed *c) { gl_draw_tex(gc, x2f(c[0]), x2f(c[1]), x2f(c[2]), x2f(c[3]), x2f(c[4])); }
 
-static void api_Flush(GC *gc) { (void)gc; }
+static void api_Flush(GC *gc)
+{
+    if (gc->be->flush_all)
+        gc->be->flush_all(gc);
+}
 static void api_Finish(GC *gc)
 {
     RT rt;
     if (gc->be->finish && gl_get_rt(gc, &rt))
         gc->be->finish(gc, &rt);
+    api_Flush(gc);
 }
 
 /* APPLE_fence / object waits: everything is synchronous here. */
@@ -1819,7 +1866,10 @@ static const GLubyte *api_GetString(GC *gc, GLenum name)
     case GL_RENDERER:   return (const GLubyte *)gc->be->name;
     case GL_VERSION:    return (const GLubyte *)"OpenGL ES-CM 1.1 ios3ds";
     case GL_EXTENSIONS: return (const GLubyte *)gl_extensions;
+    case 0x8A1E:        return (const GLubyte *)"";     /* QuartzCore asks right after GL_EXTENSIONS (an
+                                                           Apple-private second extension list); none */
     }
+    gl_log("GetString: unknown name %#x", name);
     gl_set_error(gc, GL_INVALID_ENUM);
     return NULL;
 }
@@ -1836,6 +1886,8 @@ static int get_values(GC *gc, GLenum pname, float *v, int *kind)
     *kind = T_INT;
     switch (pname) {
     case GL_MAX_TEXTURE_SIZE: v[0] = MAX_TEX_SIZE; return 1;
+    case 0x84F8:              v[0] = MAX_TEX_SIZE; return 1;    /* GL_MAX_RECTANGLE_TEXTURE_SIZE (QuartzCore) */
+    case 0x84FD:              v[0] = 4; return 1;               /* GL_MAX_TEXTURE_LOD_BIAS_EXT */
     case GL_MAX_RENDERBUFFER_SIZE: v[0] = 2048; return 1;
     case GL_MAX_TEXTURE_UNITS: v[0] = MAX_TEX_UNITS; return 1;
     case GL_MAX_LIGHTS: v[0] = MAX_LIGHTS; return 1;

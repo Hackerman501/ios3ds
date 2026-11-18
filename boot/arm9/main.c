@@ -110,7 +110,7 @@ typedef struct {
     u32 probes;
     u32 display_regs;
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
-    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag;  /* PICA200 (gpumirror.c, docs/pica200.md) */
+    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag, ca_gpu;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
     u32 mcu_acc;         /* 0: no accelerometer for iOS */
     u32 powersave;       /* 0: no power saving while iOS' screen is off */
@@ -155,6 +155,7 @@ static int parse_bootcfg(char *txt)
     cfg.gpu_vbl_div = 2;
     cfg.gpu_clk = 1;
     cfg.gpu_diag = 1;
+    cfg.ca_gpu = 1;
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
     cfg.powersave = 1;
@@ -172,6 +173,7 @@ static int parse_bootcfg(char *txt)
         { "screen", &cfg.screen },
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
+        { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
     };
     int lineno = 0;
@@ -844,7 +846,7 @@ void a9_main(int argc, char **argv)
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
     mcu_set_led(cfg.notify_led != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
-        u32 g[6] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag };
+        u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
     }
     if (!cfg.jump) {

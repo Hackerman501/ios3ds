@@ -65,7 +65,8 @@ typedef struct {
     uint32_t spin_us;       /* IRQ-time busy-wait budget per step (0 = never wait) */
     uint32_t gpu_clk;       /* boot.cfg gpu_clk=  1: set GX_GPU_CLK = 0x70100 at bring-up if it reads 0 */
     uint32_t gpu_diag;      /* boot.cfg gpu_diag= 1: staged GPU diagnostics at bring-up ([gpu-diag] lines) */
-    uint32_t _r1[2];
+    uint32_t ca_gpu;        /* boot.cfg ca_gpu=   1: CoreAnimation may composite on the GPU (docs/gpu.md 7) */
+    uint32_t _r1[1];
     /* line 2: ARM11 status (cleaned to RAM after every update) */
     uint32_t state;         /* GM_ST_* */
     uint32_t reason;        /* GM_WHY_* when FAILED / DISABLED */

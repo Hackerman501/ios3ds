@@ -183,6 +183,7 @@ static int transform(GC *gc, int lo, int hi)
 {
     Fetch fv, fc, fn, ft[MAX_TEX_UNITS];
     int has_c, has_n, has_t[MAX_TEX_UNITS], use_t[MAX_TEX_UNITS], i, u, n = hi - lo + 1;
+    float rect_w[MAX_TEX_UNITS], rect_h[MAX_TEX_UNITS];
     const Mat4 *mvp = mvp_get(gc), *mv = &gc->mv[gc->mv_depth];
     float nm[9];
     int need_eye = gc->lighting || gc->fog;
@@ -202,8 +203,11 @@ static int transform(GC *gc, int lo, int hi)
     has_c = fetch_init(gc, &fc, &gc->a_color);
     has_n = gc->lighting && fetch_init(gc, &fn, &gc->a_normal);
     for (u = 0; u < MAX_TEX_UNITS; u++) {
+        Tex *tx = gl_bound_tex(gc, u);
         use_t[u] = gc->tu[u].enabled;
         has_t[u] = use_t[u] && fetch_init(gc, &ft[u], &gc->a_texcoord[u]);
+        rect_w[u] = use_t[u] && tx && tx->rect && tx->w ? (float)tx->w : 0;
+        rect_h[u] = use_t[u] && tx && tx->rect && tx->h ? (float)tx->h : 1;
     }
     if (gc->lighting)
         normal_matrix(mv, nm);
@@ -260,6 +264,10 @@ static int transform(GC *gc, int lo, int hi)
             if (t[3] != 1 && t[3] != 0) {
                 t[0] /= t[3];
                 t[1] /= t[3];
+            }
+            if (rect_w[u]) {                    /* rectangle texture: texel units */
+                t[0] /= rect_w[u];
+                t[1] /= rect_h[u];
             }
             out->t[u][0] = t[0];
             out->t[u][1] = t[1];
