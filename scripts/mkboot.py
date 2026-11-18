@@ -37,7 +37,7 @@ RING_BUF = 0x40000            # power of two; ring header (16 bytes) precedes it
 RING_SIZE = RING_BUF + 16
 SHIM_PA = 0x20840000          # fixed: the shim is linked at VA 0x80840000 (boot/common/ios3ds.h)
 SHIM_SIZE = 0x10000
-DEFAULT_CMDLINE = "rd=md0 debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+DEFAULT_CMDLINE = "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
 
 
 def align(x, a):

@@ -665,3 +665,17 @@ Design and RE notes: docs/gpu.md §7.
 - **Why late:** the QEMU GX model completes an operation from a virtual-time timer that needs the BQL; the shim's self-test polled GX registers in a tight loop (each MMIO read takes the BQL). On a busy host (several QEMUs) the timer can wait a long time. Measured with the merged (rel) QEMU on a loaded host: upload 44871 ticks, read-out 75494 ticks (~45/75 ms) for operations modelled at 0.4 ms — the 200 ms limit had a margin of ~3. Not reproduced as a failure in this worktree.
 - **Fixes:** 1 s per operation; thread-context waits poll in ~1 ms slices with a 10 µs `IODelay` between; the QEMU model runs due operations when a GX register is read; `pm_selftest` returns `PM_SELFTEST_TIMEOUT` with the operation and register, logged as `self-test aborted, GPU operation N did not finish` and reported as `GM_WHY_TIMEOUT` (ARM9: `display mirror FAILED (GPU timeout: operation N of a frame did not finish, register …)`). Host test: a hung GPU gives `PM_SELFTEST_TIMEOUT`, operation 3.
 - **After the fix (plain QEMU, this worktree, merged main):** self-test read-out ~55 ms → passes with margin; mirror active in plain and `--icount 2` boots.
+
+## 48. Timer interrupts while the screen is off (2026-11-18)
+- **Shim counters** (`xp /24wx 0x20840040`: +0x4C timer IRQs, +0x58 deferred FIQ retries, +0x78 VBlanks, +0x80 clock reads, +0x8C `set_decrementer` calls, +0x98 IRQs): with the screen on, 87 timer IRQs/s, 296 decrementer sets/s, 1363 clock reads/s. With it off, 140, 415 and 2055. No deferred retries in either.
+- **Sampling** (`set_decrementer` = shim+0x18, hardware breakpoint through QEMU's gdbstub, frame-pointer backtraces 18 deep):
+  - User frames end in `usleep` (dyld cache 0x32c9f117), called from ios3ds-input 0x70bc and ios3ds-mcud 0x7008 (both ARM `bl`, read with `llvm-objdump --macho`), or in `sleep` (0x32ce31ef, ios3ds-wifid).
+  - Kernel-only chains go through `thread_call_allocate+0x2bc` (0x80025019, the thread_call worker's block), through `assert_wait_deadline+0x212`, and through `STRDUP+0x764` (0x8005c52d).
+  - 0x8005c4f0 is XNU's `serial_keyboard_poll`: a loop calling the UART rx hook (0x8006b004 with 0,1,0,1), then `clock_interval_to_deadline(16, …)`, `assert_wait_deadline`, `thread_block`, i.e. 62.5 wakeups/s forever, with nothing to read (our rx-ready patch always says no). The boot-arg `serial=3` (bit 1 = keyboard) started it; `serial=1` keeps the serial console without it. After the change the chain is gone from the samples, and console output is unchanged.
+  - The thread_call worker's function call (`blx r8` at 0x80024fa6) is mostly BSD networking callouts: `ip_output+0x86f4`, `net_del_domain+0x5c` and `+0xb8`, `in6addr_local+…`, `sodisconnect+0xb9a`, `netboot_root+0x4` (nearest exported symbols). The mix is the same with the screen on and off; only their share of all timer arms doubles when off.
+- **No CoreAnimation:** no SpringBoard or QuartzCore user frames among the timer arms, so the guess in §43 was wrong.
+- **Changes:**
+  - `serial=1`;
+  - ios3ds-input at 10 Hz while `screen_off` (read from the MCU mailbox; samples queue in the ring, and hold timing now counts real sleep);
+  - ios3ds-mcud at 4 Hz while off.
+- **Result** (QEMU): off 146 IRQs/s (143 timer) instead of 245; on 127 instead of 144; ARM11 vCPU thread 10 % instead of 14 % host CPU while off. Table in docs/mcu.md §9.

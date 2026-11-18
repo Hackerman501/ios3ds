@@ -356,26 +356,51 @@ does. ios3ds-mcud therefore holds a `NoIdleSleepAssertion`
 (`IOPMAssertionCreateWithName`; argument `sleepok` disables it). The screen
 still goes off and the CPUs idle.
 
-**QEMU** (plain TCG, 94 s locked, `build/emu-p3` with powersave=1 and
-`build/emu-p4` with powersave=0, same boot and inputs):
+**Fewer wakeups while off.**
+- **Input daemon:** `ios3ds-input` polls its mailbox at 10 Hz instead of
+  60 Hz while the screen is off. It reads `screen_off` from
+  `kern.ios3ds_mcu`; button samples queue in the 30-deep ring, so HOME and
+  POWER still arrive within 100 ms. Its hold timing now counts real sleep
+  time.
+- **ios3ds-mcud:** runs at 4 Hz instead of 10 Hz while the screen is off,
+  reading the brightness every loop so a wake turns the backlight on at
+  once.
+- **Kernel:** the boot-args now say `serial=1` instead of `serial=3`.
+  Bit 1 started XNU's serial keyboard thread, which polled the
+  (never-ready) UART every 16 ms, at 62.5 Hz with the screen on or off
+  (re-log 48). Console output is unchanged.
 
-| | screen on | off, powersave=0 | off, powersave=1 |
+**QEMU** (plain TCG; locked about 80 s; shim counters read with
+`xp /24wx 0x20840040`; host CPU from the vCPU threads):
+
+| | screen on | off, before (powersave only) | off, now |
 |---|---|---|---|
-| ARM9 monitor loops/s | 1696 | 4371 | 520 (493 of them in WFI) |
-| ARM9 host-CPU thread | 39 % | — | 2 % |
-| ARM11 IRQs/s | 144 | 304 | 245 |
-| … of which VBlank | 30 | 59 | 0 |
-| … of which timer | ~114 | 242 | 243 |
-| ARM11 host-CPU thread | 8 % | — | 14 % |
+| ARM9 monitor loops/s | 1837 | 520 (493 in WFI) | 530 (495 in WFI) |
+| ARM9 vCPU thread, host CPU | 42 % | 2 % | 2 % |
+| ARM11 IRQs/s | 127 (31 VBlank) | 245 (0 VBlank) | 146 (0 VBlank) |
+| ARM11 timer IRQs/s | ~96 | 243 | 143 |
+| ARM11 set_decrementer calls/s | 296 | — | 416 |
+| ARM11 vCPU thread, host CPU | 7 % | 14 % | 10 % |
 
-Wake works in both cases: `[power] iOS screen on again after 94 s off`,
-then the lock screen and the unlock.
+For comparison, powersave=0 while off: 4371 ARM9 loops/s, 304 ARM11 IRQs/s
+(59 of them VBlank).
 
-**ARM11 timer interrupts double while the screen is off,** with and without
-powersave, so this is iOS' own behaviour. All iOS threads are waiting
-(ios3ds-sample), and the heartbeat PCs are the idle WFI. A likely cause is
-CoreAnimation timers replacing the stopped CLCD frame interrupts; not
-changed here.
+**Where the remaining ARM11 timer interrupts come from** (re-log 48):
+- Method: breakpoints in QEMU's gdbstub on the shim's `set_decrementer`
+  (backtraces including user frames) and on the `thread_call` worker's
+  function call.
+- What arms timers while the screen is off: `usleep` in ios3ds-mcud, in
+  ios3ds-input and (1 Hz) in ios3ds-wifid; kernel `thread_call` timers,
+  which are BSD networking callouts (resolved callees: `ip_output+0x86f4`,
+  `net_del_domain+0x5c/+0xb8`, and others); and the serial keyboard poll,
+  now gone.
+- The CoreAnimation guess was wrong: no SpringBoard or QuartzCore frames
+  show up among the timer arms.
+- The networking callouts' share of the timer arms doubles when the screen
+  goes off, with the same mix of functions. My guess: with the screen on,
+  the busy (emulated) CPU makes them fire less often. They are left alone
+  (they are XNU's own protocol timers); about 140 timer interrupts per
+  second on an idle ARM11 cost well under 1 % CPU.
 
 **"Where is my backlight?" ~3x/s after a wake:** AppleM2CLCD's
 `safe_enable_backlight` (0x807a95d0) finds no backlight service, logs, and

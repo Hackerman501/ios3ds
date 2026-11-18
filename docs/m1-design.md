@@ -72,7 +72,7 @@ The ARM9 checks every rule the kernel imposes before it jumps:
 
 | Key | Meaning |
 |---|---|
-| `cmdline` | XNU boot-args (default `debug=0x8 serial=3 amfi_allow_any_signature=1 cs_enforcement_disable=1`) |
+| `cmdline` | XNU boot-args (default `debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1`) |
 | `jump` | `0` = load everything but don't start XNU |
 | `countdown_ms` | delay before the jump; hold **B** to cancel |
 | `probes` | `0` = skip the ARM11 instruction probes |

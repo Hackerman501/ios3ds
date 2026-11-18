@@ -29,6 +29,7 @@
 #include <dlfcn.h>
 
 #include "input_proto.h"
+#include "mcu_proto.h"
 
 /* ---- libSystem ----------------------------------------------------- */
 typedef unsigned int mach_port_t;
@@ -343,9 +344,10 @@ static void send_key(uint32_t usage, int down)
 static uint8_t key_state[NKEYS];        /* 0 idle, 1 down pending, 2 down sent */
 static uint64_t key_t0[NKEYS];
 
-/* poll-loop ticks (~16 ms each); mach_timebase_info is not usable here */
-static uint64_t loops;
-static uint64_t now_us(void) { return loops * 16000u; }
+/* poll-loop time: the sum of the loop's sleeps (16 ms, or 100 ms while the
+   screen is off); mach_timebase_info is not usable here */
+static uint64_t loops, slept_us;
+static uint64_t now_us(void) { return slept_us; }
 
 static void key_send(unsigned i, int down)
 {
@@ -411,7 +413,9 @@ static int client_alive(void)
 
 int main(int argc, char **argv)
 {
-    int mib[8], i;
+    int mib[8], mcumib[8], i;
+    size_t mculen = 8;
+    int have_mcu = 0, screen_off = 0;
     size_t miblen = 8, len;
     inmbox_t box;
     insample_t state;
@@ -477,6 +481,28 @@ int main(int argc, char **argv)
         }
         loops++;
         key_tick();
-        usleep(16000);
+        /* screen off (ARM9 power saving, docs/mcu.md section 9): nothing to
+           do with touches and iOS sleeps, so poll at 10 Hz instead of 60.
+           Button samples queue up in the mailbox ring (30 deep), so a HOME
+           or POWER press is still seen, within 100 ms. */
+        if ((loops & (screen_off ? 3 : 15)) == 0) {     /* every 0.25 s on, 0.4 s off */
+            mcubox_t mb;
+            size_t ml = sizeof mb;
+            if (!have_mcu) {
+                mculen = 8;
+                have_mcu = sysctlnametomib(MCU_SYSCTL_NAME, mcumib, &mculen) == 0 ? 1 : -1;
+            }
+            if (have_mcu > 0 && sysctl(mcumib, (unsigned)mculen, &mb, &ml, 0, 0) == 0 && ml == sizeof mb &&
+                mb.magic == MCU_MAGIC) {
+                int off = mb.ps_on && mb.screen_off;
+                if (off != screen_off && opt_debug) say("[input] screen %s: polling at %d Hz", off ? "off" : "on", off ? 10 : 60);
+                screen_off = off;
+            }
+        }
+        {
+            unsigned us = screen_off ? 100000 : 16000;
+            usleep(us);
+            slept_us += us;
+        }
     }
 }
