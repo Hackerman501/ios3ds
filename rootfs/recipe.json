@@ -4,7 +4,7 @@
   "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
   "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
   "/var/log/syslog": "",
-  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDidShowReorderText</key>\n\t<true/>\n\t<key>SBDisableMailAutoLaunch</key>\n\t<true/>\n</dict>\n</plist>\n",
+  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDidShowReorderText</key>\n\t<true/>\n\t<key>SBDisableMailAutoLaunch</key>\n\t<true/>\n\t<key>SBNoWatchdogs</key>\n\t<true/>\n</dict>\n</plist>\n",
   "/System/Library/Caches/com.apple.dyld/enable-dylibs-to-override-cache": ""
  },
  "disable_daemons": [
@@ -59,6 +59,11 @@
    "EnvironmentVariables": {
     "DYLD_INSERT_LIBRARIES": "/usr/lib/ios3ds-a80211.dylib"
    }
+  },
+  "/System/Library/LaunchDaemons/com.apple.securityd.plist": {
+   "EnvironmentVariables": {
+    "DYLD_INSERT_LIBRARIES": "/usr/lib/ios3ds-hwaes.dylib"
+   }
   }
  },
  "add": {
@@ -74,6 +79,7 @@
   "build/rootfs-add/usr/libexec/ios3ds-wifid": "/usr/libexec/ios3ds-wifid",
   "build/rootfs-add/usr/libexec/ios3ds-nettest": "/usr/libexec/ios3ds-nettest",
   "build/rootfs-add/usr/lib/ios3ds-a80211.dylib": "/usr/lib/ios3ds-a80211.dylib",
+  "build/rootfs-add/usr/lib/ios3ds-hwaes.dylib": "/usr/lib/ios3ds-hwaes.dylib",
   "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist",
   "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
   "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
@@ -93,6 +99,7 @@
   "/usr/libexec/ios3ds-wifid": "0755",
   "/usr/libexec/ios3ds-nettest": "0755",
   "/usr/lib/ios3ds-a80211.dylib": "0755",
+  "/usr/lib/ios3ds-hwaes.dylib": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644",
   "/usr/libexec/ios3ds-tone": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",

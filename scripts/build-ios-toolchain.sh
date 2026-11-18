@@ -63,6 +63,7 @@ STUBS=(
     /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
     /System/Library/Frameworks/QuartzCore.framework/QuartzCore
     /System/Library/Frameworks/IOKit.framework/Versions/A/IOKit
+    /System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration
 )
 
 say() { printf '\033[1m== %s\033[0m\n' "$*"; }

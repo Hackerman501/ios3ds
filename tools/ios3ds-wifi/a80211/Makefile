@@ -9,7 +9,7 @@ $(OUT): a80211.c $(ROOT)/boot/common/wifi_proto.h
 	mkdir -p $(dir $@)
 	$(CC) -Os -Wall -Wextra -Wno-unused-parameter -I$(ROOT)/boot/common -dynamiclib \
 	    -install_name /usr/lib/ios3ds-a80211.dylib a80211.c \
-	    -framework IOKit -framework CoreFoundation -o $@
+	    -framework IOKit -framework CoreFoundation -framework SystemConfiguration -o $@
 
 clean:
 	rm -f $(OUT)

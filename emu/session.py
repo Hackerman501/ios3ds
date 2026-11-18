@@ -5,7 +5,9 @@
   emu/session.py tap X Y            tap iOS point (320x480 portrait)
   emu/session.py drag X0 Y0 X1 Y1 [SECONDS]
   emu/session.py type "text"        tap the iOS keyboard keys for the text (lower case,
-                                    digits and - via the 123 page; see KEYS below)
+                                    digits and -/:;()$&@" via the 123 page, which stays up
+                                    until a letter needs the ABC page; the page is
+                                    remembered between calls, --page abc|123 overrides)
   emu/session.py key QCODE [HOLD]   3DS button (h = HOME, ...)
   emu/session.py shot NAME          upright iOS screenshot -> <dir>/NAME.png
   emu/session.py log [PATTERN]      grep the live sd:/ios3ds/log.txt and the QEMU output
@@ -32,9 +34,9 @@ DIR = os.path.join(viewer.ROOT, "build", "emu-session")
 SOCK = os.path.join(DIR, "qmp.sock")
 
 # iOS 4 English keyboard, portrait (points): rows of letters and their y
-ROWS = [("qwertyuiop", 0, 32, 315), ("asdfghjkl", 16, 32, 369), ("zxcvbnm", 48, 32, 423)]
-NUM_ROWS = [("1234567890", 0, 32, 315), ("-/:;()$&@\"", 0, 32, 369)]
-MODE_KEY = (22, 459)        # "123" / "ABC"
+ROWS = [("qwertyuiop", 0, 32, 291), ("asdfghjkl", 14, 32, 347), ("zxcvbnm", 44, 32, 400)]
+NUM_ROWS = [("1234567890", 0, 32, 291), ("-/:;()$&@\"", 0, 32, 347)]
+MODE_KEY = (22, 457)        # "123" / "ABC"
 
 
 def key_xy(ch):
@@ -45,7 +47,7 @@ def key_xy(ch):
         if ch in row:
             return "123", (x0 + w * row.index(ch) + w / 2, y)
     if ch == " ":
-        return None, (160, 459)
+        return None, (160, 457)
     raise SystemExit("session: no key for %r" % ch)
 
 
@@ -68,11 +70,13 @@ def main():
     ap.add_argument("--icount", default="")
     ap.add_argument("--extra", default="")
     ap.add_argument("--sd", default=os.path.join(viewer.ROOT, "build", "sd.img"))
+    ap.add_argument("--page", choices=("abc", "123"), help="keyboard page before 'type'")
     a = ap.parse_args()
     os.makedirs(DIR, exist_ok=True)
     if a.cmd == "start":
-        if os.path.exists(SOCK):
-            os.remove(SOCK)
+        for f in (SOCK, os.path.join(DIR, "kbpage")):
+            if os.path.exists(f):
+                os.remove(f)
         cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel",
                "tcg,thread=%s" % ("single" if a.icount else "multi"),
                "-kernel", os.path.join(viewer.ROOT, "build", "boot", "ios3ds.firm"),
@@ -127,7 +131,8 @@ def main():
         time.sleep(0.05)
         q.pointer(dx, dy, False)
     elif a.cmd == "type":
-        page = "abc"
+        pfile = os.path.join(DIR, "kbpage")
+        page = a.page or (open(pfile).read().strip() if os.path.exists(pfile) else "abc")
         for ch in a.args[0]:
             want, xy = key_xy(ch)
             if want and want != page:
@@ -136,8 +141,8 @@ def main():
                 page = want
             tap(q, *xy, hold=0.12)
             time.sleep(0.5)
-            if page == "123" and ch not in "1234567890":    # iOS returns to letters after a symbol
-                page = "abc"
+        with open(pfile, "w") as f:         # iOS 4 stays on 123 after - (seen in QEMU)
+            f.write(page)
     elif a.cmd == "key":
         hold = float(a.args[1]) if len(a.args) > 1 else 0.2
         q.key(a.args[0], True)

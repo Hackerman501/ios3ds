@@ -104,6 +104,30 @@ kern_return_t IORegistryEntrySetCFProperty(io_registry_entry_t entry, CFStringRe
 CFStringRef CFStringCreateWithCString(CFAllocatorRef, const char *, unsigned);
 void CFDictionarySetValue(CFMutableDictionaryRef, const void *, const void *);
 void CFRelease(CFTypeRef);
+Boolean CFEqual(CFTypeRef, CFTypeRef);
+typedef const struct __SCPreferences *SCPreferencesRef;
+CFTypeRef SCPreferencesGetValue(SCPreferencesRef, CFStringRef);
+extern const CFTypeRef kCFBooleanTrue;
+typedef struct __CFRunLoop *CFRunLoopRef;
+typedef struct __CFRunLoopTimer *CFRunLoopTimerRef;
+typedef double CFAbsoluteTime, CFTimeInterval;
+typedef struct IONotificationPort *IONotificationPortRef;
+typedef void (*IOServiceMatchingCallback)(void *refcon, io_object_t iterator);
+extern const CFStringRef kCFRunLoopCommonModes;
+extern const mach_port_t kIOMasterPortDefault;
+CFRunLoopRef CFRunLoopGetCurrent(void);
+void CFRunLoopWakeUp(CFRunLoopRef);
+CFAbsoluteTime CFAbsoluteTimeGetCurrent(void);
+CFRunLoopTimerRef CFRunLoopTimerCreate(CFAllocatorRef, CFAbsoluteTime, CFTimeInterval, unsigned, long,
+                                       void (*)(CFRunLoopTimerRef, void *), void *);
+void CFRunLoopAddTimer(CFRunLoopRef, CFRunLoopTimerRef, CFStringRef);
+CFTypeRef CFRetain(CFTypeRef);
+kern_return_t IOServiceAddMatchingNotification(IONotificationPortRef, const char *, CFDictionaryRef,
+                                               IOServiceMatchingCallback, void *, io_object_t *);
+kern_return_t IOServiceGetMatchingServices(mach_port_t, CFDictionaryRef, io_object_t *);
+CFMutableDictionaryRef IOBSDNameMatching(mach_port_t, uint32_t, const char *);
+kern_return_t IOObjectRelease(io_object_t);
+char *getenv(const char *);
 #define kCFStringEncodingUTF8 0x08000100u
 
 /* ---- logging ------------------------------------------------------------------ */
@@ -288,6 +312,7 @@ static const wlan_bss_t *current_bss(void)
 }
 
 static uint8_t seen[256];           /* request types already logged */
+static int wm_log;                  /* IOS3DS_WIFI_LOG: 1 WiFiManager's log, 2 + every request */
 
 static int fail(int e) { errno = e; return -1; }
 
@@ -464,6 +489,8 @@ static int a80211_set(struct apple80211req *r)
     return 0;                       /* other settings: accepted, nothing to do */
 }
 
+typedef struct { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; } Dl_info;
+int dladdr(const void *, Dl_info *);
 static int a80211_ioctl(int set, struct apple80211req *r)
 {
     int t = r->req_type;
@@ -471,6 +498,14 @@ static int a80211_ioctl(int set, struct apple80211req *r)
     int rc = set ? a80211_set(r) : a80211_get(r);
     int e = errno;
     pthread_mutex_unlock(&lock);
+    if (wm_log > 1) {
+        void **fp = __builtin_frame_address(0);
+        Dl_info di;
+        void *lr = fp && fp[0] ? ((void **)fp[0])[1] : 0;     /* ioctl's caller */
+        const char *b = lr && dladdr(lr, &di) && di.dli_fname ? strrchr(di.dli_fname, '/') : NULL;
+        say("[a80211] %s %d len %u -> %d/%d (%s+%lx)", set ? "SET" : "GET", t, r->req_len, rc, rc ? e : 0,
+            b ? b + 1 : "?", b ? (unsigned long)((char *)lr - (char *)di.dli_fbase) : 0ul);
+    }
     if (t >= 0 && t < 256 && !(seen[t] & (set ? 2 : 1))) {
         seen[t] |= set ? 2 : 1;
         say("[a80211] first %s type %d (len %u): %s", set ? "SET" : "GET", t, r->req_len,
@@ -478,6 +513,135 @@ static int a80211_ioctl(int set, struct apple80211req *r)
     }
     errno = e;
     return rc;
+}
+
+/* ---- the interface notification -------------------------------------------------
+   WiFiManager arms an IOServiceFirstMatch notification for IO80211Interface and,
+   for each match, reads the interface's "BSD Name" (31 tries, 10 ms apart) or
+   gives up for good ("Could not obtain IO80211Interface bsd name"). Our
+   interface is published by ios3ds-wifid long before configd's InterfaceNamer
+   names it (20+ s, it waits for IOKit to go quiet), so the real notification
+   would always come too early. Instead the client gets an iterator that
+   matches nothing, and once en0 exists the watcher thread schedules a timer
+   on the run loop that client's notification port is scheduled on, which
+   hands its callback an iterator with the named interface
+   (IOBSDNameMatching). More than one client in configd asks (the order
+   differs from boot to boot), so every registration is remembered. */
+#define NOTE_MAX 6
+static struct note {
+    IONotificationPortRef port;
+    IOServiceMatchingCallback cb;
+    void *refcon;
+    CFRunLoopRef rl;                /* from CFRunLoopAddSource(port's source) */
+    CFRunLoopRef cur;               /* the registering thread's, if rl never shows up */
+    int sent;
+} notes[NOTE_MAX];
+static CFMutableDictionaryRef iface_match[NOTE_MAX];   /* dicts we returned for IO80211Interface */
+static unsigned iface_match_n;
+
+CFTypeRef IONotificationPortGetRunLoopSource(IONotificationPortRef);
+void IONotificationPortDestroy(IONotificationPortRef);
+void CFRunLoopAddSource(CFRunLoopRef, CFTypeRef, CFStringRef);
+
+static void note_fire(CFRunLoopTimerRef t, void *info)
+{
+    struct note n;
+    pthread_mutex_lock(&lock);
+    n = notes[(uintptr_t)info];
+    pthread_mutex_unlock(&lock);
+    if (!n.cb) return;
+    io_object_t it = 0;
+    CFMutableDictionaryRef m = IOBSDNameMatching(kIOMasterPortDefault, 0, ourif);
+    if (!m || IOServiceGetMatchingServices(kIOMasterPortDefault, m, &it) != 0 || !it) {
+        say("[a80211] no IOKit service for %s", ourif);
+        return;
+    }
+    say("[a80211] handing %s to an IO80211Interface client (refcon %p)", ourif, n.refcon);
+    n.cb(n.refcon, it);
+    IOObjectRelease(it);
+}
+
+static void notes_schedule(void)      /* under lock */
+{
+    if (!ourif[0]) return;
+    for (uintptr_t i = 0; i < NOTE_MAX; i++) {
+        struct note *n = &notes[i];
+        if (!n->cb || n->sent) continue;
+        if (!n->rl) n->rl = n->cur, n->cur = NULL;
+        if (!n->rl) continue;
+        n->sent = 1;
+        CFRunLoopTimerRef t = CFRunLoopTimerCreate(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent(), 0, 0, 0,
+                                                   note_fire, (void *)i);
+        CFRunLoopAddTimer(n->rl, t, kCFRunLoopCommonModes);
+        CFRelease(t);
+        CFRunLoopWakeUp(n->rl);
+    }
+}
+
+static int is_iface_match(CFDictionaryRef m)
+{
+    for (unsigned i = 0; i < iface_match_n; i++)
+        if (iface_match[i] == m) {
+            iface_match[i] = iface_match[--iface_match_n];
+            return 1;
+        }
+    return 0;
+}
+
+static kern_return_t my_IOServiceAddMatchingNotification(IONotificationPortRef port, const char *type,
+                                                         CFDictionaryRef match, IOServiceMatchingCallback cb,
+                                                         void *refcon, io_object_t *it)
+{
+    pthread_mutex_lock(&lock);
+    int ours = match && is_iface_match(match);
+    pthread_mutex_unlock(&lock);
+    if (!ours)
+        return IOServiceAddMatchingNotification(port, type, match, cb, refcon, it);
+    kern_return_t r = IOServiceAddMatchingNotification(port, type, IOServiceMatching("IOS3DSNoSuchClass"),
+                                                       cb, refcon, it);
+    CFRelease(match);               /* the call consumes one reference */
+    if (r != 0) return r;
+    pthread_mutex_lock(&lock);
+    struct note *n = NULL;
+    for (int i = 0; i < NOTE_MAX && !n; i++)
+        if (notes[i].port == port || !notes[i].cb) n = &notes[i];
+    if (n) {
+        if (n->rl && n->port != port) { CFRelease(n->rl); n->rl = NULL; }
+        if (n->cur) CFRelease(n->cur);
+        n->cur = (CFRunLoopRef)CFRetain(CFRunLoopGetCurrent());
+        n->port = port;
+        n->cb = cb;
+        n->refcon = refcon;
+        n->sent = 0;
+        /* a port already on a run loop: that run loop; otherwise CFRunLoopAddSource tells */
+    }
+    pthread_mutex_unlock(&lock);
+    say("[a80211] %s for IO80211Interface (refcon %p): deferred until the interface has a BSD name",
+        type, refcon);
+    return r;
+}
+
+static void my_CFRunLoopAddSource(CFRunLoopRef rl, CFTypeRef src, CFStringRef mode)
+{
+    CFRunLoopAddSource(rl, src, mode);
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < NOTE_MAX; i++)
+        if (notes[i].cb && !notes[i].rl && src == IONotificationPortGetRunLoopSource(notes[i].port))
+            notes[i].rl = (CFRunLoopRef)CFRetain(rl);
+    pthread_mutex_unlock(&lock);
+}
+
+static void my_IONotificationPortDestroy(IONotificationPortRef port)
+{
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < NOTE_MAX; i++)
+        if (notes[i].port == port) {
+            if (notes[i].rl) CFRelease(notes[i].rl);
+            if (notes[i].cur) CFRelease(notes[i].cur);
+            memset(&notes[i], 0, sizeof notes[i]);
+        }
+    pthread_mutex_unlock(&lock);
+    IONotificationPortDestroy(port);
 }
 
 /* status poller: turns ARM9 state changes into 802.11 events */
@@ -489,6 +653,7 @@ static void *watcher(void *arg)
         usleep(250000);
         if (!ourif[0]) { is_ours(""); continue; }
         pthread_mutex_lock(&lock);
+        notes_schedule();
         int ok = wlan_read() == 0;
         uint32_t ev[4], nev = 0;
         if (ok) {
@@ -565,8 +730,11 @@ static int my_ioctl(int fd, unsigned long req, ...)
 static CFMutableDictionaryRef my_IOServiceMatching(const char *name)
 {
     if (name && !strcmp(name, "IO80211Interface")) {
-        say("[a80211] IOServiceMatching(IO80211Interface) -> IOEthernetInterface");
-        return IOServiceMatching("IOEthernetInterface");
+        CFMutableDictionaryRef m = IOServiceMatching("IOEthernetInterface");
+        pthread_mutex_lock(&lock);
+        if (iface_match_n < NOTE_MAX) iface_match[iface_match_n++] = m;
+        pthread_mutex_unlock(&lock);
+        return m;
     }
     if (name && !strcmp(name, "IO80211Controller"))
         return IOServiceMatching("IOUserEthernetController");
@@ -613,12 +781,30 @@ static kern_return_t my_IORegistryEntrySetCFProperty(io_registry_entry_t e, CFSt
     return r;
 }
 
+/* IOS3DS_WIFI_LOG=1 (or 2) in configd's environment: WiFiManager's own log
+   (LoggingEnabled/LoggingFileEnabled/LoggingFile in com.apple.wifi.plist)
+   goes to /dev/console */
+static CFStringRef k_log, k_logfile_on, k_logfile, v_console;
+
+static CFTypeRef my_SCPreferencesGetValue(SCPreferencesRef p, CFStringRef key)
+{
+    if (wm_log && key) {
+        if (CFEqual(key, k_log) || CFEqual(key, k_logfile_on)) return kCFBooleanTrue;
+        if (CFEqual(key, k_logfile)) return v_console;
+    }
+    return SCPreferencesGetValue(p, key);
+}
+
 __attribute__((used, section("__DATA,__interpose"))) static const struct { const void *rep, *orig; } interpose[] = {
     { (const void *)my_ioctl, (const void *)ioctl },
     { (const void *)my_IOServiceMatching, (const void *)IOServiceMatching },
+    { (const void *)my_IOServiceAddMatchingNotification, (const void *)IOServiceAddMatchingNotification },
+    { (const void *)my_CFRunLoopAddSource, (const void *)CFRunLoopAddSource },
+    { (const void *)my_IONotificationPortDestroy, (const void *)IONotificationPortDestroy },
     { (const void *)my_IOObjectConformsTo, (const void *)IOObjectConformsTo },
     { (const void *)my_IORegistryEntryCreateCFProperties, (const void *)IORegistryEntryCreateCFProperties },
     { (const void *)my_IORegistryEntrySetCFProperty, (const void *)IORegistryEntrySetCFProperty },
+    { (const void *)my_SCPreferencesGetValue, (const void *)SCPreferencesGetValue },
 };
 
 const char *getprogname(void);
@@ -627,6 +813,14 @@ int unsetenv(const char *);
 __attribute__((constructor)) static void init(void)
 {
     pthread_t t;
+    const char *lg = getenv("IOS3DS_WIFI_LOG");
+    if (lg && (*lg == '1' || *lg == '2')) {
+        k_log = CFStringCreateWithCString(kCFAllocatorDefault, "LoggingEnabled", kCFStringEncodingUTF8);
+        k_logfile_on = CFStringCreateWithCString(kCFAllocatorDefault, "LoggingFileEnabled", kCFStringEncodingUTF8);
+        k_logfile = CFStringCreateWithCString(kCFAllocatorDefault, "LoggingFile", kCFStringEncodingUTF8);
+        v_console = CFStringCreateWithCString(kCFAllocatorDefault, "/dev/console", kCFStringEncodingUTF8);
+        wm_log = *lg - '0';
+    }
     unsetenv("DYLD_INSERT_LIBRARIES");      /* configd's children get the plain system */
     if (strcmp(getprogname(), "configd")) return;
     say("[a80211] loaded into configd (pid %d)", getpid());
