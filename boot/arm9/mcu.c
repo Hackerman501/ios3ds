@@ -64,6 +64,7 @@ static u32 home_since;
 static bool power_down;
 static u32 power_until;         /* tick when the synthetic POWER press ends */
 static bool power_long;
+static u32 off_req, off_at;     /* power-off request, carried out at off_at */
 
 static u32 ms_ticks(u32 ms) { return ms * hz / 1000u; }
 
@@ -267,7 +268,14 @@ void mcu_poll(u32 now)
             box->valid |= MCUV_ACC;     /* "turned on", samples follow */
         }
         box->ack_seq = rs;
-        if (p == MCU_PWR_OFF || p == MCU_PWR_REBOOT) power_off(p);
+        if ((p == MCU_PWR_OFF || p == MCU_PWR_REBOOT) && !off_req) {
+            off_req = p;        /* let the monitor loop drain XNU's last lines first */
+            off_at = now + ms_ticks(300);
+        }
+    }
+    if (off_req && (int)(now - off_at) >= 0) {
+        power_off(off_req);
+        off_req = 0;
     }
 
     if (now - t_irq >= ms_ticks(30)) {
@@ -289,7 +297,7 @@ void mcu_poll(u32 now)
         t_batt = now;
         u8 p = box->batt_percent, f = box->flags;
         if (read_batt()) {
-            if (p != box->batt_percent || f != box->flags) {
+            if (p != box->batt_percent || ((f ^ box->flags) & (MCUF_ADAPTER | MCUF_CHARGING))) {
                 logp("[mcu] battery %u%%%s%s\n", box->batt_percent,
                      (box->flags & MCUF_ADAPTER) ? ", charger" : "", (box->flags & MCUF_CHARGING) ? ", charging" : "");
             }

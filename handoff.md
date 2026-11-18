@@ -17,6 +17,8 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 | Wi-Fi (ARM9 AR6014 + `ios3ds-wifid`) | off cleanly without `wifi.cfg` | not tested |
 | Audio (shim PL080/I2S/I2C emulation → CSND) | kexts start | CODEC answers; `AppleEmbeddedAudioDevice: could not start DMA: device is not ready` |
 | `.3dsx` launcher (rename swap + restore) | — | works |
+| MCU ([docs/mcu.md](docs/mcu.md)): RTC/calendar, battery icon, HOME/POWER, shell, volume slider, brightness, shutdown → power off | works (branch `agent/mcu`) | not tested; §7 of mcu.md lists the log lines |
+| MCU accelerometer | samples reach ios3ds-mcud, SpringBoard ignores client IOHID events | not tested |
 
 ## 2. Current work
 
@@ -24,7 +26,9 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 - **Old hang:** the clock base was 0. Fixed by the lazy shim init.
 - **Speed-ups:** chunked logging, md0 served during screen copies and with a 2 ms linger, and the 30 s IORTC wait cut to 2 s.
 
-**Open: `gettimeofday` early in boot.**
+**Solved (agent/mcu, re-log §31): `gettimeofday` early in boot.** The commpage fast path froze it for up to 1 s (usec divisor 1 → degenerate reciprocal); patch `commpage-gtod-off`. The notes below are the history.
+
+**Was open: `gettimeofday` early in boot.**
 - gltest's offscreen frame reads `0 ms` on hardware in run10 (IORTC wait 0 s) and run11 (2 s); run9 (30 s) read 1089 ms.
 - The 2 s wait fixed it in QEMU, but not on the 3DS.
 - The next build's gltest logs `gltest: timing: gettimeofday rc … errno … tv … -> …; mach_absolute_time … ms`. That line settles whether the call fails or the clock is frozen.
@@ -82,5 +86,5 @@ Where ios3ds stands and what to do next. Read [README.md](README.md) and [docs/a
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
 4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
-6. RTC: an IORTC provider (MCU over I2C) would remove the remaining 2 s wait and give real wall-clock time.
+6. RTC: done on `agent/mcu` (PEGetGMTTimeOfDay from the MCU RTC, no IORTC wait); hardware check pending. Accelerometer → SpringBoard needs a kernel IOHID service (docs/mcu.md §6.2).
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).

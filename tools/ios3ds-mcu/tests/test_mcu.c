@@ -202,7 +202,9 @@ int main(void)
     /* iOS shut down: power off through reg 0x20 */
     b->req_power = MCU_PWR_OFF;
     b->req_seq = b->req_seq + 1;
-    run(10);
+    run(100);
+    CHECK(writes_0x20 == -1, "power off waits for the log to drain");
+    run(300);
     CHECK(writes_0x20 == 1, "power off write %d", writes_0x20);
 
     /* MCU dead at boot: FAILED, no buttons, nothing touched */

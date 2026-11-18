@@ -15,8 +15,10 @@
  * icon). The RTC, HOME/POWER and shell close/open never pass through here
  * (kernel calendar, input mailbox, ARM9). See docs/mcu.md.
  *
- * Arguments: debug (log every change), acc=AXES (default "-y,x,-z": iOS x,
- * y, z from the 3DS axes, see docs/mcu.md), noacc, novol, nobl.
+ * Arguments: debug (log every change), acc (turn the accelerometer on:
+ * off by default, SpringBoard ignores client-dispatched IOHID events, see
+ * docs/mcu.md section 6.2), acc=AXES (implies acc; default "-y,x,-z": iOS x,
+ * y, z from the 3DS axes), novol, nobl.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <stdarg.h>
@@ -78,7 +80,7 @@ extern SEL sel_registerName(const char *);
 extern id objc_msgSend(id, SEL, ...);
 #define MSG(type, obj, sel) ((type)objc_msgSend)(obj, sel_registerName(sel)
 
-static int opt_debug, opt_noacc, opt_novol, opt_nobl;
+static int opt_debug, opt_noacc = 1, opt_novol, opt_nobl;
 static void say(const char *fmt, ...);
 
 /* Clock cross-check (the open "gettimeofday vs mach_absolute_time" question,
@@ -184,10 +186,13 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "debug")) opt_debug = 1;
         else if (!strcmp(argv[i], "noacc")) opt_noacc = 1;
+        else if (!strcmp(argv[i], "acc")) opt_noacc = 0;
         else if (!strcmp(argv[i], "novol")) opt_novol = 1;
         else if (!strcmp(argv[i], "nobl")) opt_nobl = 1;
-        else if (!strncmp(argv[i], "acc=", 4) && !parse_accmap(argv[i] + 4))
-            say("[mcud] bad %s (want e.g. acc=-y,x,-z); keeping the default", argv[i]);
+        else if (!strncmp(argv[i], "acc=", 4)) {
+            opt_noacc = 0;
+            if (!parse_accmap(argv[i] + 4)) say("[mcud] bad %s (want e.g. acc=-y,x,-z); keeping the default", argv[i]);
+        }
     }
 
     while (sysctlnametomib(MCU_SYSCTL_NAME, mib, &miblen) != 0 ||

@@ -23,6 +23,8 @@ on the console.
 | SD | TMIO host at 0x10006000 (the command, status, FIFO32 and auto-CMD12 subset that Normmatt's driver uses) on top of QEMU's real SD card model (`-drive if=sd`) |
 | Screens | PDC0/PDC1 framebuffer registers; formats 0–4, rotated storage; a 400×480 display (top screen above bottom). `screendump` gives PNGs. |
 | Buttons | HID at 0x10146000. Keyboard: A=a, B=s, X=x, Y=y, L=q, R=w, START=Enter, SELECT=Backspace, plus the arrow keys |
+| MCU (I2C bus 2, 0x4A) | IRQs, RTC from the host clock, battery, sliders, accelerometer, power off (QEMU exits). Keys: HOME=h, POWER=p ("held" after 3 s), volume slider -/=, shell c, turn the console [ / ]. QOM properties on `/machine` for tests: `mcu-battery`, `mcu-charging`, `mcu-volume`, `mcu-shell-open`, `mcu-orient`, `lcd-backlight` (read only). [mcu.md](mcu.md) §6 |
+| LCD backlight | 0x10202240 / 0x10202A40; once written, the emulated screens are dimmed by it (and blacked out when the MCU switches a backlight off) |
 | CFG9 / CFG11 | SDMMCCTL is stored; SOCINFO reports an Old 3DS |
 | GPU (PICA200) | The GX block at 0x10400000: PSC memory fill, PPF display transfer / texture copy and the P3D command-list processor, rendered by a software model (`tools/ios3ds-pica/sim/picasim.c`, [pica200.md](pica200.md) §5). GIC 40/41/44/45 follow its status bits. `PDN_GPU_CNT` reads 0x1007F (clocked, out of reset), `CFG11_GPUPROT` is stored. A development model: it has not been compared with hardware. |
 | Unmapped addresses | **external abort**, like a real bus. This is how the emulator caught XNU touching S5L8720 peripherals. Known IO windows are `unimplemented-device` (reads return 0, logged with `-d unimp`). |
@@ -38,8 +40,9 @@ on the console.
 - Caches are not modelled, so coherency bugs won't show up here. That's why
   the design keeps caches off everywhere except inside XNU, and the shim
   cleans every line it writes.
-- No PXI, I2C, MCU, GPU, DSP or SPI. The LCDs are already "on", as after
-  Luma's screen init.
+- No PXI or DSP. I2C, SPI, the MCU and the GPU are development models, not
+  compared with hardware. The LCDs are already "on", as after Luma's screen
+  init.
 
 ## Usage
 
@@ -51,6 +54,8 @@ python3 emu/run.py --time 10 --trace int,unimp,guest_errors   # exceptions -> bu
 python3 emu/run.py --regs                      # register dump of both CPUs at the end
 python3 emu/mon.py --boot 7 "info registers" "x/16wx 0x80251ef0"   # poke a stopped VM
 python3 emu/run.py --gdb     # waits for arm-none-eabi-gdb on :1234
+python3 emu/run.py --time 420 --out build/emu-x --hmp "300=qom-set /machine mcu-battery 15"
+python3 emu/tap.py --time 400 --key 280:h --key 340:p:5 --set 255:mcu-battery=50 --get 300:lcd-backlight
 python3 emu/run.py --icount 2 --time 300   # real-hardware timing (see below)
 ```
 

@@ -33,5 +33,12 @@
   "orig": "66d0",
   "new": "66e0",
   "why": "commpage_set_timestamp (0x8006ade0): beq -> b, the gettimeofday timestamp is never published. Userland __commpage_gettimeofday (dyld cache 0x32d4b748) adds (now - base) / usec_divisor via a reciprocal the kernel computes here; our timebase is 1047311 Hz, so usec_divisor = 1 and the reciprocal degenerates (M = 0, add = 1, shift = 0 -> a shift by -1): elapsed time always reads 0 and gettimeofday() stays frozen at the last syscall refresh for up to 1 s (gltest '0 ms', '1063 ms vs mach 412 ms', docs/mcu.md section 8). With the base left at 0 userland always takes the gettimeofday syscall, which is exact"
+ },
+ {
+  "name": "pe-halt-skip-pm",
+  "va": "0x801c98ec",
+  "orig": "9847",
+  "new": "c046",
+  "why": "PEHaltRestart: skip the IOPMrootDomain halt/restart broadcast (blx r3 -> 0x801db12b). It messages IOMobileGraphicsFamily -> AppleM2CLCD (disable_backlight) -> AppleARMPlatform function -> AppleS5L8720X's SWI backlight function, which sleeps on a command gate (AppleS5L8720X+0x37cc) for an interrupt the 3DS never raises: every iOS shutdown hung there forever (QEMU, SELECT+START thread dump, re-log 33). File systems are already unmounted and md0 writes are synchronous; the platform call that follows (pe-halt-mcu) powers the console off"
  }
 ]

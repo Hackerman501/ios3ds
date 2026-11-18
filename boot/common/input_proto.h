@@ -12,7 +12,8 @@
 #include <stdint.h>
 
 /* Inside the shim region (SHIM_PA 0x20840000 / SHIM_VA 0x80840000):
-   0x6000 blkmbox_t (128 bytes), 0x6200 inmbox_t (512 bytes), 0x8000 bounce. */
+   0x6000 blkmbox_t (128 bytes), 0x6200 inmbox_t (512 bytes), 0x6400 mcubox_t
+   (256 bytes, mcu_proto.h), 0x8000 bounce. */
 #define SHIM_INPUT_OFF   0x6200u
 #define INPUT_MAGIC      0x54504E49u    /* 'INPT' */
 #define INPUT_VERSION    1u
@@ -21,8 +22,8 @@
 /* insample_t.buttons: pressed = 1 (the ARM9 inverts HID_PAD). Bits 0-11 are
    the HID_PAD bits (A B SELECT START RIGHT LEFT UP DOWN R L X Y). */
 #define INBTN_PAD_MASK   0x0FFFu
-#define INBTN_HOME       (1u << 12)     /* MCU IRQ bits 2/3 (needs I2C; later) */
-#define INBTN_POWER      (1u << 13)     /* MCU IRQ bit 0 (later) */
+#define INBTN_HOME       (1u << 12)     /* MCU IRQ bits 2/3 (boot/arm9/mcu.c, docs/mcu.md) */
+#define INBTN_POWER      (1u << 13)     /* MCU IRQ bits 0/1 (boot/arm9/mcu.c) */
 
 #define INFLAG_PEN       (1u << 0)      /* stylus/finger on the panel; tx/ty valid */
 #define INFLAG_CPAD      (1u << 1)      /* cx/cy valid */

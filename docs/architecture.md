@@ -21,7 +21,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 |---|---|
 | 0x20001000 | kernelcache, flat image with patches applied (8.1 MB) |
 | after the kernel | device tree, then boot_args |
-| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
+| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
 | 0x20850000 | XNU log ring (256 KB) |
 | 0x208A0000 | network mailbox (docs/wifi.md) |
 | 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
@@ -63,6 +63,11 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
   - **GIC 29 (timer):** acknowledge, then re-enter the kernel's FIQ handler as if a real FIQ had been taken.
   - **GIC 42 (3DS top LCD VBlank):** set the fake CLCD frame-status bit, put the CLCD vector into the fake VIC's VICADDRESS, and enter the kernel's normal IRQ path. Apple's VIC and CLCD drivers then handle it like real hardware.
 - The time hooks are **stackless**: the `mach_absolute_time` fast path calls them without a usable stack.
+
+**System controller (MCU)** ([mcu.md](mcu.md)):
+- The ARM9 polls the MCU over I2C and fills the MCU mailbox (shim + 0x6400).
+- `PEGetGMTTimeOfDay` / `PESetGMTTimeOfDay` / `PEHaltRestart` go to the shim: the calendar starts from the 3DS RTC, and a shutdown powers the console off through the MCU.
+- The shim registers an `IOPMPowerSource` for SpringBoard's battery icon; HOME and POWER reach iOS as input-mailbox buttons; `ios3ds-mcud` handles volume, brightness and the accelerometer.
 
 **Root disk:**
 - The device tree's memory-map gets a `RAMDisk` entry the size of the root filesystem, and the boot-args include `rd=md0`.
