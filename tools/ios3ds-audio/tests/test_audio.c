@@ -363,11 +363,31 @@ static void test_iic(void)
     CHECK(shim_iic_transfer(&codec, 1, 1, NULL, 1, rd) != 0, "bad argument rejected");
     CHECK(shim_iic_transfer(&codec, 1, 1, &sub, 0, rd) != 0, "zero length rejected");
     CHECK(shim_audio.stat.iic_writes == 1 && shim_audio.stat.iic_reads == 2, "counters");
+
+    /* LM48821: one byte, no sub-address, step << 3 | 3 -> CSND volume */
+    {
+        u8 v = 31 << 3 | 3;
+        CHECK(shim_iic_transfer(&amp, 2, 0, NULL, 1, &v) == 0, "amp write ok");
+        CHECK(shim_audio.stat.amp_step == 31 && shim_audio.stat.volume == 0x8000, "loudest step = unity: %x",
+              shim_audio.stat.volume);
+        v = 25 << 3 | 3;                                    /* +12 dB: 6 dB below the loudest */
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
+        CHECK(shim_audio.stat.volume > 16300 && shim_audio.stat.volume < 16500, "-6 dB: %u", shim_audio.stat.volume);
+        v = 4;                                              /* the driver's mute: mode byte, amp off */
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
+        CHECK(shim_audio.stat.volume == 0, "mute");
+        v = 11 << 3 | 3;                                    /* back on at the quietest step iOS used (-16 dB) */
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
+        CHECK(shim_audio.stat.volume == 654, "step 11: %u", shim_audio.stat.volume);
+        v = 0x22;                                           /* another register of the amp: no volume change */
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
+        CHECK(shim_audio.stat.volume == 654, "non-volume byte ignored");
+    }
 }
 
 int main(void)
 {
-    CHECK(sizeof(aud_cfg_t) == 40 && sizeof(aud_stat_t) == 64, "layout shared with mkboot / the ARM9");
+    CHECK(sizeof(aud_cfg_t) == 40 && sizeof(aud_stat_t) == 72, "layout shared with mkboot / the ARM9");
     test_tx_stream();
     test_tx_chained();
     test_idle_silence_and_stop();

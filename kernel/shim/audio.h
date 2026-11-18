@@ -45,6 +45,8 @@ typedef struct {
     uint32_t peak;          /* max |sample| since the last start: nonzero = iOS really plays something */
     uint32_t last_src;      /* last source PA consumed */
     uint32_t state;         /* bit0 TX running, bit1 RX running, bit2 CSND running, bit3 IO window mapped */
+    uint32_t amp_step;      /* last LM48821 gain step iOS wrote (0..31), AUD_AMP_OFF, AUD_AMP_NONE */
+    uint32_t volume;        /* CSND channel volume derived from it (0..0x8000) */
 } aud_stat_t;
 
 typedef struct {
@@ -59,6 +61,9 @@ typedef struct {
 #define AUD_RING_FRAMES   8192u         /* 186 ms at 44.1 kHz; 2 x 16 KiB */
 #define AUD_LEAD_FRAMES   2048u         /* 46 ms of output latency */
 #define AUD_RATE_DIV      1520u         /* 67027964 / 1520 = 44097.34 Hz */
+#define AUD_AMP_NONE      0xFFu         /* aud_stat_t.amp_step: iOS has not set a level yet */
+#define AUD_AMP_OFF       0x100u        /* ... the amp was shut down (volume 0) */
+#define AUD_AMP_REF_STEP  31u           /* LM48821 step of iOS's loudest setting (+18 dB) = CSND unity (audio.c amp_gain) */
 
 /* ---- 3DS CSND (0x10103000), from libn3ds include/arm11/drivers/csnd.h ----- */
 #define CSND_PA           0x10103000u

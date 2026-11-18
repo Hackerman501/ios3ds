@@ -21,7 +21,7 @@ PYTHON  ?= python3
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
-USERLAND := tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon
+USERLAND := tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-audio/tone
 
 .PHONY: all help toolchain fwprep firm shim launcher userland hfsplus sd sdimg qemu emu kscan test release clean
 
