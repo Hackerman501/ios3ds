@@ -26,5 +26,8 @@ int sdio_w8(u32 func, u32 addr, u8 val);
    buf 4-byte aligned. */
 int sdio_read_blocks(u32 func, u32 addr, u8 *buf, u32 len);
 int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len);
+/* CMD53, byte mode, incrementing address, one transfer of len (4..512,
+   multiple of 4) bytes: used to check that the 32-bit FIFO works. */
+int sdio_read_bytes(u32 func, u32 addr, u8 *buf, u32 len);
 /* STAT1 | STAT0 << 16 of the last command, for the log. */
 u32 sdio_last_status(void);

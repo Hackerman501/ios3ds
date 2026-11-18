@@ -164,6 +164,15 @@ int sdio_read_blocks(u32 func, u32 addr, u8 *buf, u32 len)
                    buf, NULL, len, SDIO_BLOCK, NULL);
 }
 
+int sdio_read_bytes(u32 func, u32 addr, u8 *buf, u32 len)
+{
+    if (!len || len > 512 || (len & 3)) return SDIO_ERR_ARG;
+    /* byte mode (bit 27 = 0), incrementing address, count = len (512 = 0) */
+    return command(53 | RSP_R1 | CMD_DATA | CMD_READ | CMD_SDIO,
+                   (func & 7) << 28 | 1u << 26 | (addr & 0x1FFFF) << 9 | (len & 0x1FF),
+                   buf, NULL, len, len, NULL);
+}
+
 int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len)
 {
     if (!len || len % SDIO_BLOCK || len / SDIO_BLOCK > 0x1FF) return SDIO_ERR_ARG;
