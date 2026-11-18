@@ -184,8 +184,10 @@ void ca_frame(void)
         return;
     pica_backend_stats2(&s);
     gl_log("CA: %llu frames; per frame over the last 300: render thread CPU %llu us, %u.%u command lists, "
-           "%u.%u read-backs (%u KiB), %u.%u texture uploads (%u KiB)", (unsigned long long)frames - 1,
+           "%u.%u GPU presents, %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB)",
+           (unsigned long long)frames - 1,
            (unsigned long long)((cpu - cpu0) / 300), (s.lists - s0.lists) / 300, (s.lists - s0.lists) * 10 / 300 % 10,
+           (s.presents - s0.presents) / 300, (s.presents - s0.presents) * 10 / 300 % 10,
            (s.readbacks - s0.readbacks) / 300, (s.readbacks - s0.readbacks) * 10 / 300 % 10,
            (s.readback_kb - s0.readback_kb) / 300, (s.uploads - s0.uploads) / 300,
            (s.uploads - s0.uploads) * 10 / 300 % 10, (s.upload_kb - s0.upload_kb) / 300);
