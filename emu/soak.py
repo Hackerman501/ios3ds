@@ -121,9 +121,22 @@ def main():
     if booted is None:
         log("boot did not reach SpringBoard in %.0f s" % a.boot_timeout)
     else:
-        log("SpringBoard + input up after %.0f s; settling 30 s" % booted)
-        time.sleep(30)
-        home_ref = shot("home_ref")
+        log("SpringBoard + input up after %.0f s; waiting for a stable home screen" % booted)
+        # reference: not black (the screen copy may be switching to the GPU,
+        # soak 3) and unchanged across two shots 5 s apart
+        prev, home_ref = None, None
+        for _ in range(36):
+            time.sleep(5)
+            img = shot("home_ref")
+            bright = ImageStat.Stat(img.convert("L")).mean[0]
+            if prev is not None and bright > 20 and ImageStat.Stat(ImageChops.difference(
+                    img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
+                home_ref = img
+                break
+            prev = img
+        if home_ref is None:
+            log("no stable, non-black home screen within 180 s")
+            home_ref = prev
         for i in range(a.cycles):
             x, y = targets[i % len(targets)]
             c = {"cycle": i, "tap": [x, y]}
