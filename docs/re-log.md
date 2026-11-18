@@ -553,7 +553,7 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
 
 ## 38. iOS shows the 3DS clock's time (2026-11-18)
 - The 3DS RTC keeps **local** time (it's set in the 3DS System Settings). The MCU driver (§33) hands it to XNU as UTC, and iOS then displayed it in its default zone, `/private/var/db/timezone/localtime` → US Pacific: RTC 00:27 Wednesday showed as 4:29 PM Tuesday.
-- rootfs/recipe.json now replaces that symlink with `rootfs/files/localtime-UTC`, a 54-byte TZif v1 file generated for this project (one ttinfo: offset 0, "UTC"; no Apple data).
+- rootfs/recipe.json now replaces that symlink with `rootfs/files/localtime-UTC`, a 54-byte TZif v1 file generated for this project (one ttinfo: offset 0, "UTC"; no Apple data). §50 replaced it with a symlink to `/usr/share/zoneinfo/UTC`: as a regular file it made CoreFoundation scan all of zoneinfo in every process.
 - iOS now shows exactly the 3DS clock: QEMU RTC 00:38 → status bar "12:38 AM", calendar "Wednesday".
 - To get a true UTC epoch plus a real zone instead, set `rtc_offset=` in boot.cfg and pick a zone in Settings (docs/mcu.md).
 
@@ -679,6 +679,53 @@ Design and RE notes: docs/gpu.md §7.
   - ios3ds-input at 10 Hz while `screen_off` (read from the MCU mailbox; samples queue in the ring, and hold timing now counts real sleep);
   - ios3ds-mcud at 4 Hz while off.
 - **Result** (QEMU): off 146 IRQs/s (143 timer) instead of 245; on 127 instead of 144; ARM11 vCPU thread 10 % instead of 14 % host CPU while off. Table in docs/mcu.md §9.
+
+## 49. Microphone: iOS records the 3DS mic (2026-11-18)
+- **No input at first:** AudioSession reported input available 0, route "", and `AudioSessionSetActive(PlayAndRecord)`/`AudioQueueNewInput` failed with `'nopi'`. An iPod2,1 records only from a wired headset.
+- **Codec side:** AppleCS42L58Audio's input data sources come from `audio0` properties (0x80660294): `line` always, `imic` with `ain2b-intmic`, `emic` with `ain2a-extmic`. AppleEmbeddedAudio names them (0x80655a04). Adding `ain2b-intmic` alone changed nothing.
+- **Routing:** the decision is made by mediaserverd's HAL plug-in `/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin` (found through the HFS catalog; stripped).
+  - It picks `RoutingSettings_<product>` by matching `hw.model` against a 4-byte table at file offset 0x287210 (`K48 K93 K94 K95 K66 N18 N72 N81 N82 N88 N90 N92 N94`).
+  - N72 has no built-in mic port.
+  - Patch (`rootfs/recipe.json`): the N81 slot (iPod touch 4G) reads `N72`, the N72 slot `X72`. Result: input available 1, route `SpeakerAndMicrophone`, speaker output and amp volume unchanged.
+- **Data path:**
+  - The 3DS MIC block (0x10162000, GBATEK's DSi layout) runs at I2S2 / 4 = 11,901 Hz.
+  - First version: drained by the ARM9 monitor loop. In QEMU it overran the 16-word FIFO constantly. It now runs in the shim (ARM11), which services every 1 ms while the mic is on; the 3DS's own mic service also runs on the ARM11.
+  - The ARM9 powers the CODEC ADC while the shim says iOS records. `boot.cfg mic=0` keeps everything off.
+  - Safety: no data for 250 ms, a FIFO that never empties, or the block switching itself off each lead to one log line, mic off, and silence.
+- **Findings on the way (QEMU):**
+  - iOS's input chain high-passes the input and adds a fixed +23.65 dB (×15.23; an 8000 sine clipped). The shim takes it off again (`AUD_MIC_GAIN_Q15`).
+  - The 1 ms service deadline also has to hold while the RX channel is idle between two queued commands.
+  - The mic must stay on across such gaps (1 s hold); switching it off there punched 50 ms holes.
+  - With main's older md0 code (interrupts off while waiting), services stalled and samples were lost. Fixed by rebasing onto the md0-with-interrupts change.
+  - Some recordings were corrupted, always bit-identically, by isolated spikes while the shim's own output was clean. Cause: the L/R word phase was carried over from the previous input stream; after an odd-length stream every frame straddled two. The phase now comes from the buffer address.
+  - A 10 ms write-ahead of the input ring, tried first, made no difference and was removed.
+- **Result (`IOS3DS_MIC=sine:440:1000`, real FIFO, icount 2):** five of five recordings in RecordAudio (run 16) and five of five in PlayAndRecord with the speaker output running (run 17) fit 440.03 Hz at amplitude 1003.0, residual 41 dB. 0 overruns, 0 underruns, 0 resyncs.
+- **Bit-exactness:** iOS's own filtering makes app-level bit-exactness impossible. The host test shows it below iOS: a counter through the shim's FIFO drain and RX emulation arrives as an exact scaled, interpolated ramp, L = R in every frame, including after an odd-length stream.
+
+## 50. Boot time and cold app launches under `--icount 2` (2026-11-18)
+- **Instrumentation** (docs/boot-perf.md §1):
+  - ARM9 `ioprof=1/2` (`[io]` and `[blk]` lines; the shim passes `xnu_bytes` and `buf_flags` in blkmbox line 1) and `log_ts=1`;
+  - `[boot]` phase stamps (the ARM9 clock now starts at a9_main, not at the monitor);
+  - QEMU `N3DS_PROF`, which samples `CPU(cpu)->halted` and blkmbox `seq`/`done_seq` (PA 0x20846020/0x20846040) every 1 ms of virtual time;
+  - `emu/bootprof.py` and `emu/hfsmap.py`. The latter is a small HFS+ parser: volume header forks, catalog leaf records (data and resource forks), extents overflow, journal.
+- **Timestamp pitfall:** the first stamp version put the stamp before a line's first character. The console sends `\r` and blank lines long before the text, so an `[input] down` was stamped 1.6 s early. The stamp now goes before the first visible character.
+- **5 s with nothing running** after `/dev/md0 on /` (10.7–15.7 s): no md0, ARM11 0 %. launchctl imports `_IOKitWaitQuiet` (strings of /bin/launchctl, extracted with hfsplus) and calls it with a 5 s timeout.
+  - `ios3ds-diag -iobusy` walks the IOService plane: `IORegistryEntryCreateIterator(root, "IOService", recursive)`, then `IOServiceGetBusyState` and `IOServiceGetState`, all through `dlsym` because the stub SDK lacks them. It found `clkrstgen` and `wdt` (AppleARMIODevice, state 0xa: matched, not registered) busy 1, and AppleS5L8720XIO busy 2.
+  - SELECT+START dump at 13 s, annotated with scripts/btmap.py: two matching threads in `IORecursiveLockSleep` ← `IOService::waitForMatchingService+0xc0` ← `waitForService+0x2e`:
+    - ← AppleARMPlatform+0x26f3/+0x2831 ← AppleS5L8720X+0x2f68 (`AppleS5L8720XClockController::start`);
+    - ← AppleARMPlatform+0xa017 ← AppleS5L8900X+0x9d6c (`AppleARMWatchDogTimer` start via super::start).
+  - **Clock controller:** 0x80750f38 formats `"function-core_voltage_%ld"` (literal 0x8075109c) and calls the lookup (literal 0x807510a4 = 0x802e4815). The lookup reads that property of the provider (vtable +0x94 getProperty), takes the phandle, builds a matching dictionary and waits with no timeout. A NULL result goes to `panic("…Bad DPSM Tables in Device Tree")` (0x807510a8, `_panic` 0x80015c7c).
+  - **Watchdog:** 0x802ec006–0x802ec014: `waitForService(serviceMatching("IOPMU") [0x802f089c], 0)`. On NULL it skips to 0x802ec02e: it only reads `IOPMUBootDebug` and then parses `-s`.
+  - **Patches** (kernel/patches-boot.json):
+    - `wdt-no-pmu-wait`: 0x802ec014 `blx r3` → `movs r0,#0`;
+    - `clkctl-voltage-quiet`: the literal → shim +0x28 `shim_quiet_clk_function` (kernel/shim/quiet.c). It calls `IOService::adjustBusy(-1)` (0x801aef24) on `IORegistryEntry::fromPath("IODeviceTree:/arm-io/clkrstgen")` (0x801aae60), calls the original lookup (still endless), and adds `+1` if it returns.
+  - Result: `[iobusy] 0s: 0 of 80 services busy`; wifid starts at 10.9 s instead of 16.8 s.
+- **zoneinfo scans** (hfsmap): 339 reads of /usr/share/zoneinfo/* at 19, 32 and 57 s; Settings' cold launch had 454 of its 571 chunks there. Apple's `/private/var/db/timezone/localtime` is a 30-byte symlink (staging rootfs). The re-log 38 regular file makes CoreFoundation look for a zone file with the same contents. Now a symlink to `/usr/share/zoneinfo/UTC` (recipe `symlink`, xpwn `hfsplus symlink`).
+- **Mail at boot:** `[smp]` showed MobileMail with 1.7 s of CPU after boot. Its Info.plist has `UIBackgroundModes = (audio, continuous)`. SpringBoard's strings include `autoLaunchIfNecessaryOnBootOrInstall:` and `Not autolaunching Mail since the SBDisableMailAutoLaunch default is set`, so the recipe sets that default.
+- **md0 sizes:**
+  - `mdevioctl` (0x80072a14) answers MAXBLOCKCOUNT/MAXSEGMENTCOUNT read/write with 32 (0x80072a9e). MAXBYTECOUNT gets ENOTTY, so `vfs_init_io_attributes` (literal pool 0x80087920–0x8008797c, mount fields 0x8b8–0x8d8) fails and the mount keeps MAXPHYS = 128 KiB.
+  - Page-in runs from the VM pre-heat reach 1.7 MiB. The 800 KiB read at launchd start is the shared cache's code signature (cache offset 0x9ee4000, after LINKEDIT 0x8646000+0x189e000).
+- **Numbers:** docs/boot-perf.md §2. Rebased on 13ee8ec (microphone): settled at 26.5 s. soak.py with 20 cycles in plain QEMU, including the 130 s lock: PASS.
 
 ## 50. CoreAnimation frames without the CPU read-back (2026-11-18)
 Design: docs/gpu.md §7 ("Presenting without the read-back"), docs/pica200.md §15.

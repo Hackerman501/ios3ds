@@ -10,3 +10,6 @@ bool audio_init(void);
 /* Monitor loop: report stream starts/stops seen by the shim's audio emulation
    (kernel/shim/audio.c) in the SD log. shim_pa = cfg.shim_pa (0 = no shim). */
 void audio_poll(u32 shim_pa);
+
+/* boot.cfg mic=0: never touch the MIC block (iOS's input stays silent) */
+void audio_set_mic(bool enabled);

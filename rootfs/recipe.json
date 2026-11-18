@@ -4,7 +4,7 @@
   "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
   "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
   "/var/log/syslog": "",
-  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDidShowReorderText</key>\n\t<true/>\n</dict>\n</plist>\n",
+  "/private/var/mobile/Library/Preferences/com.apple.springboard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>SBDisableAutoDim</key>\n\t<true/>\n\t<key>SBDontLockAfterCrash</key>\n\t<true/>\n\t<key>SBDidShowReorderText</key>\n\t<true/>\n\t<key>SBDisableMailAutoLaunch</key>\n\t<true/>\n</dict>\n</plist>\n",
   "/System/Library/Caches/com.apple.dyld/enable-dylibs-to-override-cache": ""
  },
  "disable_daemons": [
@@ -41,6 +41,9 @@
   "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",
   "/private/var/db/timezone/localtime"
  ],
+ "symlink": {
+  "/private/var/db/timezone/localtime": "/usr/share/zoneinfo/UTC"
+ },
  "plist_set": {
   "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
    "StandardErrorPath": "/dev/console",
@@ -54,6 +57,8 @@
   }
  },
  "add": {
+  "build/rootfs-add/usr/libexec/ios3ds-diag": "/usr/libexec/ios3ds-diag",
+  "tools/ios3ds-diag/com.ios3ds.iobusy.plist": "/System/Library/LaunchDaemons/com.ios3ds.iobusy.plist",
   "build/rootfs-add/usr/libexec/ios3ds-sample": "/usr/libexec/ios3ds-sample",
   "rootfs/files/com.ios3ds.sample.plist": "/System/Library/LaunchDaemons/com.ios3ds.sample.plist",
   "build/rootfs-add/usr/libexec/ios3ds-input": "/usr/libexec/ios3ds-input",
@@ -67,10 +72,11 @@
   "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
   "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
   "build/rootfs-add/usr/libexec/ios3ds-mcud": "/usr/libexec/ios3ds-mcud",
-  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist",
-  "rootfs/files/localtime-UTC": "/private/var/db/timezone/localtime"
+  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist"
  },
  "chmod": {
+  "/usr/libexec/ios3ds-diag": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.iobusy.plist": "0644",
   "/usr/libexec/ios3ds-sample": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.sample.plist": "0644",
   "/usr/libexec/ios3ds-input": "0755",
@@ -84,8 +90,7 @@
   "/usr/libexec/ios3ds-tone": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",
   "/usr/libexec/ios3ds-mcud": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644",
-  "/private/var/db/timezone/localtime": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644"
  },
  "file_patches": [
   {
@@ -227,6 +232,13 @@
    "orig": "3536354c",
    "new": "41524742",
    "why": "QuartzCore CA::WindowServer::M2Display ctor: the display surface format for an ES1 (API 1) GL compositor is the literal 'L565' (16 bpp); make it 'BGRA' like API 2 so CA's GL compositor renders the 32 bpp format the CLCD scans out and the screen mirror reads (docs/gpu.md 7)"
+  },
+  {
+   "path": "/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin/VirtualAudio",
+   "offset": "0x287228",
+   "orig": "4e3732004e383100",
+   "new": "583732004e373200",
+   "why": "VirtualAudio (mediaserverd's routing plug-in) picks its routing database by matching hw.model against the product table at 0x287210 (K48 ... N72 N81 ...). N72's database has no built-in microphone (input only from a wired headset), so iOS reports no input. Swap the N72 slot to 'X72' and the N81 (iPod touch 4G: speaker, headphones, built-in mic, no receiver) slot to 'N72': this N72 now routes like an N81 and gets MicrophoneBuiltIn, backed by the codec's 'imic' data source (dt_audio.py ain2b-intmic) and the 3DS microphone (docs/audio.md)"
   }
  ]
 }

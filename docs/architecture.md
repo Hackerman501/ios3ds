@@ -93,9 +93,10 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
   - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
   - QuartzCore's ES1 display surface format is patched from 16 to 32 bpp, so its GL compositor can run on our engine (SpringBoard only, GPU only, [gpu.md](gpu.md) §7);
-  - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot.
+  - see [gpu.md](gpu.md). `ios3ds-gltest` checks it at boot when boot.cfg has `diag=1`.
   - with `IOS3DS_GL=pica` the engine renders on the PICA200 through the shim's `ios3ds_gpu` service (`kernel/shim/pica.c`); see [pica200.md](pica200.md).
 - `ios3ds-sample` (`tools/ios3ds-sample`) prints every process's thread state to the console periodically. It is a debugging aid.
+- `ios3ds-diag` (`tools/ios3ds-diag`) starts the test jobs (gltest, the boot tone, the sampler, `[iobusy]`) only when boot.cfg has `diag=1` ([boot-perf.md](boot-perf.md)).
 
 ## 5. Debugging aids
 - **SELECT+START:** XNU panics and dumps all thread backtraces, through the shim's `panic_req`.

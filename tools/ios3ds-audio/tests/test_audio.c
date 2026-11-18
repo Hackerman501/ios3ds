@@ -29,6 +29,26 @@ void *aud_host_p2v(u32 pa, u32 len)
 }
 void aud_host_log(int c) { if (loglen < sizeof(logbuf) - 1) logbuf[loglen++] = (char)c; }
 
+/* the MIC block: a FIFO the test fills (hmic_push) */
+static u32 hmic_cnt, hmic_q[4096], hmic_head, hmic_tail, hmic_next;
+u32 aud_host_mic_cnt_r(void) { return hmic_cnt | (hmic_head == hmic_tail ? MIC_CNT_EMPTY : 0); }
+void aud_host_mic_cnt_w(u32 v)
+{
+    hmic_cnt = v & ~(MIC_CNT_CLEAR | MIC_CNT_EMPTY);
+    if (v & MIC_CNT_CLEAR) hmic_head = hmic_tail;
+}
+u32 aud_host_mic_data_r(void)
+{
+    if (hmic_head == hmic_tail) return 0;
+    return hmic_q[hmic_tail++ & 4095];
+}
+static void hmic_push(u32 samples)              /* a ramp of 6 per sample, two per FIFO word */
+{
+    for (u32 i = 0; i < samples; i += 2, hmic_next += 2)
+        hmic_q[hmic_head++ & 4095] = (u16)(int16_t)((int)hmic_next * 6 - 3000) |
+                                     (u32)(u16)(int16_t)((int)(hmic_next + 1) * 6 - 3000) << 16;
+}
+
 extern volatile aud_blk_t shim_audio;
 void aud_service(u32 now);
 int shim_iic_transfer(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf);
@@ -289,13 +309,98 @@ static void test_rx_and_other_channels(void)
     t += 11875;                         /* exactly 1000 words */
     aud_service(t);
     CHECK(shim_audio.stat.rx_words == 1000, "rx %u", shim_audio.stat.rx_words);
-    CHECK(buf[0] == 0 && buf[1999] == 0 && buf[2000] == 0xEE, "1000 words of silence delivered");
+    CHECK(buf[0] == 0 && buf[1999] == 0, "1000 words of silence delivered (the mic ring is empty)");
     CHECK(CH(1, DST) == BUF_PA + 2000, "DestAddr %x", CH(1, DST));
     CHECK(shim_audio.stat.starts == 0 && !(shim_audio.stat.state & 4), "input alone does not start CSND");
     t += 11875;
     aud_service(t);
     CHECK(!(CH(1, CFG) & 1) && (aud_host_dmac[1] & 2), "input item done, TC on channel 1");
     CHECK(aud_test_inject(), "interrupt");
+}
+
+/* microphone: the shim drains the MIC FIFO into its ring and feeds the RX stream */
+static void test_mic(void)
+{
+    reset();
+    hmic_cnt = hmic_head = hmic_tail = hmic_next = 0;
+    volatile aud_mic_t *m = (volatile aud_mic_t *)aud_host_p2v(AUD_MIC_PA, sizeof(aud_mic_t));
+    int16_t *buf = (int16_t *)aud_host_p2v(BUF_PA, RING_BYTES);
+    u32 t = 100, bad = 0, steps = 0;
+#define G(x) ((int16_t)(((int32_t)(x) * (int32_t)AUD_MIC_GAIN_Q15 + (1 << 14)) >> 15))
+    lli(0)[0] = I2S_RX_FIFO; lli(0)[1] = BUF_PA; lli(0)[2] = 0; lli(0)[3] = TX_CTL | DI | 4000 | IBIT;
+    start_chan(1, 0, RX_CFG);
+    aud_service(t);
+    CHECK(m->magic == AUD_MIC_MAGIC && m->want == 1 && m->state == AUD_MIC_RUNNING, "input stream -> mic on");
+    CHECK((hmic_cnt & MIC_CNT_EN) && ((hmic_cnt >> 2) & 3) == AUD_MIC_DIV, "MIC_CNT %x", hmic_cnt);
+    CHECK(m->rate == 11901, "rate %u", m->rate);
+    for (int i = 0; i < 48; i++) {      /* 1 ms services, ~12 mic samples each, as on the device */
+        hmic_push(12);
+        aud_service(t += 1047);
+    }
+    CHECK(m->wr >= 560 && m->wr <= 580, "the shim drained the FIFO: %u samples", m->wr);
+    CHECK(!(CH(1, CFG) & 1), "4000-word item done");
+    /* the first 20 ms are the reader's lag (the ring's old contents); then the ramp */
+    for (u32 f = 1000; f < 2000; f++) {
+        if (buf[2 * f] != buf[2 * f + 1]) bad++;
+        int d = buf[2 * f] - buf[2 * f - 2];
+        if (d == 1) steps++;
+        else if (d) bad++;
+    }
+    CHECK(!bad, "%u frames not a scaled, interpolated ramp", bad);
+    CHECK(steps > 70 && shim_audio.stat.mic_samples >= 520 && shim_audio.stat.mic_samples <= 545,
+          "11901 Hz over 2000 frames at 44097 Hz: %u mic samples used, %u steps", shim_audio.stat.mic_samples, steps);
+    CHECK(shim_audio.stat.mic_underruns == 0, "no underruns: %u", shim_audio.stat.mic_underruns);
+
+    /* the input stream pauses briefly between commands: the mic stays on */
+    CH(1, CFG) = 0;
+    aud_service(t += 100);
+    CHECK(m->want == 1 && m->state == AUD_MIC_RUNNING, "short gap: mic stays on");
+
+    /* the MIC block stops delivering: after 250 ms the input goes silent, once */
+    lli(1)[0] = I2S_RX_FIFO; lli(1)[1] = BUF_PA; lli(1)[2] = 0; lli(1)[3] = TX_CTL | DI | 4000 | IBIT;
+    start_chan(1, 1, RX_CFG);
+    for (int i = 0; i < 40; i++) aud_service(t += 10000);
+    CHECK(m->state == AUD_MIC_FAILED && m->why == 1 && !(hmic_cnt & MIC_CNT_EN), "no data -> failed, MIC off");
+    CHECK(strstr(logbuf, "no samples for 250 ms") != NULL, "logged");
+    lli(2)[0] = I2S_RX_FIFO; lli(2)[1] = BUF_PA; lli(2)[2] = 0; lli(2)[3] = TX_CTL | DI | 100 | IBIT;
+    start_chan(1, 2, RX_CFG);
+    aud_service(++t);
+    aud_service(t += 1200);
+    CHECK(buf[0] == 0 && buf[99] == 0, "failed mic -> silence");
+    CH(1, CFG) = 0;
+    aud_service(t += 100);
+    aud_service(t += AUD_MIC_HOLD_TICKS);
+    CHECK(m->want == 0, "input stream gone for a second -> mic not wanted");
+
+    /* a stream of odd length must not shift the next stream's frames:
+       every frame iOS reads has L = R */
+    {
+        u32 k, mism = 0;
+        reset();
+        hmic_cnt = hmic_head = hmic_tail = hmic_next = 0;
+        lli(0)[0] = I2S_RX_FIFO; lli(0)[1] = BUF_PA + 0x8000; lli(0)[2] = 0; lli(0)[3] = TX_CTL | DI | 1001 | IBIT;
+        start_chan(1, 0, RX_CFG);
+        aud_service(t = 100);
+        for (int i = 0; i < 20; i++) { hmic_push(12); aud_service(t += 1047); }
+        CHECK(!(CH(1, CFG) & 1), "odd stream done");
+        for (k = 0; k < 4000; k++) buf[k] = 0x5A5A;
+        lli(1)[0] = I2S_RX_FIFO; lli(1)[1] = BUF_PA; lli(1)[2] = 0; lli(1)[3] = TX_CTL | DI | 2000 | IBIT;
+        start_chan(1, 1, RX_CFG);
+        aud_service(t += 1);
+        for (int i = 0; i < 30; i++) { hmic_push(12); aud_service(t += 1047); }
+        for (k = 0; k < 1000; k++) if (buf[2 * k] != buf[2 * k + 1]) mism++;
+        CHECK(!mism, "frames after an odd-length stream: %u with L != R", mism);
+    }
+
+    /* boot.cfg mic=0 */
+    reset();
+    hmic_cnt = 0;
+    m->arm9_magic = AUD_MIC_MAGIC;
+    m->disabled = 1;
+    lli(0)[0] = I2S_RX_FIFO; lli(0)[1] = BUF_PA; lli(0)[2] = 0; lli(0)[3] = TX_CTL | DI | 4000 | IBIT;
+    start_chan(1, 0, RX_CFG);
+    aud_service(t = 100);
+    CHECK(m->state == AUD_MIC_DISABLED && !(hmic_cnt & MIC_CNT_EN), "mic=0: MIC block untouched");
 }
 
 static void test_bad_addresses_and_halt(void)
@@ -387,7 +492,7 @@ static void test_iic(void)
 
 int main(void)
 {
-    CHECK(sizeof(aud_cfg_t) == 40 && sizeof(aud_stat_t) == 72, "layout shared with mkboot / the ARM9");
+    CHECK(sizeof(aud_cfg_t) == 40 && sizeof(aud_stat_t) == 84, "layout shared with mkboot / the ARM9");
     test_tx_stream();
     test_tx_chained();
     test_idle_silence_and_stop();
@@ -395,6 +500,7 @@ int main(void)
     test_bad_addresses_and_halt();
     test_csnd_resync();
     test_iic();
+    test_mic();
     if (fails) {
         printf("%d check(s) failed\n", fails);
         return 1;

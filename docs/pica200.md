@@ -324,7 +324,8 @@ Commands and output are in `re-log.md`, entry 27.
 ## 8. First run on a real 3DS: what to look at
 
 1. Boot as usual; `log.txt` on the SD card (or the top-screen console) has
-   the `[pica]` and `gltest:` lines. gltest runs at boot; nothing else uses
+   the `[pica]` and `gltest:` lines. gltest runs at boot with `diag=1` in
+   boot.cfg (docs/boot-perf.md §3); nothing else uses
    the GPU, so a failure cannot take the home screen down.
 2. `[pica] bring-up:` shows `PDN_GPU_CNT`. Expected 0x0001007F. Anything else
    means Luma did not leave the GPU running; the shim tries to start it and

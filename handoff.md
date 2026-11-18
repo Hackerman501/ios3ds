@@ -24,6 +24,7 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 | Wi-Fi | end to end against the `ctr-wifi` model: SDIO, BMI, HTC/WMI, WPA2 4-way, DHCP lease, default route, DNS, HTTP fetch (`emu/wifi_test.py`, re-log 45); off cleanly without `wifi.cfg` or firmware | not tested (docs/wifi.md §6 lists the log lines to read) |
 | Screen-off power saving (copies paused, ARM9 WFI, VBlank masked, no system sleep) | works: ARM9 39 % → 2 % host CPU while locked (re-log 43) | not tested; `powersave=0` |
 | Notification LED (low battery) | pattern written (model) | not tested; off by default, `notify_led=1` |
+| Boot time (`--icount 2`; IOKitWaitQuiet 5 s fix, zoneinfo symlink, no Mail at boot, test jobs only with `diag=1`) | settled at 26.2 s instead of 34.0 s; Settings' cold launch has 125 md0 chunks instead of 571 ([docs/boot-perf.md](docs/boot-perf.md)) | not tested; set `diag=1` for test runs, `ioprof=1` measures the card |
 
 ## 2. How work is organised now
 - **Release tree:** clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (branch `rel-main`, pushed to `main`). It has its own unified QEMU build (GPU + CSND + MCU models). Card builds come only from there.

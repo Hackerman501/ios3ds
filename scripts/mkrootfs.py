@@ -92,6 +92,14 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "add", local_path(local, rootfs_add), path)
             if verbose:
                 print("[mkrootfs] added %s -> %s" % (local, path))
+        for path, target in recipe.get("symlink", {}).items():
+            if exists(out, path):
+                hfs(out, "rm", path)
+            res = hfs(out, "symlink", path, target)
+            if not exists(out, path):
+                raise SystemExit("hfsplus symlink %s failed: %s" % (path, res.strip()))
+            if verbose:
+                print("[mkrootfs] symlink %s -> %s" % (path, target))
         for path, keys in recipe.get("plist_set", {}).items():
             import plistlib
             tmp = os.path.join(td, "p.plist")

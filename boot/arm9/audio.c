@@ -118,6 +118,17 @@ bool audio_init(void)
     cdc_write(P101, 28, 7);
     ms(38);
 
+    /* microphone side: libn3ds microphoneInit() without the calibration
+       filters (the CODEC's reset defaults pass audio through). The ADC itself
+       is powered only while iOS records (mic_start). */
+    cdc_mask(P100, 34, 0, 4);                   /* mic ADC output select */
+    cdc_mask(1, 48, 0x40, 0xC0);                /* ADC input impedance, P and M terminal */
+    cdc_mask(1, 49, 0x40, 0xC0);
+    cdc_write(P101, 51, 3);                     /* mic bias (hw_cal default) */
+    cdc_mask(P101, 65, 0, 0x3F);                /* PGA gain correction 0 */
+    cdc_mask(P101, 66, 2, 3);                   /* quick charge (hw_cal default) */
+    cdc_write(1, 47, 43);                       /* mic PGA */
+
     codec_ok = true;
     log_ok("[audio] CODEC id %02x rev %02x: DAC %s, %s, I2S1_CNT %04x\n", id, rev,
            dac ? "up" : "not confirmed", hp ? "headphones" : "speaker", *(vu16 *)I2S1_CNT_PA);
@@ -147,6 +158,69 @@ static void jack_poll(void)
            hp ? "headphones" : "speaker");
 }
 
+#define T9_VAL(n)   (*(vu16 *)(0x10003000u + (n) * 4))   /* main.c's wall clock: 65457 Hz */
+#define T9_HZ       65457u
+static u32 t9_ticks(void)
+{
+    u16 hi, lo, hi2;
+    do {
+        hi = T9_VAL(3);
+        lo = T9_VAL(2);
+        hi2 = T9_VAL(3);
+    } while (hi != hi2);
+    return (u32)hi << 16 | lo;
+}
+
+/* ---- microphone -------------------------------------------------------------
+   The kernel shim drains the MIC FIFO itself (ARM11, kernel/shim/audio.c) while
+   iOS records and says so in aud_mic_t.want; the ARM9 owns the CODEC (SPI), so
+   it powers the ADC for that time, publishes boot.cfg mic=0 and logs. */
+static volatile aud_mic_t *const micr = (volatile aud_mic_t *)AUD_MIC_PA;
+static struct { bool enabled, adc; u32 state; } mic = { .enabled = true, .state = ~0u };
+
+void audio_set_mic(bool enabled) { mic.enabled = enabled; }
+
+static void mic_poll(volatile aud_stat_t *st)
+{
+    static u32 svc0, early0, t0;
+    static const char *const why[] = { "?", "no samples for 250 ms", "FIFO never empties",
+                                       "MIC block switched itself off", "no IO window" };
+    bool want;
+    micr->disabled = !mic.enabled;              /* our line: rewritten every pass */
+    micr->arm9_magic = AUD_MIC_MAGIC;
+    if (micr->magic != AUD_MIC_MAGIC) return;   /* the shim has not used the mic yet */
+    want = micr->want && mic.enabled;
+    if (want != mic.adc && codec_ok) {
+        if (want) {
+            cdc_mask(P0, 81, 0x80, 0x80);       /* ADC powered up */
+            cdc_mask(P0, 82, 0, 0x80);          /* ADC unmuted */
+        } else {
+            cdc_mask(P0, 82, 0x80, 0x80);
+            cdc_mask(P0, 81, 0, 0x80);
+        }
+        mic.adc = want;
+        micr->adc_on = want;
+    }
+    if (micr->state != mic.state) {
+        mic.state = micr->state;
+        if (mic.state == AUD_MIC_RUNNING) {
+            svc0 = st ? st->services : 0;
+            early0 = st ? st->early_wakes : 0;
+            t0 = t9_ticks();
+            log_ok("[audio] mic on: %u Hz into iOS's input stream\n", (unsigned)micr->rate);
+        } else if (mic.state == AUD_MIC_OFF && micr->starts) {
+            u32 ms = (t9_ticks() - t0) / (T9_HZ / 1000);
+            log_ok("[audio] mic off: %u samples, %u FIFO overruns; %u shim services (%u early) in %u ms\n",
+                   (unsigned)micr->wr, (unsigned)micr->overruns, (unsigned)(st ? st->services - svc0 : 0),
+                   (unsigned)(st ? st->early_wakes - early0 : 0), (unsigned)ms);
+        }
+        else if (mic.state == AUD_MIC_FAILED)
+            log_warn("[audio] mic: %s: input stays silent\n", why[micr->why < 5 ? micr->why : 0]);
+        else if (mic.state == AUD_MIC_DISABLED)
+            log_warn("[audio] mic disabled (boot.cfg mic=0): input stays silent\n");
+    }
+}
+
 void audio_poll(u32 shim_pa)
 {
     static volatile aud_blk_t *b;
@@ -162,8 +236,9 @@ void audio_poll(u32 shim_pa)
             if (w[0] == AUD_CFG_MAGIC0 && w[1] == AUD_CFG_MAGIC1) { b = (volatile aud_blk_t *)w; break; }
         }
     }
-    if (!b) return;
+    if (!b) { mic_poll(NULL); return; }
     volatile aud_stat_t *s = &b->stat;
+    mic_poll(s);
     if (s->starts != starts) {
         starts = s->starts;
         log_ok("[audio] iOS output stream #%u started (CSND starts %u)\n", (unsigned)starts, (unsigned)s->csnd_starts);

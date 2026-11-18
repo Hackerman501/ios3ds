@@ -660,6 +660,10 @@ typedef struct {
     uint32_t arm9_entry, arm11_entry;
     uint32_t argv_addr;
     bool screen_init;
+    /* profiler (env N3DS_PROF=<file>, docs/boot-perf.md) */
+    QEMUTimer *prof_timer;
+    FILE *prof_out;
+    uint32_t prof_n, prof_a11, prof_a9, prof_md0, prof_md0_a11idle;
 } CtrMachine;
 
 static CtrMachine *ctr;
@@ -1482,6 +1486,53 @@ static bool mcu_prop_get_shell(Object *obj, Error **errp)
 static void mcu_prop_set_shell(Object *obj, bool open, Error **errp)
 {
     mcu_set_shell(ctr, open);
+}
+
+/* --- profiler ------------------------------------------------------------
+   N3DS_PROF=<file>: every 1 ms of guest (virtual) time, sample whether each CPU
+   is halted (WFI) and whether an md0 request is outstanding in the shim's block
+   mailbox (blkmbox_t at SHIM_PA + 0x6000: seq at +0x20, done_seq at +0x40);
+   one line per 250 ms of guest time. With -icount, guest time is instruction-
+   clocked, and in QEMU's round-robin TCG the vCPUs share one instruction clock:
+   a busy ARM9 also slows the ARM11 down in guest time. */
+#define PROF_MBOX 0x20846000u
+
+static void ctr_prof_tick(void *opaque)
+{
+    CtrMachine *s = opaque;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    uint32_t seq = 0, done = 0;
+    bool a11_run = !CPU(s->cpu11)->halted, a9_run = !CPU(s->cpu9)->halted;
+    address_space_read(&address_space_memory, PROF_MBOX + 0x20, MEMTXATTRS_UNSPECIFIED, &seq, 4);
+    address_space_read(&address_space_memory, PROF_MBOX + 0x40, MEMTXATTRS_UNSPECIFIED, &done, 4);
+    bool md0 = seq != done;
+    s->prof_n++;
+    s->prof_a11 += a11_run;
+    s->prof_a9 += a9_run;
+    s->prof_md0 += md0;
+    s->prof_md0_a11idle += md0 && !a11_run;
+    if (s->prof_n == 250) {     /* a line per 250 ms */
+        /* the ARM9 monitor's clock (timers 2+3, 65457 Hz) for lining up with its log */
+        tmr9_sync(s, 2);
+        tmr9_sync(s, 3);
+        uint32_t a9t = (s->tmr9[3].counter & 0xFFFF) << 16 | (s->tmr9[2].counter & 0xFFFF);
+        fprintf(s->prof_out, "[qprof] a9t=%.3f t=%.3f a11 %u%% a9 %u%% md0 %u%% md0+a11idle %u%%\n",
+                a9t / 65457.0, now / 1e9, s->prof_a11 * 2 / 5, s->prof_a9 * 2 / 5, s->prof_md0 * 2 / 5,
+                s->prof_md0_a11idle * 2 / 5);
+        fflush(s->prof_out);
+        s->prof_n = s->prof_a11 = s->prof_a9 = s->prof_md0 = s->prof_md0_a11idle = 0;
+    }
+    timer_mod(s->prof_timer, now + SCALE_MS);
+}
+
+static void ctr_prof_init(CtrMachine *s)
+{
+    const char *path = getenv("N3DS_PROF");
+    if (!path || !*path) return;
+    s->prof_out = fopen(path, "w");
+    if (!s->prof_out) return;
+    s->prof_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, ctr_prof_tick, s);
+    timer_mod(s->prof_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCALE_MS);
 }
 
 static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
@@ -2325,6 +2376,7 @@ static void ctr_init(MachineState *machine)
     ctr_csnd_init(&s->io_shared, 0x10103000 - CTR_IO_SHARED_BASE, &s->fcram, CTR_FCRAM_BASE);
     /* Wi-Fi: TMIO2 + AR6014 + access point -> -nic user,model=ctr-wifi (ctr_wifi.c) */
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
+    ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };
@@ -2396,6 +2448,7 @@ static void ctr_init(MachineState *machine)
     qemu_console_resize(s->con, CTR_TOP_W, CTR_SCR_H * 2);
     qemu_input_handler_register(NULL, &ctr_input_handler);
     ctr_add_mcu_props(s, OBJECT(machine));
+    ctr_prof_init(s);
 
     /* ---- payload ---- */
     if (!machine->kernel_filename) {

@@ -60,6 +60,9 @@ static void status(int row, u32 color, const char *fmt, ...)
 /* ARM11 log ring                                                           */
 
 static u32 a11_log_tail;
+static u32 clk_ticks(void);
+static bool log_ts;         /* boot.cfg log_ts=1 */
+static void ts_prefix(char *buf, u32 *n);
 
 /* copy ring bytes [*tail, head) to the log in chunks: one f_write per chunk,
    not per byte (per-byte writes + syncs made real-SD console output crawl
@@ -70,13 +73,19 @@ static u32 a11_log_tail;
    heartbeat from ever seeing a quiet console. */
 static u32 text_bytes;
 
-static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color)
+static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color, bool *bol)
 {
     char chunk[512];
     while (*tail != head) {
         u32 n = 0;
-        while (*tail != head && n < sizeof(chunk)) {
+        while (*tail != head && n < sizeof(chunk) - 16) {
             char c = buf[*tail % size];
+            /* the stamp goes before a line's first visible character (the
+               console sends "\r" and blank lines long before the text) */
+            bool vis = c != '\n' && c != '\r' && c != ' ' && c != '\t';
+            if (log_ts && *bol && vis) ts_prefix(chunk, &n);
+            if (c == '\n') *bol = true;
+            else if (vis) *bol = false;
             chunk[n++] = c;
             if (c != '\n' && c != '\r' && c != ' ' && c != '\t') text_bytes++;
             (*tail)++;
@@ -93,7 +102,8 @@ static void drain_a11_log(void)
         log_warn("[a11] (log overrun, %u bytes lost)\n", head - a11_log_tail - SHARED_LOG_SIZE);
         a11_log_tail = head - SHARED_LOG_SIZE;
     }
-    drain_ring((const volatile char *)sh->log_buf, SHARED_LOG_SIZE, &a11_log_tail, head, CON_CYAN);
+    static bool bol = true;
+    drain_ring((const volatile char *)sh->log_buf, SHARED_LOG_SIZE, &a11_log_tail, head, CON_CYAN, &bol);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -115,7 +125,11 @@ typedef struct {
     u32 mcu_acc;         /* 0: no accelerometer for iOS */
     u32 powersave;       /* 0: no power saving while iOS' screen is off */
     u32 notify_led;      /* 1: notification LED blinks red on low battery */
+    u32 diag;            /* 1: diagnostics on (boot-arg ios3ds_diag=1 for the test daemons, docs/boot-perf.md) */
+    u32 ioprof;          /* md0 profile: 1 = [io] per second, 2 = + [blk] per request */
+    u32 log_ts;          /* 1: "[s.ms]" timestamps on forwarded console lines */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
+    u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -159,6 +173,7 @@ static int parse_bootcfg(char *txt)
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
     cfg.powersave = 1;
+    cfg.mic = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -175,6 +190,8 @@ static int parse_bootcfg(char *txt)
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
+        { "mic", &cfg.mic },
+        { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
     char *line = txt;
@@ -335,6 +352,9 @@ static u32 fc_rd(u32 pa) { return in_fcram(pa, 4) ? *(vu32 *)pa : 0xBAD0BAD0u; }
 
 static void clk_start(void)
 {
+    static bool started;        /* once, at ARM9 start: all times count from there */
+    if (started) return;
+    started = true;
     T9_CNT(2) = 0;
     T9_CNT(3) = 0;
     T9_VAL(2) = 0;
@@ -355,6 +375,20 @@ static u32 clk_ticks(void)
 }
 
 static u32 clk_secs(void) { return clk_ticks() / T9_HZ; }
+static u32 clk_ms(void) { return (u32)((u64)clk_ticks() * 1000 / T9_HZ); }
+
+static void ts_prefix(char *buf, u32 *n)
+{
+    u32 t = clk_ms();
+    *n += snprintf(buf + *n, 16, "[%u.%03u] ", t / 1000, t % 1000);
+}
+
+/* ARM9 boot phases (docs/boot-perf.md): one line each, ms since the ARM9 started */
+static void stamp(const char *what)
+{
+    u32 t = clk_ms();
+    logp("[boot] %u.%03u s: %s\n", t / 1000, t % 1000, what);
+}
 
 /* heartbeat while the console is quiet: is the kernel alive (clock reads,
    ticks), is md0 busy, and where does the ARM11 spend its time (IRQ-time PC
@@ -489,13 +523,15 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             }
         }
         drain_a11_log();
+        blksrv_prof_tick();
         if (ring && ring->magic == XNU_RING_MAGIC && ring->size) {
             u32 head = ring->head;
             if (head - ring_tail > ring->size) {
                 log_warn("[xnu] (ring overrun, %u bytes lost)\n", head - ring_tail - ring->size);
                 ring_tail = head - ring->size;
             }
-            drain_ring((const volatile char *)ring->buf, ring->size, &ring_tail, head, CON_WHITE);
+            static bool bol = true;
+            drain_ring((const volatile char *)ring->buf, ring->size, &ring_tail, head, CON_WHITE, &bol);
         }
         /* The entry stub zeroes 36 KiB at topOfKernelData and writes the L1
            entries for virtBase. We filled it with a pattern before the jump. */
@@ -656,6 +692,7 @@ void a9_main(int argc, char **argv)
         top1 = (u8 *)fbs[3];
         bot1 = (u8 *)fbs[5];
     }
+    clk_start();
     con_init(top0, top1, bot0, bot1);
     display_init(top0, top1, bot0, bot1);
 
@@ -698,6 +735,7 @@ void a9_main(int argc, char **argv)
         monitor("ARM11 did not come up");
     }
     log_ok("ARM11 ready\n");
+    stamp("SD mounted, ARM11 ready");
     status(8, CON_GREEN, "ARM11 ok, MIDR %08x", SHARED->midr);
     report_cpu();
     drain_a11_log();
@@ -715,9 +753,12 @@ void a9_main(int argc, char **argv)
         monitor("nothing to boot");
     }
     parse_bootcfg(cfgbuf);
+    log_ts = cfg.log_ts != 0;
+    blksrv_profile(cfg.ioprof, clk_ticks, T9_HZ);
+    stamp("boot.cfg read");
 
-    if (cfg.probes) {
-        logp("running ARM11 instruction probes (boot.cfg probes=0 skips them)\n");
+    if (cfg.probes || cfg.diag) {   /* diagnostics only (0.25 s): off unless asked for */
+        logp("running ARM11 instruction probes (boot.cfg probes=0 diag=0 skips them)\n");
         log_flush();
         volatile shared_t *sh = SHARED;
         sh->a9_cmd = A9CMD_PROBE;
@@ -735,6 +776,7 @@ void a9_main(int argc, char **argv)
         }
         sh->a9_cmd = A9CMD_NONE;
         report_probes();
+        stamp("ARM11 probes done");
     }
     logp("kernel %s @%08x entry %08x\n", cfg.kernel, cfg.kernel_pa, cfg.entry_pa);
     logp("devtree %s @%08x, boot_args @%08x\n", cfg.devtree, cfg.devtree_pa, cfg.bootargs_pa);
@@ -761,6 +803,7 @@ void a9_main(int argc, char **argv)
         monitor("devtree load failed");
     }
     log_ok("devtree: %u bytes at %08x\n", dsize, cfg.devtree_pa);
+    stamp("kernel + devtree loaded");
 
     if (cfg.shim[0]) {
         u32 ssize = 0;
@@ -780,6 +823,7 @@ void a9_main(int argc, char **argv)
         } else {
             log_ok("rootfs %s: %u MiB served as md0\n", cfg.rootfs, secs / 2048);
         }
+        stamp("rootfs opened (fast-seek map)");
     }
 
     /* the shim calls its GPU part only if gpu.bin put the part's magic there
@@ -802,6 +846,7 @@ void a9_main(int argc, char **argv)
         log_ok("loaded %s: %u bytes at %08x\n", cfg.load_path[i], sz, pa);
     }
 
+    stamp("load= files loaded");
     display_arm(cfg.display_regs);
 
     u32 entry_word = *(vu32 *)cfg.entry_pa;
@@ -826,6 +871,10 @@ void a9_main(int argc, char **argv)
     ba->deviceTreeP = cfg.devtree_pa - cfg.phys_base + cfg.virt_base;
     ba->deviceTreeLength = dsize;
     strlcpy_(ba->CommandLine, cfg.cmdline, sizeof(ba->CommandLine));
+    /* diag=1: the test/diagnostic launchd jobs (gltest, boot tone, [smp] sampler)
+       look for this boot-arg in kern.bootargs and exit at once without it */
+    if (cfg.diag && strlen(ba->CommandLine) + 14 < sizeof(ba->CommandLine))
+        strlcpy_(ba->CommandLine + strlen(ba->CommandLine), " ios3ds_diag=1", 15);
     log_ok("boot_args at %08x: dt va %08x len %u\n", cfg.bootargs_pa, ba->deviceTreeP, dsize);
 
     /* XNU log ring (filled by the M2 console hook) */
@@ -845,10 +894,12 @@ void a9_main(int argc, char **argv)
     mcu_config_acc(cfg.mcu_acc != 0);
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
     mcu_set_led(cfg.notify_led != 0);
+    audio_set_mic(cfg.mic != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
     }
+    stamp("Wi-Fi, audio, MCU, GPU set up");
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");
@@ -863,6 +914,7 @@ void a9_main(int argc, char **argv)
         delay_ms(100);
     }
 
+    stamp("countdown over");
     log_color(CON_GREEN, "jumping: ARM11 -> %08x, r0=%08x (boot_args)\n", cfg.entry_pa, cfg.bootargs_pa);
     log_flush();
     volatile shared_t *sh = SHARED;
@@ -874,6 +926,7 @@ void a9_main(int argc, char **argv)
         log_err("ARM11 did not acknowledge the jump command\n");
     } else {
         log_ok("ARM11 acknowledged, now in XNU\n");
+        stamp("XNU started");
     }
     status(10, CON_GREEN, "XNU started");
     monitor("XNU running");

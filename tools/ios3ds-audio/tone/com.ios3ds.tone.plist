@@ -6,6 +6,7 @@
 	<string>com.ios3ds.tone</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>/usr/libexec/ios3ds-diag</string>
 		<string>/usr/libexec/ios3ds-tone</string>
 		<string>1</string>
 		<string>10</string>
