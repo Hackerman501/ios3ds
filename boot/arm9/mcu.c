@@ -314,6 +314,19 @@ void mcu_poll(u32 now)
             box->valid |= MCUV_ACC;     /* "turned on", samples follow */
         }
         box->ack_seq = rs;
+        static u32 delta_seq;
+        if (box->user_delta_seq != delta_seq) {
+            /* iOS set the time: keep RTC + offset across reboots (the 3DS RTC
+               itself is not the user's time: Horizon adds an offset kept on
+               the NAND, which we don't read; run14's RTC said 2001) */
+            delta_seq = box->user_delta_seq;
+            char t[16];
+            int32_t total = box->rtc_offset + box->user_delta;
+            int n = snprintf(t, sizeof(t), "%d\n", (int)total);
+            int w = sd_write_small("0:/ios3ds/rtc_offset.txt", t, (u32)n);
+            logp("[mcu] iOS set the time: rtc_offset %d saved to sd:/ios3ds/rtc_offset.txt (%s)\n",
+                 (int)total, w == n ? "ok" : "write failed");
+        }
         if ((p == MCU_PWR_OFF || p == MCU_PWR_REBOOT) && !off_req) {
             off_req = p;        /* let the monitor loop drain XNU's last lines first */
             off_at = now + ms_ticks(300);

@@ -14,6 +14,7 @@ void log_flush(void);
 int log_mount_sd(char *why, u32 whylen);
 bool log_sd_ok(void);
 int sd_read_small(const char *path, char *buf, u32 size);
+int sd_write_small(const char *path, const char *buf, u32 len);
 int sd_load(const char *path, void *dst, u32 maxsize, u32 *outsize);
 void log_to_bottom(bool on);
 void log_target(int which);

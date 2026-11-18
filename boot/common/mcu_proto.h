@@ -82,7 +82,9 @@ typedef struct {
     uint32_t req_power;     /* MCU_PWR_*: iOS halted / restarted */
     uint32_t req_acc;       /* 1 = the accelerometer is wanted (enable + sample it) */
     uint32_t backlight;     /* 1 + LCD backlight level the shim last set (1 = screen off), 0 = never set */
-    uint32_t _r4[4];
+    int32_t  user_delta;    /* seconds iOS' clock is ahead of rtc_utc (Settings > Date & Time) */
+    uint32_t user_delta_seq;/* bumped whenever iOS sets the time; the ARM9 saves the offset */
+    uint32_t _r4[2];
     /* line 5: ARM9 acknowledgements */
     uint32_t ack_seq;       /* == req_seq once the ARM9 acted on it */
     uint32_t ps_on;         /* boot.cfg powersave: the shim may mask VBlank while the CLCD is off */

@@ -890,6 +890,16 @@ void a9_main(int argc, char **argv)
     wifi_init();
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
+    {   /* time set in iOS Settings, saved by mcu.c, wins over boot.cfg rtc_offset */
+        char t[24];
+        int n = sd_read_small("0:/ios3ds/rtc_offset.txt", t, sizeof(t));
+        if (n > 0) {
+            int v = 0, neg = t[0] == '-';
+            for (int i = neg; i < n && t[i] >= '0' && t[i] <= '9'; i++) v = v * 10 + (t[i] - '0');
+            cfg.rtc_offset = neg ? -v : v;
+            logp("[mcu] rtc_offset %d from sd:/ios3ds/rtc_offset.txt (time set in iOS)\n", (int)cfg.rtc_offset);
+        }
+    }
     mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
     mcu_config_acc(cfg.mcu_acc != 0);
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */

@@ -141,8 +141,12 @@ void shim_mcu_set_gmt(long secs)
 {
     if (rtc_known()) {
         user_delta = (int32_t)((u32)secs - BOX->rtc_utc);
-        IOLog("ios3ds-mcu: iOS set the time to %ld (RTC %d s); the 3DS RTC is not written\n",
-              secs, (int)user_delta);
+        IOLog("ios3ds-mcu: iOS set the time to %ld (RTC %d s); the 3DS RTC is not written, "
+              "the ARM9 saves the offset to sd:/ios3ds/rtc_offset.txt\n", secs, (int)user_delta);
+        BOX->user_delta = user_delta;       /* hardware run14: the raw 3DS RTC said 2001 */
+        BOX->user_delta_seq = BOX->user_delta_seq + 1;
+        BOX->req_seq = BOX->req_seq + 1;
+        dclean(&BOX->req_seq, 32);
     } else {
         IOLog("ios3ds-mcu: iOS set the time to %ld; no RTC to keep it\n", secs);
     }

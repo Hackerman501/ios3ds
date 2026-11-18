@@ -135,6 +135,19 @@ int sd_read_small(const char *path, char *buf, u32 size)
     return br;
 }
 
+/* write a whole small file (created or replaced); returns bytes written or -FRESULT */
+int sd_write_small(const char *path, const char *buf, u32 len)
+{
+    FIL f;
+    UINT bw = 0;
+    FRESULT r = f_open(&f, path, FA_WRITE | FA_CREATE_ALWAYS);
+    if (r != FR_OK) return -(int)r;
+    r = f_write(&f, buf, len, &bw);
+    f_close(&f);
+    if (r != FR_OK) return -(int)r;
+    return bw;
+}
+
 /* load a file to an absolute address, with a progress callback per MiB */
 int sd_load(const char *path, void *dst, u32 maxsize, u32 *outsize)
 {

@@ -60,3 +60,12 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL`. The GX clock setup (0 -> 0x70100) changed nothing measurable.
 - PSC fills never write FCRAM (traffic counters: `ext-wr +0`); non-power-of-two textures sample wrongly (48x40: 0 of 1920). Those two facts explain both run12 failures. Analysis: docs/pica200.md §13.
 - CPU copy: 41-95 copies per ~30 s, 235-430 ms each.
+
+## run14 (`fe45ac4`, all QEMU-verified drivers; card boot.cfg ca_gpu=0, powersave=0, diag=1)
+- Ran for an hour with no panic, stall or md0 error. The `[hb] clock` ratio stayed at 1000/1000 the whole time, so the kernel time base is right on hardware.
+- **GPU screen copy works on hardware:** `display mirror ACTIVE`, self-test 0 of 518400 bytes off, 11–24 fps for the whole hour, every spot check 0/512. The ARM9 copy before it took ~350 ms per frame.
+- **MCU works:** version 12/25, battery 21–22 % charging, 3540–3620 mV, 25 °C, volume slider 63/63, 3D slider. The accelerometer was powered on by Apple's LIS302DL driver, and SpringBoard registered an orientation change (0 → 6). HOME presses arrive.
+- **The RTC read 2001-02-04.** The raw 3DS RTC isn't the user's time: Horizon adds an offset kept in the NAND config, which we don't read. New: when the time is set in iOS Settings, the ARM9 saves the offset to `sd:/ios3ds/rtc_offset.txt` and applies it at boot.
+- **Audio:** an output stream started and the boot tone played. Whether it was audible isn't in the log.
+- **GL on the PICA200: gltest FAIL.** The cube isn't drawn, and scenes 1 and 2 differ a lot from the software rasterizer. The GPU copy and the GPU self-tests pass, so the problem is in the 3D/GL path (depth, vertices or lighting). GL apps still use the CPU rasterizer, so it isn't visible yet.
+- Wi-Fi stayed off: no `wifi-fw.bin` on the card (expected).
