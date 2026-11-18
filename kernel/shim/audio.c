@@ -80,7 +80,7 @@ AUD_DATA volatile aud_blk_t shim_audio = { .cfg = {
     .pcm_pa = AUD_PCM_PA, .ring_frames = AUD_RING_FRAMES, .lead_frames = AUD_LEAD_FRAMES,
     .rate_div = AUD_RATE_DIV, .flags = AUD_F_CSND | AUD_F_LOG,
     .stat_off = sizeof(aud_cfg_t),
-} };
+}, .stat = { .amp_step = AUD_AMP_NONE, .volume = 0x8000 } };
 #define shim_audio_cfg  shim_audio.cfg
 #define shim_audio_stat shim_audio.stat
 
@@ -94,7 +94,8 @@ static struct {
     u32 next_valid, next;               /* tick of the next audio deadline */
     u32 k_valid, k_deadline, clamped;   /* XNU's own timer deadline; 1 = the private timer runs short for audio */
     u32 io_ok;
-} A AUD_DATA = { 0 };
+    u32 vol, vol_applied;               /* CSND channel volume (0..0x8000) from the speaker amp's gain */
+} A AUD_DATA = { .vol = 0x8000 };
 
 /* ======================================================================== */
 #ifndef AUD_HOST_TEST
@@ -274,6 +275,29 @@ static void sink_put(const u16 *src, u32 words)     /* src == NULL: silence */
     shim_audio_stat.peak = peak;
 }
 
+/* ---- volume ----------------------------------------------------------------
+   iOS sets the speaker level on the LM48821 amp, not in the PCM: AppleLM48821Amp
+   (0x807b8108) turns a gain in whole dB into a 5-bit step and writes one byte,
+   step << 3 | 3, with no sub-address (the codec's HP output feeds the amp, DT
+   "hpout-spkr"). The 3DS has no such amp, so the step becomes CSND's channel
+   volume: the dB the driver meant, relative to the step of iOS's loudest
+   setting (AUD_AMP_REF_STEP = unity; the driver's range is -38..+18 dB,
+   0x807b800c). Volume 0 is not a step: the driver's mute (0x807b8048) writes
+   the mode byte 0x04 (amp shut down) until the next step.
+   amp_gain[s] = 32768 * 10^((dB(s) - 18) / 20), dB(s) = the lower bound of
+   the driver's comparison chain (-62 -52 -44 ... 0 2 4 ... 12 13 ... 18). */
+static const u16 amp_gain[32] = {
+    0, 3, 10, 26, 52, 82, 130, 184, 260, 368, 519, 654, 823, 1036, 1305, 1642,
+    2068, 2603, 3277, 4125, 5193, 6538, 8231, 10362, 13045, 16423, 18427, 20675,
+    23198, 26029, 29205, 32768,
+};
+
+static u32 amp_step_to_vol(u32 step)
+{
+    u32 r, v = udivmod(amp_gain[step & 31] * 0x8000u, amp_gain[AUD_AMP_REF_STEP], &r);
+    return v > 0x8000u ? 0x8000u : v;
+}
+
 static void csnd_channel(u32 ch, u32 pa, u32 bytes, u32 vol)
 {
     u32 b = CSND_CH(ch);
@@ -309,8 +333,9 @@ static void csnd_start(void)
     csnd_w16(CSND_MASTER_VOL, 0x8000);
     csnd_w16(CSND_CNT, CSND_CNT_EN | CSND_CNT_RS_FILTER);
     /* VOL: right in the low half, left in the high half (libn3ds csnd.h) */
-    csnd_channel(AUD_CH_L, pa, n * 2, 0x8000u << 16);
-    csnd_channel(AUD_CH_R, pa + n * 2, n * 2, 0x8000u);
+    A.vol_applied = A.vol;
+    csnd_channel(AUD_CH_L, pa, n * 2, A.vol_applied << 16);
+    csnd_channel(AUD_CH_R, pa + n * 2, n * 2, A.vol_applied);
     /* unpause both back to back: they stay sample-aligned */
     {
         u32 l = csnd_r16(CSND_CH(AUD_CH_L) + CSND_CH_CNT) | CSND_CH_PLAYING;
@@ -513,6 +538,11 @@ void aud_service(u32 now)
             if (A.idle_words > IDLE_STOP_WORDS) csnd_stop();
         }
         csnd_resync();
+        if (A.vol != A.vol_applied && csnd_usable()) {
+            A.vol_applied = A.vol;
+            csnd_w32(CSND_CH(AUD_CH_L) + CSND_CH_VOL, A.vol_applied << 16);
+            csnd_w32(CSND_CH(AUD_CH_R) + CSND_CH_VOL, A.vol_applied);
+        }
     }
     A.pacing = tx_seen || rx_seen || A.csnd_on;
     A.next = next;
@@ -544,7 +574,7 @@ static u32 iic_logged AUD_DATA = 0;
 int shim_iic_transfer(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
 {
     u8 *regs = NULL;
-    u32 a = 0;
+    u32 a = 0, changed = 0;
     if ((sublen && !sub) || !len || !buf) return (int)0xE00002C2;     /* kIOReturnBadArgument, like the original */
     for (int i = 0; i < IIC_DEVS && !regs; i++) {
         if (iic_dev[i].nub == nub || !iic_dev[i].nub) {
@@ -555,14 +585,31 @@ int shim_iic_transfer(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 
     if (!regs) regs = iic_dev[IIC_DEVS - 1].reg;
     if (sublen) a = sub[sublen - 1];
     a &= 0x7F;                                  /* CS42L58: bit 7 of the MAP byte = auto-increment */
+    if (op == 2 && !sublen && len == 1 && ((buf[0] & 7) == 3 || buf[0] == 4)) {   /* LM48821 (see amp_gain) */
+        A.vol = buf[0] == 4 ? 0 : amp_step_to_vol(buf[0] >> 3);
+        shim_audio_stat.amp_step = buf[0] == 4 ? AUD_AMP_OFF : buf[0] >> 3u;
+        shim_audio_stat.volume = A.vol;
+        if (logging() && (u32)buf[0] != regs[0]) {
+            if (buf[0] == 4) log_str("ios3ds-audio: amp off -> CSND volume 0\n");
+            else {
+                log_kv("ios3ds-audio: amp step ", buf[0] >> 3);
+                log_kv(" -> CSND volume ", A.vol);
+                log_putc('\n');
+            }
+        }
+    }
     if (op == 2) {
-        for (u32 i = 0; i < len; i++) regs[(a + i) & 0xFF] = buf[i];
+        for (u32 i = 0; i < len; i++) {
+            if (regs[(a + i) & 0xFF] != buf[i]) changed = 1;
+            regs[(a + i) & 0xFF] = buf[i];
+        }
         shim_audio_stat.iic_writes++;
     } else {
         for (u32 i = 0; i < len; i++) buf[i] = regs[(a + i) & 0xFF];
         shim_audio_stat.iic_reads++;
     }
-    if (logging() && iic_logged < 300) {
+    /* the first 300 accesses (driver start-up), then only writes that change a register */
+    if (logging() && (iic_logged < 300 || (changed && iic_logged < 3000))) {
         iic_logged++;
         log_kv(op == 2 ? "ios3ds-audio: iic w dev=" : "ios3ds-audio: iic r dev=", (u32)(uintptr_t)nub & 0xFFFF);
         log_kv(" reg=", a);
@@ -678,6 +725,7 @@ void aud_test_reset(void)
     for (u32 i = 0; i < sizeof(shim_audio_stat); i++) p[i] = 0;
     p = (u8 *)iic_dev;
     for (u32 i = 0; i < sizeof(iic_dev); i++) p[i] = 0;
+    A.vol = 0x8000;
     iic_logged = 0;
 }
 #endif

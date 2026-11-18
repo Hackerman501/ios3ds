@@ -411,3 +411,49 @@ Branch `agent/gpu` = `agent/pica` + main. Design: docs/pica200.md §9-11.
 - **Changes:** bring-up applies the clock/VRAM/priority setup (boot.cfg `gpu_clk`, default 1). `pica_diag.c` runs staged tests before and after it (fills to VRAM and FCRAM; PPF; P3D constant quad into VRAM and FCRAM; 64x64 and 48x40 textures drawn 1:1) with counter deltas (boot.cfg `gpu_diag`, default 1); docs/pica200.md §12 says how to read them. A failed mirror self-test also dumps a texture tile and a render-target tile with their expected values. The diagnostic lists are built by genmirror (blob version 2).
 - **Host:** the diagnostics pass on the model (`diagnostics on the model: 0x7f`); the dump's expectations equal what a passing self-test leaves (`16 of 16`). The model has no traffic counters (they read 0) and does not need the clock register.
 - **QEMU** (this build, `--time 450` and `--icount 2 --time 300`): `[pica] GX setup as libn3ds hardwareReset: clock 0x00000000 -> 0x00070100 …`, `[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM ok->ok …; PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT ok` (the model fills and draws without the clock, so "as found" passes there), mirror self-test variant 0, `gltest: PICA200 PASS`, home screen; screenshots identical to the CPU-copy run in both modes; icount mirror 23.9 fps, spot checks 0/512.
+## 30. Audio: "could not start DMA: device is not ready", fixed; PCM reaches CSND (2026-11-18)
+- **Symptom (hardware runs 8-11):** each UI sound (a tap, the Home key) logged `AppleEmbeddedAudioDevice: could not start DMA: device is not ready` and no stream ever started. Reproduced in QEMU: two Home presses, two errors (agent/audio2 `build/evidence/run1-before.txt`).
+- **Where the message comes from:**
+  - The format string `%s: could not start DMA: %s` is in AppleARMIISAudio (0x80612e0c), printed by `startDMA` (0x80611b48) when 0x80611584 fails. The text "device is not ready" is IOKit's string for kIOReturnNotReady (0xE00002D8).
+  - The call chain is 0x80611474 → 0x806113c8 → I2S controller vtable 0x358.
+- **The PL080 is not the culprit:**
+  - `startDMACommand` (vtable 0x354, 0x807d00e4) does return NotReady for channel state ≤ 1.
+  - But `_initDMAChannel` leaves channels at state 2, and the boot log shows channels 3, 4 and 5 initialised.
+  - State map: 1 = allocated, 2 = ready, 3 = running.
+- **The I2S controller's DMA start (AppleS5L8900X kext, 0x8066d448):**
+  - For `i2s-version` 0 (the DT has no such property, so the boot log reads "i2sVersion: 0") with frame sync requested, it sets state 1 (0x8066d490), enables its interrupt and arms a timeout.
+  - It then sleeps on the state.
+  - The interrupt action (0x8066caf0) moves the state 1 → 2 on one edge and 2 → 3 on the next. The timeout (0x8066cb84) sets 4.
+  - Anything but 3 returns NotReady; a timeout returns 0xE00002EB.
+- **That interrupt is GPIO pin 44:**
+  - i2s0's `interrupts` is the string `','` = 0x2c, and its `interrupt-parent` 0x0090c9a0 is `/arm-io/gpio`, not the VIC.
+  - So the driver waits for two edges of a pin (presumably the word clock) to start DMA on a frame boundary.
+  - The 3DS has no such pin, and the GPIO block is a fake page.
+- **Fix:** kernel patch `i2s-start-no-lrck-sync` (`kernel/patches-audio.json`): `mov r3,#1` → `mov r3,#3` at 0x8066d490.
+  - The wait loop falls through as if synced. The interrupt is disabled and the timeout cancelled as on success.
+  - A DT `i2s-version` ≥ 3 would also skip the wait, but it changes register and clock programming. Not taken.
+- **QEMU CSND model** (`emu/qemu/hw/arm/ctr_csnd.c`): plays channels from FCRAM on the virtual clock, ST_ADDR reads the play position, and a stereo mix sink logs `[csnd]` statistics and writes a WAV with `IOS3DS_CSND_WAV`.
+- **Test client:** `ios3ds-tone` (AudioQueue via dlopen; left = tone, right = half amplitude).
+- **Run 2 (plain TCG):** no more NotReady. The tone stream started (`tx start ch5`) and CSND played L/R at the exact amplitudes, but only 1,914 of 17,640 frames were tone.
+  - The fragments are whole 1,024-frame AudioQueue buffers: underruns.
+  - QEMU's guest runs about 3x slower than the 3DS (home screen at ~200 s vs ~70 s) while the audio clock is real time.
+- **Run 3 (`--icount 2`):** after the first seconds of boot, every 1 s tone is 44,099 frames, gap-free, 999 Hz, peak 5999 L / 2999 R: bit-exact.
+- **Volume is not applied in the PCM:**
+  - Volume keys change neither the samples nor the codec level.
+  - Each press writes one byte to the LM48821 speaker amp: `ab a3 9b 8b 83` down, `8b … c3` up.
+  - AppleLM48821Amp setGain (0x807b8108) maps whole dB to a 5-bit step (19 = 0 dB, 31 = +18 dB) and writes `step << 3 | 3`.
+  - Its mute (0x807b8048) writes `0x04`; its range is −38..+18 dB (0x807b800c).
+  - Run 4: volume-up stops at step 31, volume-down goes 31 … 11 and then mute (`0x04`, plus CS42L58 regs 6 = 0, 0x1a = 0x80).
+- **Shim volume mapping:** a step becomes the CSND channel volume `10^((dB − 18)/20)` (step 31 = unity) and `0x04` becomes 0.
+  - It is applied to the running channels at the next service.
+  - Run 4's recording follows it exactly: step 16 → peak 3007 = 6000 × 16422/32768; step 11 → 239.
+- **Headphones:**
+  - iOS stays on its speaker route (no `function-hp_detect`), so its volume always arrives as amp steps.
+  - The CSND volume is digital, so it applies to either 3DS output.
+  - The ARM9 now polls the jack (GPIO2 bit 0, debounced) and repeats the init's `HEADSET_SEL` routing on a change.
+- **Run 5 (final code, `--icount 2`, 85 tones):**
+  - Home pressed twice: 0 NotReady errors.
+  - Volume swept up to step 31, down to mute and back up. Every recorded tone plays at exactly dB(step) − 18: step 22 → −12.0 dB, step 31 → 0.0 dB, step 11 → −34.0 dB.
+  - While muted, 28.2 s of digital silence although tones kept playing; the level returned on the next step.
+  - The ARM9 logs `[audio] iOS volume: amp step N -> CSND volume V/32768`.
+- **Hardware safety:** the patch only skips a wait for a pin the 3DS does not have. The volume path only writes CSND channel VOL. The tone client logs and exits on any AudioToolbox error. Jack polling only runs when the CODEC answered at boot.

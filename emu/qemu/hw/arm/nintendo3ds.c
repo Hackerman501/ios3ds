@@ -61,6 +61,7 @@
 #include "target/arm/cpu.h"
 #include "target/arm/cpu-qom.h"
 #include "picasim.h"
+#include "ctr_csnd.h"
 
 /* ------------------------------------------------------------------------ */
 /* Memory map                                                               */
@@ -2144,6 +2145,8 @@ static void ctr_init(MachineState *machine)
     memory_region_add_subregion(&s->io_shared, CTR_CFG11_BASE - CTR_IO_SHARED_BASE, &s->cfg11);
     memory_region_init_io(&s->pdn, NULL, &pdn_ops, s, "ctr.pdn", 0x1000);
     memory_region_add_subregion(&s->io_shared, 0x10141000 - CTR_IO_SHARED_BASE, &s->pdn);
+    /* CSND sound block: plays from FCRAM, records the mix (ctr_csnd.c) */
+    ctr_csnd_init(&s->io_shared, 0x10103000 - CTR_IO_SHARED_BASE, &s->fcram, CTR_FCRAM_BASE);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };
