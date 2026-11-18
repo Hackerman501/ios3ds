@@ -107,6 +107,9 @@ int wifi_cfg_parse(char *txt, wifi_cfg_t *c)
             } else if (streq(k, "fw")) {
                 if (vl < 1 || vl >= sizeof(c->fw)) return -lineno;
                 copy_str(c->fw, v, sizeof(c->fw));
+            } else if (streq(k, "nettest")) {
+                if (vl >= sizeof(c->nettest)) return -lineno;
+                copy_str(c->nettest, v, sizeof(c->nettest));
             } else if (streq(k, "verbose")) {
                 if (vl != 1 || v[0] < '0' || v[0] > '9') return -lineno;
                 c->verbose = (u32)(v[0] - '0');

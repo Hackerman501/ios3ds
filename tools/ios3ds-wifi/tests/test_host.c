@@ -68,6 +68,13 @@ static void test_ring(void)
     net_core_fill(m, &io);
     CHECK(io.nframes == 3 && io.rx_next == 3 && io.rx_pending == 0 && io.link == 0);
     CHECK(memcmp(io.mac, mac, 6) == 0 && io.backend == NET_BACKEND_LOOP);
+    CHECK(io.ssid[0] == 0 && io.nettest[0] == 0);
+    memcpy((void *)mb.ssid, "net", 3);
+    memset((void *)mb.nettest, 'x', sizeof(mb.nettest));    /* unterminated: clipped */
+    net_core_fill(m, &io);
+    CHECK(memcmp(io.ssid, "net", 4) == 0 && strlen(io.nettest) == 63);
+    memset((void *)mb.nettest, 0, sizeof(mb.nettest));
+    net_core_fill(m, &io);
     u32 off = 0, len = 0;
     for (u32 i = 0; i < 3; i++) {
         const u8 *p = netio_get(io.data, NETIO_DATA, &off, &len);
@@ -110,7 +117,7 @@ static void test_ring(void)
     /* a batch is limited by the 4 KiB io buffer, the rest stays pending */
     for (u32 i = 0; i < NET_SLOTS; i++) mb.rx[i].len = 1000;
     net_core_fill(m, &io);
-    CHECK(io.nframes == 4 && io.rx_pending == NET_SLOTS - 4);   /* 4 x 1002 <= 4064 */
+    CHECK(io.nframes == 3 && io.rx_pending == NET_SLOTS - 3);   /* 3 x 1002 <= 3968 */
 
     /* wrap the 32-bit indices */
     net_mbox_init(m, NET_BACKEND_LOOP, mac);
@@ -192,6 +199,10 @@ static void test_cfg(void)
     CHECK(wifi_cfg_parse(t8, &c) == -2);
     char t9[] = "ssid=123456789012345678901234567890123\n";
     CHECK(wifi_cfg_parse(t9, &c) == -1);
+    char t10[] = "ssid=a\nnettest=http://10.0.2.2:8080/x example.com\n";
+    CHECK(wifi_cfg_parse(t10, &c) == 0 && strcmp(c.nettest, "http://10.0.2.2:8080/x example.com") == 0);
+    char t11[] = "ssid=a\nnettest=http://0123456789012345678901234567890123456789012345678901234567890123\n";
+    CHECK(wifi_cfg_parse(t11, &c) == -2);
 }
 
 /* ---------------------------------------------------------------- crypto */

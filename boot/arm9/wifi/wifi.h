@@ -29,6 +29,7 @@ typedef struct {
     u8   mac[6];
     char fw[64];            /* firmware container, default 0:/ios3ds/wifi-fw.bin */
     u32  verbose;           /* 1 = log every state change, 2 = also frames */
+    char nettest[64];       /* "<url> [dns name]": iOS self-test after DHCP (docs/wifi.md) */
 } wifi_cfg_t;
 
 /* Parse the text of wifi.cfg (modified in place). Returns 0, or the 1-based
