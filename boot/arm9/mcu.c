@@ -172,6 +172,13 @@ void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 ticks_per_s)
          (box->flags & MCUF_SHELL_OPEN) ? "open" : "closed", mask_ok ? "set" : "NOT set (no HOME/POWER events)");
 }
 
+void mcu_config_acc(bool on)
+{
+    if (!box) return;
+    box->acc_off = !on;
+    if (!on) log_warn("[mcu] accelerometer hidden from iOS (boot.cfg mcu_acc=0)\n");
+}
+
 u16 mcu_buttons(void)
 {
     u16 b = 0;

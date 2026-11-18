@@ -1,9 +1,8 @@
 # The 3DS system controller (MCU) in iOS
 
 Status: **implemented and verified in QEMU (`-M nintendo3ds`), not yet run on
-hardware**, except the accelerometer: its samples reach the daemon, but
-SpringBoard ignores them (§6.2). Section 7 lists what a hardware run will
-show and which assumptions it checks.
+hardware.** Section 7 lists what a hardware run will show and which
+assumptions it checks.
 
 | Feature | 3DS side | iOS side | QEMU |
 |---|---|---|---|
@@ -13,7 +12,7 @@ show and which assumptions it checks.
 | Shell close / open | IRQ bits 5/6, reg 0x0F bit 1 | POWER tap (lock) / HOME tap (wake), from the ARM9 | see §6 |
 | Volume slider | reg 0x09 (0..63) | ios3ds-mcud → `AVSystemController setActiveCategoryVolumeTo:` | see §6 |
 | Brightness | LCD backlight PWM 0x10202240 / 0x10202A40 (ARM11) | SpringBoard's `DisplayBrightness` × `DisplayBrightnessFactor` → ios3ds-mcud → sysctl → shim | see §6 |
-| Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | ios3ds-mcud → IOHID accelerometer events (type 13): **ignored by SpringBoard**, off by default | see §6.2 |
+| Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | Apple's AppleLIS302DL driver on an emulated LIS302DL (shim I2C register file) → SpringBoard orientation, UIAccelerometer | see §6.2 |
 | iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9 | see §6 |
 
 ## 1. Data path
@@ -75,9 +74,8 @@ mailbox (+0x6200..+0x63FF) and the free space below the GPU mirror mailbox
 - **Shell:** close → POWER tap unless iOS' screen is already off; open →
   HOME tap if it is off. "Off" = the shim's last backlight level is 0
   (`backlight == 1`), so it follows iOS' own screen state. In both cases the
-  two LCD backlights are switched through MCU reg 0x22 (0x14 off, 0x28 on),
-  because this build's SpringBoard does not blank on a lock press
-  (SBDontLockEver).
+  two LCD backlights are also switched through MCU reg 0x22 (0x14 off,
+  0x28 on), so the screens follow the shell even if iOS ignored the press.
 - **Power off:** on `req_power`, wait 300 ms (the monitor loop drains the
   kernel's last log lines), sync the log, write reg 0x20 = 1.
 - **boot.cfg:** `mcu=0` disables all of it; `rtc_offset=N` is added to the
@@ -140,8 +138,9 @@ polls `kern.ios3ds_mcu` every 100 ms:
   `DisplayBrightnessFactor` from SpringBoard's HID event system
   (`IOHIDEventSystemClientCopyProperty`; SpringBoard keeps its backlight
   state there) and sends `brightness × factor` to the shim.
-- **Accelerometer** (only with the `acc` argument, §6.2): while the screen
-  is on it asks the ARM9 for samples and sends `IOHIDEventCreateAccelerometerEvent(x, y, z)` (type 13) into
+- **Accelerometer, old route** (only with the `acc` argument; superseded by
+  the kernel driver, §6.2): while the screen is on it asks the ARM9 for
+  samples and sends `IOHIDEventCreateAccelerometerEvent(x, y, z)` (type 13) into
   SpringBoard's HID event system, normalised so the running mean of |a| is
   1 g (the raw unit does not matter). Axis map `acc=-y,x,-z` (default, an
   argument): iOS x, y, z from the 3DS axes, see §7.
@@ -195,31 +194,87 @@ and md0 writes are synchronous); the platform call then reaches the shim. The
 ARM9 waits 300 ms after the request so the kernel's last lines reach the log,
 then writes MCU reg 0x20.
 
-### 6.2 Accelerometer: samples arrive, SpringBoard ignores them
+### 6.2 Accelerometer: Apple's driver on an emulated LIS302DL
 
-The 3DS side and the daemon work (the g vectors above follow the model's
-poses), but SpringBoard never acts on the events:
-- Its HID event callback switches on the event type (0x51b20: type 3 →
-  keyboard handler 0x5028c, type 13 → accelerometer handler 0x4fb44, which
-  reads fields 0xd0000–0xd0003, honours `SBIgnoreAccelerometerEvents`
-  (flag 0x18d3d1) and posts `com.apple.springboard.rawOrientation`).
-- With hardware breakpoints on 0x51b1c, 0x4fb44 and the `notify_set_state`
-  call (0x4fef8) (QEMU gdbstub, `emu/gdb/rsp.py`), 30 s of events from
-  ios3ds-mcud hit none of them; the rawOrientation state stays 0.
-- This matches re-log §19 and §22: keyboard and digitizer events sent with
-  `IOHIDEventSystemClientDispatchEvent` are ignored too (buttons and touch
-  therefore go as GSEvents).
-- SpringBoard's other route is polling accelerometer *services*
-  (`IOHIDServiceCopyEvent(service, 13, …)` at 0x50088). A kernel IOHID
-  service is needed. Next step: give Apple's own `AppleEmbeddedAccelerometer`
-  (LIS331DLH driver, in the kernelcache) a device-tree node on an emulated
-  I2C bus and answer its register reads (WHO_AM_I, CTRL_REG1-5, OUT_X..Z)
-  from the MCU mailbox in the shim's I2C emulation, as kernel/shim/audio.c
-  does for the audio codec.
+First attempt (still in ios3ds-mcud as `acc`): IOHID accelerometer events
+sent by a client. SpringBoard ignores them, as it ignores client keyboard and
+touch events (re-log §37: hardware breakpoints on its type-13 handler never
+hit). SpringBoard only takes accelerometer data from a kernel HID service.
 
-Until then ios3ds-mcud leaves the accelerometer off (no I2C traffic for
-nothing); `acc` in its launchd arguments turns it on.
+Now the n72's own accelerometer node `/arm-io/i2c0/accelerometer` stays in
+the device tree (`tools/ios3ds-mcu/dt_mcu.py`). Apple's
+AppleEmbeddedAccelerometer (class AppleLIS302DL) starts on it, and the shim
+answers its I2C transfers (`shim_mcu_iic`, called first by
+`kernel/shim/audio.c`'s `shim_iic_transfer`). Details in re-log §40:
+- `WHO_AM_I` (0x0F) reads 0x3B.
+- `CTRL_REG1` power-up bit → the shim asks the ARM9 for samples (`req_acc`).
+- The `CTRL_REG2` BOOT bit reads back cleared (the driver panics after 500
+  tries otherwise).
+- `OUT_X/Y/Z` (0x29/0x2B/0x2D) are the newest MCU sample in iOS axes. They are
+  scaled so the running mean of |a| is 55 counts (1 g at the driver's
+  18 mg/count), with z negated for the DT's `orientation` 4.
+- The data-ready interrupt (GPIO 0x63) never fires. The driver polls with its
+  own timer at the `ReportInterval` that SpringBoard sets while an app that
+  rotates is in front.
 
+QEMU (`build/emu-a2`, Safari opened by a tap, then
+`qom-set /machine mcu-orient 1 / 3 / 0`):
+```
+ios3ds-mcu: accelerometer read reg 0x0f len 1                       (probe at boot)
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+launchd[31] Builtin profile: MobileSafari (sandbox)
+ios3ds-mcu: accelerometer sample #1: 0 -55 0 counts (|a| = 16384 MCU units)
+[mcud] SpringBoard device orientation 0 -> 1
+[mcud] SpringBoard device orientation 1 -> 4      (pose 1: landscape, Home button left)
+[mcud] SpringBoard device orientation 4 -> 3      (pose 3: landscape, Home button right)
+[mcud] SpringBoard device orientation 3 -> 1      (pose 0: portrait)
+```
+Safari's bookmarks view turns to landscape, to the other landscape, and back
+to portrait in the screenshots. SpringBoard and the home screen behave as
+before (the home screen does not rotate on an iPod touch).
+
+Kill switch: `mcu_acc=0` in boot.cfg. The shim then answers the driver's
+probe with kIOReturnNoDevice, so no accelerometer service exists. Without a
+working MCU it does the same.
+
+### 6.3 Lock = screen off (SBDontLockEver removed)
+
+The rootfs used to set `SBDontLockEver` in com.apple.springboard.plist (an
+early guard against the keybag/lock-state problem). With it set, SpringBoard
+ignored the lock button and the screen stayed on (re-log §21).
+
+Removing it alone was **not** enough. The first lock blanked the screen,
+but after waking the picture stayed frozen on the old frame (status-bar clock
+stuck). The fake CLCD page read `+0x00 = 2` (controller off) after the wake.
+Cause: on display sleep the system lowers the CPU performance state, and
+`AppleS5L8720XClockController` then sleeps on its command gate waiting for a
+"change done" interrupt that the fake clock page never raises. It is the
+same wait that hung every shutdown (§6.1). Patch `s5l-perf-nowait` marks the
+change as done at once (re-log §41).
+
+With both changes, in QEMU (`build/emu-l6`):
+```
+[input] key 30 down/up                                   (SELECT = lock)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000      (both screens black)
+[input] key 40 down/up                                   (3DS HOME)
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+```
+- After the wake the lock screen appears: "1:32, Wednesday, November 18",
+  the charging battery, "slide to unlock".
+- Sliding it unlocks back to the home screen, whose clock keeps running
+  (1:33, 1:34). The CLCD reads `+0x00 = 3` again.
+- Left alone on the lock screen, iOS turns the screen off again after about
+  10 s, as on an iPod.
+- Passcode-less unlock works; the stubbed keybag is not in the way.
+
+Trade-offs:
+- After a lock the user has to slide to unlock (touch works on the lock
+  screen).
+- With the screen off, iOS ignores touches; HOME, POWER, START or opening
+  the shell wake it.
+- If a hardware run shows trouble, put `SBDontLockEver` back
+  (rootfs/recipe.json). The lock press is then ignored, and closing the
+  shell still darkens the screens through MCU reg 0x22.
 
 ## 7. Hardware assumptions (unverified) and the log lines that check them
 
@@ -236,7 +291,7 @@ settles it on the first hardware run:
 | Volume slider 0x09 is 0..63 | libn3ds | `[mcud] volume slider N/63 -> iOS volume …` while moving the slider |
 | 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x10..0x8F a safe range | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
 | MCU reg 0x22 bits 2-5 switch the backlights | libn3ds `MCU_LCD_PWR_*` | closing the shell darkens both screens: `[mcu] shell closed: …; LCD backlights off` |
-| Accelerometer: reg 0x40 bit 0 enables it, 0x45-0x4A are x/y/z s16; axes as in the QEMU model (x right, y hinge, z out of the lower screen) | 3dbrew, libn3ds | `[mcu] accelerometer on`; `[mcud] accelerometer raw … -> iOS …` while turning the console; wrong axes: `acc=` argument in com.ios3ds.mcud.plist |
+| Accelerometer: reg 0x40 bit 0 enables it, 0x45-0x4A are x/y/z s16; axes as in the QEMU model (x right, y hinge, z out of the lower screen) | 3dbrew, libn3ds | `[mcu] accelerometer on`; `ios3ds-mcu: accelerometer sample #1: x y z counts (|a| = …)` (about 55 on the gravity axis, `|a|` = the MCU's 1 g); `[mcud] SpringBoard device orientation …` while turning the console in Safari. Wrong axes: the map in `acc_sample()` (tools/ios3ds-mcu/shim/mcu.c); off: `mcu_acc=0` |
 | Reg 0x20 bit 0 powers the console off | Luma `mcuPowerOff` | `[mcu] iOS shut down: log synced, powering off through the MCU` as the last log line, then the console is off |
 
 Kill switch: `mcu=0` in `sd:/ios3ds/boot.cfg` (the MCU is never touched; clock at 1970, no battery, no HOME/POWER).

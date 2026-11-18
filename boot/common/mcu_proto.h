@@ -59,7 +59,8 @@ typedef struct {
     int32_t  rtc_offset;    /* seconds added to the RTC (boot.cfg rtc_offset) */
     uint8_t  rtc_raw[8];    /* BCD: sec min hour wday mday mon year(2000+) + pad */
     uint32_t rtc_reads;
-    uint32_t _r1[3];
+    uint32_t acc_off;       /* boot.cfg mcu_acc=0: the shim hides the accelerometer from iOS */
+    uint32_t _r1[2];
     /* line 2: ARM9, battery, sliders, event counters */
     uint8_t  batt_percent;  /* reg 0x0B, 0..100 */
     uint8_t  batt_temp;     /* reg 0x0A, degrees C */

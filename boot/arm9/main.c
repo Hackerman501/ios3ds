@@ -103,6 +103,7 @@ typedef struct {
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
     u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
+    u32 mcu_acc;         /* 0: no accelerometer for iOS */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 nloads;
     char load_path[4][64];
@@ -144,6 +145,7 @@ static int parse_bootcfg(char *txt)
     cfg.gpu_clk = 1;
     cfg.gpu_diag = 1;
     cfg.mcu = 1;
+    cfg.mcu_acc = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -158,7 +160,7 @@ static int parse_bootcfg(char *txt)
         { "screen", &cfg.screen },
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
-        { "mcu", &cfg.mcu },
+        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc },
     };
     int lineno = 0;
     char *line = txt;
@@ -816,6 +818,7 @@ void a9_main(int argc, char **argv)
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
+    mcu_config_acc(cfg.mcu_acc != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[6] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
