@@ -590,3 +590,13 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
 - **Cause:** the same wait as the shutdown hang (§36): AppleS5L8720X+0x37cc, in `AppleS5L8720XClockController`, is a loop `while (byte +0x38c) commandGate->commandSleep(+0x38c)` after starting a performance-state change (flags from vtable +0x39c). The clear comes from a completion interrupt the fake clock/power page never raises. Display sleep lowers the performance state, so the CLCD's power path blocked there.
 - **Patch `s5l-perf-nowait`** (0x807517cc): `ldrb r3,[r5,#0x38c]; cmp r3,#0; bne` → `mov r3,#0; strb r3,[r5,#0x38c]; nop`.
 - **Result** (`build/emu-l6`): CLCD `00000003 00000010` after the wake. The lock screen shows "1:32 Wednesday, November 18", the charging battery and "slide to unlock". The slide returns to the home screen, and the clock advances (1:33, 1:34). The rootfs drops `SBDontLockEver`; `SBDontLockAfterCrash` and `SBDisableAutoDim` stay.
+
+## 42. "Where is my backlight?" flood after lock/wake (2026-11-18)
+- **Soak 6** (main + accelerometer + lock, 40 cycles): PASS, but the last `[hb]` line was at t=150 s, because the console was never quiet. After the first lock/unlock, `AppleM2CLCD::safe_enable_backlight(), Where is my backlight?` appeared 3,504 times, about 3 per second.
+- **Three AppleM2CLCD functions** share the format string `%s, Where is my backlight?` (VA 0x807b0b58, literal refs 0x807a9564/95c4/965c):
+  - the level setter (0x807a9514);
+  - `disable_backlight` (0x807a9570);
+  - `safe_enable_backlight` (0x807a95d0).
+
+  Each looks up the backlight service (`bl 0x807a9490`). When there is none, which is always on the 3DS, each only `IOLog`s (0x801a6be9) and returns. The flow is otherwise harmless; the cost was console/SD traffic. The 3DS backlight is driven by ios3ds-mcud through the MCU (§36, §41).
+- **Patches** `clcd-backlight-log-set` / `-disable` / `-enable`: the `blx r3` (IOLog) at 0x807a9558, 0x807a95b0 and 0x807a9648 becomes `nop`.

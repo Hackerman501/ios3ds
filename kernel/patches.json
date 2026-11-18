@@ -131,5 +131,26 @@
   "orig": "0400000a",
   "new": "0000a0e1",
   "why": "AppleM2CLCD swap_begin: take the debug-flag-0x10 path (swap-done signalled synchronously, no frame IRQ needed)"
+ },
+ {
+  "name": "clcd-backlight-log-set",
+  "va": "0x807a9558",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in the backlight-level setter (0x807a9514)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log"
+ },
+ {
+  "name": "clcd-backlight-log-disable",
+  "va": "0x807a95b0",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in AppleM2CLCD::disable_backlight (0x807a9570)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log"
+ },
+ {
+  "name": "clcd-backlight-log-enable",
+  "va": "0x807a9648",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in AppleM2CLCD::safe_enable_backlight (0x807a95d0)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log"
  }
 ]
