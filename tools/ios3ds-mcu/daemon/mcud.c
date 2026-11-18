@@ -180,7 +180,7 @@ int main(int argc, char **argv)
     uint32_t loops = 0, seen_seq = 0, acc_seen = 0, waits = 0;
     int synced = 0, vol_last = -1, vol_pending = 0;
     float g_avg = 0, bright = -1, factor = -1;
-    int acc_dom = -1, orient_tok = -1;
+    int acc_dom = -1, orient_tok = -1, orient_last = -1;
     uint32_t orient_check = 0;
 
     for (i = 1; i < argc; i++) {
@@ -315,6 +315,17 @@ int main(int argc, char **argv)
             }
         }
 
+        /* SpringBoard's own device orientation (set from the accelerometer
+           service, docs/mcu.md section 6.2): log every change */
+        if ((loops % 10) == 0) {
+            uint64_t st = 0;
+            if (orient_tok < 0) notify_register_check("com.apple.springboard.rawOrientation", &orient_tok);
+            if (orient_tok >= 0 && notify_get_state(orient_tok, &st) == 0 && (int)st != orient_last) {
+                if (orient_last != -1 || st)
+                    say("[mcud] SpringBoard device orientation %d -> %u", orient_last, (unsigned)st);
+                orient_last = (int)st;
+            }
+        }
         if (orient_check && loops == orient_check && orient_tok >= 0) {
             uint64_t st = 0;
             notify_get_state(orient_tok, &st);
