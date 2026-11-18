@@ -74,9 +74,8 @@ mailbox (+0x6200..+0x63FF) and the free space below the GPU mirror mailbox
 - **Shell:** close → POWER tap unless iOS' screen is already off; open →
   HOME tap if it is off. "Off" = the shim's last backlight level is 0
   (`backlight == 1`), so it follows iOS' own screen state. In both cases the
-  two LCD backlights are switched through MCU reg 0x22 (0x14 off, 0x28 on),
-  because this build's SpringBoard does not blank on a lock press
-  (SBDontLockEver).
+  two LCD backlights are also switched through MCU reg 0x22 (0x14 off,
+  0x28 on), so the screens follow the shell even if iOS ignored the press.
 - **Power off:** on `req_power`, wait 300 ms (the monitor loop drains the
   kernel's last log lines), sync the log, write reg 0x20 = 1.
 - **boot.cfg:** `mcu=0` disables all of it; `rtc_offset=N` is added to the
@@ -237,6 +236,33 @@ before (the home screen does not rotate on an iPod touch).
 Kill switch: `mcu_acc=0` in boot.cfg. The shim then answers the driver's
 probe with kIOReturnNoDevice, so no accelerometer service exists. Without a
 working MCU it does the same.
+
+### 6.3 Lock = screen off (SBDontLockEver removed)
+
+The rootfs used to set `SBDontLockEver` in com.apple.springboard.plist
+(an early guard against the keybag/lock-state problem). With it set,
+SpringBoard ignored the lock button: no screen change (re-log §21). It is
+now removed (`SBDontLockAfterCrash` and `SBDisableAutoDim` stay). QEMU
+(`build/emu-l1`, `build/emu-l2`):
+```
+[input] key 30 down/up                                   (SELECT = lock)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000      (both screens black)
+[input] key 40 down/up                                   (3DS HOME)
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+```
+After the wake, iOS goes straight back to the home screen: no "slide to
+unlock" screen appears, so there is nothing to unlock and no keybag call can
+block. The device stays usable afterwards (taps, Safari). iOS'
+own auto-lock did not fire within 2 minutes of idling in QEMU; on hardware,
+if it does fire after the Settings → General → Auto-Lock delay, the
+backlights go off the same way (HOME or POWER wakes).
+
+Trade-offs, if a future build shows trouble:
+- Restoring `SBDontLockEver` (rootfs/recipe.json) brings back the old
+  behaviour: the lock press is ignored, and only closing the shell darkens
+  the screens (through MCU reg 0x22).
+- With the screen off, iOS ignores touches; only HOME, POWER, START or
+  opening the shell wake it.
 
 ## 7. Hardware assumptions (unverified) and the log lines that check them
 

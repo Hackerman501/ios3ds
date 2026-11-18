@@ -570,3 +570,9 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
   - BOOT reads back cleared, `WHO_AM_I` = 0x3B, `STATUS` (0x27) = 0x0F, `FF_WU_SRC` = 0, outputs from the MCU mailbox as in docs/mcu.md §6.2. `CTRL_REG1` bit 6 switches the ARM9's sampling.
   - The shim has no divide instruction and no libgcc, so it has its own shift-subtract divide and integer square root.
 - **QEMU** (`build/emu-a1`: home screen only): probe at boot, sensor powered on once SpringBoard is up, but no samples. On an iPod touch the home screen does not rotate, so nobody sets `ReportInterval`. `build/emu-a2` (Safari opened by a tap): samples start at Safari's launch; SpringBoard's `com.apple.springboard.rawOrientation` goes 0 → 1, → 4 for model pose 1, → 3 for pose 3, → 1 for pose 0. Safari's bookmarks view rotates both ways and back.
+
+## 36. Lock turns the screen off: SBDontLockEver removed (2026-11-18)
+- SpringBoard reads `SBDontLockEver` with `CFPreferencesGetAppBooleanValue` at 0xb42c (Thumb; CFString at 0x15848c, found by resolving `ldr/add pc` pairs against the string's address) into a global flag, next to `SBDontLockAfterCrash` and others.
+- **With the key** (the rootfs default since the first boots): a lock press (`key 30`) leaves SpringBoard's `DisplayBrightnessFactor` at 1 and the screen on (§21, §33).
+- **Without it** (QEMU `build/emu-l1`, `build/emu-l2`): `key 30` → `DisplayBrightnessFactor` 0 → ios3ds-mcud → shim → LCD backlight 0 (`qom-get lcd-backlight` 0, both emulated screens black). HOME (`key 40`) → factor 1, backlight 0x4F, and straight to the home screen: no slide-to-unlock screen, so the stubbed keybag/lock state is never asked. No idle auto-lock within 2 minutes.
+- The rootfs recipe now drops `SBDontLockEver`; `SBDontLockAfterCrash` and `SBDisableAutoDim` stay.

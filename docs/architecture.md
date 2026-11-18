@@ -88,7 +88,7 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
 - The dyld shared cache gets small byte patches:
   - liblockdown is stubbed, reporting "Activated" and BrickState = false;
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
-- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0` and `CA_ENABLE_OGL=0`, and `SBDontLockEver` is set in `com.apple.springboard.plist`.
+- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0` and `CA_ENABLE_OGL=0`, and `com.apple.springboard.plist` sets `SBDontLockAfterCrash` and `SBDisableAutoDim` (`SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
 - OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:
   - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;
