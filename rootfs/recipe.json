@@ -61,7 +61,9 @@
   "build/rootfs-add/usr/libexec/ios3ds-wifid": "/usr/libexec/ios3ds-wifid",
   "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist",
   "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
-  "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist"
+  "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
+  "build/rootfs-add/usr/libexec/ios3ds-mcud": "/usr/libexec/ios3ds-mcud",
+  "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist"
  },
  "chmod": {
   "/usr/libexec/ios3ds-sample": "0755",
@@ -74,7 +76,9 @@
   "/usr/libexec/ios3ds-wifid": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644",
   "/usr/libexec/ios3ds-tone": "0755",
-  "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644"
+  "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",
+  "/usr/libexec/ios3ds-mcud": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644"
  },
  "file_patches": [
   {
