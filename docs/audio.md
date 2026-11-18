@@ -3,7 +3,7 @@
 Status: **plays in QEMU, bit-exact; not yet heard on hardware**. On the 3DS
 (runs 8-11) every sound failed with `AppleEmbeddedAudioDevice: could not start
 DMA: device is not ready`: the I2S controller waits for a GPIO edge nobody
-raises (section 3, re-log section 30). With that fixed, an AudioQueue tone goes
+raises (section 3, re-log section 32). With that fixed, an AudioQueue tone goes
 through mediaserverd, IOAudio2, the emulated PL080/I2S and the shim into CSND,
 and the QEMU board's CSND model records it sample for sample. Volume keys set
 the CSND volume (they drive iOS's speaker amp, which the shim translates).
@@ -195,7 +195,7 @@ while the virtual (audio) clock runs in real time, so mediaserverd misses its
 deadlines and only fragments of a sound reach the ring (run 2: 1,914 of
 17,640 frames of a 400 ms tone). With icount every 1 s tone after boot is
 complete (44,099 frames), gap-free, 999 Hz, peak 5999/2999 = exactly the
-tone's 6000/3000 at unity volume (run 3, re-log section 30).
+tone's 6000/3000 at unity volume (run 3, re-log section 32).
 
 ## 7. Open points / next steps
 
