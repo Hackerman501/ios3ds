@@ -242,7 +242,7 @@ static void bringup(void)
 static void run(pica_req_t *r, uint32_t pid)
 {
     uint32_t *a = r->a;
-    if (!bringup_state)
+    if (!bringup_state && r->op != PICA_OP_CONFIG)
         bringup();
     switch (r->op) {
     case PICA_OP_INFO:
@@ -257,6 +257,10 @@ static void run(pica_req_t *r, uint32_t pid)
     case PICA_OP_SUBMIT:   r->status = pica_drv_submit(&drv, a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_FILL:     r->status = pica_drv_fill(&drv, a); break;
     case PICA_OP_TRANSFER: r->status = pica_drv_transfer(&drv, a[0], a[1], a[2], a[3], a[4]); break;
+    case PICA_OP_CONFIG:
+        a[0] = gm_valid() && GM->gpu_enable && GM->ca_gpu ? PICA_CFG_CA_GPU : 0;
+        r->status = PICA_OK;
+        break;
     default:               r->status = PICA_ERR_BAD_OP; break;
     }
 }
@@ -342,6 +346,8 @@ static pica_mirror_t mir;
 static pd_env_t denv;                       /* diagnostics; denv.vram = 0 when not mapped */
 static uint32_t d_before, d_on;
 
+static void m_relax(void) { IODelay(10); }
+
 static void mplat_init(void)
 {
     mplat.rd = p_rd;
@@ -351,6 +357,7 @@ static void mplat_init(void)
     mplat.to_gpu = m_to_gpu;
     mplat.from_gpu = m_from_gpu;
     mplat.log = k_printf;
+    mplat.relax = m_relax;
 }
 
 /* bring-up, before pica_drv_init: diagnostics as Luma left the GPU. The
@@ -511,6 +518,14 @@ void shim_gpu_thread_poll(void)
     GM->selftest_bad = bad0;
     for (i = 0; i < 4; i++)
         GM->first_bad[i] = fbad[i];
+    if (v == PM_SELFTEST_TIMEOUT) {
+        /* the GPU (or the emulator's model of it) did not finish an
+           operation: not a picture mismatch, say so */
+        k_printf("[gpu] display mirror: self-test aborted, GPU operation %u did not finish: CPU copy stays\n",
+                 fbad[0]);
+        m_set(GM_ST_FAILED, GM_WHY_TIMEOUT);
+        goto out;
+    }
     if (v < 0) {
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
         if (denv.vram) {
@@ -571,6 +586,7 @@ static void m_after(int st)
     if (st == PM_TIMEOUT) {
         /* the GPU did not finish: stop mirroring for good; the ARM9 notices
            (frames stop) and copies with the CPU again */
+        GM->first_bad[0] = mir.cur + 1;
         GM->first_bad[3] = mir.why_timeout;
         m_set(GM_ST_FAILED, GM_WHY_TIMEOUT);
         return;

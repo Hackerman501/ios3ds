@@ -48,7 +48,10 @@ enum {
                            a4..a7 the same for slot 1 (bytes 0 = unused) */
     PICA_OP_TRANSFER,   /* PPF display transfer: a0 src pa, a1 src h<<16|w, a2 dst pa, a3 dst h<<16|w, a4 flags */
     PICA_OP_FREE_ALL,   /* free every block the calling process owns */
+    PICA_OP_CONFIG,     /* -> a0 PICA_CFG_* flags from boot.cfg (does not bring the GPU up) */
 };
+
+#define PICA_CFG_CA_GPU 1u      /* boot.cfg gpu=1 and ca_gpu=1: CoreAnimation may composite on the GPU */
 
 enum {
     PICA_OK = 0,

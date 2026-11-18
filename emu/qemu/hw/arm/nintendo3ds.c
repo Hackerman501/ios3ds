@@ -1574,9 +1574,19 @@ static void gx_reset(CtrMachine *s)
     s->gpuprot = 0;
 }
 
+static void gx_run_due(void *opaque);
+
 static uint64_t gx_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
+    /* A guest polling a busy engine sees it finish once its time has come,
+       even if the timer callback has not run yet: with MTTCG a vCPU that
+       polls the GX registers in a tight loop can keep the main loop (and
+       the timer) waiting for the lock, and the "GPU" would never finish
+       (soak4: a mirror self-test timed out that way). */
+    if (s->gx_nq) {
+        gx_run_due(s);
+    }
     return picasim_read(&s->pica, addr);
 }
 

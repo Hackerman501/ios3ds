@@ -105,7 +105,7 @@ static void p_log(const char *fmt, ...)
     vprintf(fmt, ap);
     va_end(ap);
 }
-static const pm_plat_t plat = { p_rd, p_wr, p_ticks, 1000000, p_sync, p_sync, p_log };
+static const pm_plat_t plat = { p_rd, p_wr, p_ticks, 1000000, p_sync, p_sync, p_log, NULL };
 static int d_copy(pica_uptr_t a, void *b, uint32_t n) { memcpy(b, (const void *)a, n); return 0; }
 static int d_copyout(const void *a, pica_uptr_t b, uint32_t n) { memcpy((void *)b, a, n); return 0; }
 static void d_udelay(uint32_t us) { (void)us; }
@@ -312,6 +312,14 @@ int main(int argc, char **argv)
         for (r = 0, i = 0; i < 1000000 && (r = (uint32_t)pm_poll(&t, 0)) == PM_BUSY; i++)
             ;
         CHECK(r == PM_TIMEOUT && t.cur == 2, "unreachable list: state %u at op %u", r, t.cur);
+        /* the self-test reports a GPU that does not finish as such, not as a mismatch (soak4) */
+        {
+            uint32_t b0 = 7, fb4[4] = { 0, 0, 0, 0 };
+            int sv = pm_selftest(&t, arena, ARENA_PA, arena + 0x100000, ARENA_PA + 0x100000, 4096, &b0, fb4);
+            CHECK(sv == PM_SELFTEST_TIMEOUT && fb4[0] == 3 && b0 == 0,
+                  "self-test with a hung GPU: result %d, operation %u, bad %u", sv, fb4[0], b0);
+            printf("self-test with a hung GPU: result %d (PM_SELFTEST_TIMEOUT), operation %u\n", sv, fb4[0]);
+        }
         printf("unreachable command list: pm_poll -> %s at operation %u after %u polls\n",
                r == PM_TIMEOUT ? "TIMEOUT" : "?", t.cur + 1, i);
     }
