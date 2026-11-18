@@ -571,11 +571,22 @@ void aud_service(u32 now)
 static struct { void *nub; u8 reg[256]; } iic_dev[IIC_DEVS] AUD_DATA = { { 0 } };
 static u32 iic_logged AUD_DATA = 0;
 
+#ifndef AUD_HOST_TEST
+int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf);
+#else
+static int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
+{ (void)nub; (void)op; (void)sublen; (void)sub; (void)len; (void)buf; return -1; }
+#endif
+
 int shim_iic_transfer(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
 {
     u8 *regs = NULL;
     u32 a = 0, changed = 0;
     if ((sublen && !sub) || !len || !buf) return (int)0xE00002C2;     /* kIOReturnBadArgument, like the original */
+    {   /* the accelerometer (LIS302DL) is answered from the MCU: tools/ios3ds-mcu/shim/mcu.c */
+        int r = shim_mcu_iic(nub, op, sublen, sub, len, buf);
+        if (r != -1) return r;
+    }
     for (int i = 0; i < IIC_DEVS && !regs; i++) {
         if (iic_dev[i].nub == nub || !iic_dev[i].nub) {
             iic_dev[i].nub = nub;

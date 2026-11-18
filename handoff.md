@@ -10,13 +10,14 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 |---|---|---|
 | Boot to SpringBoard, touch, buttons, apps | works; soak 5: 40 cycles PASS | works (runs 8–13, ~66–82 s to input) |
 | md0 | waits with IRQs on under a kernel mutex (re-log 31) | old IRQs-off version tested |
-| Screen copy on the PICA200 (512x512 texture, clock setup) | ACTIVE, pixel-identical; one plain-QEMU timeout open (re-log 39) | run13: failed on the non-power-of-two texture, so CPU copy; the fix is not yet run |
+| Screen copy on the PICA200 (512x512 texture, clock setup) | ACTIVE, pixel-identical; one plain-QEMU self-test timeout open (re-log 39, agent/gpu) | run13: failed on the non-power-of-two texture, so CPU copy; the fix is not yet run |
 | ARM9 CPU screen copy (fallback) | bursts, displayed set only | 300–430 ms/frame (run 12/13); the faster version is not yet run |
 | GL on the PICA200 | gltest PASS (clears drawn, no FCRAM fills) | not yet run |
 | Audio output (I2S start patch, CSND) | bit-exact PCM, volume keys | not yet run (run 8–10: "could not start DMA") |
 | MCU: RTC (shown as the 3DS's local time), battery, HOME/POWER/shell, volume slider, brightness, shutdown | works ([docs/mcu.md](docs/mcu.md)) | not yet run |
 | `gettimeofday` | fixed (`commpage-gtod-off`, re-log 34) | run12/13 showed the bug |
-| Accelerometer | in progress (agent/mcu: Apple's LIS331DLH driver path) | — |
+| Accelerometer (Apple's LIS302DL driver on a shim-emulated sensor, `mcu_acc=0` hides it) | works: Safari rotates (re-log 40) | not yet run |
+| Lock = screen off (`SBDontLockEver` removed, `s5l-perf-nowait`) | works: lock blanks, HOME wakes, slide to unlock (re-log 41) | not yet run |
 | Microphone | in progress (agent/audio2) | — |
 | CoreAnimation compositing on the GPU | in progress (agent/gpu) | — |
 | Wi-Fi | off cleanly without `wifi.cfg` | not tested |
@@ -71,5 +72,5 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
 4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
-6. RTC: done on `agent/mcu` (PEGetGMTTimeOfDay from the MCU RTC, no IORTC wait); hardware check pending. Accelerometer → SpringBoard needs a kernel IOHID service (docs/mcu.md §6.2).
+6. RTC and accelerometer: done (re-log 33, 40); hardware check pending.
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).

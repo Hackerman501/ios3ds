@@ -63,13 +63,21 @@ static u32 a11_log_tail;
 /* copy ring bytes [*tail, head) to the log in chunks: one f_write per chunk,
    not per byte (per-byte writes + syncs made real-SD console output crawl
    and starved the md0 block server running on the same ARM9) */
+/* console bytes other than whitespace: "activity" for the stall dump and
+   the heartbeat. In QEMU the kernel console carries a steady stream of empty
+   lines (70% of all lines in a soak, none on hardware), which kept the
+   heartbeat from ever seeing a quiet console. */
+static u32 text_bytes;
+
 static void drain_ring(const volatile char *buf, u32 size, u32 *tail, u32 head, u32 color)
 {
     char chunk[512];
     while (*tail != head) {
         u32 n = 0;
         while (*tail != head && n < sizeof(chunk)) {
-            chunk[n++] = buf[*tail % size];
+            char c = buf[*tail % size];
+            chunk[n++] = c;
+            if (c != '\n' && c != '\r' && c != ' ' && c != '\t') text_bytes++;
             (*tail)++;
         }
         log_raw(chunk, n, color);
@@ -103,6 +111,7 @@ typedef struct {
     u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
     u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag, ca_gpu;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
+    u32 mcu_acc;         /* 0: no accelerometer for iOS */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 nloads;
     char load_path[4][64];
@@ -145,6 +154,7 @@ static int parse_bootcfg(char *txt)
     cfg.gpu_diag = 1;
     cfg.ca_gpu = 1;
     cfg.mcu = 1;
+    cfg.mcu_acc = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -160,7 +170,7 @@ static int parse_bootcfg(char *txt)
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
-        { "mcu", &cfg.mcu },
+        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc },
     };
     int lineno = 0;
     char *line = txt;
@@ -574,12 +584,13 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 status(23, CON_GREY, "en%08x/%08x pd%08x/%08x", (unsigned)g[7],
                        (unsigned)g[10], (unsigned)g[8], (unsigned)g[9]);
                 status(20, CON_GREY, "sctlr %08x stage %u", (unsigned)g[12], (unsigned)g[0x7C / 4]);
-                /* 5 s without a clock read or console output: dump once.
-                   10 s without console output: heartbeat every 10 s. */
+                /* 5 s without a clock read or console text: dump once.
+                   10 s without console text: heartbeat every 10 s; otherwise
+                   one every 30 s. */
                 static u32 last_abs, last_head, abs_since, head_since, next_hb;
                 static bool dumped;
                 u32 now = clk_secs();
-                u32 abs = st[0x80 / 4], hd = ring ? ring->head : 0;
+                u32 abs = st[0x80 / 4], hd = text_bytes;
                 if (abs != last_abs || hd != last_head) {
                     abs_since = now;
                     dumped = false;
@@ -594,8 +605,12 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                     dumped = true;
                     dump_probes("ARM11 stalled: no clock read or console output for 5 s");
                 }
-                if (st[0x40 / 4] && (int)(now - next_hb) >= 0) {
+                /* also every 30 s regardless: the daemons now log real text
+                   every few seconds, so the console is rarely quiet for 10 s */
+                static u32 last_hb;
+                if (st[0x40 / 4] && ((int)(now - next_hb) >= 0 || now - last_hb >= 30)) {
                     next_hb = now + 10;
+                    last_hb = now;
                     heartbeat(now - head_since);
                 }
             }
@@ -818,6 +833,7 @@ void a9_main(int argc, char **argv)
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
+    mcu_config_acc(cfg.mcu_acc != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);

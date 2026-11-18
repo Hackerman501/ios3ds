@@ -56,6 +56,8 @@
 #define kOSBooleanTrue          (**(void ***)0x80232e4c)   /* a C++ reference: &gOSBooleanTrue */
 #define kOSBooleanFalse         (**(void ***)0x80232e50)
 #define gIOPlatform             (*(void **)0x8029d490)
+#define data_bytes              KPT(0x8018d534, const u8 *, void *)   /* OSData::getBytesNoCopy() */
+#define data_length             KPT(0x8018d510, u32, void *)          /* OSData::getLength() */
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -271,6 +273,158 @@ static void backlight_set(u32 level)   /* level 0..1000 (iOS brightness x factor
     dclean(&BOX->req_seq, 32);
 }
 
+static u32 acc_daemon, acc_driver;      /* who wants accelerometer samples */
+
+static void acc_request(void)
+{
+    volatile mcubox_t *b = BOX;
+    u32 want = acc_daemon || acc_driver;
+    if (b->req_acc == want) return;
+    b->req_acc = want;
+    b->req_seq = b->req_seq + 1;
+    dclean(&b->req_seq, 32);
+}
+
+/* ---- accelerometer: a LIS302DL on the emulated I2C bus ------------------- */
+/*
+ * The device tree keeps /arm-io/i2c0/accelerometer (tools/ios3ds-mcu/dt_mcu.py),
+ * so Apple's AppleEmbeddedAccelerometer (class AppleLIS302DL, kext at
+ * 0x8061a000) starts on it and publishes the IOHID accelerometer service.
+ * kernel/shim/audio.c's shim_iic_transfer (AppleARMIICDevice transfer) hands
+ * every transfer to this function first. Registers used by the driver
+ * (re-log section 39): WHO_AM_I 0x0F (probe), CTRL_REG1 0x20 (bit 6 power),
+ * CTRL_REG2 0x21 (bit 6 BOOT: must read back 0, else the driver panics after
+ * 500 tries), CTRL_REG3 0x22, FF_WU_SRC_1 0x31, OUT_X/Y/Z 0x29/0x2B/0x2D
+ * (signed 8 bit, read one by one; the driver scales by 1187/65536 g, i.e.
+ * ~55 counts per g, then applies the DT 'orientation' flags: 4 = negate z).
+ * Its data-ready interrupt never fires; it polls with its own timer at the
+ * ReportInterval SpringBoard sets.
+ */
+#define ACC_I2C_ADDR    0x1D            /* = tools/ios3ds-mcu/dt_mcu.py */
+#define ACC_COUNTS_G    55
+#define kIOReturnNoDevice 0xE00002C0
+
+static struct { void *nub; int acc; } iic_nubs[6];
+static u8 lis[0x40];
+static u32 acc_g;                       /* running mean of |a| in MCU units (1 g) */
+static u32 acc_logged;
+
+static u32 udiv(u32 n, u32 d)           /* no libgcc in the shim */
+{
+    u32 q = 0, r = 0;
+    if (!d) return 0;
+    for (int i = 31; i >= 0; i--) {
+        r = r << 1 | ((n >> i) & 1);
+        if (r >= d) { r -= d; q |= 1u << i; }
+    }
+    return q;
+}
+
+static u32 isqrt(u32 v)
+{
+    u32 r = 0, bit = 1u << 30;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return r;
+}
+
+/* the I2C address from the nub's 'reg' property, cached per nub */
+static int nub_is_acc(void *nub)
+{
+    for (unsigned i = 0; i < sizeof iic_nubs / sizeof iic_nubs[0]; i++) {
+        if (iic_nubs[i].nub == nub) return iic_nubs[i].acc;
+        if (!iic_nubs[i].nub) {
+            void *d = ((void *(*)(void *, const char *))(*(void ***)nub)[0x9c / 4])(nub, "reg");
+            int acc = 0;
+            if (d && data_length(d) >= 4) {
+                const u8 *p = data_bytes(d);
+                acc = p && p[0] == ACC_I2C_ADDR && !p[1] && !p[2] && !p[3];
+            }
+            iic_nubs[i].nub = nub;
+            iic_nubs[i].acc = acc;
+            return acc;
+        }
+    }
+    return 0;
+}
+
+/* newest MCU sample -> LIS302DL counts in iOS device axes (iOS x = -3DS y,
+   y = 3DS x, z = -3DS z, as ios3ds-mcud's default; docs/mcu.md section 5) */
+static void acc_sample(int8_t out[3])
+{
+    volatile mcubox_t *b = BOX;
+    int v[3], g;
+    dinval(b->acc, 32);
+    v[0] = -b->acc[1];
+    v[1] = b->acc[0];
+    v[2] = -b->acc[2];
+    g = (int)isqrt((u32)(v[0] * v[0]) + (u32)(v[1] * v[1]) + (u32)(v[2] * v[2]));
+    if (g > 64)
+        acc_g = acc_g ? acc_g - (acc_g >> 4) + ((u32)g >> 4) : (u32)g;
+    for (int i = 0; i < 3; i++) {
+        int c = 0;
+        if (acc_g) {
+            u32 m = udiv((u32)(v[i] < 0 ? -v[i] : v[i]) * ACC_COUNTS_G, acc_g);
+            c = m > 127 ? 127 : (int)m;
+            if (v[i] < 0) c = -c;
+        }
+        out[i] = (int8_t)c;
+    }
+    out[2] = (int8_t)-out[2];           /* the DT 'orientation' 4 negates z again */
+}
+
+/* AppleARMIICDevice transfer for the accelerometer: -1 = not ours */
+int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
+{
+    if (!nub || !nub_is_acc(nub)) return -1;
+    volatile mcubox_t *b = BOX;
+    if (!mcu_live() || b->acc_off) {
+        if (!acc_logged++)
+            IOLog("ios3ds-mcu: accelerometer hidden from iOS (%s)\n", b->acc_off ? "boot.cfg mcu_acc=0" : "no MCU");
+        return (int)kIOReturnNoDevice;
+    }
+    u32 a = sublen && sub ? (sub[sublen - 1] & 0x3F) : 0;
+    int8_t s[3] = { 0, 0, 0 };
+    int sampled = 0;
+    for (u32 i = 0; i < len; i++, a = (a + 1) & 0x3F) {
+        if (op == 2) {
+            lis[a] = buf[i];
+            if (a == 0x21) lis[a] &= (u8)~0x40;         /* BOOT: reload done at once */
+            if (a == 0x20) {
+                acc_driver = (buf[i] & 0x40) != 0;      /* PD: sensor powered */
+                acc_request();
+                IOLog("ios3ds-mcu: accelerometer %s by AppleLIS302DL (CTRL_REG1 0x%02x)\n",
+                      acc_driver ? "powered on" : "powered off", buf[i]);
+            }
+        } else {
+            u8 v = lis[a];
+            if (a == 0x0F) v = 0x3B;                    /* WHO_AM_I: LIS302DL */
+            else if (a == 0x27) v = 0x0F;               /* STATUS: new X/Y/Z data */
+            else if (a == 0x31 || a == 0x35) v = 0;     /* FF_WU_SRC: no events */
+            else if (a == 0x29 || a == 0x2B || a == 0x2D) {
+                if (!sampled++) {
+                    static u32 served;
+                    acc_sample(s);
+                    if (++served == 1 || served == 100 || served == 1000 || served % 10000 == 0)
+                        IOLog("ios3ds-mcu: accelerometer sample #%u: %d %d %d counts (|a| = %u MCU units)\n",
+                              (unsigned)served, s[0], s[1], -s[2], (unsigned)acc_g);
+                }
+                v = (u8)s[(a - 0x29) >> 1];
+            }
+            buf[i] = v;
+        }
+    }
+    if (acc_logged < 8 && op != 2 && a != 0x2A && a != 0x2C && a != 0x2E) {
+        acc_logged++;
+        IOLog("ios3ds-mcu: accelerometer read reg 0x%02x len %u\n", (unsigned)(a - len) & 0x3F, (unsigned)len);
+    }
+    return 0;
+}
+
 /* ---- sysctls ------------------------------------------------------------- */
 
 typedef struct {
@@ -280,7 +434,7 @@ typedef struct {
 } mcuctl_t;
 
 static mcuctl_t ctl;
-static u32 acc_sent;
+
 
 static int mcu_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *req)
 {
@@ -295,12 +449,9 @@ static int mcuctl_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *re
     if (r) return r;
     volatile mcubox_t *b = BOX;
     if (!mcu_live()) return 0;
-    if (ctl.acc != acc_sent) {
-        acc_sent = ctl.acc;
-        b->req_acc = ctl.acc;
-        b->req_seq = b->req_seq + 1;
-        dclean(&b->req_seq, 32);
-    }
+    (void)b;
+    acc_daemon = ctl.acc != 0;
+    acc_request();
     if (ctl.backlight) backlight_set(ctl.backlight - 1);
     return 0;
 }

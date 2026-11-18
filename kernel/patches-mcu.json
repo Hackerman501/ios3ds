@@ -40,5 +40,12 @@
   "orig": "9847",
   "new": "c046",
   "why": "PEHaltRestart: skip the IOPMrootDomain halt/restart broadcast (blx r3 -> 0x801db12b). It messages IOMobileGraphicsFamily -> AppleM2CLCD (disable_backlight) -> AppleARMPlatform function -> AppleS5L8720X's SWI backlight function, which sleeps on a command gate (AppleS5L8720X+0x37cc) for an interrupt the 3DS never raises: every iOS shutdown hung there forever (QEMU, SELECT+START thread dump, re-log 33). File systems are already unmounted and md0 writes are synchronous; the platform call that follows (pe-halt-mcu) powers the console off"
+ },
+ {
+  "name": "s5l-perf-nowait",
+  "va": "0x807517cc",
+  "orig": "8c33d5e5000053e3f6ffff1a",
+  "new": "0030a0e38c33c5e50000a0e1",
+  "why": "AppleS5L8720XClockController (kext AppleS5L8720X+0x37cc): after starting a performance-state change it sleeps on its command gate (vtable +0x90) until byte +0x38c is cleared by the change-done interrupt, which the fake clock/power page never raises. Hit by IOPMrootDomain's halt broadcast (re-log 36) and by every display sleep (lock): the CLCD stayed off and the screen froze after the first wake. ldrb r3,[r5,#0x38c]; cmp r3,#0; bne wait -> mov r3,#0; strb r3,[r5,#0x38c]; nop: the change counts as done at once (docs/mcu.md 6.3)"
  }
 ]

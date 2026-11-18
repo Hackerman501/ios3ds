@@ -6,6 +6,8 @@
    calendar reads it during boot). enable = boot.cfg mcu, rtc_offset = boot.cfg
    rtc_offset (seconds added to the RTC to get UTC). */
 void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 hz);
+/* boot.cfg mcu_acc=0: the shim hides the accelerometer from iOS (after mcu_init) */
+void mcu_config_acc(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */
