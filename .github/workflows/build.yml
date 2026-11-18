@@ -99,7 +99,7 @@ jobs:
       - name: Host packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-cryptography python3-pil >/dev/null   # PIL: tests/test_bootperf.py imports emu/bootprof.py
+          sudo apt-get install -y -qq python3-cryptography python3-pil python3-tk >/dev/null   # PIL + tkinter: tests/test_bootperf.py imports emu/bootprof.py (-> emu/viewer.py)
       - name: make test
         run: make test
 
