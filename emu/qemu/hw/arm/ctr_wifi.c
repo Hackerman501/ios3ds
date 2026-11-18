@@ -26,7 +26,7 @@
  * (sizes, addresses, order) and the "firmware" is this file's HTC/WMI code.
  *
  * Properties (-global ctr-wifi.<name>=<value>): ssid, psk, security
- * (wpa2|open), group (ccmp|tkip), channel (1-13), hidden, fifo32, debug (0-3), mac.
+ * (wpa2|open), group (ccmp|tkip), channel (1-13), hidden, fifo32, decoys, debug (0-3), mac.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -162,6 +162,7 @@ struct CtrWifiState {
     uint32_t channel_mhz;
     bool hidden;
     bool fifo32;                    /* false: the FIFO32 port does not move data */
+    bool decoys;                    /* other (beacon-only) networks in scans */
     uint32_t debug;
 
     /* 3DS side power */
@@ -683,39 +684,64 @@ static int ap_rsn_ie(CtrWifiState *s, uint8_t *o)
     return 22;
 }
 
-static int ap_ies(CtrWifiState *s, uint8_t *o, bool probe_resp)
+/* Other networks "on the air" (beacons only): they make a scan list look
+   like a real one. They never answer an association (no network). */
+static const struct {
+    const char *ssid;
+    uint8_t bssid[6];
+    uint32_t mhz;
+    bool wpa2;
+    int16_t rssi;
+} decoys[] = {
+    { "NeighborNet", { 0x0E, 0xA9, 0x11, 0x00, 0x00, 0x01 }, 2412, true, -81 },
+    { "CoffeeShop", { 0x0E, 0xA9, 0x11, 0x00, 0x00, 0x02 }, 2462, false, -72 },
+};
+
+static int bss_ies(uint8_t *o, const char *ssid, int ssid_len, uint32_t mhz, const uint8_t *rsn)
 {
     static const uint8_t rates[] = { 1, 8, 0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24 };
-    int n = 0, l = (s->hidden && !probe_resp) ? 0 : strlen(s->ssid);
+    int n = 0;
     o[n++] = 0;
-    o[n++] = l;
-    memcpy(o + n, s->ssid, l);
-    n += l;
+    o[n++] = ssid_len;
+    memcpy(o + n, ssid, ssid_len);
+    n += ssid_len;
     memcpy(o + n, rates, sizeof(rates));
     n += sizeof(rates);
     o[n++] = 3;
     o[n++] = 1;
-    o[n++] = channel_of(s->channel_mhz);
-    if (s->wpa2) {
-        n += ap_rsn_ie(s, o + n);
+    o[n++] = channel_of(mhz);
+    if (rsn) {
+        memcpy(o + n, rsn, 22);
+        n += 22;
     }
     return n;
 }
 
-static void send_bssinfo(CtrWifiState *s, bool probe_resp)
+static void send_bss(CtrWifiState *s, const char *ssid, int ssid_len, const uint8_t *bssid,
+                     uint32_t mhz, const uint8_t *rsn, int16_t rssi, bool probe_resp)
 {
     uint8_t b[256];
     memset(b, 0, 28);
-    wr16le(b, s->channel_mhz);
+    wr16le(b, mhz);
     b[2] = probe_resp ? 2 : 1;              /* frame type: beacon 1, probe response 2 */
-    b[3] = 40;                              /* SNR (dsiwifi ignores < 0x20) */
-    wr16le(b + 4, (uint16_t)-55);           /* RSSI dBm */
-    memcpy(b + 6, s->bssid, 6);
+    b[3] = rssi + 95;                       /* SNR over a -95 dBm noise floor (dsiwifi ignores < 0x20) */
+    wr16le(b + 4, (uint16_t)rssi);          /* RSSI dBm */
+    memcpy(b + 6, bssid, 6);
     /* 802.11 body: timestamp, beacon interval, capability (ESS, privacy) */
     wr16le(b + 16 + 8, 100);
-    wr16le(b + 16 + 10, 0x0401 | (s->wpa2 ? 0x10 : 0));
-    int n = 28 + ap_ies(s, b + 28, probe_resp);
+    wr16le(b + 16 + 10, 0x0401 | (rsn ? 0x10 : 0));
+    int n = 28 + bss_ies(b + 28, ssid, ssid_len, mhz, rsn);
     wmi_event(s, EV_BSSINFO, b, n);
+}
+
+static void send_bssinfo(CtrWifiState *s, bool probe_resp)
+{
+    uint8_t rsn[22];
+    if (s->wpa2) {
+        ap_rsn_ie(s, rsn);
+    }
+    send_bss(s, s->ssid, (s->hidden && !probe_resp) ? 0 : strlen(s->ssid), s->bssid, s->channel_mhz,
+             s->wpa2 ? rsn : NULL, -55, probe_resp);
     WLOG(s, 1, "scan: BSSINFO \"%s\" %s ch %d (%s)", s->ssid, mac_str(s->bssid),
          channel_of(s->channel_mhz), probe_resp ? "probe response" : "beacon");
 }
@@ -742,6 +768,14 @@ static void scan_step(void *opaque)
             send_bssinfo(s, probe);
         } else if (visible) {
             WLOG(s, 1, "scan: AP seen on channel %d, but BSS filter %u reports nothing", ch, s->bss_filter);
+        }
+    }
+    for (int i = 0; s->decoys && i < (int)ARRAY_SIZE(decoys); i++) {
+        if (channel_of(decoys[i].mhz) == ch && s->bss_filter == BSS_FILTER_ALL) {
+            static const uint8_t rsn[22] = { 0x30, 20, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F,
+                                             0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 2, 0x0C, 0x00 };
+            send_bss(s, decoys[i].ssid, strlen(decoys[i].ssid), decoys[i].bssid, decoys[i].mhz,
+                     decoys[i].wpa2 ? rsn : NULL, decoys[i].rssi, false);
         }
     }
     if (s->scan_ch_mask) {
@@ -2181,6 +2215,7 @@ static const Property ctr_wifi_props[] = {
     /* "fifo32=off": the hypothesis that the ARM9 cannot use TMIO2's FIFO at
        +0x10C (docs/wifi.md 7.2); the driver must fall back to CMD52 */
     DEFINE_PROP_BOOL("fifo32", CtrWifiState, fifo32, true),
+    DEFINE_PROP_BOOL("decoys", CtrWifiState, decoys, true),
     DEFINE_PROP_UINT32("debug", CtrWifiState, debug, 1),
 };
 

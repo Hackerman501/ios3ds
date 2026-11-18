@@ -112,6 +112,9 @@ static struct {
     u32 reconnect_at;               /* now_ms() for the next WMI_CONNECT, 0 = none */
     u8 scan_done, auth_fails;
     u8 byte_mode;                   /* 1: mailbox through CMD52 (the FIFO self-test failed) */
+    u8 verbose, switching, from_ios;
+    u16 disc_reason, disc_code;
+    u32 link_seq;
 } A;
 
 static u32 now_ms(void)
@@ -126,6 +129,19 @@ static u32 now_ms(void)
 }
 
 static u8 pkt[0x680] __attribute__((aligned(4)));   /* mailbox packet scratch */
+
+/* The network to be on: from wifi.cfg at boot, or from iOS (WLAN_CMD_JOIN).
+   have = 0: stay idle (no wifi.cfg, or iOS said "leave"). */
+static struct {
+    char ssid[33];
+    u8 ssid_len, security, have;
+    u8 pmk[32];
+} T;
+
+/* every BSS seen in scans since the last user scan (docs/wifi.md 10) */
+static wlan_bss_t scan_tab[WLAN_SCAN_MAX];
+static u32 nscan, scan_seq;
+static u8 user_scan;                /* a WLAN_CMD_SCAN is running */
 
 static u32 fail(int err, const char *what)
 {
@@ -374,8 +390,7 @@ static int fw_step(void)
 /* ---- WMI ------------------------------------------------------------------------ */
 static int wmi_connect(void)
 {
-    const wifi_cfg_t *c = A.cfg;
-    int wpa = c->security == WIFI_SEC_WPA2;
+    int wpa = T.security == WIFI_SEC_WPA2;
     struct __attribute__((packed)) {
         u8 networkType, dot11AuthMode, authMode, pairwiseCryptoType, pairwiseCryptoLen,
            groupCryptoType, groupCryptoLen, ssidLength;
@@ -390,8 +405,8 @@ static int wmi_connect(void)
     p.authMode = wpa ? AUTH_WPA2_PSK : AUTH_NONE;
     p.pairwiseCryptoType = wpa ? CRYPT_AES : CRYPT_NONE;
     p.groupCryptoType = wpa ? A.group_crypt : CRYPT_NONE;
-    p.ssidLength = c->ssid_len;
-    memcpy(p.ssid, c->ssid, c->ssid_len);
+    p.ssidLength = T.ssid_len;
+    memcpy(p.ssid, T.ssid, T.ssid_len);
     if (A.found) {
         p.channel = A.channel;
         memcpy(p.bssid, A.bssid, 6);
@@ -432,7 +447,8 @@ static void link_up(void)
     u8 one = 1;
     wmi_send(WMI_SYNCHRONIZE, &one, 1);
     A.state = NET_ST_UP;
-    log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", A.cfg->ssid,
+    A.auth_fails = 0;
+    log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", T.ssid,
            A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3], A.bssid[4], A.bssid[5]);
 }
 
@@ -489,9 +505,11 @@ static int scan_start(void)
         u8 scanType, numChannels; u16 channelList;
     } sc = { 0, 0, 20, 0, 0, 0, 0 };
     memset(&ps, 0, sizeof(ps));
-    ps.flag = 1;                                /* SPECIFIC_SSID_FLAG */
-    ps.len = A.cfg->ssid_len;
-    memcpy(ps.ssid, A.cfg->ssid, A.cfg->ssid_len);
+    if (T.have) {                               /* probe for it too (hidden networks) */
+        ps.flag = 1;                            /* SPECIFIC_SSID_FLAG */
+        ps.len = T.ssid_len;
+        memcpy(ps.ssid, T.ssid, T.ssid_len);
+    }
     int r = wmi_send(WMI_SET_BSS_FILTER, &f, sizeof(f));
     if (r >= 0) r = wmi_send(WMI_SET_PROBED_SSID, &ps, sizeof(ps));
     if (r >= 0) r = wmi_send(WMI_START_SCAN, &sc, sizeof(sc));
@@ -503,13 +521,49 @@ static int scan_start(void)
 /* WMI_BSSINFO_EVENT: u16 channel, u8 frametype, u8 snr, s16 rssi, u8 bssid[6],
    u32 ieMask, then the beacon/probe-response body (8 timestamp, 2 interval,
    2 capability, IEs). Remember our SSID's channel, BSSID and group cipher. */
+static void scan_record(const u8 *d, u32 n)
+{
+    const u8 *ie = d + 28, *end = d + n;
+    wlan_bss_t *b = NULL;
+    u32 i;
+    for (i = 0; i < nscan; i++)
+        if (!memcmp(scan_tab[i].bssid, d + 6, 6)) b = &scan_tab[i];
+    if (!b) {
+        if (nscan >= WLAN_SCAN_MAX) return;
+        b = &scan_tab[nscan++];
+    }
+    memset(b, 0, sizeof(*b));
+    memcpy(b->bssid, d + 6, 6);
+    b->channel_mhz = (u16)(d[0] | d[1] << 8);
+    b->rssi = (int16_t)(d[4] | d[5] << 8);
+    b->noise = (int16_t)(b->rssi - (int8_t)d[3]);
+    b->beacon_int = (u16)(d[24] | d[25] << 8);
+    b->caps = (u16)(d[26] | d[27] << 8);
+    if (b->caps & 0x10) b->flags |= WLAN_BSS_PRIVACY;
+    for (const u8 *p = ie; p + 2 <= end && p + 2 + p[1] <= end; p += 2 + p[1]) {
+        if (p[0] == 0 && p[1] <= 32 && !b->ssid_len) {
+            b->ssid_len = p[1];
+            memcpy(b->ssid, p + 2, p[1]);
+        }
+        if (p[0] == 0x30) b->flags |= WLAN_BSS_RSN;
+        if (p[0] == 0xDD && p[1] >= 4 && p[2] == 0x00 && p[3] == 0x50 && p[4] == 0xF2 && p[5] == 1)
+            b->flags |= WLAN_BSS_WPA;
+        if ((u32)b->ie_len + 2 + p[1] <= WLAN_IE_MAX) {
+            memcpy(b->ie + b->ie_len, p, 2 + p[1]);
+            b->ie_len = (u8)(b->ie_len + 2 + p[1]);
+        }
+    }
+}
+
 static void on_bssinfo(const u8 *d, u32 n)
 {
     if (n < 28) return;
+    scan_record(d, n);
+    if (!T.have) return;
     const u8 *ie = d + 28, *end = d + n;
     int match = 0, group = CRYPT_AES;
     while (ie + 2 <= end && ie + 2 + ie[1] <= end) {
-        if (ie[0] == 0 && ie[1] == A.cfg->ssid_len && !memcmp(ie + 2, A.cfg->ssid, ie[1])) match = 1;
+        if (ie[0] == 0 && ie[1] == T.ssid_len && !memcmp(ie + 2, T.ssid, ie[1])) match = 1;
         if (ie[0] == 0x30 && ie[1] >= 6) group = ie[7] == 2 ? CRYPT_TKIP : CRYPT_AES;  /* RSN group suite 00-0F-AC-xx */
         ie += 2 + ie[1];
     }
@@ -523,8 +577,8 @@ static void on_bssinfo(const u8 *d, u32 n)
 static void do_connect(void)
 {
     int r = wmi_connect();
-    logp("[wifi] connect \"%s\" (%s%s), %s: %d\n", A.cfg->ssid,
-         A.cfg->security == WIFI_SEC_WPA2 ? "WPA2-PSK/CCMP" : "open",
+    logp("[wifi] connect \"%s\" (%s%s), %s: %d\n", T.ssid,
+         T.security == WIFI_SEC_WPA2 ? "WPA2-PSK/CCMP" : "open",
          A.group_crypt == CRYPT_TKIP ? ", TKIP group" : "",
          A.found ? "seen in scan" : "not seen in scan, firmware picks", r);
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_SCAN;
@@ -550,8 +604,13 @@ static void on_wmi(const u8 *b, u32 len)
         v = 0;                                  /* GBATEK: timeout 0 = no heartbeat (Type4 firmware needs this) */
         wmi_send(WMI_SET_HEARTBEAT_TIMEOUT, &v, 4);
         A.group_crypt = CRYPT_AES;
+        if (!T.have) {
+            logp("[wifi] idle: no network configured, waiting for iOS (Settings > Wi-Fi)\n");
+            A.state = NET_ST_IDLE;
+            break;
+        }
         int r = scan_start();
-        logp("[wifi] scanning for \"%s\": %d\n", A.cfg->ssid, r);
+        logp("[wifi] scanning for \"%s\": %d\n", T.ssid, r);
         A.state = r < 0 ? NET_ST_FAILED : NET_ST_SCAN;
         A.err = r;
         break;
@@ -560,17 +619,22 @@ static void on_wmi(const u8 *b, u32 len)
         on_bssinfo(d, n);
         break;
     case WMI_EV_SCAN_COMPLETE:
+        if (user_scan) {
+            user_scan = 0;
+            scan_seq++;
+            logp("[wifi] scan done: %u networks\n", nscan);
+        }
         if (A.state == NET_ST_SCAN && !A.scan_done) do_connect();
         break;
     case WMI_EV_CONNECT:
         /* u16 channel; u8 bssid[6]; ... (ath6kl struct wmi_connect_event) */
         if (n >= 8) memcpy(A.bssid, d + 2, 6);
         logp("[wifi] associated, channel %u MHz\n", n >= 2 ? d[0] | (u32)d[1] << 8 : 0);
-        if (A.cfg->security == WIFI_SEC_WPA2) {
+        if (T.security == WIFI_SEC_WPA2) {
             u8 sn[32];
             memset(sn, 0, sizeof(sn));
             snonce(sn);
-            wpa2_start(&A.wpa, A.cfg->pmk, A.mac, A.bssid, sn);
+            wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
             A.wpa.group_cipher = A.group_crypt == CRYPT_TKIP ? 2 : 4;   /* must match our association IE */
             A.state = NET_ST_AUTH;
         } else {
@@ -579,17 +643,39 @@ static void on_wmi(const u8 *b, u32 len)
         break;
     case WMI_EV_DISCONNECT:
         /* u16 802.11 reason/status, u8 bssid[6], u8 WMI reason (ath6kl) */
+        A.disc_reason = n >= 9 ? d[8] : 0;
+        A.disc_code = n >= 2 ? (u16)(d[0] | d[1] << 8) : 0;
+        A.link_seq++;
         if (A.state == NET_ST_AUTH && ++A.auth_fails == 3)
-            log_err("[wifi] the WPA2 handshake failed 3 times: is psk= in wifi.cfg right?\n");
+            log_err("[wifi] the WPA2 handshake failed 3 times: wrong password?\n");
+        if (!T.have) {                          /* iOS asked to leave (or never joined) */
+            logp("[wifi] disconnected (WMI reason %u): idle\n", A.disc_reason);
+            A.state = NET_ST_IDLE;
+            break;
+        }
+        if (A.switching) {                      /* leaving the old network for a new one */
+            A.switching = 0;
+            A.state = NET_ST_SCAN;
+            A.scan_done = 1;
+            A.reconnect_at = 1;
+            break;
+        }
+        if (A.auth_fails >= 3 && A.from_ios) {  /* a wrong password typed in Settings: give up */
+            log_warn("[wifi] disconnected (WMI reason %u, 802.11 code %u): giving up on \"%s\"\n",
+                     A.disc_reason, A.disc_code, T.ssid);
+            T.have = 0;
+            A.state = NET_ST_IDLE;
+            break;
+        }
         log_warn("[wifi] disconnected (WMI reason %u, 802.11 code %u), reconnecting in 5 s\n",
-                 n >= 9 ? d[8] : 0, n >= 2 ? d[0] | d[1] << 8 : 0);
+                 A.disc_reason, A.disc_code);
         A.state = NET_ST_SCAN;
         A.scan_done = 1;
         A.reconnect_at = now_ms() + 5000;
         if (!A.reconnect_at) A.reconnect_at = 1;
         break;
     default:
-        if (A.cfg->verbose) logp("[wifi] WMI event %04x, %u bytes\n", id, n);
+        if (A.verbose) logp("[wifi] WMI event %04x, %u bytes\n", id, n);
         break;
     }
 }
@@ -645,7 +731,7 @@ static void pump(void)
     u32 type = 0;
     int n = mbox_recv(&type);
     if (n <= 0) {
-        if (n < 0 && A.cfg->verbose) log_warn("[wifi] mailbox read: %d\n", n);
+        if (n < 0 && A.verbose) log_warn("[wifi] mailbox read: %d\n", n);
         return;
     }
     const u8 *body = pkt + 6;
@@ -659,11 +745,147 @@ static void pump(void)
         u32 len = wifi_frame_from_wmi(body, (u32)n, eth, sizeof(eth), &et);
         if (!len) return;
         if (et == 0x888E) {
-            if (A.cfg->security == WIFI_SEC_WPA2) on_eapol(eth, len);
+            if (T.security == WIFI_SEC_WPA2 && A.state == NET_ST_AUTH) on_eapol(eth, len);
         } else if (A.state == NET_ST_UP && !A.rxlen) {
             memcpy(A.rxframe, eth, len);
             A.rxlen = len;
         }
+    }
+}
+
+/* ---- iOS control plane (WLAN_CMD_*, docs/wifi.md section 10) ----------------------- */
+static int fw_up(void)
+{
+    return A.state == NET_ST_IDLE || A.state == NET_ST_SCAN || A.state == NET_ST_AUTH ||
+           A.state == NET_ST_UP;
+}
+
+/* associated or a WMI_CONNECT outstanding (the firmware will report back) */
+static int connecting(void)
+{
+    return A.state == NET_ST_AUTH || A.state == NET_ST_UP ||
+           (A.state == NET_ST_SCAN && A.scan_done && !A.reconnect_at);
+}
+
+static int user_scan_start(void)
+{
+    struct __attribute__((packed)) { u8 filter, a1; u16 a2; u32 ieMask; } f = { 1, 0, 0, 0 };
+    struct __attribute__((packed)) {
+        u32 forceFgScan, isLegacy, homeDwellTime, forceScanInterval;
+        u8 scanType, numChannels; u16 channelList;
+    } sc = { 0, 0, 20, 0, 0, 0, 0 };
+    nscan = 0;
+    user_scan = 1;
+    int r = wmi_send(WMI_SET_BSS_FILTER, &f, sizeof(f));
+    if (r >= 0) r = wmi_send(WMI_START_SCAN, &sc, sizeof(sc));
+    return r;
+}
+
+/* choose channel, BSSID and group cipher for T from the scan table (strongest) */
+static void target_lookup(void)
+{
+    const wlan_bss_t *best = NULL;
+    for (u32 i = 0; i < nscan; i++) {
+        const wlan_bss_t *b = &scan_tab[i];
+        if (b->ssid_len == T.ssid_len && !memcmp(b->ssid, T.ssid, T.ssid_len) &&
+            (!best || b->rssi > best->rssi))
+            best = b;
+    }
+    A.found = 0;
+    A.group_crypt = CRYPT_AES;
+    if (!best) return;
+    A.found = 1;
+    A.channel = best->channel_mhz;
+    memcpy(A.bssid, best->bssid, 6);
+    for (u32 i = 0; i + 2 <= best->ie_len; i += 2 + best->ie[i + 1])
+        if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6)
+            A.group_crypt = best->ie[i + 7] == 2 ? CRYPT_TKIP : CRYPT_AES;
+}
+
+int ar6k_command(const volatile wlan_cmd_t *c)
+{
+    if (!fw_up()) return -1;
+    u32 zero = 0;
+    switch (c->cmd) {
+    case WLAN_CMD_SCAN:
+        logp("[wifi] iOS: scan\n");
+        return user_scan_start();
+    case WLAN_CMD_JOIN: {
+        if (!c->ssid_len || c->ssid_len > 32) return -2;
+        int was = connecting();
+        memset(&T, 0, sizeof(T));
+        for (u32 i = 0; i < c->ssid_len; i++) T.ssid[i] = c->ssid[i];
+        T.ssid_len = c->ssid_len;
+        T.security = c->security == WLAN_SEC_WPA2 ? WIFI_SEC_WPA2 : WIFI_SEC_OPEN;
+        for (u32 i = 0; i < 32; i++) T.pmk[i] = c->pmk[i];
+        T.have = 1;
+        A.from_ios = 1;
+        A.auth_fails = 0;
+        target_lookup();
+        logp("[wifi] iOS: join \"%s\" (%s), %s\n", T.ssid, T.security == WIFI_SEC_WPA2 ? "WPA2" : "open",
+             A.found ? "in the scan list" : "not in the scan list: scanning");
+        if (was) {                              /* leave the current network first */
+            A.switching = 1;
+            return wmi_send(WMI_DISCONNECT, &zero, 4);
+        }
+        if (A.found) {
+            do_connect();
+            return A.err;
+        }
+        A.state = NET_ST_SCAN;
+        return scan_start();
+    }
+    case WLAN_CMD_LEAVE:
+        logp("[wifi] iOS: leave \"%s\"\n", T.ssid);
+        T.have = 0;
+        A.reconnect_at = 0;
+        if (connecting()) return wmi_send(WMI_DISCONNECT, &zero, 4);
+        A.state = NET_ST_IDLE;
+        return 0;
+    }
+    return -3;
+}
+
+/* status + scan table into the wlan mailbox (wifi.c, every poll) */
+void ar6k_publish(volatile wlanmbox_t *w, u32 *published_scan)
+{
+    volatile wlan_status_t *st = &w->st;
+    u32 ws;
+    switch (A.state) {
+    case NET_ST_POWER: case NET_ST_BMI: case NET_ST_FWLOAD: case NET_ST_BOOT:
+    case NET_ST_HTC: case NET_ST_WMI: ws = WLAN_ST_STARTING; break;
+    case NET_ST_IDLE: ws = WLAN_ST_IDLE; break;
+    case NET_ST_SCAN: ws = T.have ? WLAN_ST_JOINING : WLAN_ST_IDLE; break;
+    case NET_ST_AUTH: ws = WLAN_ST_JOINING; break;
+    case NET_ST_UP: ws = WLAN_ST_UP; break;
+    default: ws = WLAN_ST_OFF; break;
+    }
+    st->state = ws;
+    for (int i = 0; i < 6; i++) st->mac[i] = A.mac[i];
+    st->link_seq = A.link_seq;
+    st->disc_reason = A.disc_reason;
+    st->disc_code = A.disc_code;
+    if (ws == WLAN_ST_UP || ws == WLAN_ST_JOINING) {
+        int16_t rssi = -60, noise = -95;
+        for (u32 i = 0; i < nscan; i++)
+            if (!memcmp(scan_tab[i].bssid, A.bssid, 6)) { rssi = scan_tab[i].rssi; noise = scan_tab[i].noise; }
+        for (int i = 0; i < 6; i++) st->bssid[i] = A.bssid[i];
+        for (int i = 0; i < 32; i++) st->ssid[i] = i < T.ssid_len ? T.ssid[i] : 0;
+        st->ssid_len = T.ssid_len;
+        st->security = T.security == WIFI_SEC_WPA2 ? WLAN_SEC_WPA2 : WLAN_SEC_OPEN;
+        st->channel_mhz = A.channel;
+        st->rssi = rssi;
+        st->noise = noise;
+    } else {
+        st->ssid_len = 0;
+    }
+    if (*published_scan != scan_seq) {
+        *published_scan = scan_seq;
+        volatile u8 *d = (volatile u8 *)w->bss;
+        const u8 *src = (const u8 *)scan_tab;
+        for (u32 i = 0; i < nscan * sizeof(wlan_bss_t); i++) d[i] = src[i];
+        st->nscan = nscan;
+        st->scan_seq = scan_seq;
     }
 }
 
@@ -672,10 +894,22 @@ static int ar6k_init(const wifi_cfg_t *cfg, u8 mac[6])
 {
     memset(&A, 0, sizeof(A));
     A.cfg = cfg;
+    A.verbose = (u8)cfg->verbose;
+    memset(&T, 0, sizeof(T));
+    if (cfg->ssid_len) {                    /* wifi.cfg preset: join it at boot */
+        memcpy(T.ssid, cfg->ssid, cfg->ssid_len);
+        T.ssid_len = cfg->ssid_len;
+        T.security = cfg->security;
+        memcpy(T.pmk, cfg->pmk, 32);
+        T.have = 1;
+    }
     memset(mac, 0, 6);          /* known after WMI ready; wifi.c copies it then */
     int r = sd_load(cfg->fw, fw_buf, sizeof(fw_buf), &fw_size);
     if (r < 0) {
-        log_warn("[wifi] %s: not found (%d). Create it with tools/ios3ds-wifi/nwmfw.py\n", cfg->fw, r);
+        if (cfg->ssid_len)
+            log_warn("[wifi] %s: not found (%d). Create it with tools/ios3ds-wifi/nwmfw.py\n", cfg->fw, r);
+        else
+            logp("[wifi] %s: not found (%d): Wi-Fi off (docs/wifi.md section 3)\n", cfg->fw, r);
         return -1;
     }
     if ((r = fw_check()) < 0) {
@@ -787,7 +1021,7 @@ static u32 ar6k_poll(void)
             return fail(-111, A.state == NET_ST_HTC ? "firmware start (no HTC_READY)" : "WMI start (no WMI_READY)");
         if (!A.rxlen) pump();
         break;
-    case NET_ST_AUTH: case NET_ST_UP:
+    case NET_ST_AUTH: case NET_ST_UP: case NET_ST_IDLE:
         if (!A.rxlen) pump();       /* keep a data frame until rx() took it */
         break;
     default:

@@ -54,6 +54,11 @@
     "IOS3DS_GL_TRACE": "1",
     "IOS3DS_CA": "1"
    }
+  },
+  "/System/Library/LaunchDaemons/com.apple.configd.plist": {
+   "EnvironmentVariables": {
+    "DYLD_INSERT_LIBRARIES": "/usr/lib/ios3ds-a80211.dylib"
+   }
   }
  },
  "add": {
@@ -68,6 +73,7 @@
   "tools/ios3ds-gl/test/com.ios3ds.gltest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist",
   "build/rootfs-add/usr/libexec/ios3ds-wifid": "/usr/libexec/ios3ds-wifid",
   "build/rootfs-add/usr/libexec/ios3ds-nettest": "/usr/libexec/ios3ds-nettest",
+  "build/rootfs-add/usr/lib/ios3ds-a80211.dylib": "/usr/lib/ios3ds-a80211.dylib",
   "tools/ios3ds-wifi/daemon/com.ios3ds.wifi.plist": "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist",
   "build/rootfs-add/usr/libexec/ios3ds-tone": "/usr/libexec/ios3ds-tone",
   "tools/ios3ds-audio/tone/com.ios3ds.tone.plist": "/System/Library/LaunchDaemons/com.ios3ds.tone.plist",
@@ -86,6 +92,7 @@
   "/System/Library/LaunchDaemons/com.ios3ds.gltest.plist": "0644",
   "/usr/libexec/ios3ds-wifid": "0755",
   "/usr/libexec/ios3ds-nettest": "0755",
+  "/usr/lib/ios3ds-a80211.dylib": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.wifi.plist": "0644",
   "/usr/libexec/ios3ds-tone": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.tone.plist": "0644",

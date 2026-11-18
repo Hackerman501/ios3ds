@@ -100,6 +100,39 @@ static struct sysctl_oid net_oid = {
     .oid_fmt     = "S,ios3ds_net",
 };
 
+#define WLANMBOX ((volatile wlanmbox_t *)(NET_VA + WLAN_OFF))
+static volatile u32 wlan_busy;
+
+/* kern.ios3ds_wlan: the Wi-Fi control area for the Apple80211 bridge
+   (tools/ios3ds-wifi/a80211); same fixed-size opaque scheme as above */
+static int wlan_sysctl(struct sysctl_oid *oidp, void *arg1, int arg2, void *req)
+{
+    u32 cpsr, was;
+    __asm__ volatile("mrs %0, cpsr\n\tcpsid if" : "=r"(cpsr) :: "memory");
+    was = wlan_busy;
+    wlan_busy = 1;
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory");
+    if (was) return EBUSY;
+
+    wlanio_t *io = (wlanio_t *)arg1;
+    wlan_core_fill(WLANMBOX, io);
+    int err = sysctl_handle_opaque(oidp, io, arg2, req);
+    if (!err) wlan_core_apply(WLANMBOX, io);
+    wlan_busy = 0;
+    return err;
+}
+
+static struct sysctl_oid wlan_oid = {
+    .oid_parent  = SYSCTL_KERN_CHILDREN,
+    .oid_number  = OID_AUTO,
+    .oid_kind    = (int)(CTLFLAG_RW | CTLTYPE_OPAQUE),
+    .oid_arg1    = (void *)(NET_VA + WLAN_IO_OFF),
+    .oid_arg2    = (int)sizeof(wlanio_t),
+    .oid_name    = "ios3ds_wlan",
+    .oid_handler = wlan_sysctl,
+    .oid_fmt     = "S,ios3ds_wlan",
+};
+
 /* Thread context only (takes the funnel and a rw-lock). Idempotent. */
 void shim_net_register(void)
 {
@@ -107,4 +140,5 @@ void shim_net_register(void)
     if (done) return;
     done = 1;
     sysctl_register_oid(&net_oid);
+    sysctl_register_oid(&wlan_oid);
 }

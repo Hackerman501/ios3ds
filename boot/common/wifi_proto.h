@@ -50,6 +50,7 @@ enum {
     NET_ST_AUTH,            /* associated, WPA2 4-way handshake running */
     NET_ST_UP,              /* link up: frames flow */
     NET_ST_FAILED,          /* see netmbox_t.err */
+    NET_ST_IDLE,            /* firmware up, no network chosen (iOS Settings may join one) */
 };
 
 typedef struct {
@@ -187,6 +188,121 @@ static inline uint32_t net_ring_free(uint32_t head, uint32_t tail)
 {
     return net_ring_sane(head, tail) ? NET_SLOTS - (head - tail) : 0;
 }
+
+/* ---- Wi-Fi control: scan, join, leave (iOS Settings) ------------------- */
+/*
+ * A second area in the same FCRAM block, for the 802.11 control plane that
+ * iOS's WiFiManager drives (docs/wifi.md section 10): the ARM9 publishes its
+ * state, the current network and the last scan's BSS list; iOS posts one
+ * command at a time (cmd.seq increments, the ARM9 echoes it in st.ack_seq).
+ * Same one-writer-per-cache-line rule as netmbox_t.
+ */
+#define WLAN_OFF        0xC200u         /* NET_PA + WLAN_OFF: wlanmbox_t */
+#define WLAN_IO_OFF     0xF000u         /* NET_VA + WLAN_IO_OFF: wlanio_t (ARM11) */
+#define WLAN_MAGIC      0x4E414C57u     /* 'WLAN' */
+#define WLAN_VERSION    1u
+#define WLAN_SCAN_MAX   16u
+#define WLAN_IE_MAX     76u
+
+enum {                      /* wlan_status_t.state */
+    WLAN_ST_OFF = 0,        /* no firmware / chip failed: nothing to offer */
+    WLAN_ST_STARTING,       /* chip and firmware coming up */
+    WLAN_ST_IDLE,           /* up, not associated */
+    WLAN_ST_JOINING,        /* WMI_CONNECT sent / 4-way handshake running */
+    WLAN_ST_UP,             /* associated, keys installed */
+};
+enum {                      /* wlan_cmd_t.cmd */
+    WLAN_CMD_NONE = 0,
+    WLAN_CMD_SCAN,          /* all channels; results in bss[], st.scan_seq++ */
+    WLAN_CMD_JOIN,          /* ssid (+ pmk when security = WPA2) */
+    WLAN_CMD_LEAVE,         /* disassociate, stay idle (no auto-reconnect) */
+};
+enum { WLAN_SEC_OPEN = 0, WLAN_SEC_WPA2 = 1 };
+#define WLAN_BSS_PRIVACY 0x01   /* capability privacy bit */
+#define WLAN_BSS_RSN     0x02   /* has an RSN IE */
+#define WLAN_BSS_WPA     0x04   /* has a WPA (vendor) IE */
+
+typedef struct {            /* one BSS of the last scan (128 bytes) */
+    uint8_t  bssid[6];
+    uint8_t  ssid_len;
+    uint8_t  flags;         /* WLAN_BSS_* */
+    char     ssid[32];
+    uint16_t channel_mhz;
+    int16_t  rssi;          /* dBm */
+    int16_t  noise;         /* dBm */
+    uint16_t caps;          /* 802.11 capability field */
+    uint16_t beacon_int;
+    uint8_t  ie_len;        /* bytes in ie[] */
+    uint8_t  _r0;
+    uint8_t  ie[WLAN_IE_MAX];   /* the beacon's IEs (SSID, rates, DS, RSN, ...) */
+} wlan_bss_t;
+
+typedef struct {            /* ARM9 -> iOS, 3 cache lines */
+    uint32_t magic, version;
+    uint32_t state;         /* WLAN_ST_* */
+    uint32_t ack_seq;       /* last command handled */
+    int32_t  result;        /* of that command: 0 ok, < 0 error */
+    uint32_t scan_seq;      /* incremented when bss[] holds a new scan */
+    uint32_t nscan;         /* valid entries in bss[] */
+    uint32_t link_seq;      /* incremented on every link up and down */
+    uint8_t  bssid[6];      /* current network (state JOINING/UP) */
+    uint8_t  ssid_len;
+    uint8_t  security;      /* WLAN_SEC_* of the current network */
+    uint16_t channel_mhz;
+    int16_t  rssi;
+    int16_t  noise;
+    uint16_t disc_reason;   /* last WMI disconnect reason, 0 = none */
+    uint16_t disc_code;     /* last 802.11 reason/status code */
+    uint16_t _r0;
+    uint8_t  mac[6];        /* our station address (valid from STARTING on, once known) */
+    uint8_t  _r1[6];
+    char     ssid[32];
+} wlan_status_t;
+
+typedef struct {            /* iOS -> ARM9, 3 cache lines */
+    uint32_t seq;           /* bumped by the ARM11 for every new command */
+    uint32_t cmd;           /* WLAN_CMD_* */
+    uint8_t  ssid_len;
+    uint8_t  security;      /* WLAN_SEC_* */
+    uint8_t  has_bssid;
+    uint8_t  _r0;
+    uint8_t  bssid[6];
+    uint16_t _r1;
+    uint8_t  pmk[32];       /* WPA2: PBKDF2(passphrase, ssid) */
+    char     ssid[32];
+    uint32_t _r2[3];
+} wlan_cmd_t;
+
+typedef struct {
+    wlan_status_t st;       /* lines 0-2: ARM9 */
+    wlan_cmd_t    cmd;      /* lines 3-5: ARM11 */
+    wlan_bss_t    bss[WLAN_SCAN_MAX];   /* ARM9 */
+} wlanmbox_t;
+
+_Static_assert(sizeof(wlan_bss_t) == 128, "wlan_bss_t layout");
+_Static_assert(sizeof(wlan_status_t) == 96, "wlan_status_t layout");
+_Static_assert(sizeof(wlan_cmd_t) == 96, "wlan_cmd_t layout");
+_Static_assert(sizeof(netmbox_t) <= WLAN_OFF, "netmbox overlaps the wlan area");
+_Static_assert(WLAN_OFF + sizeof(wlanmbox_t) <= NET_IO_OFF, "wlan area overlaps the io buffer");
+
+/*
+ * sysctl kern.ios3ds_wlan (opaque RW, sizeof(wlanio_t)): a read returns the
+ * status and the scan table; a write with magic WLANIO_CMD posts cmd (the
+ * shim assigns the sequence number, readable afterwards in cmd_seq).
+ */
+#define WLAN_SYSCTL_NAME "kern.ios3ds_wlan"
+#define WLANIO_MAGIC    0x4F494C57u     /* 'WLIO' */
+#define WLANIO_CMD      0x434C5757u     /* 'WWLC' */
+typedef struct {
+    uint32_t magic;         /* WLANIO_MAGIC out, WLANIO_CMD in */
+    uint32_t version;       /* WLAN_VERSION; out: 0 = the ARM9 serves no wlan area */
+    uint32_t cmd_seq;       /* out: sequence number of the last posted command */
+    uint32_t _r[5];
+    wlan_status_t st;       /* out */
+    wlan_cmd_t    cmd;      /* in */
+    wlan_bss_t    bss[WLAN_SCAN_MAX];   /* out */
+} wlanio_t;
+_Static_assert(WLAN_IO_OFF + sizeof(wlanio_t) <= NET_SIZE, "wlanio_t does not fit");
 
 /* ---- QEMU paravirtual NIC ("ctr-vnic", emulator only) ------------------ */
 /*

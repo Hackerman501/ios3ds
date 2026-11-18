@@ -100,3 +100,41 @@ static uint32_t net_core_apply(volatile netmbox_t *m, const netio_t *io)
     NET_DCLEAN(&m->rx_tail, 32);
     return accepted;
 }
+
+/* ---- kern.ios3ds_wlan: Wi-Fi control area (wlanmbox_t) ------------------ */
+
+/* status + scan table out; nothing is consumed */
+static void wlan_core_fill(volatile wlanmbox_t *w, wlanio_t *io)
+{
+    uint8_t *o = (uint8_t *)io;
+    for (uint32_t i = 0; i < sizeof(*io); i++) o[i] = 0;
+    io->magic = WLANIO_MAGIC;
+    NET_DINVAL(&w->st, sizeof(w->st));
+    if (w->st.magic != WLAN_MAGIC || w->st.version != WLAN_VERSION) return;   /* version 0 = none */
+    io->version = WLAN_VERSION;
+    const volatile uint8_t *s = (const volatile uint8_t *)&w->st;
+    uint8_t *d = (uint8_t *)&io->st;
+    for (uint32_t i = 0; i < sizeof(io->st); i++) d[i] = s[i];
+    io->cmd_seq = w->cmd.seq;               /* our own line: always current */
+    uint32_t n = w->st.nscan < WLAN_SCAN_MAX ? w->st.nscan : WLAN_SCAN_MAX;
+    NET_DINVAL(w->bss, n * sizeof(wlan_bss_t));
+    s = (const volatile uint8_t *)w->bss;
+    d = (uint8_t *)io->bss;
+    for (uint32_t i = 0; i < n * sizeof(wlan_bss_t); i++) d[i] = s[i];
+}
+
+/* a written command: copy it into the ARM11 lines with the next sequence
+   number (seq last). Returns 1 if a command was posted. */
+static int wlan_core_apply(volatile wlanmbox_t *w, const wlanio_t *io)
+{
+    if (io->magic != WLANIO_CMD || io->version != WLAN_VERSION) return 0;
+    NET_DINVAL(&w->st, 32);
+    if (w->st.magic != WLAN_MAGIC) return 0;
+    volatile uint8_t *d = (volatile uint8_t *)&w->cmd;
+    const uint8_t *s = (const uint8_t *)&io->cmd;
+    for (uint32_t i = 4; i < sizeof(w->cmd); i++) d[i] = s[i];     /* all but seq */
+    NET_DCLEAN(&w->cmd, sizeof(w->cmd));
+    w->cmd.seq = w->cmd.seq + 1;
+    NET_DCLEAN(&w->cmd, 32);
+    return 1;
+}

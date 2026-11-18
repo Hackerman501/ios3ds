@@ -10,6 +10,7 @@
 #include "log.h"
 
 #define MBOX ((volatile netmbox_t *)NET_PA)
+#define WLAN ((volatile wlanmbox_t *)(NET_PA + WLAN_OFF))
 #define WIFI_CFG_PATH "0:/ios3ds/wifi.cfg"
 
 static wifi_cfg_t cfg;
@@ -19,6 +20,9 @@ static char cfgtxt[1024];
 static u8 frame[NET_FRAME_MAX] __attribute__((aligned(4)));
 
 const u8 *ar6k_mac(void);
+int ar6k_command(const volatile wlan_cmd_t *c);
+void ar6k_publish(volatile wlanmbox_t *w, u32 *published_scan);
+static u32 wlan_cmd_seen, wlan_scan_pub;
 
 /* ---- loopback backend: frames sent by iOS come straight back -------------- */
 static u8 loop_buf[NET_FRAME_MAX];
@@ -54,7 +58,7 @@ const wifi_backend_t wifi_backend_loop = {
 static const char *state_name(u32 s)
 {
     static const char *const n[] = { "off", "power", "bmi", "fwload", "boot", "htc", "wmi",
-                                     "scan", "auth", "up", "failed" };
+                                     "scan", "auth", "up", "failed", "idle" };
     return s < ARRAY_SIZE(n) ? n[s] : "?";
 }
 
@@ -66,19 +70,28 @@ void wifi_init(void)
     /* Always initialise the mailbox: the kernel side then sees "served, no
        backend" instead of stale FCRAM. */
     net_mbox_init(m, NET_BACKEND_NONE, NULL);
+    /* the control area iOS's Settings drive (docs/wifi.md section 10):
+       served from now on, "off" until a backend runs */
+    volatile wlanmbox_t *w = WLAN;
+    memset((void *)w, 0, sizeof(*w));
+    w->st.version = WLAN_VERSION;
+    w->st.magic = WLAN_MAGIC;
+    wlan_cmd_seen = wlan_scan_pub = 0;
 
     int n = sd_read_small(WIFI_CFG_PATH, cfgtxt, sizeof(cfgtxt));
     if (n < 0) {
-        logp("[wifi] no %s: networking off\n", WIFI_CFG_PATH);
-        return;
+        /* no preset network: still bring the chip up (if the firmware is
+           there) so iOS can scan and join from Settings */
+        logp("[wifi] no %s: no preset network\n", WIFI_CFG_PATH);
+        cfgtxt[0] = 0;
     }
     int r = wifi_cfg_parse(cfgtxt, &cfg);
     if (r < 0) {
         log_err("[wifi] wifi.cfg line %d is invalid: networking off\n", -r);
         return;
     }
-    const char *why = wifi_cfg_check(&cfg);
-    if (why) {
+    const char *why = n < 0 ? NULL : wifi_cfg_check(&cfg);
+    if (why && !(cfg.backend == WIFI_BE_AUTO && !cfg.ssid_len)) {
         log_err("[wifi] wifi.cfg: %s: networking off\n", why);
         return;
     }
@@ -97,7 +110,7 @@ void wifi_init(void)
         memset(cfg.psk, 0, sizeof(cfg.psk));
     }
     if (want->init(&cfg, mac) != 0) {
-        log_warn("[wifi] backend %s not available: networking off\n", want->name);
+        if (n >= 0) log_warn("[wifi] backend %s not available: networking off\n", want->name);
         m->err = want->last_error();
         m->state = NET_ST_FAILED;
         return;
@@ -117,6 +130,17 @@ bool wifi_poll(void)
     m->a9_polls++;
 
     u32 st = be->poll();
+    if (be == &wifi_backend_ar6014) {
+        /* iOS (Settings, via kern.ios3ds_wlan) -> driver, driver -> iOS */
+        volatile wlanmbox_t *w = WLAN;
+        u32 seq = w->cmd.seq;
+        if (seq != wlan_cmd_seen) {
+            wlan_cmd_seen = seq;
+            w->st.result = ar6k_command(&w->cmd);
+            w->st.ack_seq = seq;
+        }
+        ar6k_publish(w, &wlan_scan_pub);
+    }
     if (st != last_state) {
         if (cfg.verbose || st == NET_ST_UP || st == NET_ST_FAILED)
             logp("[wifi] state %s -> %s\n", state_name(last_state), state_name(st));

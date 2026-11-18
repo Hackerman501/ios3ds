@@ -72,7 +72,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
-                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip"))
+                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip",
+                             "settings"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
     ap.add_argument("--port", type=int, default=8080)
@@ -89,7 +90,10 @@ def main():
     fw = os.path.join(a.out, "wifi-fw.bin")
     for f in ("wifi.cfg", "wifi-fw.bin"):
         mtools(["mdel", "::/ios3ds/" + f], a.sd, check=False)
-    if a.case != "nocfg":
+    if a.case == "settings":                 # no wifi.cfg: iOS Settings drive the chip
+        dummy_fw(fw)
+        mtools(["mcopy", "-o", fw, "::/ios3ds/wifi-fw.bin"], a.sd)
+    elif a.case != "nocfg":
         lines = ["ssid=" + SSID, "verbose=1",
                  "nettest=http://10.0.2.2:%d/ios3ds-nettest %s" % (a.port, a.dns)]
         if a.case == "open":
@@ -180,8 +184,12 @@ def main():
             ("group key = AP GTK", r"group.*equals the AP's GTK"),
             ("ARM9 link up", r"\[wifi\] link up"),
         ],
+        "settings": [
+            ("chip idle without wifi.cfg", r"\[wifi\] idle: no network configured"),
+            ("a80211 loaded in configd", r"\[a80211\] loaded"),
+        ],
         "nocfg": [
-            ("Wi-Fi off", r"\[wifi\] no 0:/ios3ds/wifi\.cfg: networking off"),
+            ("Wi-Fi off", r"\[wifi\] 0:/ios3ds/wifi-fw\.bin: not found .*Wi-Fi off"),
         ],
         "nofw": [
             ("firmware missing logged", r"\[wifi\] .*wifi-fw\.bin: not found"),

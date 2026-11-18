@@ -171,6 +171,37 @@ static void test_frames(void)
     CHECK(wifi_frame_from_wmi(rx, 10, back, sizeof(back), &et) == 0);
 }
 
+/* ---------------------------------------------------------------- wlan */
+static void test_wlan(void)
+{
+    static wlanmbox_t wb;
+    static wlanio_t io, cmd;
+    volatile wlanmbox_t *w = &wb;
+    memset(&wb, 0xEE, sizeof(wb));                  /* stale FCRAM: not served */
+    wlan_core_fill(w, &io);
+    CHECK(io.magic == WLANIO_MAGIC && io.version == 0);
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.magic = WLANIO_CMD; cmd.version = WLAN_VERSION; cmd.cmd.cmd = WLAN_CMD_SCAN;
+    CHECK(wlan_core_apply(w, &cmd) == 0);           /* nobody serves: not posted */
+
+    memset(&wb, 0, sizeof(wb));
+    wb.st.magic = WLAN_MAGIC; wb.st.version = WLAN_VERSION; wb.st.state = WLAN_ST_IDLE;
+    wb.st.nscan = 2; wb.bss[0].ssid_len = 3; memcpy(wb.bss[0].ssid, "abc", 3);
+    wb.bss[1].rssi = -70; wb.bss[2].rssi = -1;      /* beyond nscan: not copied */
+    wlan_core_fill(w, &io);
+    CHECK(io.version == WLAN_VERSION && io.st.state == WLAN_ST_IDLE && io.st.nscan == 2);
+    CHECK(memcmp(io.bss[0].ssid, "abc", 3) == 0 && io.bss[1].rssi == -70 && io.bss[2].rssi == 0);
+    CHECK(io.cmd_seq == 0);
+    cmd.cmd.cmd = WLAN_CMD_JOIN; cmd.cmd.ssid_len = 3; memcpy(cmd.cmd.ssid, "abc", 3);
+    cmd.cmd.seq = 77;                               /* ignored: the shim numbers commands */
+    CHECK(wlan_core_apply(w, &cmd) == 1 && wb.cmd.seq == 1 && wb.cmd.cmd == WLAN_CMD_JOIN);
+    CHECK(wlan_core_apply(w, &cmd) == 1 && wb.cmd.seq == 2 && memcmp((const void *)wb.cmd.ssid, "abc", 3) == 0);
+    wlan_core_fill(w, &io);
+    CHECK(io.cmd_seq == 2);
+    io.magic = WLANIO_MAGIC;                        /* a plain read written back: no command */
+    CHECK(wlan_core_apply(w, &io) == 0 && wb.cmd.seq == 2);
+}
+
 /* ---------------------------------------------------------------- config */
 static void test_cfg(void)
 {
@@ -383,6 +414,7 @@ static void test_handshake(void)
 int main(void)
 {
     test_ring();
+    test_wlan();
     test_frames();
     test_cfg();
     test_crypto();
