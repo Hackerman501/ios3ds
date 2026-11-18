@@ -2325,6 +2325,7 @@ static void ctr_init(MachineState *machine)
     ctr_csnd_init(&s->io_shared, 0x10103000 - CTR_IO_SHARED_BASE, &s->fcram, CTR_FCRAM_BASE);
     /* Wi-Fi: TMIO2 + AR6014 + access point -> -nic user,model=ctr-wifi (ctr_wifi.c) */
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
+    ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };

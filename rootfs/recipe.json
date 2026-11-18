@@ -227,6 +227,13 @@
    "orig": "3536354c",
    "new": "41524742",
    "why": "QuartzCore CA::WindowServer::M2Display ctor: the display surface format for an ES1 (API 1) GL compositor is the literal 'L565' (16 bpp); make it 'BGRA' like API 2 so CA's GL compositor renders the 32 bpp format the CLCD scans out and the screen mirror reads (docs/gpu.md 7)"
+  },
+  {
+   "path": "/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin/VirtualAudio",
+   "offset": "0x287228",
+   "orig": "4e3732004e383100",
+   "new": "583732004e373200",
+   "why": "VirtualAudio (mediaserverd's routing plug-in) picks its routing database by matching hw.model against the product table at 0x287210 (K48 ... N72 N81 ...). N72's database has no built-in microphone (input only from a wired headset), so iOS reports no input. Swap the N72 slot to 'X72' and the N81 (iPod touch 4G: speaker, headphones, built-in mic, no receiver) slot to 'N72': this N72 now routes like an N81 and gets MicrophoneBuiltIn, backed by the codec's 'imic' data source (dt_audio.py ain2b-intmic) and the 3DS microphone (docs/audio.md)"
   }
  ]
 }

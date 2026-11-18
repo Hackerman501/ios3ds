@@ -47,6 +47,9 @@ typedef struct {
     uint32_t state;         /* bit0 TX running, bit1 RX running, bit2 CSND running, bit3 IO window mapped */
     uint32_t amp_step;      /* last LM48821 gain step iOS wrote (0..31), AUD_AMP_OFF, AUD_AMP_NONE */
     uint32_t volume;        /* CSND channel volume derived from it (0..0x8000) */
+    uint32_t mic_samples;   /* microphone samples handed to iOS's input stream */
+    uint32_t mic_underruns; /* input words that had to repeat the last sample (ring empty) */
+    uint32_t mic_resyncs;   /* read position re-aligned to the ARM9's write position */
 } aud_stat_t;
 
 typedef struct {
@@ -101,3 +104,51 @@ typedef struct {
 #define AUD_I2S2_CNT      (1u << 15 | 1u << 14 | 1u << 13)  /* I2S2 (mic/camera side) as libn3ds */
 #define AUD_CH_L          0
 #define AUD_CH_R          1
+
+/* ---- microphone: the shim drains the 3DS MIC FIFO itself (ARM11, every
+   service: 1 ms while iOS's input stream runs) into a ring in FCRAM and feeds
+   iOS's I2S RX emulation from it. The ARM9 only powers the CODEC's ADC while
+   "want" is set and logs; it reads the shim's lines from RAM (the shim cleans
+   them) and writes only its own line, which the shim invalidates before reading.
+   Placement: after the CSND rings, below topOfKernelData. -------------------- */
+#define AUD_MIC_PA        0x208C8000u
+#define AUD_MIC_SAMPLES   8192u         /* power of two; 0.69 s at 11.9 kHz */
+#define AUD_MIC_MAGIC     0x3043494Du   /* 'MIC0' */
+#define AUD_MIC_OFF       0             /* aud_mic_t.state */
+#define AUD_MIC_RUNNING   1
+#define AUD_MIC_FAILED    2             /* the MIC block did not deliver: input stays silent */
+#define AUD_MIC_DISABLED  3             /* boot.cfg mic=0 */
+typedef struct {
+    /* written by the shim (cache line 0) */
+    uint32_t magic;         /* AUD_MIC_MAGIC once the shim set it up */
+    uint32_t state;         /* AUD_MIC_* */
+    uint32_t rate;          /* samples per second while running */
+    uint32_t wr;            /* samples written so far (free-running; ring index = wr % AUD_MIC_SAMPLES) */
+    uint32_t overruns;      /* MIC FIFO overrun flags seen (samples lost between two services) */
+    uint32_t starts;
+    uint32_t want;          /* 1 = iOS records: the ARM9 keeps the CODEC's ADC powered */
+    uint32_t why;           /* AUD_MIC_FAILED: 1 no data, 2 FIFO never empties, 3 block off, 4 no IO window */
+    /* written by the ARM9 (cache line 1) */
+    uint32_t arm9_magic;    /* AUD_MIC_MAGIC: the next field is valid */
+    uint32_t disabled;      /* boot.cfg mic=0: the shim never touches the MIC block */
+    uint32_t adc_on;        /* the ARM9 has powered the ADC */
+    uint32_t pad1[5];
+    int16_t s[AUD_MIC_SAMPLES];
+} aud_mic_t;
+/* 3DS MIC block (GBATEK "DSi Microphone", same design on the 3DS) */
+#define MIC_CNT_PA        0x10162000u   /* u16 */
+#define MIC_DATA_PA       0x10162004u   /* u32: two samples, older one low */
+#define MIC_CNT_EN        (1u << 15)
+#define MIC_CNT_CLEAR     (1u << 12)
+#define MIC_CNT_OVERRUN   (1u << 11)
+#define MIC_CNT_EMPTY     (1u << 8)
+#define MIC_CNT_DIV(n)    ((n) << 2)    /* rate = I2S2 rate / (1 + n) */
+#define AUD_MIC_DIV       3u            /* 47605 / 4 = 11901 Hz: the FIFO (32 samples) lasts 2.7 ms */
+#define AUD_MIC_WORDS_MAX 64u           /* per service: a FIFO that never reports empty is broken (it holds 16) */
+#define AUD_MIC_NODATA_TICKS 262000u    /* 250 ms without a sample after enabling -> failed */
+#define AUD_I2S2_HZ       47605u
+/* iOS's input chain (VirtualAudio, route SpeakerAndMicrophone) applies a fixed
+   +23.65 dB (x15.23, measured in QEMU: 1000 -> 15232); the shim takes it off
+   again so apps see the 3DS mic at the level the CODEC's PGA gives it */
+#define AUD_MIC_GAIN_Q15  2151u
+#define AUD_MIC_HOLD_TICKS 1047000u     /* keep the mic on 1 s after the input stream stopped */

@@ -116,6 +116,7 @@ typedef struct {
     u32 powersave;       /* 0: no power saving while iOS' screen is off */
     u32 notify_led;      /* 1: notification LED blinks red on low battery */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
+    u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -159,6 +160,7 @@ static int parse_bootcfg(char *txt)
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
     cfg.powersave = 1;
+    cfg.mic = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -175,6 +177,7 @@ static int parse_bootcfg(char *txt)
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
+        { "mic", &cfg.mic },
     };
     int lineno = 0;
     char *line = txt;
@@ -845,6 +848,7 @@ void a9_main(int argc, char **argv)
     mcu_config_acc(cfg.mcu_acc != 0);
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
     mcu_set_led(cfg.notify_led != 0);
+    audio_set_mic(cfg.mic != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);

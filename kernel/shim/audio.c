@@ -65,6 +65,7 @@
 #define MAX_DT          2000000u    /* ticks: cap for one catch-up step (1.9 s) */
 #define IDLE_STOP_WORDS (3u * 2u * 44100u)  /* CSND keeps playing silence this long after iOS stops */
 #define LLI_GUARD       600
+#define RX_STEP_TICKS   1047        /* 1 ms of the shim time base (1.047 MHz): input service period */
 
 enum { MODE_TX, MODE_RX, MODE_DROP };
 
@@ -95,6 +96,13 @@ static struct {
     u32 k_valid, k_deadline, clamped;   /* XNU's own timer deadline; 1 = the private timer runs short for audio */
     u32 io_ok;
     u32 vol, vol_applied;               /* CSND channel volume (0..0x8000) from the speaker amp's gain */
+    u32 mic_want;                       /* last value given to aud_mic_t.want */
+    u32 rx_last;                        /* tick of the last service that saw the input stream */
+    u32 mic_synced, mic_rd, mic_frac, mic_step, rx_phase;
+    u32 mic_on, mic_t_data;
+    int32_t dbg_prev;
+    u32 dbg_jumps, dbg_maxd;            /* RX output: frame-to-frame jumps > 16 and the largest (logged at rx stop) */
+    int32_t mic_last;
 } A AUD_DATA = { .vol = 0x8000 };
 
 /* ======================================================================== */
@@ -126,6 +134,12 @@ static inline void *p2v(u32 pa, u32 len)
 {
     if (pa < PHYS_BASE || pa + len < pa || pa + len > PHYS_BASE + FCRAM_SIZE) return NULL;
     return (void *)(pa - PHYS_BASE + VIRT_BASE);
+}
+
+static void dinval(const volatile void *p, u32 len)   /* the ARM9 wrote RAM behind our cache */
+{
+    u32 a = (u32)p & ~31u, end = (u32)p + len;
+    for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
 }
 
 static void dclean(const void *p, u32 len)
@@ -164,6 +178,9 @@ static inline void csnd_w16(u32 off, u32 v) { CSND_REG16(off) = (u16)v; }
 static inline void csnd_w32(u32 off, u32 v) { CSND_REG32(off) = v; }
 static inline u32 csnd_r16(u32 off) { return CSND_REG16(off); }
 static inline u32 csnd_r32(u32 off) { return CSND_REG32(off); }
+static inline u32 mic_cnt_r(void) { return REG16(IO_VA + (MIC_CNT_PA - IO_PA)); }
+static inline void mic_cnt_w(u32 v) { REG16(IO_VA + (MIC_CNT_PA - IO_PA)) = (u16)v; }
+static inline u32 mic_data_r(void) { return REG32(IO_VA + (MIC_DATA_PA - IO_PA)); }
 
 /* CSND is heard through I2S1 to the CODEC. boot/arm9/audio.c programs the
    CODEC and these two registers before XNU starts; assert them again from the
@@ -195,6 +212,7 @@ extern void aud_host_log(int c);
 static inline volatile u32 *dmac_regs(void) { return aud_host_dmac; }
 static inline void *p2v(u32 pa, u32 len) { return aud_host_p2v(pa, len); }
 static inline void dclean(const void *p, u32 len) { (void)p; (void)len; }
+static inline void dinval(const volatile void *p, u32 len) { (void)p; (void)len; }
 static void log_putc(int c) { aud_host_log(c); }
 static void aud_map_io(void) { A.io_ok = 1; shim_audio_stat.state |= 8; }
 static inline int csnd_usable(void) { return (shim_audio_cfg.flags & AUD_F_CSND) && aud_host_csnd_present; }
@@ -203,6 +221,12 @@ static inline void csnd_w32(u32 off, u32 v) { csnd_w16(off, v); csnd_w16(off + 2
 static inline u32 csnd_r16(u32 off) { return aud_host_csnd[off] | (u32)aud_host_csnd[off + 1] << 8; }
 static inline u32 csnd_r32(u32 off) { return csnd_r16(off) | csnd_r16(off + 2) << 16; }
 static void i2s_out_enable(void) { }
+extern u32 aud_host_mic_cnt_r(void);
+extern void aud_host_mic_cnt_w(u32 v);
+extern u32 aud_host_mic_data_r(void);
+static inline u32 mic_cnt_r(void) { return aud_host_mic_cnt_r(); }
+static inline void mic_cnt_w(u32 v) { aud_host_mic_cnt_w(v); }
+static inline u32 mic_data_r(void) { return aud_host_mic_data_r(); }
 
 #endif
 /* ======================================================================== */
@@ -374,6 +398,189 @@ static void csnd_resync(void)
     }
 }
 
+/* ---- microphone -------------------------------------------------------------
+   iOS's input stream is the I2S RX FIFO: 16-bit words, L then R, at the same
+   word clock as the output. The samples come from the 3DS MIC block, which the
+   shim drains itself on every service (mic_drain: 1 ms apart while the input
+   stream runs, RX_STEP_TICKS; the FIFO holds 2.7 ms) into the ring aud_mic_t.
+   mic_fill reads the ring at the mic's rate (11.9 kHz), interpolates linearly
+   to the output frame rate, scales by AUD_MIC_GAIN_Q15 (iOS adds that much
+   again) and sends the value to both channels. The reader trails the writer by
+   MIC_LAG; an empty ring repeats the last value, a reader that fell too far
+   behind jumps. The ARM9 powers the CODEC's ADC while aud_mic_t.want is set.
+   Anything unexpected from the MIC block -> one log line, mic off, silence. */
+#define MIC_LAG_DIV 50          /* trail by rate / 50 samples (20 ms) */
+
+static volatile aud_mic_t *mic_ring(void) { return (volatile aud_mic_t *)p2v(AUD_MIC_PA, sizeof(aud_mic_t)); }
+
+static void mic_publish(volatile aud_mic_t *m)     /* the ARM9 reads line 0 from RAM */
+{
+    dclean((const void *)m, 32);
+}
+
+static void mic_hw_stop(volatile aud_mic_t *m, u32 state)
+{
+    if (A.mic_on) mic_cnt_w(0);
+    A.mic_on = 0;
+    A.mic_synced = 0;
+    m->state = state;
+    mic_publish(m);
+}
+
+static void mic_fail(volatile aud_mic_t *m, u32 why, u32 cnt)
+{
+    static const char *const what[] = { "?", "no samples for 250 ms", "FIFO never empties",
+                                        "MIC block switched itself off", "no IO window" };
+    mic_hw_stop(m, AUD_MIC_FAILED);
+    m->why = why;
+    mic_publish(m);
+    if (logging()) {
+        log_str("ios3ds-audio: mic: ");
+        log_str(what[why < 5 ? why : 0]);
+        log_kv(" (MIC_CNT ", cnt);
+        log_str("): input stays silent\n");
+    }
+}
+
+static void mic_hw_start(volatile aud_mic_t *m, u32 now)
+{
+    aud_map_io();
+    if (!A.io_ok) { mic_fail(m, 4, 0); return; }
+    mic_cnt_w(0);
+    mic_cnt_w(MIC_CNT_EN | MIC_CNT_CLEAR | MIC_CNT_DIV(AUD_MIC_DIV));
+    A.mic_on = 1;
+    A.mic_t_data = now;
+    A.mic_synced = 0;
+    m->rate = AUD_I2S2_HZ / (1 + AUD_MIC_DIV);
+    m->state = AUD_MIC_RUNNING;
+    m->starts++;
+    mic_publish(m);
+    if (logging()) {
+        log_kv("ios3ds-audio: mic on, Hz=", m->rate);
+        log_kv(" MIC_CNT=", mic_cnt_r());
+        log_putc('\n');
+    }
+}
+
+static void mic_drain(volatile aud_mic_t *m, u32 now)
+{
+    u32 n, wr = m->wr, cnt = 0;
+    for (n = 0; n < AUD_MIC_WORDS_MAX; n++) {
+        u32 v;
+        cnt = mic_cnt_r();
+        if (cnt & MIC_CNT_EMPTY) break;
+        if (!(cnt & MIC_CNT_EN)) { mic_fail(m, 3, cnt); return; }
+        if (cnt & MIC_CNT_OVERRUN) {
+            m->overruns++;
+            mic_cnt_w(cnt & ~MIC_CNT_OVERRUN);
+        }
+        v = mic_data_r();
+        m->s[wr & (AUD_MIC_SAMPLES - 1)] = (int16_t)v;
+        m->s[(wr + 1) & (AUD_MIC_SAMPLES - 1)] = (int16_t)(v >> 16);
+        wr += 2;
+    }
+    m->wr = wr;
+    if (n == AUD_MIC_WORDS_MAX) { mic_fail(m, 2, cnt); return; }
+    if (n) A.mic_t_data = now;
+    else if (now - A.mic_t_data > AUD_MIC_NODATA_TICKS) mic_fail(m, 1, cnt);
+}
+
+/* the reader: where in the ring the next output frame comes from */
+typedef struct { u32 rd, frac, phase; int32_t last; } mic_cur_t;
+
+/* one RX word from cursor c (wr = the ring's write count); returns 0 when the
+   ring ran dry (the value repeats). `real` = count statistics. */
+static int mic_word(volatile aud_mic_t *m, u32 wr, mic_cur_t *c, int16_t *out, int real)
+{
+    int ok = 1;
+    if (!c->phase) {                            /* a new frame: between mic samples rd and rd + 1 */
+        if ((int)(wr - c->rd) >= 2) {
+            int32_t s0 = m->s[c->rd & (AUD_MIC_SAMPLES - 1)];
+            int32_t s1 = m->s[(c->rd + 1) & (AUD_MIC_SAMPLES - 1)];
+            int32_t v = s0 + (((s1 - s0) * (int32_t)(c->frac >> 2)) >> 14);
+            c->last = (v * (int32_t)AUD_MIC_GAIN_Q15 + (1 << 14)) >> 15;
+            c->frac += A.mic_step;
+            while (c->frac >= 0x10000u && (int)(wr - c->rd) > 1) {
+                c->frac -= 0x10000u;
+                c->rd++;
+                if (real) shim_audio_stat.mic_samples++;
+            }
+        } else {
+            ok = 0;
+            if (real) shim_audio_stat.mic_underruns++;
+        }
+        if (real) {
+            int32_t dd = c->last - A.dbg_prev;
+            if (dd < 0) dd = -dd;
+            if (dd > 16) A.dbg_jumps++;
+            if ((u32)dd > A.dbg_maxd) A.dbg_maxd = (u32)dd;
+            A.dbg_prev = c->last;
+        }
+    }
+    *out = (int16_t)c->last;
+    c->phase ^= 1;
+    return ok;
+}
+
+static void mic_cur_get(mic_cur_t *c) { c->rd = A.mic_rd; c->frac = A.mic_frac; c->phase = A.rx_phase; c->last = A.mic_last; }
+static void mic_cur_put(const mic_cur_t *c) { A.mic_rd = c->rd; A.mic_frac = c->frac; A.rx_phase = c->phase; A.mic_last = c->last; }
+
+static void mic_fill(u8 *dst, u32 words, u32 sw)
+{
+    volatile aud_mic_t *m = mic_ring();
+    int16_t *out = (int16_t *)dst;
+    mic_cur_t c;
+    u32 wr, r, i;
+    if (!m || sw != 1 || !A.mic_on || m->state != AUD_MIC_RUNNING) goto silence;
+    wr = m->wr;
+    if (!A.mic_synced || (int)(wr - A.mic_rd) < 0 || wr - A.mic_rd > AUD_MIC_SAMPLES / 2) {
+        if (A.mic_synced) shim_audio_stat.mic_resyncs++;
+        A.mic_rd = wr - udivmod(m->rate, MIC_LAG_DIV, &r);
+        A.mic_frac = 0;
+        A.mic_step = udivmod(m->rate << 16, udivmod(CSND_CLOCK, shim_audio_cfg.rate_div, &r), &r);
+        A.mic_synced = 1;
+    }
+    mic_cur_get(&c);
+    /* frames are 4 bytes (L, R): the word's place in its frame comes from the
+       address, not from what the previous stream left behind */
+    c.phase = ((u32)(uintptr_t)dst >> 1) & 1;
+    for (i = 0; i < words; i++) mic_word(m, wr, &c, &out[i], 1);
+    mic_cur_put(&c);
+    return;
+silence:
+    A.mic_synced = 0;
+    for (i = 0; i < (words << sw); i++) dst[i] = 0;
+}
+
+/* iOS's input stream started / stopped (debounced by the caller) */
+static void mic_want(u32 on, u32 now)
+{
+    volatile aud_mic_t *m = mic_ring();
+    if (!m) return;
+    if (m->magic != AUD_MIC_MAGIC) {            /* first use: our lines are ours from now on */
+        m->magic = AUD_MIC_MAGIC;
+        m->state = AUD_MIC_OFF;
+        m->wr = m->overruns = m->starts = m->want = m->why = 0;
+        mic_publish(m);
+    }
+    if (on == A.mic_want) return;
+    A.mic_want = on;
+    m->want = on;
+    if (on) {
+        dinval(&m->arm9_magic, 32);             /* the ARM9's line */
+        if (m->arm9_magic == AUD_MIC_MAGIC && m->disabled) {
+            m->state = AUD_MIC_DISABLED;
+            mic_publish(m);
+        } else if (m->state != AUD_MIC_FAILED) {
+            mic_hw_start(m, now);
+        } else {
+            mic_publish(m);
+        }
+    } else {
+        mic_hw_stop(m, m->state == AUD_MIC_RUNNING ? AUD_MIC_OFF : m->state);
+    }
+}
+
 /* ---- one PL080 channel ---------------------------------------------------- */
 /* Transfer up to `budget` items of the channel's programmed width; walk the
    LLI chain like the controller does. Returns the number transferred. */
@@ -397,7 +604,8 @@ static u32 run_chan(volatile u32 *r, u32 ch, u32 budget, int mode, u32 *tc)
                 u32 dst = r[CH_DST];
                 u8 *p = (u8 *)p2v(dst, n << sw);
                 if (p) {
-                    for (u32 i = 0; i < (n << sw); i++) p[i] = 0;
+                    mic_fill(p, n, sw);
+                    dclean(p, n << sw);         /* iOS reads it through other mappings */
                 } else {
                     shim_audio_stat.bad_addr++;
                 }
@@ -471,6 +679,11 @@ void aud_service(u32 now)
     A.pace_last = now;
     wr0 = A.wr;
 
+    if (A.mic_on) {
+        volatile aud_mic_t *m = mic_ring();
+        if (m) mic_drain(m, now);
+    }
+
     for (u32 ch = 0; ch < 8; ch++) {
         volatile u32 *r = d + DMAC_CH(ch);
         u32 cfg = r[CH_CFG], flow = CFG_FLOW(cfg);
@@ -497,6 +710,14 @@ void aud_service(u32 now)
         } else if (flow == 2 && IS_I2S(r[CH_SRC])) {
             if (!rx_seen) {
                 rx_seen = 1;
+                if (!A.rx_on && logging()) {        /* input stream start */
+                    log_kv("ios3ds-audio: rx start ch", ch);
+                    log_kv(" dst=", r[CH_DST]);
+                    log_kv(" lli=", r[CH_LLI]);
+                    log_kv(" ctl=", r[CH_CTL]);
+                    log_kv(" cfg=", cfg);
+                    log_putc('\n');
+                }
                 run_chan(r, ch, words, MODE_RX, &tc);
             }
         } else if (flow == 1) {
@@ -506,10 +727,22 @@ void aud_service(u32 now)
             continue;                               /* peripheral -> memory with no peripheral: waits forever */
         }
         if (r[CH_CFG] & CFG_E) {
-            u32 t = now + ticks_to_item_end(r);
+            u32 t = ticks_to_item_end(r);
+            /* input: iOS reads the ring up to where the sample clock says the
+               DMA is, which can be ahead of our last service; come back soon
+               so the newest input is never more than RX_STEP_TICKS old */
+            if (flow == 2 && t > RX_STEP_TICKS) t = RX_STEP_TICKS;
+            t += now;
             if (!have_next || (int)(t - next) < 0) next = t;
             have_next = 1;
         }
+    }
+    /* the MIC FIFO lasts 2.7 ms: drain it every RX_STEP_TICKS while the mic is
+       on, also when the input channel is idle between two queued commands */
+    if (A.mic_on) {
+        u32 t = now + RX_STEP_TICKS;
+        if (!have_next || (int)(t - next) < 0) next = t;
+        have_next = 1;
     }
     for (u32 ch = 0; ch < 8; ch++)
         if (d[DMAC_CH(ch) + CH_CFG] & CFG_E) enabled |= 1u << ch;
@@ -524,8 +757,21 @@ void aud_service(u32 now)
             log_putc('\n');
         }
     }
+    if (A.rx_on && !rx_seen && logging()) {
+        log_kv("ios3ds-audio: rx stop words=", shim_audio_stat.rx_words);
+        log_kv(" mic jumps>16=", A.dbg_jumps);
+        log_kv(" maxd=", A.dbg_maxd);
+        log_kv(" underruns=", shim_audio_stat.mic_underruns);
+        log_kv(" resyncs=", shim_audio_stat.mic_resyncs);
+        A.dbg_jumps = A.dbg_maxd = 0;
+        log_putc('\n');
+    }
     A.tx_on = tx_seen;
     A.rx_on = rx_seen;
+    /* between two queued input commands the channel may be idle for a moment:
+       the mic stays on until the input stream has been gone for a while */
+    if (rx_seen) A.rx_last = now;
+    mic_want(rx_seen || (A.mic_want && now - A.rx_last < AUD_MIC_HOLD_TICKS), now);
 
     /* the sink gets exactly `words` words per step: what iOS played, then silence */
     if (A.csnd_on) {

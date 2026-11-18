@@ -1,6 +1,6 @@
 # Audio: iOS 4.2.1 sound out of the 3DS speaker
 
-Status: **plays in QEMU, bit-exact; not yet heard on hardware**. On the 3DS
+Status: **output plays in QEMU, bit-exact; microphone recording works in QEMU (section 7); neither verified on hardware yet**. On the 3DS
 (runs 8-11) every sound failed with `AppleEmbeddedAudioDevice: could not start
 DMA: device is not ready`: the I2S controller waits for a GPIO edge nobody
 raises (section 3, re-log section 32). With that fixed, an AudioQueue tone goes
@@ -170,7 +170,9 @@ Memory: CSND rings at PA 0x208C0000..0x208C8000, between the XNU log ring and
 | `boot/arm9/tsc.c`, `tsc.h` | CODEC SPI helpers made public, bus init split out (`cdc_bus_init`) |
 | `kernel/patches-audio.json` | `i2s-start-no-lrck-sync` |
 | `rootfs/recipe.json`, `Makefile` | `ios3ds-tone` + its launchd plist; `tools/ios3ds-audio/tone` in `USERLAND` |
-| `emu/qemu/hw/arm/nintendo3ds.c`, `emu/build-qemu.sh` | `ctr_csnd_init()` at 0x10103000; build `ctr_csnd.c` |
+| `emu/qemu/hw/arm/nintendo3ds.c`, `emu/build-qemu.sh` | `ctr_csnd_init()` at 0x10103000, `ctr_mic_init()` at 0x10162000; build `ctr_csnd.c` |
+| `boot/arm9/main.c` | `boot.cfg mic=` key, `audio_set_mic()` |
+| `rootfs/recipe.json` | VirtualAudio product-table patch (section 7) |
 
 ## 6. QEMU
 
@@ -197,7 +199,63 @@ deadlines and only fragments of a sound reach the ring (run 2: 1,914 of
 complete (44,099 frames), gap-free, 999 Hz, peak 5999/2999 = exactly the
 tone's 6000/3000 at unity volume (run 3, re-log section 32).
 
-## 7. Open points / next steps
+## 7. Microphone (re-log section 49)
+
+```
+ iOS: AudioQueue input -> mediaserverd (VirtualAudio HAL plug-in: route SpeakerAndMicrophone)
+      -> IOAudio2 input stream -> AppleEmbeddedAudio -> PL080 RX channel (I2S RX FIFO 0x3CA00038)
+ shim (ARM11 IRQ, every 1 ms while iOS records): MIC FIFO 0x10162004 -> mic ring (FCRAM 0x208C8000, aud_mic_t)
+                   RX words = ring samples, linearly interpolated 11.9 kHz -> 44.1 kHz, scaled, L = R
+ ARM9 monitor loop: CODEC ADC powered while aud_mic_t.want is set (SPI is the ARM9's)
+ 3DS: built-in mic -> CODEC ADC (I2S2 47.6 kHz) -> MIC block (rate / 4)
+```
+
+**Why iOS saw no input.** An iPod2,1 (N72) has no built-in microphone; it
+records only from a wired headset. AudioSession reported input available 0,
+route "", and `AudioSessionSetActive`/`AudioQueueNewInput` failed with `'nopi'`.
+Two things decide it:
+
+| Fact | Where |
+|---|---|
+| AppleCS42L58Audio offers input data sources from DT properties of `audio0`: `line` always, `imic` with `ain2b-intmic`, `emic` with `ain2a-extmic`; AppleEmbeddedAudio names them "Line in" / "Internal microphone" / "External microphone" | 0x80660294, 0x80655a04 |
+| Routing is done by mediaserverd's HAL plug-in `/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin` (AudioDriverPlugIns-252.1, stripped). It picks a per-product routing database (`RoutingSettings_N72`, `_N81`, `_N82`, ...) by matching `hw.model` against the table at file offset 0x287210 (`K48 K93 K94 K95 K66 N18 N72 N81 N82 N88 N90 N92 N94`, 4 bytes each). N72's database has no built-in mic port | strings, table |
+| CoreMedia maps the plug-in's ports to routes: `MicrophoneBuiltIn`, `MicrophoneWired`, `LineIn`; `SpeakerAndMicrophone` = speaker out + built-in mic | CoreMedia 0x3743534c |
+
+**What ios3ds changes for it.**
+
+- `dt_audio.py` adds `ain2b-intmic` to `audio0`, so the codec has an internal mic data source.
+- `rootfs/recipe.json` patches the plug-in's product table: the N81 slot (iPod touch 4G: speaker, headphones, built-in mic, no receiver) reads `N72`, and the N72 slot `X72`. iOS then reports input available 1 with route `SpeakerAndMicrophone`. Output stays on the speaker, and volume still comes as amp steps.
+- **Shim** (`kernel/shim/audio.c` `mic_want`/`mic_drain`/`mic_fill`):
+  - When iOS's input DMA starts, the shim enables the MIC block at I2S2 / 4 = 11,901 Hz.
+  - On every service it drains the 16-word FIFO (2.7 ms) into the ring. While an input stream runs the shim services every 1 ms (`RX_STEP_TICKS`); without that the HAL read the newest input before it was written.
+  - The RX emulation reads the ring instead of writing zeros. It interpolates linearly to the I2S frame rate, sends the same value to L and R, and trails the writer by 20 ms. An empty ring repeats the last value; a reader that fell more than half a ring behind jumps (`mic_underruns`, `mic_resyncs`).
+  - Which word of a frame (L or R) is being written comes from the destination address (frames are 4 bytes), not from the previous stream. Carrying the phase over put an odd-length stream's successor half a frame off, and iOS's input chain turned that into spikes; it showed as recordings that were bit-identically good or bad depending on the stream before.
+  - The `rx stop` log line reports frame-to-frame jumps above 16 in the delivered input, the largest one, underruns and resyncs.
+  - The samples are scaled by `AUD_MIC_GAIN_Q15` (−23.65 dB). iOS's input chain for this route adds a fixed +23.65 dB (×15.23, measured: a 1000-amplitude sine came back at 15,232, an 8000 one clipped). With the compensation, apps get the 3DS mic at the level the CODEC's PGA gives it.
+  - The mic stays on until the input stream has been gone for 1 s (`AUD_MIC_HOLD_TICKS`). The RX channel can be idle for a moment between two queued commands, and switching off there punched 50 ms holes into a recording.
+  - Safety, each case logged once (`ios3ds-audio: mic: ... input stays silent`; ring state FAILED, reason in `why`), then silence: no sample within 250 ms, a FIFO that never reports empty (> 64 words in one service), the block disabling itself, or no IO window.
+  - Draining from the ARM11 is deliberate. The 3DS's own mic service runs there, while ARM9 access to 0x10162000 is unverified. A first version drained from the ARM9 monitor loop and overran the FIFO constantly in QEMU.
+- **ARM9** (`boot/arm9/audio.c` `mic_poll`):
+  - At boot, `audio_init` applies the CODEC side of libn3ds `microphoneInit` (ADC select, input impedance, bias, PGA, without the calibration filters).
+  - While `aud_mic_t.want` is set, it powers and unmutes the CODEC's ADC (page 0 registers 81/82).
+  - It logs the shim's mic state changes (`[audio] mic on/off/...`).
+  - `boot.cfg mic=0` sets `disabled` in its own cache line, and the shim then never touches the MIC block.
+- **QEMU:** `ctr_mic_init` (in `ctr_csnd.c`) models the MIC block (GBATEK layout).
+  - Its source is set with `IOS3DS_MIC=ramp|sine:HZ:AMP|file.wav`.
+  - `IOS3DS_MIC_FIFO=n` enlarges the FIFO, so a slow emulated ARM9 does not hide other problems.
+- **Test client:** `ios3ds-tone rec count interval ms delay [dir|- [plar|reca]]` logs input availability, route, frames, peak, RMS and a least-squares sine fit. With `dir` it also saves `recN.wav`, which ends up in `rootfs.hfs` on the SD image (md0 writes go through); category `reca` is RecordAudio, as Voice Memos uses. The shipped job never records.
+- **Evidence (QEMU, `--icount 2`, `IOS3DS_MIC=sine:440:1000`, real 32-sample FIFO):**
+  - Every recording, in both PlayAndRecord and RecordAudio, fits 440.03 Hz at amplitude 1003.0 (level within 0.3 % of the source) with the residual 41 dB below the signal (interpolation images plus iOS's filters).
+  - 0 FIFO overruns, 0 underruns, 0 resyncs, about 1,050 shim services a second while the mic is on.
+
+**iOS processes the input.** The VAD's input chain for this route
+high-passes the mic and applies the fixed gain above. A 16-bit counter comes
+back as near-zero values with a decaying start transient. So the app-level
+recording cannot be bit-exact. Bit-exactness is shown below iOS: the host
+test feeds a counter through the RX emulation and checks every delivered frame
+(steps of 0 or +1, L = R, the expected number of new samples, no underruns).
+
+## 8. Open points / next steps
 
 1. Hardware: listen for the boot tone (`tone: #1 ...` in the log, the shim's
    `ios3ds-audio: tx start` and the ARM9 `[audio] iOS output stream #1
@@ -209,5 +267,9 @@ tone's 6000/3000 at unity volume (run 3, re-log section 32).
    slider is not read.
 3. Hardware: headphone jack polling reads GPIO2 bit 0 from the ARM9
    (unverified there; QEMU has no GPIO2 model).
-4. Microphone: RX DMA currently delivers silence; CSND capture units could
-   feed it.
+4. Microphone on hardware:
+   - whether MIC_CNT's bits match GBATEK's DSi description (enable 15, empty 8, overrun 11, rate divider 2-3);
+   - whether the CODEC's ADC needs more than libn3ds' microphoneInit plus page 0 registers 81/82;
+   - how often the 1 ms service misses the 2.7 ms FIFO (`[audio] mic off` reports overruns). If it is often, a CDMA program could drain it instead.
+   - The iOS input gain compensation assumes the same +23.65 dB for other categories (Voice Memos uses RecordAudio); check the level there.
+5. iOS's headphone route (`function-hp_detect`) is not driven yet. The ARM9 jack polling re-routes the CODEC only. Driving it would need a GPIO input plus its interrupt on the fake GPIO page, and the VAD would then switch output volume to the CODEC's headphone registers.

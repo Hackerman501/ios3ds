@@ -27,6 +27,14 @@ DELETE = ["arm-io/i2c0/accelerometer", "arm-io/i2c0/pmu", "arm-io/i2c0/tethered"
 #   interrupts/-parent  -> pmu interrupt 0x16; only used for hp detect
 AUDIO0_DROP = ["function-hp_detect", "mikey", "interrupts", "interrupt-parent"]
 
+# The 3DS has a built-in microphone; the iPod has only the headset one
+# ("ain2a-extmic"). AppleCS42L58Audio offers input data sources from these
+# properties (0x80660294): 'line' always, 'imic' with "ain2b-intmic", 'emic'
+# with "ain2a-extmic"; CoreMedia names them LineIn / MicrophoneBuiltIn /
+# MicrophoneWired. Declaring the internal one gives iOS a mic that is always
+# there, without a headset route.
+AUDIO0_ADD = {"ain2b-intmic": b""}
+
 DMAC0_IRQ = 0x10    # /arm-io/dmac0 'interrupts' (VIC0 source 16)
 
 
@@ -40,6 +48,8 @@ def apply(root):
         raise KeyError("dt_audio: no /arm-io/i2c0/audio0")
     for name in AUDIO0_DROP:
         codec.delete(name)
+    for name, value in AUDIO0_ADD.items():
+        codec.set(name, value)
     dmac = root.find("arm-io/dmac0")
     irq = dmac.get("interrupts")
     if irq is None or int.from_bytes(irq[:4], "little") != DMAC0_IRQ:

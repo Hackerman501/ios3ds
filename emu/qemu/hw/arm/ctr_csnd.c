@@ -1,5 +1,6 @@
 /*
- * ios3ds QEMU board: a minimal model of the 3DS CSND sound block (0x10103000).
+ * ios3ds QEMU board: minimal models of the 3DS CSND sound block (0x10103000)
+ * and the MIC FIFO (0x10162000, at the end of this file).
  *
  * Enough for the kernel shim's audio path (kernel/shim/audio.c) to be checked
  * end to end in the emulator: channels play PCM16/PCM8 from FCRAM at their
@@ -360,4 +361,191 @@ void ctr_csnd_init(MemoryRegion *parent, hwaddr offset, MemoryRegion *fcram, hwa
     C.tick = timer_new_ns(QEMU_CLOCK_VIRTUAL, csnd_tick, NULL);
     memory_region_init_io(&C.io, NULL, &csnd_ops, NULL, "ctr.csnd", 0x1000);
     memory_region_add_subregion(parent, offset, &C.io);
+}
+
+/* ======================================================================== */
+/*
+ * MIC (0x10162000): the microphone FIFO behind the CODEC's ADC (I2S2).
+ * Layout as GBATEK documents the DSi's (the 3DS block is the same design):
+ *   0x000 MIC_CNT (u16): 2-3 rate divider (I2S2 rate / (1 + n)), 8 FIFO empty,
+ *         9 half full (>= 8 words), 10 full (16 words), 11 overrun, 12 clear
+ *         (write 1), 13-14 IRQ mode (not modelled), 15 enable
+ *   0x004 MIC_DATA (u32): two signed 16-bit samples, older one in the low half
+ * Samples are produced on the virtual clock at 47605 / (1 + n) Hz (I2S2 as
+ * boot/arm9/audio.c programs it) from IOS3DS_MIC:
+ *   ramp           a 16-bit counter (sample k = k & 0xFFFF): checks the whole
+ *                  path for dropped, repeated-out-of-order or altered samples
+ *   sine:HZ:AMP    a sine, e.g. sine:440:8000
+ *   /path/x.wav    16-bit PCM (first channel), looped, one sample per tick
+ *   unset          silence (the FIFO still runs)
+ * IOS3DS_MIC_FIFO=n (samples) enlarges the FIFO, to tell overruns caused by a
+ * slow emulated ARM9 apart from anything the rest of the path does.
+ */
+#define MIC_FIFO_DEFAULT 32     /* 16 words, as GBATEK documents; IOS3DS_MIC_FIFO=n overrides (test aid) */
+#define MIC_FIFO_SAMPLES M.fifo
+#define MIC_I2S2_HZ      47605
+
+static struct {
+    MemoryRegion io;
+    uint16_t cnt;
+    int64_t t0;             /* virtual time of sample 0 since enable */
+    uint64_t made, taken;   /* samples produced / read since enable */
+    int mode;               /* 0 silence, 1 ramp, 2 sine, 3 wav */
+    double hz, amp;
+    int16_t *wav;
+    uint32_t wav_n;
+    uint64_t total_taken, overruns;
+    int64_t stat_ns;
+    uint32_t fifo;
+} M;
+
+static uint32_t mic_rate(void)
+{
+    return MIC_I2S2_HZ / (1 + ((M.cnt >> 2) & 3));
+}
+
+static int16_t mic_sample(uint64_t k)
+{
+    switch (M.mode) {
+    case 1: return (int16_t)(uint16_t)k;
+    case 2: return (int16_t)lrint(M.amp * sin(2 * M_PI * M.hz * (double)k / mic_rate()));
+    case 3: return M.wav_n ? M.wav[k % M.wav_n] : 0;
+    default: return 0;
+    }
+}
+
+/* bring the FIFO up to now: samples made but not read beyond the FIFO are lost */
+static void mic_advance(void)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    uint64_t due;
+    if (!(M.cnt & 0x8000)) {
+        return;
+    }
+    due = muldiv64(now - M.t0, mic_rate(), NANOSECONDS_PER_SECOND);
+    if (due > M.made) {
+        M.made = due;
+    }
+    if (M.made - M.taken > MIC_FIFO_SAMPLES) {
+        M.taken = M.made - MIC_FIFO_SAMPLES;    /* oldest samples dropped */
+        M.cnt |= 1u << 11;
+        M.overruns++;
+    }
+}
+
+static uint64_t mic_read(void *opaque, hwaddr addr, unsigned size)
+{
+    mic_advance();
+    if (addr < 4) {
+        uint32_t n = (uint32_t)(M.made - M.taken), v = M.cnt & ~0x0700u;
+        if (!(M.cnt & 0x8000) || n < 2) v |= 1u << 8;
+        if (n >= MIC_FIFO_SAMPLES / 2) v |= 1u << 9;
+        if (n >= MIC_FIFO_SAMPLES) v |= 1u << 10;
+        return extract32(v, (addr & 3) * 8, size * 8);
+    }
+    if (addr >= 4 && addr < 8) {
+        uint32_t v = 0;
+        if ((M.cnt & 0x8000) && M.made - M.taken >= 2) {
+            v = (uint16_t)mic_sample(M.taken) | (uint32_t)(uint16_t)mic_sample(M.taken + 1) << 16;
+            M.taken += 2;
+            M.total_taken += 2;
+        }
+        if (M.total_taken && M.total_taken % (5u * MIC_I2S2_HZ / 4) < 2) {
+            int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            if (now - M.stat_ns > NANOSECONDS_PER_SECOND) {
+                fprintf(stderr, "[mic] %" PRIu64 " samples read at %u Hz, %" PRIu64 " overruns\n",
+                        M.total_taken, mic_rate(), M.overruns);
+                M.stat_ns = now;
+            }
+        }
+        return v;
+    }
+    return 0;
+}
+
+static void mic_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    uint16_t old = M.cnt, v;
+    if (addr >= 4) {
+        return;
+    }
+    v = (uint16_t)(size >= 2 ? val : (addr & 1 ? (old & 0xFF) | (val << 8) : (old & 0xFF00) | val));
+    mic_advance();
+    M.cnt = (v & ~0x1F00u) | (old & (1u << 11) & v);   /* overrun stays until written 0 */
+    if ((v & 0x8000) && (!(old & 0x8000) || (v & 0x1000))) {     /* enable or clear: empty FIFO */
+        M.t0 = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        M.made = M.taken = 0;
+        M.cnt &= ~(1u << 11);
+        if (!(old & 0x8000)) {
+            fprintf(stderr, "[mic] enabled: %u Hz, source %s, FIFO %u samples\n", mic_rate(),
+                    (const char *[]){ "silence", "ramp", "sine", "wav" }[M.mode], M.fifo);
+        }
+    }
+}
+
+static const MemoryRegionOps mic_ops = {
+    .read = mic_read,
+    .write = mic_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 1, .max_access_size = 4 },
+    .impl = { .min_access_size = 1, .max_access_size = 4 },
+};
+
+static void mic_load_wav(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    uint8_t h[12], ck[8];
+    uint16_t ch = 1, bits = 16;
+    if (!f) {
+        fprintf(stderr, "[mic] cannot read %s: silence\n", path);
+        return;
+    }
+    if (fread(h, 1, 12, f) == 12 && !memcmp(h, "RIFF", 4) && !memcmp(h + 8, "WAVE", 4)) {
+        while (fread(ck, 1, 8, f) == 8) {
+            uint32_t len = ldl_le_p(ck + 4);
+            if (!memcmp(ck, "fmt ", 4) && len >= 16) {
+                uint8_t fmt[16];
+                if (fread(fmt, 1, 16, f) != 16) break;
+                ch = lduw_le_p(fmt + 2);
+                bits = lduw_le_p(fmt + 14);
+                fseek(f, len - 16, SEEK_CUR);
+            } else if (!memcmp(ck, "data", 4) && bits == 16 && ch) {
+                uint32_t frames = len / (2 * ch);
+                int16_t *all = g_new(int16_t, (size_t)frames * ch);
+                frames = fread(all, 2 * ch, frames, f);
+                M.wav = g_new(int16_t, frames ? frames : 1);
+                for (uint32_t i = 0; i < frames; i++) {
+                    M.wav[i] = (int16_t)lduw_le_p(&all[(size_t)i * ch]);
+                }
+                g_free(all);
+                M.wav_n = frames;
+                M.mode = 3;
+                break;
+            } else {
+                fseek(f, len + (len & 1), SEEK_CUR);
+            }
+        }
+    }
+    fclose(f);
+    if (M.mode != 3) {
+        fprintf(stderr, "[mic] %s is not 16-bit PCM WAV: silence\n", path);
+    }
+}
+
+void ctr_mic_init(MemoryRegion *parent, hwaddr offset)
+{
+    const char *src = getenv("IOS3DS_MIC"), *fifo = getenv("IOS3DS_MIC_FIFO");
+    M.fifo = fifo && atoi(fifo) >= 2 ? (uint32_t)atoi(fifo) & ~1u : MIC_FIFO_DEFAULT;
+    if (src && !strcmp(src, "ramp")) {
+        M.mode = 1;
+    } else if (src && !strncmp(src, "sine", 4)) {
+        M.mode = 2;
+        M.hz = 440;
+        M.amp = 8000;
+        sscanf(src, "sine:%lf:%lf", &M.hz, &M.amp);
+    } else if (src && *src) {
+        mic_load_wav(src);
+    }
+    memory_region_init_io(&M.io, NULL, &mic_ops, NULL, "ctr.mic", 0x100);
+    memory_region_add_subregion(parent, offset, &M.io);
 }

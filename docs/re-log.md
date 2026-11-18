@@ -679,3 +679,25 @@ Design and RE notes: docs/gpu.md §7.
   - ios3ds-input at 10 Hz while `screen_off` (read from the MCU mailbox; samples queue in the ring, and hold timing now counts real sleep);
   - ios3ds-mcud at 4 Hz while off.
 - **Result** (QEMU): off 146 IRQs/s (143 timer) instead of 245; on 127 instead of 144; ARM11 vCPU thread 10 % instead of 14 % host CPU while off. Table in docs/mcu.md §9.
+
+## 49. Microphone: iOS records the 3DS mic (2026-11-18)
+- **No input at first:** AudioSession reported input available 0, route "", and `AudioSessionSetActive(PlayAndRecord)`/`AudioQueueNewInput` failed with `'nopi'`. An iPod2,1 records only from a wired headset.
+- **Codec side:** AppleCS42L58Audio's input data sources come from `audio0` properties (0x80660294): `line` always, `imic` with `ain2b-intmic`, `emic` with `ain2a-extmic`. AppleEmbeddedAudio names them (0x80655a04). Adding `ain2b-intmic` alone changed nothing.
+- **Routing:** the decision is made by mediaserverd's HAL plug-in `/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin` (found through the HFS catalog; stripped).
+  - It picks `RoutingSettings_<product>` by matching `hw.model` against a 4-byte table at file offset 0x287210 (`K48 K93 K94 K95 K66 N18 N72 N81 N82 N88 N90 N92 N94`).
+  - N72 has no built-in mic port.
+  - Patch (`rootfs/recipe.json`): the N81 slot (iPod touch 4G) reads `N72`, the N72 slot `X72`. Result: input available 1, route `SpeakerAndMicrophone`, speaker output and amp volume unchanged.
+- **Data path:**
+  - The 3DS MIC block (0x10162000, GBATEK's DSi layout) runs at I2S2 / 4 = 11,901 Hz.
+  - First version: drained by the ARM9 monitor loop. In QEMU it overran the 16-word FIFO constantly. It now runs in the shim (ARM11), which services every 1 ms while the mic is on; the 3DS's own mic service also runs on the ARM11.
+  - The ARM9 powers the CODEC ADC while the shim says iOS records. `boot.cfg mic=0` keeps everything off.
+  - Safety: no data for 250 ms, a FIFO that never empties, or the block switching itself off each lead to one log line, mic off, and silence.
+- **Findings on the way (QEMU):**
+  - iOS's input chain high-passes the input and adds a fixed +23.65 dB (×15.23; an 8000 sine clipped). The shim takes it off again (`AUD_MIC_GAIN_Q15`).
+  - The 1 ms service deadline also has to hold while the RX channel is idle between two queued commands.
+  - The mic must stay on across such gaps (1 s hold); switching it off there punched 50 ms holes.
+  - With main's older md0 code (interrupts off while waiting), services stalled and samples were lost. Fixed by rebasing onto the md0-with-interrupts change.
+  - Some recordings were corrupted, always bit-identically, by isolated spikes while the shim's own output was clean. Cause: the L/R word phase was carried over from the previous input stream; after an odd-length stream every frame straddled two. The phase now comes from the buffer address.
+  - A 10 ms write-ahead of the input ring, tried first, made no difference and was removed.
+- **Result (`IOS3DS_MIC=sine:440:1000`, real FIFO, icount 2):** five of five recordings in RecordAudio (run 16) and five of five in PlayAndRecord with the speaker output running (run 17) fit 440.03 Hz at amplitude 1003.0, residual 41 dB. 0 overruns, 0 underruns, 0 resyncs.
+- **Bit-exactness:** iOS's own filtering makes app-level bit-exactness impossible. The host test shows it below iOS: a counter through the shim's FIFO drain and RX emulation arrives as an exact scaled, interpolated ramp, L = R in every frame, including after an odd-length stream.

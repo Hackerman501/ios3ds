@@ -8,3 +8,6 @@
 /* map the CSND register page at parent + offset; channels read their samples
    from the FCRAM region that starts at fcram_base (physical) */
 void ctr_csnd_init(MemoryRegion *parent, hwaddr offset, MemoryRegion *fcram, hwaddr fcram_base);
+
+/* map the MIC FIFO block (IOS3DS_MIC selects the sound source, ctr_csnd.c) */
+void ctr_mic_init(MemoryRegion *parent, hwaddr offset);
