@@ -24,6 +24,7 @@
 #include "gpumirror.h"
 #include "gpu_mirror.h"
 #include "mcu.h"
+#include "powersave.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -112,6 +113,8 @@ typedef struct {
     u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
     u32 mcu_acc;         /* 0: no accelerometer for iOS */
+    u32 powersave;       /* 0: no power saving while iOS' screen is off */
+    u32 notify_led;      /* 1: notification LED blinks red on low battery */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 nloads;
     char load_path[4][64];
@@ -154,6 +157,7 @@ static int parse_bootcfg(char *txt)
     cfg.gpu_diag = 1;
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
+    cfg.powersave = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -168,7 +172,7 @@ static int parse_bootcfg(char *txt)
         { "screen", &cfg.screen },
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
-        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc },
+        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
     };
     int lineno = 0;
     char *line = txt;
@@ -469,7 +473,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
     log_sync_each(false);
     u32 last_sync = 0;
     for (;;) {
-        bool busy = false;
+        bool busy = false, io_recent = true;
         /* md0 first: the ARM11 kernel spins (IRQs off) until its request is
            served and usually posts the next one within microseconds while it
            streams a file, so after serving one, linger up to 2 ms for the next
@@ -541,6 +545,10 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             }
             last_blit = clk_ticks();
         }
+        /* power saving while iOS' screen is off (powersave.c, docs/mcu.md section 9) */
+        if (ps_update(cfg.display_regs && display_active(cfg.display_regs), ios_display, clk_ticks()))
+            last_blit = clk_ticks() - blit_gap;     /* woken: copy a fresh frame on the next loop */
+        io_recent = clk_ticks() - last_io < T9_HZ / 5;
         /* X: next screen mode (X is not forwarded to iOS as a button) */
         bool xdown = !(HID_PAD & HID_X);
         if (ios_display && xdown && !x_latched) {
@@ -621,7 +629,8 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         tick++;
         /* ~2 ms of mailbox polling instead of a blind delay: block requests
            are latency-bound (the ARM11 spins while it waits) */
-        for (u32 i = 0; !busy && i < 200; i++) {
+        bool slept = ps_sleep(busy, io_recent);     /* screen off and idle: WFI ~2 ms */
+        for (u32 i = 0; !slept && !busy && i < 200; i++) {
             if (blksrv_poll()) busy = true;
             else waitcycles(335);
         }
@@ -832,6 +841,8 @@ void a9_main(int argc, char **argv)
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
     mcu_config_acc(cfg.mcu_acc != 0);
+    ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
+    mcu_set_led(cfg.notify_led != 0);
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[6] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);

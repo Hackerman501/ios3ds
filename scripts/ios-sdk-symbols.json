@@ -53,6 +53,7 @@
     "_IOHIDEventSystemClientCopyProperty",
     "_IOHIDEventSystemClientCreate",
     "_IOHIDEventSystemClientDispatchEvent",
+    "_IOPMAssertionCreateWithName",
     "_IORegistryEntryCreateCFProperty"
    ],
    "weak": []

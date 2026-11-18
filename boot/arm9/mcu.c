@@ -38,6 +38,7 @@
 #define R_IRQ_MASK  0x18        /* 4 bytes, 1 = masked */
 #define R_PWR       0x20        /* bit 0 power off, bit 2 reboot */
 #define R_LCD_PWR   0x22        /* bits 2/3 bottom backlight off/on, 4/5 top off/on (libn3ds MCU_LCD_PWR_*) */
+#define R_LED       0x2D        /* notification LED pattern, 100-byte stream */
 #define R_RTC       0x30        /* 7 bytes BCD */
 #define R_ACC_CFG   0x40        /* bit 0 accelerometer on */
 #define R_ACC_DATA  0x45        /* x, y, z: s16 little endian */
@@ -172,6 +173,39 @@ void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 ticks_per_s)
          (box->flags & MCUF_SHELL_OPEN) ? "open" : "closed", mask_ok ? "set" : "NOT set (no HOME/POWER events)");
 }
 
+/* ---- notification LED (MCU reg 0x2D) -------------------------------------
+   Pattern (3dbrew "MCU Services" / libn3ds McuInfoLedPattern): delay, smoothing,
+   loop delay, unknown, then 32 steps of red, green, blue. Unverified on
+   hardware, hence off by default (boot.cfg notify_led). */
+static bool led_enabled;
+static int led_shown = -1;              /* 0 off, 1 low-battery blink */
+
+void mcu_set_led(bool on) { led_enabled = on; }
+
+static void led_update(void)
+{
+    if (!led_enabled) return;
+    int want = (box->valid & MCUV_BATT) && box->batt_percent <= 10 && !(box->flags & MCUF_CHARGING);
+    if (want == led_shown) return;
+    u8 p[100];
+    for (u32 i = 0; i < sizeof p; i++) p[i] = 0;
+    if (want) {
+        p[0] = 0x2F;                        /* step time */
+        p[1] = 0x2F;                        /* smoothing (fade between steps) */
+        p[2] = 0x00;                        /* loop again at once */
+        for (int i = 0; i < 32; i++) p[4 + i] = (i & 8) ? 0x00 : 0xA0;   /* red: on 8 steps, off 8 */
+    }
+    if (i2c_write(MCU_BUS, MCU_DEV, R_LED, p, sizeof p)) {
+        led_shown = want;
+        logp("[mcu] notification LED %s\n", want ? "blinking red: battery low" : "off");
+    } else {
+        box->i2c_errors++;
+    }
+}
+
+void mcu_set_powersave(bool on) { if (box) box->ps_on = on; }
+void mcu_screen_off(bool off) { if (box) box->screen_off = off; }
+
 void mcu_config_acc(bool on)
 {
     if (!box) return;
@@ -254,6 +288,11 @@ static void irq_events(u32 now)
 
 static void power_off(u32 how)
 {
+    if (led_shown > 0) {                    /* don't leave the LED blinking on a switched-off console */
+        led_enabled = true;
+        box->batt_percent = 100;
+        led_update();
+    }
     log_warn("[mcu] iOS %s: log synced, powering off through the MCU\n",
              how == MCU_PWR_REBOOT ? "restarted" : "shut down");
     log_flush();
@@ -310,6 +349,7 @@ void mcu_poll(u32 now)
             }
             bump();
         }
+        led_update();
     }
     if (now - t_rtc >= hz) {
         t_rtc = now;

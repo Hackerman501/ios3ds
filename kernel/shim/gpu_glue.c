@@ -33,8 +33,11 @@ void shim_gpu_poll(void)
 }
 
 /* IRQ mode, private stack (entry.S): timer and VBlank interrupts */
+void shim_mcu_irq_hook(uint32_t id);   /* tools/ios3ds-mcu/shim/mcu.c: VBlank off while the screen is */
+
 void shim_gpu_irq_hook(uint32_t id)
 {
+    shim_mcu_irq_hook(id);
     if (gpu_part())
         shim_gpu_irq(id);
 }

@@ -322,3 +322,82 @@ then "1063 ms" while `mach_absolute_time` said 412 ms) is answered (re-log §34)
   gettimeofday +… ms, mach_absolute_time +… ms`, and gltest's timing line
   should show equal values.
 
+## 9. Power saving while iOS' screen is off
+
+"Off" = iOS has shown its display and AppleM2CLCD has switched the (fake) CLCD
+controller off again: lock, auto-lock, or the shell closed (which locks).
+`boot/arm9/powersave.c` and `shim_mcu_irq_hook` (tools/ios3ds-mcu/shim/mcu.c)
+then:
+- **pause the screen copy on both paths.** The ARM9 CPU copy already follows
+  the CLCD enable bit (`display_active()`). The GPU mirror gets `want = 0` in
+  its mailbox (`gm_want()`, gpu_mirror.h); the shim checks it before every
+  frame. No GPU code changed.
+- **stop reading the touch ADC.** Buttons, HOME/POWER and the shell are still
+  read every loop.
+- **let the ARM9 sleep.** Once md0 has been quiet for 200 ms, the monitor
+  loop waits for an interrupt between iterations. ARM9 timer 1 wakes it every
+  2 ms; IRQs stay masked in CPSR, so the pending IRQ only ends the wait. A
+  block request is served within 2 ms, then the loop stays busy for the next
+  200 ms.
+- **mask the VBlank interrupt on the ARM11.** GIC 42 is masked at the
+  distributor on the next VBlank. It is unmasked from the timer interrupt or
+  a `kern.ios3ds_mcu` read as soon as the CLCD is on again. The CLCD frame
+  IRQ is not injected while the controller is off anyway.
+- **wake:** everything is restored, and the next loop copies a fresh frame
+  (`last_blit` is reset).
+
+The ARM9 logs both transitions with the rates. `powersave=0` in boot.cfg
+turns all of it off; the rates are then still logged, for comparison.
+
+**No system sleep.** Without SBDontLockEver, iOS put the whole system to
+sleep about a minute after a lock ("System Sleep", "vic[0] ena 00010000"
+in the log). Nothing on the 3DS can wake it: on an iPod the PMU interrupt
+does. ios3ds-mcud therefore holds a `NoIdleSleepAssertion`
+(`IOPMAssertionCreateWithName`; argument `sleepok` disables it). The screen
+still goes off and the CPUs idle.
+
+**QEMU** (plain TCG, 94 s locked, `build/emu-p3` with powersave=1 and
+`build/emu-p4` with powersave=0, same boot and inputs):
+
+| | screen on | off, powersave=0 | off, powersave=1 |
+|---|---|---|---|
+| ARM9 monitor loops/s | 1696 | 4371 | 520 (493 of them in WFI) |
+| ARM9 host-CPU thread | 39 % | — | 2 % |
+| ARM11 IRQs/s | 144 | 304 | 245 |
+| … of which VBlank | 30 | 59 | 0 |
+| … of which timer | ~114 | 242 | 243 |
+| ARM11 host-CPU thread | 8 % | — | 14 % |
+
+Wake works in both cases: `[power] iOS screen on again after 94 s off`,
+then the lock screen and the unlock.
+
+**ARM11 timer interrupts double while the screen is off,** with and without
+powersave, so this is iOS' own behaviour. All iOS threads are waiting
+(ios3ds-sample), and the heartbeat PCs are the idle WFI. A likely cause is
+CoreAnimation timers replacing the stopped CLCD frame interrupts; not
+changed here.
+
+**"Where is my backlight?" ~3x/s after a wake:** AppleM2CLCD's
+`safe_enable_backlight` (0x807a95d0) finds no backlight service, logs, and
+keeps its pending flag (+0xea0). So it retries on every frame until the next
+sleep. Patch `clcd-backlight-retry-off` clears the flag instead: after a
+wake there are 0 such lines (`build/emu-p3`); one remains at the lock
+(`disable_backlight`).
+
+## 10. Notification LED (opt-in)
+
+`notify_led=1` in boot.cfg: at ≤ 10 % battery, not charging, the ARM9
+writes a red blink pattern to MCU register 0x2D. Otherwise it writes all
+zeros (off), and it switches the LED off before a power-off.
+- **Pattern** (3dbrew "MCU Services" / libn3ds `McuInfoLedPattern`): step
+  time 0x2F, smoothing 0x2F, loop delay 0, then 32 steps each of red (0xA0
+  for 8 steps, 0 for 8), green (0) and blue (0).
+- **Default is off:** the timing values are not verified on hardware.
+- **QEMU model:** captures the 100-byte stream (`qom-get /machine mcu-led-rgb0`,
+  `mcu-led-steps`). `build/emu-p3`: `mcu-battery 8` + charger off →
+  `[mcu] notification LED blinking red: battery low`, steps 16, step-0 colour
+  0xA00000; charger on → `[mcu] notification LED off`, steps 0.
+- **Hardware check:** whether the LED blinks red at ~1 Hz and goes dark
+  again. If the timing is wrong, adjust `p[0]`/`p[1]` in `led_update()`
+  (boot/arm9/mcu.c).
+
