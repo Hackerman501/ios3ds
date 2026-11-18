@@ -274,7 +274,10 @@ int main(int argc, char **argv)
         }
 
         /* iOS brightness -> LCD backlight, 2x per second */
-        if (!opt_nobl && client && (loops % 5) == 0) {
+        /* screen off (ARM9 power saving): every (slower) loop, so the wake's
+           brightness reaches the LCD at once */
+        int scr_off = box.ps_on && box.screen_off;
+        if (!opt_nobl && client && (scr_off || (loops % 5) == 0)) {
             float b = -1, fa = -1;
             int hb = copy_float(k_bright, &b), hf = copy_float(k_factor, &fa);
             if (hb && !hf) fa = 1;
@@ -360,6 +363,6 @@ int main(int argc, char **argv)
                 (unsigned)box.home_presses, (unsigned)box.power_presses, (unsigned)box.power_holds,
                 (unsigned)box.shell_closes, (unsigned)box.shell_opens);
         seen_seq = box.seq;
-        usleep(100000);
+        usleep(scr_off ? 250000 : 100000);     /* 4 Hz while the screen is off, 10 Hz on */
     }
 }
