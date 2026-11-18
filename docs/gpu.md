@@ -284,12 +284,74 @@ is OFF`): the screen keeps working, slower. Kill switch: boot.cfg `ca_gpu=0`
   compositor at the same moments: 2181 of 192000 pixels differ, by at most 1
   (rounding), on still frames; animation frames differ where the two runs
   are at different animation times.
-- Cost: see re-log 46. In QEMU the GPU path is not cheaper for SpringBoard,
-  because every frame writes the whole 320x480 display surface back through
-  the arena (PPF tiled→linear, copy-out, a per-pixel byte rotation), and
-  QEMU runs CA's software compositor at host speed. The engine logs
-  `[gl] CA: … per frame: render thread CPU … us, … read-backs (… KiB)` every
-  300 frames, so a hardware run measures it directly.
-- Next: present without the CPU read-back (render the final frame through a
-  GPU swizzle pass and PPF it straight into the display surface's physical
-  memory, which is VRAM), and read back only the rows CA changed.
+- Cost: see re-log 46 (with the read-back) and 49 (without).
+
+### Presenting without the read-back (re-log 49)
+
+Until re-log 49 every CA frame was rendered into an arena target and then
+copied back: PPF tiled→linear into arena scratch, `READ` into the IOSurface,
+and a per-pixel byte rotation (RGBA8 in the PICA200's byte order A,B,G,R →
+iOS BGRA) on the ARM11, ~616 KiB per frame. Now the final frame never passes
+through the CPU:
+
+1. **Which targets.** `gl_get_rt` marks a render target `surface` when its
+   pixels are an IOSurface (a texture bound with `BindCoreSurface`, or a
+   renderbuffer backed by a drawable). If such a target has a multiple-of-8
+   width and height, pitch = width and 8-byte alignment, the back end gives it
+   a power-of-two GPU colour buffer (run 13: NPOT textures sample garbage)
+   plus a w×h "swizzle" buffer.
+2. **Swizzle pass.** At sync time (`glFlush`/`glFinish`/`SwapNotification`)
+   the back end draws one quad into the swizzle buffer, sampling the target's
+   colour buffer as a texture (nearest, clamp, texcoords 0..w/pw, 0..h/ph).
+   Three TEV stages build the output: `tex.a·(1,0,0)`, `+ tex.r·(0,1,0)`,
+   `+ tex.g·(0,0,1)`, alpha = `tex.b` (or the constant 255 for an opaque
+   target). Read back in the PICA200's byte order this is B,G,R,A in memory,
+   i.e. iOS BGRA, with no CPU work.
+3. **Present.** The engine pre-writes one word per destination page (see
+   below), then asks the shim (`PICA_OP_PRESENT`, protocol 3) to PPF-transfer
+   the swizzle buffer (tiled RGBA8 → linear RGBA8, row order flipped unless
+   the target is flipped) straight to the IOSurface.
+4. **Shim checks** (`kernel/shim/pica.c`, `present`): size = w·h·4, 8-byte
+   aligned, plain RGBA8 → RGBA8 transfer (no texture copy, no tiled output,
+   no crop). Then it walks the *caller's* page tables (TTBR0/TTBCR, L1 section
+   or coarse table, L2 small/large page) for every page of the range: each
+   must be mapped user read/write (AP = 3, APX = 0), the pages must be
+   physically contiguous, and the whole range must lie in FCRAM or VRAM. So
+   the GPU writes only memory the caller could write itself. Then the range's
+   D-cache lines are cleaned and invalidated by VA (`c7,c14,1`; the caller's
+   VAs are live because the sysctl runs in its context) and the transfer runs.
+   A refusal is logged once with the descriptors and CP15 state.
+5. **Present check.** Until one non-uniform frame has matched, every present
+   is followed by the old CPU read-back of the same frame into a scratch
+   buffer and a comparison with what the GPU wrote (±2 per channel for TEV
+   rounding): the swizzle pass and the transfer are not verified on hardware,
+   and the CA scene check only covers the render target, not the presented
+   surface. A mismatch logs `[gl] pica: GPU present check FAILED: …`, puts the
+   read-back into the surface for that frame and turns presenting off for the
+   process; success logs `GPU present check passed` once. Host test: a third
+   gltest run with presents that swap R and B (`IOS3DS_HOST_PRESENT=swap`)
+   must hit the check and still PASS.
+6. **Fallback.** If `PRESENT` fails once (refusal, older shim, GPU error) the
+   engine logs it, stops presenting for the rest of the process and uses the
+   read-back as before. `IOS3DS_GL_NO_PRESENT=1` forces the read-back;
+   `IOS3DS_GL_PRESENT_ALL=1` presents every eligible target (host test).
+
+**XNU's modified-bit emulation.** The first attempt was refused: `not
+user-writable (… L1 257ca001 L2 18000823 … TTBCR 2 DACR 00000001)`. L2
+0x18000823 is a small page at PA 0x18000000 with AP = 2 (user read-only):
+XNU's ARM pmap maps writable pages read-only until the first write, takes the
+permission fault, sets the page's modified bit and only then maps it AP = 3.
+CA had not written the surface since it was mapped (the GPU had). The engine
+now writes each destination page once (`pg[k] = pg[k]`, one word per 4 KiB
+and the last word) right before `PRESENT`; the walk then sees AP = 3.
+
+**What CA's display surface is.** The log of the first successful present:
+`user VA 0x00325000 = PA 0x18000000 (VRAM, 600 KiB)` — the IOSurface CA
+composites into is AppleM2CLCD's scan-out framebuffer at the start of `/vram`,
+physically contiguous. The GPU writes the picture the LCD path (ARM9 copy or
+GPU mirror) reads, so a frame costs one P3D quad and one PPF transfer.
+
+Results (QEMU, re-log 49): CA frames have 0 read-backs; render thread CPU per
+frame under `--icount 2` dropped from 19–27 ms to about 8 ms; screenshots
+match the software compositor except for the status-bar clock and moments
+where the runs are at different animation times.

@@ -73,6 +73,8 @@ list. A top-level node goes straight to the OID tree, and works.
 | `SUBMIT` | copy a command list into the driver's staging buffer (optionally vertex data first), run it, wait for the end marker |
 | `FILL` | PSC memory fill, two slots |
 | `TRANSFER` | PPF display transfer |
+| `CONFIG` | boot.cfg switches for userland (`ca_gpu`), no bring-up |
+| `PRESENT` | PPF display transfer from an arena buffer straight into a *user* buffer, after a page-table walk proves the caller may write it (§15) |
 
 One request runs at a time (a flag taken with interrupts masked; waiters
 `IOSleep`). The same flag keeps GL requests and the display mirror's frames
@@ -499,6 +501,7 @@ log will show it.
 | texture | NPOT 320x480 RGBA8 texture, nearest, clamp | the PICA200 samples NPOT textures (Citra handles any size; libctru's docs ask for POT) | **denied by run 13** (§13): now a 512x512 texture |
 | sampling | truncation (Citra) tried first, rounding second | — | `variant 0 (as modelled)` vs `variant 1 (sampling rounds)` |
 | row order | texture and render-target rows as Citra stores them tried first, flips after | — | the variant number (bits 2 and 4) |
+| present | `PRESENT` walks the caller's TTBR0 tables (L1 section/coarse, L2 small/large; AP = 3 and APX = 0 required), checks contiguity and FCRAM/VRAM, cleans+invalidates the range by VA, then PPFs into the PA | the ARMv6 descriptor layout as in the ARM ARM; that the CLCD scans out what PPF writes to /vram without further maintenance; no outer cache | `[pica] present: GPU writes the caller's surface directly: user VA … = PA 0x18000000 (VRAM, 600 KiB)`; a refusal prints `[pica] present: destination … not usable: …` with the descriptors, and the engine falls back to the read-back; `[gl] pica: GPU present check passed` / `FAILED` compares the first non-uniform presented frame with the CPU read-back |
 | GPU hang | every mirror operation has a 1 s limit (200 ms until soak 4); a timeout switches the mirror off for good, the ARM9 notices within 1 s | — | `[gpu] display mirror FAILED (GPU timeout: operation N of a frame did not finish, register …)` or, in the self-test, `self-test aborted, GPU operation N did not finish` + `[gpu] screen copy: ARM9 CPU again` |
 
 ## 11. First hardware run of `agent/gpu`: what to look at
@@ -693,3 +696,34 @@ accesses; now about 217k word reads + 122k word writes, all in 4-word
 bursts. Results stay byte-identical (host test: CPU copy vs GPU model vs
 `gm_map`, all modes, and the shown-set-only case). QEMU cannot show bus
 costs; its instruction-clocked timing is in re-log 30.
+
+## 15. Presenting into the caller's memory (`PICA_OP_PRESENT`)
+
+For CoreAnimation on the GPU (docs/gpu.md §7) the engine needs the final
+frame in the display IOSurface. Copying it through the arena (`TRANSFER` to
+scratch, `READ`, byte rotation on the CPU) cost ~616 KiB of CPU copying per
+frame. `PRESENT` (protocol 3) lets the GPU write the caller's buffer itself:
+
+- arguments: source PA (an arena block, tiled RGBA8), dimensions, the
+  destination's *user* VA and size, PPF flags; only a plain RGBA8→RGBA8
+  tiled→linear transfer (optionally row-flipped) is accepted;
+- the shim walks the page tables the MMU uses for that VA (TTBR0, TTBCR.N;
+  L1 section or coarse table; L2 large/small page) for every 4 KiB step and
+  requires user read/write access (AP = 3, APX = 0) — so the GPU writes only
+  what the caller could write — physical contiguity, and a range inside FCRAM
+  or VRAM; a refusal returns `PICA_ERR_FAULT` / `PICA_ERR_NOT_CONTIG` and logs
+  the descriptors and TTBR0/TTBCR/DACR/SCTLR once;
+- D-cache lines of the range are cleaned and invalidated by VA before the
+  transfer (the CPU may have dirty lines from earlier software frames).
+
+XNU's pmap maps writable pages read-only (AP = 2) until their first write
+(modified-bit emulation), so the engine touches every destination page just
+before the request. Residual risk, documented rather than solved: another
+thread of the same process could unmap the buffer between the walk and the
+transfer; the GPU would then write a page the process no longer owns. The
+display surface is wired for the life of the window server, and command lists
+are not validated either (§2), so this is not a new class of hole.
+
+In QEMU the display IOSurface turned out to be AppleM2CLCD's framebuffer at PA
+0x18000000 (VRAM, contiguous, 600 KiB). On hardware the same `[pica] present:`
+line answers it; any failure falls back to the read-back.

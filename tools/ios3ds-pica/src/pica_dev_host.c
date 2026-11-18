@@ -90,13 +90,18 @@ static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t byt
 {
     const char *e = getenv("IOS3DS_HOST_PRESENT");
     uint32_t pa, st;
-    if (e && *e == '0')
+    if (e && *e == '0')                         /* IOS3DS_HOST_PRESENT=0: refuse, =swap: R and B swapped */
         return PICA_ERR_NOT_CONTIG;
     if ((st = pica_drv_alloc(&drv, 2, bytes, 0, &pa)) != PICA_OK)
         return st;
     st = pica_drv_transfer(&drv, src_pa, dim, pa, dim, flags);
     if (st == PICA_OK)
         memcpy(dst, arena + (pa - HOST_ARENA_PA), bytes);
+    if (st == PICA_OK && e && *e == 's') {      /* simulate a wrong channel swizzle on hardware */
+        uint32_t *w = dst, i;
+        for (i = 0; i < bytes / 4; i++)
+            w[i] = (w[i] & 0xFF00FF00u) | (w[i] >> 16 & 0xFF) | (w[i] & 0xFF) << 16;
+    }
     pica_drv_free(&drv, 2, pa);
     return st;
 }

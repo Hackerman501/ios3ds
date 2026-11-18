@@ -86,6 +86,7 @@ static struct {
     unsigned tick, warned;
     unsigned lists, draws;
     unsigned readbacks, readback_kb, uploads, upload_kb, presents;
+    int present_checked;
     int no_present;                     /* the shim refused PRESENT once: read back from now on */
 } P;
 
@@ -428,38 +429,98 @@ static int present_target(PTarget *t)
     return 0;
 }
 
-/* write the GPU image of a target back into its CPU memory */
-static void sync_target(PTarget *t)
+/* the CPU read-back: the GPU image of a target into dst (rt.pitch layout);
+   0 = done, -1 = no memory, else the GPU error */
+static uint32_t read_back(PTarget *t, uint32_t *dst)
 {
     uint32_t dim = (uint32_t)t->ph << 16 | (uint32_t)t->pw, st, *lin;
     int y, x;
-    if (P.cur == t)
-        flush_list();
-    if (!t->dirty || P.state != 1)
-        return;
-    t->dirty = 0;
-    if (t->swz_pa && !P.no_present && present_target(t) == 0)
-        return;
     lin = scratch((size_t)t->pw * t->ph);
     if (!lin)
-        return;
+        return (uint32_t)-1;
     st = P.dev->transfer(t->color_pa, dim, t->lin_pa, dim, PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
     P.readbacks++;
     P.readback_kb += (uint32_t)t->pw * t->ph * 4 >> 10;
     if (st == PICA_OK)
         st = P.dev->read(t->lin_pa, lin, (uint32_t)t->pw * t->ph * 4);
-    if (st != PICA_OK) {
-        gpu_fail("reading a frame back", st);
-        return;
-    }
+    if (st != PICA_OK)
+        return st;
     /* Transfer row r is GL row ph-1-r; a GPU word is R<<24|G<<16|B<<8|A and
        the engine's is A<<24|R<<16|G<<8|B: rotate right by 8. */
     for (y = 0; y < t->h; y++) {
         const uint32_t *s = lin + (size_t)(t->ph - 1 - y) * t->pw;
-        uint32_t *d = t->rt.color + (size_t)(t->rt.flip ? t->h - 1 - y : y) * t->rt.pitch;
+        uint32_t *d = dst + (size_t)(t->rt.flip ? t->h - 1 - y : y) * t->rt.pitch;
         for (x = 0; x < t->w; x++)
             d[x] = (s[x] >> 8 | s[x] << 24) | t->rt.opaque;
     }
+    return 0;
+}
+
+/* Until one non-trivial frame has matched, compare what the GPU presented
+   with the CPU read-back of the same frame (the swizzle pass's TEV setup and
+   the transfer into the surface are not verified on hardware). Allows +-2
+   per channel (TEV rounding). A mismatch: the read-back from now on, and
+   this frame is replaced by the read-back. */
+static void check_present(PTarget *t)
+{
+    uint32_t n = (uint32_t)t->w * t->h, i, bad = 0, uniform = 0, fx = 0, fy = 0, got = 0, want = 0, st;
+    uint32_t *ref = malloc((size_t)n * 4);
+    const uint32_t *surf = t->rt.color;
+    int k;
+    if (!ref)
+        return;
+    if ((st = read_back(t, ref)) != 0) {
+        free(ref);
+        if (st != (uint32_t)-1)
+            gpu_fail("reading a frame back", st);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        uint32_t a = surf[i], b = ref[i];
+        if (a == ref[0] || b == ref[0])
+            uniform++;
+        for (k = 0; k < 32; k += 8) {
+            int d = (int)(a >> k & 0xFF) - (int)(b >> k & 0xFF);
+            if (d > 2 || d < -2) {
+                if (!bad++) {
+                    fx = i % (uint32_t)t->w;
+                    fy = i / (uint32_t)t->w;
+                    got = a;
+                    want = b;
+                }
+                break;
+            }
+        }
+    }
+    if (bad) {
+        gl_log("pica: GPU present check FAILED: %u of %u pixels differ from the CPU read-back (first at %u,%u: "
+               "0x%08x, expected 0x%08x): reading surfaces back through the CPU from now on",
+               bad, n, fx, fy, got, want);
+        memcpy(t->rt.color, ref, (size_t)n * 4);
+        P.no_present = 1;
+    } else if (uniform < n - n / 100) {
+        gl_log("pica: GPU present check passed (%ux%u, identical to the CPU read-back within 2)", t->w, t->h);
+        P.present_checked = 1;
+    }
+    free(ref);
+}
+
+/* write the GPU image of a target back into its CPU memory */
+static void sync_target(PTarget *t)
+{
+    uint32_t st;
+    if (P.cur == t)
+        flush_list();
+    if (!t->dirty || P.state != 1)
+        return;
+    t->dirty = 0;
+    if (t->swz_pa && !P.no_present && present_target(t) == 0) {
+        if (!P.present_checked && !getenv("IOS3DS_GL_NO_PRESENT_CHECK"))
+            check_present(t);
+        return;
+    }
+    if ((st = read_back(t, t->rt.color)) != 0 && st != (uint32_t)-1)
+        gpu_fail("reading a frame back", st);
 }
 
 /* bring rt->color into the GPU buffer */
