@@ -19,7 +19,7 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 | Accelerometer | in progress (agent/mcu: Apple's LIS331DLH driver path) | — |
 | Microphone | in progress (agent/audio2) | — |
 | CoreAnimation compositing on the GPU | in progress (agent/gpu) | — |
-| Wi-Fi | off cleanly without `wifi.cfg` | not tested |
+| Wi-Fi | end to end against the `ctr-wifi` model: SDIO, BMI, HTC/WMI, WPA2 4-way, DHCP lease, default route, DNS, HTTP fetch (`emu/wifi_test.py`, re-log 40); off cleanly without `wifi.cfg` or firmware | not tested (docs/wifi.md §6 lists the log lines to read) |
 
 ## 2. How work is organised now
 - **Release tree:** clean worktree `~/Documents/GitHub/ios3ds-wt/rel` (branch `rel-main`, pushed to `main`). It has its own unified QEMU build (GPU + CSND + MCU models). Card builds come only from there.
@@ -69,7 +69,7 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 1. Hardware run of the GPU build: mirror self-test variant, fps, `[gl] pica: GPU up`, PICA vs software frame time (docs/pica200.md §11).
 2. `gettimeofday` early in boot (§2).
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
-4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK) and the NWM firmware extraction ([docs/wifi.md](docs/wifi.md)).
+4. Wi-Fi on hardware: `sd:/ios3ds/wifi.cfg` (SSID/PSK, `nettest=`) and the NWM firmware extraction; read the log against the checklist in [docs/wifi.md](docs/wifi.md) §6.
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
 6. RTC: done on `agent/mcu` (PEGetGMTTimeOfDay from the MCU RTC, no IORTC wait); hardware check pending. Accelerometer → SpringBoard needs a kernel IOHID service (docs/mcu.md §6.2).
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).

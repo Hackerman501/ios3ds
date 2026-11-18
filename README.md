@@ -48,6 +48,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/m1-design.md](docs/m1-design.md): the 3DS payload, mailbox protocol, `boot.cfg`
 - [docs/m2-first-panic.md](docs/m2-first-panic.md): first kernel output and panic
 - [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
+- [docs/wifi.md](docs/wifi.md): Wi-Fi: the ARM9 AR6014 driver, WPA2, the network mailbox, iOS bridge, firmware extraction and the QEMU model
 - [docs/mcu.md](docs/mcu.md): the 3DS system controller (RTC, battery, HOME/POWER, sliders, accelerometer) in iOS
 - [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
@@ -101,7 +102,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
 - **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. The `ios3ds.3dsx` launcher swaps `boot.firm` on the SD card and reboots instead. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
 - **Missing hardware support:**
   - touch is untested (buttons work in the emulator);
-  - no audio or Wi-Fi yet;
+  - Wi-Fi (WPA2, DHCP, DNS) works end to end in QEMU against a model of the AR6014 and an access point, but has never run on a console; it needs the Wi-Fi firmware from your own console's NWM module and shows no status-bar Wi-Fi icon ([docs/wifi.md](docs/wifi.md));
   - the system controller (date and time, battery, HOME/POWER, sliders, brightness, accelerometer) is implemented but has only run in QEMU ([docs/mcu.md](docs/mcu.md));
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);

@@ -190,6 +190,7 @@ def main():
         "wrongpsk": [
             ("message 2 rejected", r"ctr-wifi: .*message 2 MIC is wrong"),
             ("deauth after retries", r"ctr-wifi: .*deauthenticating"),
+            ("psk hint after 3 tries", r"\[wifi\] the WPA2 handshake failed 3 times"),
         ],
     }[a.case]
     forbidden = {

@@ -568,3 +568,39 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
 - **Fix:** rootfs/recipe.json's com.apple.springboard.plist now sets `SBDidShowReorderText = true`.
 - **Soak recovery** is now second Home, then Dismiss alone, then Dismiss + Home. Pressing Home after Dismiss on page 1 opens Spotlight, which soak 4 recorded as "stuck".
 - **The same soak showed a GPU problem:** `mirror self-test: GPU operation 4 of 4 (PPF transfer) did not finish, register 0x00000000` in plain (MTTCG) QEMU. It was later reported as "self-test mismatch: 0 bytes differed". The CPU copy carried on correctly. Handed to the GPU work (agent/gpu).
+
+## 40. Wi-Fi end to end in QEMU: an AR6014 + access point model (2026-11-18)
+- **Goal:** prove the whole chain (ARM9 driver → network mailbox → `kern.ios3ds_net` → ios3ds-wifid → iOS networking) without a console. Before this, Wi-Fi had only host unit tests.
+- **Model** (`emu/qemu/hw/arm/ctr_wifi.c`, docs/wifi.md §7): TMIO controller 2 at 0x10122000, an SDIO card (CCCR/FBR/CIS, function 1), the AR6014 BMI ROM and HTC/WMI firmware behaviour, and an access point with its own WPA2-PSK authenticator, bridged to `-nic user` (slirp). Power from CFG11_WIFICNT (mapped over the board's CFG11 page) and GPIO 2_2/3_12 (a small GPIO block at 0x10147000).
+- **Written from the references, not from our driver:**
+  - ath6kl `target.h`: function-1 addresses (`HOST_INT_STATUS` 0x400, `RX_LOOKAHEAD_VALID` 0x405, lookahead 0x408, `COUNT` 0x420, `COUNT_DEC` 0x440, window 0x474/0x478/0x47C). `htc.h`: `ENDPOINT1` = 0, so the BMI credit is `COUNT_DEC` + 4·4 = 0x450, the same register GBATEK calls COUNT4. `sdio.c`: one credit read before each BMI command, lookahead-valid wait before BMI reads, window address LSB written last.
+  - dsiwifi (runs on real DSi/3DS hardware): 2-byte WMI command header, enumerated auth/crypto values (WPA2-PSK = 5, AES = 4), BSSINFO/CONNECT/DISCONNECT layouts, `00 1C` data header, `0x4000 - len` mailbox addresses, `HTC_MSG_READY` handshake.
+  - IEEE 802.11i (PRF-384, EAPOL-Key, message checks), RFC 3394 key wrap, hostapd's RSN IE comparison.
+- **First boot against the model:** the unchanged driver went SDIO → BMI → upload → HTC → WMI → scan → associate → 4-way → keys → link up in 1.6 s of virtual time. Both installed keys were equal to the AP's (`WMI_ADD_CIPHER_KEY pairwise ... equals the AP's TK`, `group ... equals the AP's GTK`).
+- **Driver changes** (the model exposed some; the references require the others):
+  - WMI and data use the endpoints from the CONNECT_SERVICE responses (status checked), not fixed 1/2.
+  - The RX trailer is stripped only with `HTC_FLG_RX_TRAILER` (bit 1). Before, any flag counted.
+  - Time-outs on the monitor clock: firmware start 3 s, HTC_READY and WMI_READY 5 s, scan 10 s. A missing HTC_READY used to wait forever in state `htc`.
+  - A disconnect takes the link down and reconnects after 5 s. Before, it reconnected at once (a tight loop with a wrong PSK). Three failed handshakes log a psk hint.
+  - **FIFO self-test:** after "SDIO up" the driver writes a pattern into the function-1 scratch registers with CMD52 and reads it back with one CMD53. If that fails, the mailbox falls back to CMD52 per byte. Reason: dsiwifi's 3DS ARM11 build reads TMIO2's data FIFO at +0x200000, not +0x10C, and nobody has tried +0x10C from the ARM9.
+- **iOS side, seen in QEMU:**
+  - `IOEthernetControllerGetIONetworkInterfaceObject` + "BSD Name" gave nothing (`[wifid] interface ? up`). IONetworkStack names the interface 20+ s later (`still no BSD interface with our MAC after 20 s`, then `interface is en0`). The daemon now finds it by MAC in `getifaddrs` AF_LINK.
+  - **configd configures en0 by itself.** The default network set does DHCP, IPMonitor adds the default route and mDNSResponder gets the DHCP DNS server. In the first run the daemon never ran `ipconfig` (no name yet), yet en0 had 10.0.2.15. `ipconfig set` is now only a fallback after 15 s without an address.
+  - `ios3ds-nettest` (new; `nettest=` in wifi.cfg, passed through the mailbox, protocol version 2):
+    ```
+    [nettest] en0 address 10.0.2.15 netmask 255.255.255.0 (after 11 s)
+    [nettest] default route via 10.0.2.2 (interface index 2)
+    [nettest] dns example.com -> 172.66.147.243
+    [nettest] http 10.0.2.2:8080/ios3ds-nettest -> HTTP/1.0 200 OK | ios3ds-wifi-test-aa4ee772 path=/ios3ds-nettest (185 bytes, 0 s)
+    [nettest] all steps passed
+    ```
+    The host's HTTP server logged `GET /ios3ds-nettest`.
+- **Status-bar Wi-Fi icon: not reachable.** SpringBoard's Wi-Fi state comes from configd's `WiFiManager.bundle`. Its strings show it only drives an `IO80211Interface`/`IO80211Controller` through Apple80211 ("Could not obtain IO80211Interface bsd name"), so an IOUserEthernet `en0` stays invisible to it.
+- **Unverified on hardware** (docs/wifi.md §6 lists the log line that settles each):
+  - the ARM9 powering the chip and driving TMIO2;
+  - the ARM9 FIFO at 0x1012210C;
+  - the stub setting `hi_board_data_initialized`;
+  - Type4 firmware answering HTC/WMI as modelled;
+  - BSSINFO from an all-channel scan with BSS filter 1;
+  - capability bits 0 in the firmware's association RSN IE;
+  - dsiwifi's post-REG_DOMAIN host-interest write, which we skip.
