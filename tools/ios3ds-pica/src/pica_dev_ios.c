@@ -91,16 +91,23 @@ static uint32_t d_config(uint32_t *flags)
     return st;
 }
 
+static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t bytes, uint32_t flags)
+{
+    pica_req_t r = { PICA_OP_PRESENT, 0, { src_pa, dim, (uint32_t)(uintptr_t)dst, bytes, flags } };
+    return call(&r);
+}
+
 const pica_dev_t *pica_dev_ios(void)
 {
     static const pica_dev_t dev = { "PICA200", d_info, d_alloc, d_free, d_write, d_read, d_submit, d_fill, d_transfer,
-                                    d_config };
+                                    d_config, d_present };
     return &dev;
 }
 
 const char *pica_strerror(uint32_t st)
 {
     static const char *const s[] = { "ok", "bad request", "GPU is powered off / in reset", "no contiguous memory for the arena",
-        "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)", why };
+        "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)", why,
+        "destination is not one physically contiguous, GPU-reachable, user-writable range" };
     return st < sizeof s / sizeof s[0] ? s[st] : "unknown error";
 }

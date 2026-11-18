@@ -38,6 +38,8 @@ $(GLTEST): test/gltest.c test/glapi.h gl_defs.h
 
 host-test: $(HOSTDIR)/gltest
 	$(HOSTDIR)/gltest $(HOSTDIR)/gltest.ppm
+	@echo "--- again, every target written back by the GPU itself (the IOSurface present path)"
+	IOS3DS_GL_PRESENT_ALL=1 $(HOSTDIR)/gltest
 
 $(HOSTDIR)/gltest: $(CORE) test/host_gl.c test/gltest.c test/glapi.h $(HDRS) $(PICA_HOST) $(PICA_HDRS)
 	mkdir -p $(dir $@)

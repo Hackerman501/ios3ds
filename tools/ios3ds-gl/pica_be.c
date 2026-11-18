@@ -43,6 +43,7 @@ typedef struct PTarget {
     int dirty;                          /* ...and it is newer than rt->color */
     RT rt;                              /* where to write it back */
     unsigned used;
+    uint32_t swz_pa;                    /* != 0: written back by the GPU itself (present_target) */
 } PTarget;
 
 typedef struct PDepth {
@@ -84,7 +85,8 @@ static struct {
     size_t scratch_words;
     unsigned tick, warned;
     unsigned lists, draws;
-    unsigned readbacks, readback_kb, uploads, upload_kb;
+    unsigned readbacks, readback_kb, uploads, upload_kb, presents;
+    int no_present;                     /* the shim refused PRESENT once: read back from now on */
 } P;
 
 enum { WARN_FOG = 1, WARN_TEXENV = 2, WARN_BIG = 4, WARN_MEM = 8, WARN_TEXBIG = 16 };
@@ -303,6 +305,129 @@ static void flush_list(void)
         gpu_fail("running a command list", st);
 }
 
+/*
+ * Write a surface target back without the CPU: one more GPU pass turns the
+ * colour buffer (sampled as a power-of-two texture, 1:1, nearest) into a
+ * w x h buffer whose RGBA8 bytes are the surface's B,G,R,A (the PICA200 has
+ * no BGRA format: TEV rebuilds r = a, g = r, b = g, a = b), and a display
+ * transfer (PICA_OP_PRESENT) puts it straight into the IOSurface's physical
+ * memory. 0 = done; else the caller reads back through the CPU.
+ */
+static int present_target(PTarget *t)
+{
+    static const float ident[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    static const float corner[6][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 0, 1 } };
+    pica_cmd_t c;
+    pica_fb_t fb;
+    pica_tex_t tx;
+    pica_tev_t tev[PICA_TEV_STAGES];
+    pica_raster_t rs;
+    pica_vtx_layout_t l;
+    float clip[16];
+    Vtx q[6];
+    uint32_t bytes, dim = (uint32_t)t->h << 16 | (uint32_t)t->w, st, *list = scratch(2048);
+    int i;
+    if (!list)
+        return -1;
+    pica_cmd_init(&c, list, 2048);
+    pica_emit_base_state(&c);
+    pica_ff_emit_program(&c);
+    memset(&fb, 0, sizeof fb);
+    fb.color_pa = t->swz_pa;
+    fb.width = (uint16_t)t->w;
+    fb.height = (uint16_t)t->h;
+    fb.color_fmt = PICA_CB_RGBA8;
+    pica_emit_framebuffer(&c, &fb);
+    pica_emit_viewport(&c, 0, 0, (uint32_t)t->w, (uint32_t)t->h);
+    pica_emit_scissor(&c, 0, 0, 0, 0, 0);
+    pica_raster_defaults(&rs);
+    rs.write_mask = PICA_WRITE_COLOR;
+    pica_emit_raster(&c, &rs);
+    memset(&tx, 0, sizeof tx);
+    tx.pa = t->color_pa;
+    tx.width = (uint16_t)t->pw;
+    tx.height = (uint16_t)t->ph;
+    tx.fmt = PICA_TEX_RGBA8;
+    tx.mag = tx.min = PICA_NEAREST;
+    tx.wrap_s = tx.wrap_t = PICA_CLAMP_TO_EDGE;
+    pica_emit_texture(&c, 0, &tx);
+    pica_emit_texunits(&c, 1);
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_tev_passthrough(&tev[i]);
+    for (i = 0; i < 3; i++) {
+        static const uint8_t op[3] = { PICA_TEVOP_RGB_ALPHA, PICA_TEVOP_RGB_R, PICA_TEVOP_RGB_G };
+        static const uint32_t k[3] = { 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u };     /* R | G<<8 | B<<16 | A<<24 */
+        tev[i].src_rgb[0] = PICA_TEVSRC_TEXTURE0;
+        tev[i].src_rgb[1] = PICA_TEVSRC_CONSTANT;
+        tev[i].src_rgb[2] = i ? PICA_TEVSRC_PREVIOUS : PICA_TEVSRC_CONSTANT;
+        tev[i].op_rgb[0] = op[i];
+        tev[i].op_rgb[1] = PICA_TEVOP_RGB_COLOR;
+        tev[i].op_rgb[2] = PICA_TEVOP_RGB_COLOR;
+        tev[i].func_rgb = i ? PICA_TEV_MULT_ADD : PICA_TEV_MODULATE;
+        tev[i].color = k[i];
+        /* alpha = the sample's blue (the surface's B byte), or opaque */
+        tev[i].src_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVSRC_TEXTURE0 : i == 2 ? PICA_TEVSRC_CONSTANT : PICA_TEVSRC_PREVIOUS;
+        tev[i].op_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVOP_A_B : PICA_TEVOP_A_ALPHA;
+        tev[i].func_a = PICA_TEV_REPLACE;
+    }
+    tev[0].src_a[0] = PICA_TEVSRC_CONSTANT;    /* stage 0 has no "previous" */
+    for (i = 0; i < PICA_TEV_STAGES; i++)
+        pica_emit_tev(&c, (unsigned)i, &tev[i]);
+    pica_ff_clip_matrix(clip, ident, ident);
+    pica_ff_emit_matrices(&c, clip, NULL, NULL, 1.0f);
+    memset(&l, 0, sizeof l);
+    l.count = PICA_FF_ATTRS;
+    l.attr[PICA_FF_POSITION].type = PICA_FLOAT;  l.attr[PICA_FF_POSITION].size = 4;
+    l.attr[PICA_FF_COLOR].type = PICA_FLOAT;     l.attr[PICA_FF_COLOR].size = 4;
+    l.attr[PICA_FF_TEXCOORD0].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD0].size = 2;
+    l.attr[PICA_FF_TEXCOORD1].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD1].size = 2;
+    l.nbuffers = 1;
+    l.buffer[0].stride = sizeof(Vtx);
+    l.base_pa = P.vbuf_pa;
+    pica_emit_vtx_layout(&c, &l);
+    pica_emit_draw_arrays(&c, PICA_TRIANGLES, 0, 6);
+    pica_emit_fb_flush(&c);
+    bytes = pica_cmd_finish(&c);
+    /* GL row y of the target is GL row y of the texture (both stored top
+       first), so pixel (x, y) samples texel (x, y): s = x / pw, t = y / ph */
+    memset(q, 0, sizeof q);
+    for (i = 0; i < 6; i++) {
+        q[i].x = corner[i][0] * 2 - 1;
+        q[i].y = corner[i][1] * 2 - 1;
+        q[i].w = 1;
+        q[i].c[0] = q[i].c[1] = q[i].c[2] = q[i].c[3] = 1;
+        q[i].t[0][0] = corner[i][0] * (float)t->w / (float)t->pw;
+        q[i].t[0][1] = corner[i][1] * (float)t->h / (float)t->ph;
+        q[i].fog = 1;
+    }
+    if (!bytes || P.dev->submit(list, bytes, P.vbuf_pa, q, sizeof q) != PICA_OK)
+        return -1;
+    /* XNU maps a user page that has not been written since its modified bit
+       was cleared read-only and makes it writable on the first write fault
+       (seen in QEMU: CA's display surface, PA 0x18000000, AP=10 before the
+       first frame). The shim only lets the GPU write pages the caller may
+       write right now, so write every page once ourselves (same value). */
+    {
+        volatile uint32_t *pg = (volatile uint32_t *)t->rt.color;
+        uint32_t n = (uint32_t)t->w * t->h, k;
+        for (k = 0; k < n; k += 1024)
+            pg[k] = pg[k];
+        pg[n - 1] = pg[n - 1];
+    }
+    /* the transfer stores the first stored row (GL top) first: right for
+       flipped surfaces (row 0 = GL top); for the others flip it */
+    st = P.dev->present(t->swz_pa, dim, t->rt.color, (uint32_t)t->w * t->h * 4,
+                        PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8) | (t->rt.flip ? 0 : PPF_FLIP_V));
+    if (st != PICA_OK) {
+        gl_log("pica: writing a surface back on the GPU failed (%s): reading it back through the CPU from now on",
+               pica_strerror(st));
+        P.no_present = 1;
+        return -1;
+    }
+    P.presents++;
+    return 0;
+}
+
 /* write the GPU image of a target back into its CPU memory */
 static void sync_target(PTarget *t)
 {
@@ -313,6 +438,8 @@ static void sync_target(PTarget *t)
     if (!t->dirty || P.state != 1)
         return;
     t->dirty = 0;
+    if (t->swz_pa && !P.no_present && present_target(t) == 0)
+        return;
     lin = scratch((size_t)t->pw * t->ph);
     if (!lin)
         return;
@@ -370,6 +497,7 @@ static void drop_target(PTarget *t)
     }
     if (t->color_pa) P.dev->free(t->color_pa);
     if (t->lin_pa) P.dev->free(t->lin_pa);
+    if (t->swz_pa) P.dev->free(t->swz_pa);
     memset(t, 0, sizeof *t);
 }
 
@@ -423,15 +551,22 @@ static PTarget *get_target(const RT *rt)
             warn_once(WARN_BIG, "render target larger than 1024: drawn by the software rasterizer");
             return NULL;
         }
+        int present = (rt->surface || getenv("IOS3DS_GL_PRESENT_ALL")) && !P.no_present && !(rt->w & 7) && !(rt->h & 7) && rt->pitch == rt->w &&
+                      !((uintptr_t)rt->color & 7) && !getenv("IOS3DS_GL_NO_PRESENT");
         t = lru;
         if (t->key) {
             sync_target(t);
             drop_target(t);
         }
-        t->pw = pad_dim(rt->w);
-        t->ph = pad_dim(rt->h);
+        /* An IOSurface (CA's display) is written back by the GPU itself
+           (present_target): its colour buffer is then sampled as a texture,
+           so it is allocated power-of-two (NPOT textures sample wrongly on
+           the PICA200, hardware run 13). */
+        t->pw = present ? (int)pica_pot((uint32_t)(rt->w < 64 ? 64 : rt->w)) : pad_dim(rt->w);
+        t->ph = present ? (int)pica_pot((uint32_t)(rt->h < 64 ? 64 : rt->h)) : pad_dim(rt->h);
         bytes = (uint32_t)t->pw * t->ph * 4;
-        if (P.dev->alloc(bytes, 0, &t->color_pa) != PICA_OK || P.dev->alloc(bytes, 0, &t->lin_pa) != PICA_OK) {
+        if (P.dev->alloc(bytes, 0, &t->color_pa) != PICA_OK || P.dev->alloc(bytes, 0, &t->lin_pa) != PICA_OK ||
+            (present && P.dev->alloc((uint32_t)rt->w * rt->h * 4, 0, &t->swz_pa) != PICA_OK)) {
             warn_once(WARN_MEM, "GPU arena full (render target): drawn by the software rasterizer");
             drop_target(t);
             return NULL;
@@ -1017,6 +1152,7 @@ void pica_backend_stats2(PicaStats *s)
     s->readback_kb = P.readback_kb;
     s->uploads = P.uploads;
     s->upload_kb = P.upload_kb;
+    s->presents = P.presents;
 }
 
 void pica_backend_stats(unsigned *lists, unsigned *draws)

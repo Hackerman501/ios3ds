@@ -54,5 +54,9 @@ uint32_t pica_drv_read(pica_drv_t *d, uint32_t pa, pica_uptr_t dst, uint32_t len
 uint32_t pica_drv_submit(pica_drv_t *d, pica_uptr_t list, uint32_t bytes,
                          uint32_t vtx_pa, pica_uptr_t vtx, uint32_t vtx_len);
 uint32_t pica_drv_fill(pica_drv_t *d, const uint32_t slot[8]);
+/* the same, but into memory outside the arena that the caller has validated
+   (PICA_OP_PRESENT); the source must be in the arena */
+uint32_t pica_drv_transfer_out(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa,
+                               uint32_t dst_dim, uint32_t flags);
 uint32_t pica_drv_transfer(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa,
                            uint32_t dst_dim, uint32_t flags);

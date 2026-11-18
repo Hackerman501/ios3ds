@@ -239,6 +239,96 @@ static void bringup(void)
         gpu_diag_after();
 }
 
+/* ---- PICA_OP_PRESENT: the caller's memory as a GPU destination ----------
+   Walk the caller's own page tables (TTBR0, we run in its thread) for a
+   user VA: the PA, and whether user code may write it (ARMv6 AP = 11, APX
+   0). So a process can only aim the GPU at memory it could write itself. */
+static uint32_t fcram_va(uint32_t pa, int *ok)
+{
+    *ok = pa >= 0x20000000u && pa < 0x28000000u;
+    return pa + 0x60000000u;            /* XNU's linear map of FCRAM at 0x80000000 */
+}
+
+static uint32_t last_l1, last_l2;          /* descriptors of the last walk (for the log) */
+
+static int uva_to_pa(uint32_t va, uint32_t *pa)
+{
+    uint32_t ttbr0, ttbcr, n, l1, e, l2, ok;
+    int okv;
+    __asm__ volatile("mrc p15, 0, %0, c2, c0, 0" : "=r"(ttbr0));
+    __asm__ volatile("mrc p15, 0, %0, c2, c0, 2" : "=r"(ttbcr));
+    n = ttbcr & 7;
+    if (n && va >= (0x80000000u >> (n - 1)))
+        return -1;                      /* not a TTBR0 (user) address */
+    l1 = ttbr0 & ~((1u << (14 - n)) - 1);
+    e = *(vu32 *)(fcram_va(l1, &okv) + (va >> 20) * 4);
+    last_l1 = e;
+    last_l2 = 0;
+    if (!okv)
+        return -1;
+    if ((e & 3) == 2) {                 /* section: AP bits 11:10, APX bit 15 */
+        ok = ((e >> 10) & 3) == 3 && !(e & (1u << 15));
+        *pa = (e & 0xFFF00000u) | (va & 0xFFFFFu);
+        return ok ? 0 : -2;
+    }
+    if ((e & 3) != 1)
+        return -1;
+    l2 = *(vu32 *)(fcram_va(e & ~0x3FFu, &okv) + ((va >> 12) & 0xFF) * 4);
+    last_l2 = l2;
+    if (!okv || !(l2 & 3))
+        return -1;
+    ok = ((l2 >> 4) & 3) == 3 && !(l2 & (1u << 9));     /* AP 5:4, APX 9 (small and large pages) */
+    *pa = (l2 & 1) && !(l2 & 2) ? (l2 & 0xFFFF0000u) | (va & 0xFFFFu) : (l2 & 0xFFFFF000u) | (va & 0xFFFu);
+    return ok ? 0 : -2;
+}
+
+static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t bytes, uint32_t flags)
+{
+    static int said_ok, said_bad;
+    uint32_t pa0 = 0, pa, off, a;
+    int r = 0;
+    if (!bytes || (va & 7) || bytes != (dim & 0xFFFF) * (dim >> 16) * 4 ||
+        (flags & (PPF_TEXCOPY | PPF_OUT_TILED | PPF_CROP)) || ((flags >> 12) & 7) != PICA_FB_RGBA8)
+        return PICA_ERR_RANGE;
+    for (off = 0; off < bytes; off = (((va + off) | 0xFFFu) + 1) - va) {
+        if ((r = uva_to_pa(va + off, &pa)) != 0)
+            break;
+        if (!off)
+            pa0 = pa;
+        else if (pa != pa0 + off) {
+            r = -3;
+            break;
+        }
+    }
+    if (!r && !((pa0 >= 0x20000000u && pa0 + bytes <= 0x28000000u) ||
+                (pa0 >= PICA_VRAM_PA && pa0 + bytes <= PICA_VRAM_PA + PICA_VRAM_SIZE)))
+        r = -4;
+    if (r) {
+        if (!said_bad++) {
+            uint32_t ttbr0, ttbcr, dacr, sctlr;
+            __asm__ volatile("mrc p15, 0, %0, c2, c0, 0" : "=r"(ttbr0));
+            __asm__ volatile("mrc p15, 0, %0, c2, c0, 2" : "=r"(ttbcr));
+            __asm__ volatile("mrc p15, 0, %0, c3, c0, 0" : "=r"(dacr));
+            __asm__ volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(sctlr));
+            k_printf("[pica] present: destination 0x%08x (+%u) not usable: %s (PA 0x%08x at +0x%x; L1 %08x L2 %08x, "
+                     "TTBR0 %08x TTBCR %x DACR %08x SCTLR %08x)\n", va, bytes,
+                     r == -1 ? "not mapped" : r == -2 ? "not user-writable" : r == -3 ? "not physically contiguous"
+                     : "not in FCRAM/VRAM", r == -3 ? pa : pa0, off, last_l1, last_l2, ttbr0, ttbcr, dacr, sctlr);
+        }
+        return r == -2 || r == -1 ? PICA_ERR_FAULT : PICA_ERR_NOT_CONTIG;
+    }
+    /* the CPU may hold dirty lines of the destination (CA or the engine wrote
+       it before): write them back and drop them, or they could later be
+       evicted over the GPU's picture. We run in the caller: its VAs work. */
+    for (a = va & ~31u; a < va + bytes; a += 32)
+        __asm__ volatile("mcr p15, 0, %0, c7, c14, 1" :: "r"(a) : "memory");
+    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+    if (!said_ok++)
+        k_printf("[pica] present: GPU writes the caller's surface directly: user VA 0x%08x = PA 0x%08x (%s, %u KiB)\n",
+                 va, pa0, pa0 >= 0x20000000u ? "FCRAM" : "VRAM", bytes >> 10);
+    return pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+}
+
 static void run(pica_req_t *r, uint32_t pid)
 {
     uint32_t *a = r->a;
@@ -257,6 +347,7 @@ static void run(pica_req_t *r, uint32_t pid)
     case PICA_OP_SUBMIT:   r->status = pica_drv_submit(&drv, a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_FILL:     r->status = pica_drv_fill(&drv, a); break;
     case PICA_OP_TRANSFER: r->status = pica_drv_transfer(&drv, a[0], a[1], a[2], a[3], a[4]); break;
+    case PICA_OP_PRESENT:  r->status = present(a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_CONFIG:
         a[0] = gm_valid() && GM->gpu_enable && GM->ca_gpu ? PICA_CFG_CA_GPU : 0;
         r->status = PICA_OK;

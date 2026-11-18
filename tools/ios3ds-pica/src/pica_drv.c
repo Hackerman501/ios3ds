@@ -314,3 +314,25 @@ uint32_t pica_drv_transfer(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uin
     d->p->wr(GXO(GX_PPF_CNT), 0);
     return st;
 }
+
+uint32_t pica_drv_transfer_out(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa,
+                               uint32_t dst_dim, uint32_t flags)
+{
+    uint32_t slen = (src_dim & 0xFFFF) * (src_dim >> 16) * 4, st = PICA_OK;
+    if (d->state != PICA_OK)
+        return d->state;
+    if (!slen || (flags & (PPF_TEXCOPY | PPF_OUT_TILED)) || ((src_pa | dst_pa) & 7) || !in_arena(d, src_pa, slen) ||
+        src_pa - d->pa < PICA_DRV_CMD_SIZE)
+        return PICA_ERR_RANGE;
+    d->p->wr(GXO(GX_PPF_IN_ADDR), src_pa >> 3);
+    d->p->wr(GXO(GX_PPF_OUT_ADDR), dst_pa >> 3);
+    d->p->wr(GXO(GX_PPF_DT_INDIM), src_dim);
+    d->p->wr(GXO(GX_PPF_DT_OUTDIM), dst_dim);
+    d->p->wr(GXO(GX_PPF_FLAGS), flags);
+    d->p->wr(GXO(GX_PPF_UNK14), 0);
+    d->p->wr(GXO(GX_PPF_CNT), PPF_CNT_START);
+    if (wait_bits(d, GXO(GX_PPF_CNT), PPF_CNT_DONE, "a display transfer out of the arena (PPF)"))
+        st = PICA_ERR_TIMEOUT;
+    d->p->wr(GXO(GX_PPF_CNT), 0);
+    return st;
+}

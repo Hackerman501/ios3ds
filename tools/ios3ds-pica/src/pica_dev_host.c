@@ -82,10 +82,29 @@ static uint32_t d_config(uint32_t *flags)
     return PICA_OK;
 }
 
+/* the host has no physical addresses for the caller's memory: transfer into
+   a scratch block of the arena and copy it out, which is what the GPU's
+   transfer does on iOS (IOS3DS_HOST_PRESENT=0: behave like a destination
+   that is not contiguous) */
+static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t bytes, uint32_t flags)
+{
+    const char *e = getenv("IOS3DS_HOST_PRESENT");
+    uint32_t pa, st;
+    if (e && *e == '0')
+        return PICA_ERR_NOT_CONTIG;
+    if ((st = pica_drv_alloc(&drv, 2, bytes, 0, &pa)) != PICA_OK)
+        return st;
+    st = pica_drv_transfer(&drv, src_pa, dim, pa, dim, flags);
+    if (st == PICA_OK)
+        memcpy(dst, arena + (pa - HOST_ARENA_PA), bytes);
+    pica_drv_free(&drv, 2, pa);
+    return st;
+}
+
 const pica_dev_t *pica_dev_host(void)
 {
     static const pica_dev_t dev = { "PICA200 software model (host)", d_info, d_alloc, d_free, d_write, d_read,
-                                    d_submit, d_fill, d_transfer, d_config };
+                                    d_submit, d_fill, d_transfer, d_config, d_present };
     return &dev;
 }
 
@@ -95,6 +114,7 @@ const char *pica_strerror(uint32_t st)
 {
     static const char *const s[] = { "ok", "bad request", "GPU is powered off / in reset", "no contiguous memory for the arena",
         "GPU arena full", "address outside the arena", "bad user pointer", "GPU timeout (see console log)",
-        "no ios3ds_gpu sysctl service" };
+        "no ios3ds_gpu sysctl service",
+        "destination is not one physically contiguous, GPU-reachable, user-writable range" };
     return st < sizeof s / sizeof s[0] ? s[st] : "unknown error";
 }

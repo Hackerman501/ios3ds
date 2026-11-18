@@ -1621,7 +1621,7 @@ int gl_get_rt(GC *gc, RT *rt)
         Tex *t = nt_get(&gc->share->tex, f->color_name);
         if (!t || !t->px)
             return 0;
-        rt->w = t->w; rt->h = t->h; rt->pitch = t->pitch; rt->color = t->px;
+        rt->w = t->w; rt->h = t->h; rt->pitch = t->pitch; rt->color = t->px; rt->surface = t->surface != NULL;
         t->be_seq++;
     }
     if (c) {
@@ -1630,6 +1630,7 @@ int gl_get_rt(GC *gc, RT *rt)
         if (!c->color)
             return 0;
         rt->w = c->w; rt->h = c->h; rt->pitch = c->pitch; rt->color = c->color; rt->flip = c->flip;
+        rt->surface = c->dr != NULL;
         if (c->ifmt == GL_RGB565 || c->ifmt == GL_RGB8)
             rt->opaque = 0xff000000u;
     }

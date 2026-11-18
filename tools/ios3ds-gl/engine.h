@@ -85,6 +85,7 @@ typedef struct RT {
     int flip;                   /* GL row 0 is the last row in memory */
     uint32_t opaque;            /* OR-ed into every colour written: 0xff000000
                                    for formats without alpha (RGB565, RGB8) */
+    int surface;                /* color is IOSurface memory (CA's display, a drawable) */
 } RT;
 
 typedef struct Mat4 { float m[16]; } Mat4;          /* column major, like GL */
@@ -234,7 +235,7 @@ extern const Backend sw_backend;
 extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */
 int pica_backend_init(void);            /* 1 = the GPU is usable */
 int pica_ca_gate(void);
-typedef struct { unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb; } PicaStats;
+typedef struct { unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents; } PicaStats;
 void pica_backend_stats2(PicaStats *s);
 int ca_scene_check(void);               /* ca.c: GPU vs CPU on a CA-like scene, 1 = close enough */
 void ca_frame(void);                    /* ca.c: one CA swap (statistics) */                 /* 1 = CoreAnimation may composite with this engine (on the GPU) */

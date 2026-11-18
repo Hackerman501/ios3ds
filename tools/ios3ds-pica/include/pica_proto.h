@@ -34,7 +34,7 @@
 
 #define PICA_SYSCTL_NAME   "ios3ds_gpu"
 #define PICA_SYSCTL_LEAF   "ios3ds_gpu"
-#define PICA_PROTO_VERSION 2
+#define PICA_PROTO_VERSION 3
 
 enum {
     PICA_OP_INFO = 0,   /* -> a[] = pica_info_t (powers the GPU up and creates the arena on first use) */
@@ -49,6 +49,10 @@ enum {
     PICA_OP_TRANSFER,   /* PPF display transfer: a0 src pa, a1 src h<<16|w, a2 dst pa, a3 dst h<<16|w, a4 flags */
     PICA_OP_FREE_ALL,   /* free every block the calling process owns */
     PICA_OP_CONFIG,     /* -> a0 PICA_CFG_* flags from boot.cfg (does not bring the GPU up) */
+    PICA_OP_PRESENT,    /* PPF display transfer from the arena straight into the caller's own memory:
+                           a0 src pa, a1 src h<<16|w, a2 user destination, a3 bytes, a4 flags (out linear).
+                           The destination must be user-writable in the caller, physically contiguous,
+                           in FCRAM or VRAM; else PICA_ERR_NOT_CONTIG / PICA_ERR_FAULT */
 };
 
 #define PICA_CFG_CA_GPU 1u      /* boot.cfg gpu=1 and ca_gpu=1: CoreAnimation may composite on the GPU */
@@ -63,6 +67,7 @@ enum {
     PICA_ERR_FAULT = 6,     /* bad user pointer */
     PICA_ERR_TIMEOUT = 7,   /* the GPU did not finish in time; details are in the console log */
     PICA_ERR_NO_SERVICE = 8,/* userland only: the sysctl does not exist (no shim support) */
+    PICA_ERR_NOT_CONTIG = 9,/* PRESENT: the destination is not one physically contiguous GPU-reachable range */
 };
 
 typedef struct {

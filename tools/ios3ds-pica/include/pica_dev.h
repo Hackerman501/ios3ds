@@ -23,6 +23,9 @@ typedef struct pica_dev {
                      uint32_t pa1, uint32_t len1, uint32_t val1, uint32_t width1);
     uint32_t (*transfer)(uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa, uint32_t dst_dim, uint32_t flags);
     uint32_t (*config)(uint32_t *flags);            /* PICA_CFG_* */
+    /* display transfer from the arena straight into the caller's memory dst
+       (bytes long), PICA_OP_PRESENT: no copy through the CPU */
+    uint32_t (*present)(uint32_t src_pa, uint32_t dim, void *dst, uint32_t bytes, uint32_t flags);
 } pica_dev_t;
 
 const pica_dev_t *pica_dev_ios(void);
