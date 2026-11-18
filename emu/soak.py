@@ -160,6 +160,7 @@ def main():
             if diff > 12:
                 c["recovered_with"] = "stuck"
                 for step, act in (("second Home", lambda: key("ret")),
+                                  ("Dismiss", lambda: tap(160, 333)),
                                   ("Dismiss + Home", lambda: (tap(160, 333), time.sleep(3), key("ret")))):
                     act()
                     time.sleep(6)

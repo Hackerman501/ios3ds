@@ -454,6 +454,7 @@ Branch `agent/gpu` = `agent/pica` + main. Design: docs/pica200.md §9-11.
   - **PASS:** no panic, stall, md0/log error, crash or jetsam; ~9,400 md0 requests served through the new lock/sleep path.
   - Spotlight cases (13, 14, 33, 34) recovered with a second Home.
   - The "Edit Home Screen" alert came back once, again on cycle 0, the first app launch after boot. So the IRQs-off freeze was not the cause.
+- **Correction (soak 4, §39):** the alert is **not** a hold. It is SpringBoard's one-time `REORDER_INFO` tip, remembered in the default `SBDidShowReorderText`, which a fresh rootfs (every QEMU soak) doesn't have. The timer analysis below is still accurate, but it wasn't what happened here.
 - **Why a Home tap can become a hold** (`SpringBoard` `-[SpringBoard menuButtonDown:]` 0x8bc0, `_menuButtonWasHeld` 0x8874, found through the objc method lists):
   - The down schedules `scheduledTimerWithTimeInterval:… _menuButtonWasHeld` with one of three intervals:
     - **2.0 s** normally;
@@ -555,3 +556,15 @@ Tools: the flat kernel image as an ELF (`llvm-objcopy -I binary -O elf32-littlea
 - rootfs/recipe.json now replaces that symlink with `rootfs/files/localtime-UTC`, a 54-byte TZif v1 file generated for this project (one ttinfo: offset 0, "UTC"; no Apple data).
 - iOS now shows exactly the 3DS clock: QEMU RTC 00:38 → status bar "12:38 AM", calendar "Wednesday".
 - To get a true UTC epoch plus a real zone instead, set `rtc_offset=` in boot.cfg and pick a zone in Settings (docs/mcu.md).
+
+## 39. The "Edit Home Screen" alert was iOS's one-time tip (2026-11-18)
+- **Soak 4** (main `e9ddbba`, all drivers merged, 40 cycles):
+  - no panic, stall, md0/log error (19,008 md0 requests), crash or jetsam;
+  - again only cycle 0 showed "Edit Home Screen" after leaving the first app.
+- **Cause:** the alert's strings are `REORDER_INFO_TITLE` / `REORDER_INFO_BODY` (SpringBoard.app English.lproj), and SpringBoard keeps the default **`SBDidShowReorderText`** next to them.
+  - iOS shows the tip once, on the first Home out of an app on a fresh device, then sets the key.
+  - QEMU soaks always start with a fresh rootfs, hence cycle 0 every time. On a real card it shows once and is remembered.
+  - The §31 "Home seen as a hold" explanation was wrong.
+- **Fix:** rootfs/recipe.json's com.apple.springboard.plist now sets `SBDidShowReorderText = true`.
+- **Soak recovery** is now second Home, then Dismiss alone, then Dismiss + Home. Pressing Home after Dismiss on page 1 opens Spotlight, which soak 4 recorded as "stuck".
+- **The same soak showed a GPU problem:** `mirror self-test: GPU operation 4 of 4 (PPF transfer) did not finish, register 0x00000000` in plain (MTTCG) QEMU. It was later reported as "self-test mismatch: 0 bytes differed". The CPU copy carried on correctly. Handed to the GPU work (agent/gpu).
