@@ -88,7 +88,8 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
 - The dyld shared cache gets small byte patches:
   - liblockdown is stubbed, reporting "Activated" and BrickState = false;
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
-- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash` and `SBDisableAutoDim` (`SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
+- Two libraries are inserted with `DYLD_INSERT_LIBRARIES`: `ios3ds-a80211.dylib` into configd (WiFiManager sees en0 as Apple 802.11 hardware) and `ios3ds-hwaes.dylib` into securityd (software AppleKeyStore key wrap, so the keychain can store items). See [wifi.md](wifi.md) §10.
+- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash`, `SBDisableAutoDim` and `SBNoWatchdogs` (no launch watchdog, [wifi.md](wifi.md) §10.4; `SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
 - OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:
   - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;

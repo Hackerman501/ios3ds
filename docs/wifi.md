@@ -4,7 +4,9 @@ Status: **works end to end in QEMU, never run on hardware.** In the
 `nintendo3ds` machine the unchanged ARM9 driver brings up an emulated AR6014
 over SDIO, associates with an emulated WPA2 access point, and iOS gets a DHCP
 lease, a default route and DNS, and fetches a page from the host (section 7,
-`emu/wifi_test.py`). The model is written from ath6kl, dsiwifi, GBATEK and
+`emu/wifi_test.py`). iOS's own Settings > Wi-Fi scans and joins through the
+touch screen and the status bar shows the bars (section 10,
+`emu/wifi_ui_test.py`). The model is written from ath6kl, dsiwifi, GBATEK and
 IEEE 802.11i, not from our driver; what it cannot prove, and the hardware
 assumptions that are still open, are in sections 6 and 7.2. Host tests:
 `make -C tools/ios3ds-wifi test` (also run by `make test`).
@@ -83,7 +85,9 @@ mac=02:..                # qemu/loop backends only
 nettest=http://10.0.2.2:8080/ example.com   # optional iOS self-test (section 5)
 ```
 
-No file means networking off; the mailbox then reports backend NONE.
+No file: the chip still comes up when `wifi-fw.bin` is there and waits idle
+for iOS (Settings > Wi-Fi, section 10); without the firmware too, networking
+is off and the mailbox reports backend NONE.
 
 ## 3. Firmware (not shipped)
 
@@ -298,7 +302,7 @@ Results (2026-11-18, re-log 45): `ok` PASS in plain QEMU and with
 `--icount 2` (SpringBoard on screen, `[nettest] all steps passed`, the host's
 server logged `GET /ios3ds-nettest`); `open`, `nocfg` (full boot to
 SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden`, `tkip` PASS. The
-status bar shows "Searching..." and no Wi-Fi bars (section 9).
+status bar showed "Searching..." and no Wi-Fi bars; section 10 added them.
 
 The paravirtual "ctr-vnic" NIC that an earlier version of this section
 proposed (`vnic.c`, `backend=qemu`, register spec in `boot/common/wifi_proto.h`)
@@ -312,21 +316,20 @@ board ("backend qemu-vnic not available").
   `wifi_poll()` in the monitor loop.
 - `scripts/mkboot.py`: `tools/ios3ds-wifi/shim/net.c` added to the shim build.
 - `kernel/shim/blk.c`: `shim_net_register()` next to `shim_input_register()`.
-- `rootfs/recipe.json`: adds `ios3ds-wifid`, `ios3ds-nettest` and `com.ios3ds.wifi.plist`.
+- `rootfs/recipe.json`: adds `ios3ds-wifid`, `ios3ds-nettest` and `com.ios3ds.wifi.plist`;
+  `ios3ds-a80211.dylib` (configd) and `ios3ds-hwaes.dylib` (securityd) with
+  `DYLD_INSERT_LIBRARIES` in their launchd plists; `SBNoWatchdogs` (section 10).
 - `emu/qemu/hw/arm/nintendo3ds.c`: one `ctr_wifi_init()` call; `emu/build-qemu.sh`
   links `ctr_wifi.c` and configures QEMU with slirp.
-- `Makefile`: `make test` also runs `make -C tools/ios3ds-wifi test`.
+- `Makefile`: `make test` also runs `make -C tools/ios3ds-wifi test`;
+  `tools/ios3ds-wifi/a80211` and `tools/ios3ds-keychain` in `USERLAND`.
+- `scripts/build-ios-toolchain.sh`: SystemConfiguration added to the stub SDK.
 
 ## 9. Open items
 
 - Hardware bring-up (section 6); MCU Wi-Fi LED (I2C, optional).
-- **Status-bar Wi-Fi icon: not feasible with this design.** SpringBoard gets
-  Wi-Fi state from configd's `WiFiManager.bundle` (MobileWiFi), which only
-  drives an `IO80211Interface`/`IO80211Controller` through the Apple80211
-  ioctls ("Could not obtain IO80211Interface bsd name" in its strings). Our
-  interface is an IOUserEthernet `en0`, so iOS networking works but the
-  status bar shows no Wi-Fi bars and Settings > Wi-Fi stays empty. Showing
-  them would need a kernel IO80211 controller emulating Apple80211.
+- Status-bar Wi-Fi icon and Settings > Wi-Fi: done (section 10; it was
+  listed here as "not feasible without a kernel IO80211 controller").
 - Data frames are sent with mailbox control word 0; dsiwifi uses `2008h` for
   IP traffic. Try that if unicast data does not flow after the handshake.
 - TX flow control: no HTC credit accounting from the receive trailer yet;
@@ -334,3 +337,178 @@ board ("backend qemu-vnic not available").
 - WPA (TKIP pairwise), WEP and enterprise networks are not supported.
 - Faster path later: wake the daemon from the shim instead of 4 ms polling,
   CMD53 byte mode for BMI instead of one CMD52 per byte.
+
+## 10. iOS Settings > Wi-Fi and the status bar (Apple80211 bridge)
+
+Sections 2-9 give iOS a working `en0`, but iOS itself does not know it is
+Wi-Fi: Settings showed "No Wi-Fi", the status bar no bars, and the network
+had to be preset in `wifi.cfg`. All of that belongs to configd's
+`WiFiManager.bundle` (MobileWiFi's server), and WiFiManager only drives
+Apple's own 802.11 driver. Since this section, iOS's own UI scans, joins
+(WPA2-PSK and open networks, password typed on the on-screen keyboard),
+remembers networks and shows the signal in the status bar; `wifi.cfg` is
+optional.
+
+```
+ Settings (AirPortSettings)  SpringBoard (bars)      ARM9 (ar6k.c)
+        | MobileWiFi IPC           |                      ^ scan / join(ssid, PMK) / leave
+        v                          v                      | status, scan table (16 x 128 B)
+ configd: WiFiManager.bundle -- Apple80211 ioctls --> ios3ds-a80211.dylib --sysctl kern.ios3ds_wlan--> wlanmbox_t
+          IPConfiguration (DHCP)    802.11 kernel events <--  (DYLD_INSERT_LIBRARIES)                @NET_PA+0xC200
+ securityd -- AppleKeyStore / IOAESAccelerator --> ios3ds-hwaes.dylib (keychain: the Wi-Fi password)
+```
+
+### 10.1 ARM9 and the control mailbox
+
+- **No `wifi.cfg` + `wifi-fw.bin` present:** the driver brings the chip up as
+  before and stops in state `idle` (`[wifi] idle: no network configured,
+  waiting for iOS (Settings > Wi-Fi)`). **Neither file:** one line, the chip is
+  never powered (`[wifi] 0:/ios3ds/wifi-fw.bin: not found ... Wi-Fi off`), iOS
+  sees no Wi-Fi hardware. A `wifi.cfg` with `ssid=` works as before (joins at
+  boot); iOS can still scan and switch networks.
+- `wlanmbox_t` (`boot/common/wifi_proto.h`) at `NET_PA + 0xC200`, inside the
+  network mailbox's section: a status block (state off/starting/idle/joining/up,
+  SSID, BSSID, channel, RSSI/noise, security, last disconnect reason, scan and
+  link sequence numbers), a command block (`scan`, `join` with SSID + 32-byte
+  PMK or open, `leave`; sequence-numbered, acknowledged in the status) and a
+  scan table of 16 networks (SSID, BSSID, channel, RSSI, noise, capability,
+  beacon interval, the first 76 bytes of IEs). One writer per cache line, as
+  `netmbox_t`.
+- `kern.ios3ds_wlan` (`tools/ios3ds-wifi/shim/net.c`): read = status + scan
+  table, write = one command (root only).
+- iOS hands the ARM9 the **PMK** (WiFiManager computes PBKDF2 itself), so a
+  join from Settings costs no PBKDF2 on the ARM9.
+
+### 10.2 `ios3ds-a80211.dylib` in configd
+
+`tools/ios3ds-wifi/a80211/a80211.c`, inserted with `DYLD_INSERT_LIBRARIES` in
+configd's launchd plist (rootfs recipe), interposes (`__DATA,__interpose`)
+exactly what WiFiManager uses, everything reverse engineered from
+WiFiManager-185.6.12 (iOS 4.2.1):
+
+| WiFiManager does | It gets |
+|---|---|
+| `IOServiceMatching("IO80211Interface")` + `IOServiceFirstMatch` notification; per match it reads "BSD Name" (31 tries, 10 ms apart) or gives up for good ("Could not obtain IO80211Interface bsd name") | a notification on a class that never matches; once `en0` exists (found by the AR6014's MAC in `getifaddrs`), a run-loop timer on the run loop the client's notification port is scheduled on (`CFRunLoopAddSource` is watched) hands its callback an iterator with `IOBSDNameMatching(en0)`. Two clients in configd register, in either order from boot to boot; each one is served. The real notification would come 20+ s too early: InterfaceNamer names the IOUserEthernet interface only after IOKit is quiet. |
+| `IOObjectConformsTo(parent, "IO80211Controller")`, `IORegistryEntryCreateCFProperties(controller)` | true for `IOUserEthernetController`; plus `IO80211HardwareVersion`, `IO80211DriverVersion`, `IO80211CountryCode` (X0), `IO80211Locale` (ETSI) |
+| `SIOCGIFMEDIA` on en0 (Apple80211GetIfListCopy keeps interfaces whose media type is `IFM_IEEE80211`) | `IFM_IEEE80211`, active. This also makes SystemConfiguration and IPConfiguration treat en0 as Wi-Fi (`kSCNetworkInterfaceTypeIEEE80211`). |
+| `ioctl(SIOCGA80211 / SIOCSA80211)` (`0xC02069C9` / `0x802069C8`, `struct apple80211req` {ifname, type, value, len, data}) | answered from `kern.ios3ds_wlan`, table below |
+| `socket(PF_SYSTEM, SOCK_RAW, SYSPROTO_EVENT)` + `SIOCSKEVFILT` {vendor 1, class 6 (802.11), subclass 1} | one end of a datagram socketpair; a watcher thread (250 ms) posts 40-byte `kern_event_msg`s with the interface name: 1 power, 2 SSID, 3 BSSID, 4 link, 9 association done, 10 scan done |
+| notify state `com.apple.iokit.hid.displayStatus` (auto-join and the disassociation timer only run with the display on; "Device display is OFF" at every boot) | nobody posts it on ios3ds (the HID event system does on an iPod), so the watcher mirrors SpringBoard's `com.apple.springboard.hasBlankedScreen` into it (on unless blanked) and posts the change: `[a80211] display on (SpringBoard) -> ...` |
+| `SCPreferencesGetValue` (logging keys only) | `IOS3DS_WIFI_LOG=1` in configd's environment sets WiFiManager's own `LoggingEnabled`/`LoggingFile` to `/dev/console` (all its NOTICE lines); `=2` also logs every Apple80211 request with its caller. Off by default. |
+
+Apple80211 requests (iOS 4 numbering; "first GET/SET type N" is logged once
+per type):
+
+| Type | Request | Answer |
+|---|---|---|
+| 1 / 9 | SSID (raw bytes, length in `req_len`) / BSSID | current network; ENXIO when not associated |
+| 2, 4, 8, 13, 14, 15, 5 | auth type, channel, rate, state (INIT/AUTH/RUN), PHY mode (11b/g), op mode (station), power save (off) | from the status block |
+| 10 (SET) | scan request | `scan` command; scan-done event when the ARM9's scan sequence moves, **at the latest after 8 s** (WiFiManager's synchronous scan waits for the event without a timeout) |
+| 11 | scan result | one 0x8C-byte record per call (channel, flags, noise, RSSI, beacon interval, capability, BSSID, 12 rates, SSID, IE pointer/length at +0x88/+0x86), EIO after the last |
+| 12 | card capabilities | WPA2-PSK, TKIP, AES-CCM bits |
+| 16 / 17 | RSSI / noise (dBm, control and aggregate) | from the AR6014's BSSINFO of the current network |
+| 19 | power (get / set) | soft radio switch; off = `leave` |
+| 20 (SET) | associate (0x180 bytes: SSID len +0x0C, SSID +0x10, key length +0x3C, key type +0x40, key +0x48) | `join`: key type 6 (PMK, 32 bytes) = WPA2-PSK, no key = open; WEP and others: EOPNOTSUPP |
+| 21 | association result | 0 pending, 1 done, 3 / 9 failed (disconnect reason / 30 s timeout); judged only after the ARM9 acknowledged the join command (WiFiManager disassociates first, so the status still shows idle for a poll: the first version reported "failed" while the join went on) |
+| 22 (SET) | disassociate | `leave` |
+| 27, 32, 29, 43, 44, 201, 204 | supported channels (1-13), rate set, deauth reason, driver/hardware version strings, current network as a scan record, RSSI bounds (-95/-30, threshold -85) | constants / status |
+| others (6, 7, 18, 57, ...) | | EOPNOTSUPP, like a driver without the feature |
+
+### 10.3 The keychain (`ios3ds-hwaes.dylib` in securityd)
+
+The first join failed with WiFiManager's `No password for ios3ds-qemu`:
+Settings stores the password in the keychain (service `AirPort`, account =
+SSID) and WiFiManager reads it back, and **every keychain write on ios3ds
+failed** with `errSecInteractionNotAllowed` (-25308; a probe `SecItemAdd`
+from configd showed it). iOS 4.2.1's securityd encrypts each item with a
+random key and has AppleKeyStore wrap that key with the class key of the
+item's protection class (IOConnectCallMethod selector 10 KeyWrap / 11
+KeyUnwrap, 32 -> 40 bytes, RFC 3394 sizes). Those class keys come from the
+system keybag that keybagd loads at boot; keybagd needs the iPod's AES engine
+and effaceable storage and was disabled long ago (re-log 18), and there is no
+IOAESAccelerator either ("unable to access hwaes key"). So mail account
+passwords could not be saved either.
+
+`tools/ios3ds-keychain/hwaes.c` is inserted into securityd the same way and
+answers `IOServiceMatching("AppleKeyStore" / "IOAESAccelerator")` with
+IOResources, `IOServiceOpen` with private handles, AppleKeyStore selector 0
+(open), 10/11 (RFC 3394 AES key wrap with one software key for every class,
+checked once on the host against the RFC's test vector, not part of
+`make test`) and IOAESAccelerator selector 1
+(AES-CBC with CommonCrypto; hardware keys UID/GID/0x835 replaced by the same
+software key). Everything else returns `kIOReturnUnsupported`. After it, the
+probe `SecItemAdd` returns 0, Settings stores the password and WiFiManager
+finds it (`SecItemCopyMatching -> 0`).
+
+**Security note:** the keychain is no longer bound to the hardware: anyone
+who has the SD card (rootfs.hfs) and this source can decrypt it. The SD card
+is not encrypted anyway. A console-bound key (the ARM9 can use the 3DS AES
+engine's console-unique keyslots) is possible later.
+
+### 10.4 Other changes
+
+- **Launch watchdog off** (`SBNoWatchdogs` in com.apple.springboard.plist):
+  with a Wi-Fi device present, Settings needs longer than SpringBoard's launch
+  watchdog in QEMU and was killed (`0x8badf00d`, "Settings failed to launch
+  in time", CPU 10 s). The 3DS is slower than the iPod; the watchdog would
+  kill slow launches on hardware too.
+- **QEMU:** the access point model also reports two beacon-only decoys in
+  scans, NeighborNet (WPA2, channel 1, -81 dBm) and CoffeeShop (open,
+  channel 11, -72 dBm), `-global ctr-wifi.decoys=off` drops them.
+- **`emu/session.py`**: one QEMU in the background, one action per call
+  (tap, drag, type on the iOS keyboard, key, shot, log). Keyboard rows were
+  measured on a screenshot (291/347/400/457); the 123 page stays up after a
+  symbol, and the page is remembered between calls.
+- **`emu/wifi_ui_test.py`**: the whole flow through the touch screen (below).
+
+### 10.5 Verified in QEMU
+
+`python3 emu/wifi_ui_test.py` (no `wifi.cfg`, dummy firmware, ca_gpu=0 for
+readable screenshots), 2026-11-18 on agent/wifi3:
+
+| Check | Log line / evidence |
+|---|---|
+| chip idle without `wifi.cfg` | `[wifi] idle: no network configured, waiting for iOS (Settings > Wi-Fi)` |
+| WiFiManager has the interface | `[a80211] handing en0 to an IO80211Interface client`; Settings: "Wi-Fi  Not Connected" |
+| Settings > Wi-Fi scans | `[wifi] iOS: scan`, `[a80211] scan done: 3 networks`; the list shows CoffeeShop, ios3ds-qemu (lock), NeighborNet (lock) |
+| join with the on-screen keyboard | 22 dots typed, Join: `[a80211] associate "ios3ds-qemu" (WPA2-PSK, PMK from WiFiManager, auth 1/8)`, `[wifi] iOS: join "ios3ds-qemu" (WPA2), in the scan list`, `[wifi] link up: ios3ds-qemu`, `[a80211] association done (result 1)` |
+| DHCP | `[wifid] en0 configured by configd` (WiFiManager's log: `Joined: ios3ds-qemu`, `Address: 10.0.2.15`) |
+| status bar | check mark in the list, Wi-Fi bars in the status bar, also on the home screen |
+| reboot, nothing touched | the known network is joined by WiFiManager's auto-join (password from the keychain): `[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus`, `[a80211] associate "ios3ds-qemu"`, `association done`, bars |
+
+8/8 checks PASS in 358 s (the tap on the Settings icon right after the home
+screen appears is sometimes ignored; the test presses Home and retries).
+Screenshots: `build/emu-wifi-ui/0*.png`. With the change in place,
+`emu/wifi_test.py --case ok` (preset network in `wifi.cfg`, HTTP fetch
+through iOS) and `--case nocfg` (no `wifi.cfg`, no firmware: one line, chip
+never powered, full boot) still PASS; in the `nocfg` case WiFiManager simply
+never gets an interface and Settings shows "No Wi-Fi".
+
+### 10.6 Unverified on hardware
+
+Besides section 6's list (SDIO, BMI, firmware, WMI, 4-way):
+
+- The real Type4 firmware answers a scan **without** a probed SSID with
+  BSSINFO for every network (the model does; with `wifi.cfg` the driver
+  always probed for one SSID) and accepts WMI_CONNECT for an SSID chosen
+  after an idle period.
+- RSSI/noise from BSSINFO are in the units the status bar expects (the model
+  sends RSSI -40..-81 dBm-like values; dsiwifi treats the byte as SNR).
+- WiFiManager's PMK equals our PBKDF2 (same standard; verified only against
+  the model's authenticator).
+- Disconnect / roaming / AP loss events: the model never loses the AP, so the
+  link-down path to WiFiManager (event 4, then auto-join) is untested.
+- A slow console: the 8 s scan guard, WiFiManager's association timeout and
+  the 250 ms event poller were tuned in QEMU only.
+- The software keychain key works the same on hardware (no hardware involved),
+  but securityd's other AppleKeyStore uses (backup keybags, selectors 4/6/12)
+  are answered "unsupported" and were never exercised.
+
+### 10.7 Open items
+
+- WEP, WPA-only (TKIP pairwise) and enterprise networks: Settings lists them,
+  joining fails (EOPNOTSUPP / association failed).
+- The status bar's carrier text says "Searching..." (no baseband); an iPod
+  shows "iPod" there. Unrelated to Wi-Fi.
+- Turning Wi-Fi off in Settings disassociates but leaves the chip powered.
+- Scan table: 16 networks, 76 bytes of IEs each.

@@ -10,7 +10,9 @@
  * library is inserted into configd (DYLD_INSERT_LIBRARIES, rootfs recipe)
  * and interposes exactly those calls:
  *
- *   IOServiceMatching("IO80211Interface")       -> our IOEthernetInterface
+ *   IOServiceMatching("IO80211Interface")       -> our IOEthernetInterface,
+ *     + IOServiceAddMatchingNotification           delivered once en0 has its
+ *                                                  BSD name (see below)
  *   IOObjectConformsTo(x, "IO80211Controller")  -> true for IOUserEthernetController
  *   IORegistryEntryCreateCFProperties(ctrl)     -> + the IO80211 keys it reads
  *   ioctl(SIOCGIFMEDIA, en0)                    -> IFM_IEEE80211
@@ -18,9 +20,12 @@
  *                                                  sysctl kern.ios3ds_wlan
  *   PF_SYSTEM event socket (802.11 subclass)    -> a socketpair we feed with
  *                                                  scan-done / link events
+ *   SCPreferencesGetValue (logging keys)        -> IOS3DS_WIFI_LOG=1|2: WiFiManager's
+ *                                                  own log (and every request) on
+ *                                                  the console
  *
  * Every request type and layout comes from reverse engineering WiFiManager's
- * own Apple80211 code (docs/wifi.md section 10, re-log). Anything unknown is
+ * own Apple80211 code (docs/wifi.md section 10, re-log 52). Anything unknown is
  * logged once and answered EOPNOTSUPP, like a driver without that feature.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -260,6 +265,9 @@ static int assoc_result;            /* GET 21: 0 pending, 1 ok, 2.. failed */
 static int assoc_pending;
 static time_t assoc_since;
 static uint8_t assoc_ssid[32], assoc_ssid_len;
+static uint32_t assoc_seq;          /* command sequence number of the join */
+static uint32_t assoc_link_seq;     /* link_seq when it was posted */
+static int assoc_was_up;
 
 static int up(void) { return io.st.state == WLAN_ST_UP; }
 
@@ -463,6 +471,9 @@ static int a80211_set(struct apple80211req *r)
         assoc_result = 0;
         assoc_pending = 1;
         assoc_since = time(NULL);
+        assoc_seq = io.cmd_seq + 1;         /* the shim numbers commands in order */
+        assoc_link_seq = io.st.link_seq;
+        assoc_was_up = io.st.state == WLAN_ST_UP;
         say("[a80211] associate \"%.*s\" (%s, auth %u/%u)", (int)sl, (const char *)d + 0x10,
             c.security ? "WPA2-PSK, PMK from WiFiManager" : "open", *(uint16_t *)(d + 6), *(uint16_t *)(d + 8));
         return wlan_post(&c) == 0 ? 0 : fail(6);
@@ -644,6 +655,36 @@ static void my_IONotificationPortDestroy(IONotificationPortRef port)
     IONotificationPortDestroy(port);
 }
 
+/* ---- display state -----------------------------------------------------------------
+   WiFiManager keeps auto-join off while notify state
+   com.apple.iokit.hid.displayStatus says the display is off ("Device display
+   is OFF", "Disabling automatic association"). The HID event system posts it
+   on a real iPod; on ios3ds nobody does, so it read "off" forever and a known
+   network was only joined with Settings open. The watcher mirrors
+   SpringBoard's com.apple.springboard.hasBlankedScreen into it (on unless
+   blanked) and posts the change. */
+uint32_t notify_register_check(const char *name, int *token);
+uint32_t notify_get_state(int token, uint64_t *state);
+uint32_t notify_set_state(int token, uint64_t state);
+uint32_t notify_post(const char *name);
+#define DISPLAY_NOTE "com.apple.iokit.hid.displayStatus"
+
+static void display_mirror(void)
+{
+    static int blank_tok = -1, disp_tok = -1;
+    static uint64_t last = 2;
+    uint64_t blanked = 0, on;
+    if (blank_tok < 0 && notify_register_check("com.apple.springboard.hasBlankedScreen", &blank_tok)) blank_tok = -1;
+    if (disp_tok < 0 && notify_register_check(DISPLAY_NOTE, &disp_tok)) disp_tok = -1;
+    if (blank_tok < 0 || disp_tok < 0 || notify_get_state(blank_tok, &blanked)) return;
+    on = !blanked;
+    if (on == last) return;
+    last = on;
+    notify_set_state(disp_tok, on);
+    notify_post(DISPLAY_NOTE);
+    say("[a80211] display %s (SpringBoard) -> %s", on ? "on" : "blanked", DISPLAY_NOTE);
+}
+
 /* status poller: turns ARM9 state changes into 802.11 events */
 static void *watcher(void *arg)
 {
@@ -651,6 +692,7 @@ static void *watcher(void *arg)
     int first = 1;
     for (;;) {
         usleep(250000);
+        display_mirror();
         if (!ourif[0]) { is_ours(""); continue; }
         pthread_mutex_lock(&lock);
         notes_schedule();
@@ -669,10 +711,15 @@ static void *watcher(void *arg)
                 ev[nev++] = EV_SCAN_DONE;
             }
             if (assoc_pending) {
+                /* judge only what the ARM9 did after it took the join command
+                   (WiFiManager sends a disassociate first: the status still
+                   says idle, or up on the old network, for a poll or two) */
+                int acked = (int32_t)(io.st.ack_seq - assoc_seq) >= 0;
                 int same = io.st.ssid_len == assoc_ssid_len && !memcmp(io.st.ssid, assoc_ssid, assoc_ssid_len);
-                if (io.st.state == WLAN_ST_UP && same) {
+                if (acked && io.st.state == WLAN_ST_UP && same && (!assoc_was_up || io.st.link_seq != assoc_link_seq)) {
                     assoc_result = 1;
-                } else if (io.st.state == WLAN_ST_IDLE || time(NULL) - assoc_since > 30) {
+                } else if ((acked && (io.st.state == WLAN_ST_IDLE || io.st.result < 0)) ||
+                           time(NULL) - assoc_since > 30) {
                     assoc_result = io.st.disc_reason ? 3 : 9;   /* -3907 / timeout */
                 }
                 if (assoc_result) {

@@ -132,12 +132,14 @@ def main():
                 sess("key", "h")            # Spotlight: back to the icons
                 time.sleep(4)
             sess("tap", *map(str, SETTINGS_ICON))
-            for _ in range(30):                     # Settings is slow to launch in QEMU
-                time.sleep(3)
-                if diff(shot(a.out, "02-settings"), home) > 15:
+            prev = None
+            for _ in range(40):                     # Settings is slow to launch in QEMU:
+                time.sleep(3)                       # wait until it is up and drawn
+                img = shot(a.out, "02-settings")
+                if diff(img, home) > 15 and prev is not None and diff(img, prev) < 1.0:
                     break
-            time.sleep(15)
-            shot(a.out, "02-settings")
+                prev = img
+            time.sleep(15)                          # the launch image is stable too
             sess("tap", *map(str, WIFI_ROW))
             t1 = time.time()
             while time.time() - t1 < 45:
@@ -181,7 +183,7 @@ def main():
         check("association via Settings", res == "done", "(%s)" % res)
         check("WPA2 4-way handshake, link up", wait_log(r"\[wifi\] link up: ios3ds-qemu", 30))
         check("DHCP lease on en0", wait_log(r"\[wifid\] en\d configured by configd", 90))
-        time.sleep(10)
+        time.sleep(30)                      # Settings redraws slowly in QEMU
         shot(a.out, "06-joined")
         sess("key", "h")
         time.sleep(8)
