@@ -97,13 +97,15 @@ static void blk_lock_init(void)
 /* One transfer of <= SHIM_BOUNCE_SIZE through the ARM9; returns status.
    sleeping = 1: interrupts are on and the caller holds blk_lock, so wait by
    spinning briefly, then sleeping in 250 us steps (other threads run). */
-static int xfer(u32 op, u32 lba, u32 count, int sleeping)
+static int xfer(u32 op, u32 lba, u32 count, int sleeping, u32 xbytes, u32 xflags)
 {
     volatile blkmbox_t *m = MBOX;
     u32 seq = m->seq + 1;
     m->op = op;
     m->lba = lba;
     m->count = count;
+    m->xnu_bytes = xbytes;      /* for the ARM9's md0 profile only */
+    m->xnu_flags = xflags;
     m->seq = seq;
     dclean(&m->seq, 32);
     for (u32 spins = 0;; spins++) {
@@ -133,7 +135,8 @@ void shim_mdevstrategy(buf_t bp)
     volatile blkmbox_t *m = MBOX;
     u32 total = buf_count(bp);
     long long blk = buf_blkno(bp);
-    int reading = buf_flags(bp) & B_READ;
+    u32 bflags = (u32)buf_flags(bp);
+    int reading = bflags & B_READ;
     u8 *data = 0;
     int err = 0;
 
@@ -160,11 +163,12 @@ void shim_mdevstrategy(buf_t bp)
             if (n > SHIM_BOUNCE_SIZE) n = SHIM_BOUNCE_SIZE;
             u32 secs = (n + 511) / 512;
             int sleeping = blk_lock != 0;
+            u32 xflags = bflags | (done ? 0 : 0x80000000u);
             u32 flags = sleeping ? 0 : irq_save();
             int st;
             if (reading) {
                 dinval(BOUNCE, secs * 512);
-                st = xfer(BLK_READ, lba, secs, sleeping);
+                st = xfer(BLK_READ, lba, secs, sleeping, total, xflags);
                 if (!st) {
                     dinval(BOUNCE, secs * 512);
                     copy(data + done, BOUNCE, n);
@@ -173,7 +177,7 @@ void shim_mdevstrategy(buf_t bp)
             } else {
                 copy(BOUNCE, data + done, n);
                 dclean(BOUNCE, secs * 512);
-                st = xfer(BLK_WRITE, lba, secs, sleeping);
+                st = xfer(BLK_WRITE, lba, secs, sleeping, total, xflags);
                 m->nwrite++;
             }
             if (!sleeping) irq_restore(flags);

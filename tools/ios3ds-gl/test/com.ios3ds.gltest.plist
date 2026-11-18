@@ -6,6 +6,7 @@
 	<string>com.ios3ds.gltest</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>/usr/libexec/ios3ds-diag</string>
 		<string>/usr/libexec/ios3ds-gltest</string>
 		<string>0</string>
 		<string>0</string>

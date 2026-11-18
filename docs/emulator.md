@@ -69,6 +69,14 @@ the instruction count, ~250 MHz, which reproduces the hardware's ordering.
 Use it for any boot-time ordering question; the plain mode stays the default
 because it is faster for long boots.
 
+### Boot and app-launch profiles: `emu/bootprof.py`
+`python3 emu/bootprof.py` boots `build/sd.img` with `--icount 2`, boot.cfg
+`ioprof=2 log_ts=1` and QEMU's profiler (`N3DS_PROF=<file>`: per 250 ms of
+guest time ARM11/ARM9 busy %, md0 pending %). It waits for the boot to
+settle, cold-launches Settings, Notes and Safari, and writes a phase table
+to `build/emu/bootprof/report.md`. `emu/hfsmap.py` maps the md0 sectors to
+HFS+ files. See [boot-perf.md](boot-perf.md).
+
 ### Scripted debugging: `emu/gdb/`
 The Arm gdb 14.2 has no Python and the host gdb has no ARM target, so the
 scripts talk to QEMU's gdbstub directly through `emu/gdb/rsp.py`:

@@ -11,6 +11,7 @@
 @   +0x1C  b shim_irq             kernel IRQ handler entry (IRQ mode)
 @   +0x20  b shim_mdevstrategy    bsd/dev/memdev.c mdevstrategy(buf_t) -> SD via ARM9
 @   +0x24  b shim_iic_transfer    AppleARMIICDevice transfer -> register file (audio codec/amp)
+@   +0x28  b shim_quiet_clk_function  AppleS5L8720XClockController PMU wait, off the busy count (quiet.c)
 @   +0x30..+0x3C                  MCU: RTC, IORTC wait, halt, set time (tools/ios3ds-mcu/shim/mcu.c)
 @
 @ Time base: MPCore watchdog in timer mode = free-running 32-bit down-counter,
@@ -78,7 +79,8 @@ _shim_base:
     b shim_irq                      @ +0x1C
     b shim_mdevstrategy             @ +0x20 (C, blk.c)
     b shim_iic_transfer             @ +0x24 (C, kernel/shim/audio.c)
-    .org 0x30                       @ +0x28/+0x2C left free
+    b shim_quiet_clk_function       @ +0x28 clock controller's PMU wait (C, kernel/shim/quiet.c)
+    .org 0x30                       @ +0x2C left free
     b shim_mcu_get_gmt              @ +0x30 PEGetGMTTimeOfDay (C, tools/ios3ds-mcu/shim/mcu.c)
     b shim_mcu_wait_rtc             @ +0x34 IOKitInitializeTime's IORTC wait
     b shim_mcu_halt_restart         @ +0x38 PEHaltRestart's platform call

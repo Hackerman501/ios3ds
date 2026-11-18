@@ -257,7 +257,7 @@ test feeds a counter through the RX emulation and checks every delivered frame
 
 ## 8. Open points / next steps
 
-1. Hardware: listen for the boot tone (`tone: #1 ...` in the log, the shim's
+1. Hardware (boot.cfg `diag=1`, docs/boot-perf.md §3): listen for the boot tone (`tone: #1 ...` in the log, the shim's
    `ios3ds-audio: tx start` and the ARM9 `[audio] iOS output stream #1
    started`). If the stream starts but nothing is heard: confirm CSND is heard
    with I2S1 DSP volume 32 and that PDN_I2S_CNT/I2S1_CNT are set (the shim

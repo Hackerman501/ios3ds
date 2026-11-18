@@ -168,7 +168,10 @@ typedef struct {
     u32 op;
     u32 lba;            /* 512-byte sectors */
     u32 count;          /* sectors, <= SHIM_BOUNCE_SIZE / 512 */
-    u32 _r1[4];
+    u32 xnu_bytes;      /* size of the whole XNU buf this chunk belongs to (profiling) */
+    u32 xnu_flags;      /* its buf_flags(): B_READ 1, B_ASYNC 2, B_PAGEIO 0x80, B_META 0x100;
+                           bit 31 = first chunk of the buf */
+    u32 _r1[2];
     /* line 2: ARM9 */
     u32 done_seq;       /* == seq when the request has completed */
     int status;         /* 0 = ok, else FatFs error */

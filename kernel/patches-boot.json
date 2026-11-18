@@ -1,0 +1,16 @@
+[
+ {
+  "name": "wdt-no-pmu-wait",
+  "va": "0x802ec014",
+  "orig": "9847",
+  "new": "0020",
+  "why": "AppleARMWatchDogTimer::start (AppleARMPlatform+0xa014): waitForService(serviceMatching(\"IOPMU\"), no timeout) -> movs r0,#0. The 3DS has no PMU, so the wait never ended and kept the wdt nub busy: launchctl's IOKitWaitQuiet at boot always ran into its 5 s timeout. The code after it handles NULL (it only reads the PMU's IOPMUBootDebug property); the matching dictionary leaks once (docs/boot-perf.md, re-log 50)"
+ },
+ {
+  "name": "clkctl-voltage-quiet",
+  "va": "0x807510a4",
+  "orig": "15482e80",
+  "new": "@shim+0x28@",
+  "why": "AppleS5L8720XClockController::start (AppleS5L8720X+0x2f60): literal of its call to AppleARMPlatform's function lookup (0x802e4815) for 'function-core_voltage_%ld' -> shim_quiet_clk_function (kernel/shim/quiet.c): the lookup waits forever for the missing PMU and must (NULL panics 'Bad DPSM Tables'), but the shim first takes the clkrstgen nub off IOKit's busy count, so IOKitWaitQuiet no longer waits 5 s for it (docs/boot-perf.md, re-log 50)"
+ }
+]

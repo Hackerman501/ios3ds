@@ -36,7 +36,7 @@ Every stage writes to the screen and to `sd:/ios3ds/log.txt`. The previous run i
 | 0: monitor only | Boot ios3ds, hold **B** | Bottom screen: version, "SD ok", "ARM11 ok"; the monitor stays in its menu | Screen/SD/ARM11 bring-up problem: the log says which step |
 | 1: kernel start | Boot without B | XNU's first lines on the top screen ("Darwin Kernel Version 10.4.0…") | Look at the last log line: device tree, boot_args, MMU |
 | 2: root disk | – | `BSD root: md0`, launchd, daemons in the log | Block server: TMIO timing on real SD |
-| 3: SpringBoard | – | Home screen on the top screen (turn the console 90° clockwise) | `[smp]` thread dumps in the log; SELECT+START for a panic dump |
+| 3: SpringBoard | – | Home screen on the top screen (turn the console 90° clockwise) | `[smp]` thread dumps in the log (boot.cfg `diag=1`, [boot-perf.md](boot-perf.md) §3); SELECT+START for a panic dump |
 | 4: input | START = Home, SELECT = lock, L/R = volume, touch on the bottom screen | Spotlight opens on Home; touches move or tap | Log lines `[input] …` and `tsc_ok` |
 
 To get back: hold POWER ~10 s, then power on normally.
