@@ -1,0 +1,280 @@
+{
+ "_comment": "Cydia pre-installed (docs/cydia.md). Third-party debs, never committed: downloaded at build/install time from 'mirrors' + path, checked against size + sha256. Set: Cydia 1.1.30 (last Telesphoreo release, armv6 slice, iOS >= 2.0) and the closure of its Depends/Pre-Depends plus the Essential packages, latest versions in apt.saurik.com tangelo-3.7 (= the 'ios' dist). Refill hashes: scripts/cydia.py pin.",
+ "mirrors": [
+  "http://apt.saurik.com/"
+ ],
+ "packages": [
+  {
+   "package": "apt7",
+   "version": "0.7.25.3-9",
+   "path": "debs/apt7_0.7.25.3-9_iphoneos-arm.deb",
+   "size": 268210,
+   "sha256": "09e9b0dba087ee93385b8591f3d2e0005d78187e95d8633525fd92cf045f69ab"
+  },
+  {
+   "package": "apt7-key",
+   "version": "0.7.25.3-3",
+   "path": "debs/apt7-key_0.7.25.3-3_iphoneos-arm.deb",
+   "size": 2962,
+   "sha256": "5f96dcc9778aea3d5f0a02a035f14426d257c2ffe328984c8226b48ae03b77ff"
+  },
+  {
+   "package": "apt7-lib",
+   "version": "0.7.25.3-16",
+   "path": "debs/apt7-lib_0.7.25.3-16_iphoneos-arm.deb",
+   "size": 501632,
+   "sha256": "dc31276fb9c912c0b731f69abc49d29f5489bfc1f002a03014ca3d055183c985"
+  },
+  {
+   "package": "base",
+   "version": "1-4",
+   "path": "debs/base_1-4_iphoneos-arm.deb",
+   "size": 1800,
+   "sha256": "447b0251ce391afdd70224402c07d0976f50b9f9fbc7f71258cdcd9683e5685d"
+  },
+  {
+   "package": "bash",
+   "version": "4.0.44-16",
+   "path": "debs/bash_4.0.44-16_iphoneos-arm.deb",
+   "size": 314702,
+   "sha256": "f66313093e9ccadd856491aba8dbda0dd58a336663d1555641e4cf8c58010bef"
+  },
+  {
+   "package": "berkeleydb",
+   "version": "4.6.21-5",
+   "path": "debs/berkeleydb_4.6.21-5_iphoneos-arm.deb",
+   "size": 483432,
+   "sha256": "6754bcc64405a837c900040420838378d81e9e1df8ea70ae50ed4f91a33d8971"
+  },
+  {
+   "package": "bzip2",
+   "version": "1.0.5-8",
+   "path": "debs/bzip2_1.0.5-8_iphoneos-arm.deb",
+   "size": 23772,
+   "sha256": "ad0cb4b6333a32423bafbac36da54f149dbe395f1083a1bdeaded46fa545e7cc"
+  },
+  {
+   "package": "coreutils",
+   "version": "8.12-13",
+   "path": "debs/coreutils_8.12-13_iphoneos-arm.deb",
+   "size": 633090,
+   "sha256": "fe1966e5f72064c8a0dbe0a00591f7be0803d36194aed1e03bd7c959b1043247"
+  },
+  {
+   "package": "coreutils-bin",
+   "version": "8.12-9",
+   "path": "debs/coreutils-bin_8.12-9_iphoneos-arm.deb",
+   "size": 736480,
+   "sha256": "9ebee84e65b1a3ccf76190286e24ca8b80081ba7b2deda7d31a6122d744292e2"
+  },
+  {
+   "package": "cydia",
+   "version": "1.1.30",
+   "path": "debs/cydia_1.1.30_iphoneos-arm.deb",
+   "size": 1292624,
+   "sha256": "f80a5228b2bacbd8e2640d96dc1b15a5cf0db681d2ed976cf53f1f5c64a9b184"
+  },
+  {
+   "package": "cydia-lproj",
+   "version": "1.1.12",
+   "path": "debs/cydia-lproj_1.1.12_iphoneos-arm.deb",
+   "size": 66876,
+   "sha256": "be77311b214122e5ff7dabd001c96b8cd8a4e479362f3163a557d8dd9b520f31"
+  },
+  {
+   "package": "darwintools",
+   "version": "1-5",
+   "path": "debs/darwintools_1-5_iphoneos-arm.deb",
+   "size": 5674,
+   "sha256": "e188cb79f4065207463d1fab1ac69fb1be66d78c91df52c2149a97bb5bd24474"
+  },
+  {
+   "package": "debianutils",
+   "version": "3.3.3ubuntu1-1p",
+   "path": "debs/debianutils_3.3.3ubuntu1-1p_iphoneos-arm.deb",
+   "size": 6164,
+   "sha256": "2d0f2b0e05bbd99c2ac3850dd68dc750f90d9d8ab8f60f91aab606c5efab707a"
+  },
+  {
+   "package": "diffutils",
+   "version": "2.8.1-6",
+   "path": "debs/diffutils_2.8.1-6_iphoneos-arm.deb",
+   "size": 92388,
+   "sha256": "308f3835cf81a3c519eaa89d5b8f8c6bfbbab03ab2fc486e8a9beac129ecdfb0"
+  },
+  {
+   "package": "dpkg",
+   "version": "1.18.10-12",
+   "path": "debs/dpkg_1.18.10-12_iphoneos-arm.deb",
+   "size": 422468,
+   "sha256": "87482e0c005a152f269f5c78a753ff514db5736b579cf870bd7dcba96f1463c2"
+  },
+  {
+   "package": "findutils",
+   "version": "4.2.33-7",
+   "path": "debs/findutils_4.2.33-7_iphoneos-arm.deb",
+   "size": 157872,
+   "sha256": "6f0154ab3a0d8a04a128163c7ef49f0d425e1225f176fa16eca72a36492c48d0"
+  },
+  {
+   "package": "firmware-sbin",
+   "version": "0-1",
+   "path": "debs/firmware-sbin_0-1_iphoneos-arm.deb",
+   "size": 1106,
+   "sha256": "17c2a22ee7e46d6d261967e4a75ba3f89062ca5f8f27f6bcaa870706c25e378e"
+  },
+  {
+   "package": "gnupg",
+   "version": "1.4.8-4",
+   "path": "debs/gnupg_1.4.8-4_iphoneos-arm.deb",
+   "size": 470686,
+   "sha256": "9ead71f65ad62e95b31cc821dd6e7b6a3dbd930a7a49e96f280a2988288f5187"
+  },
+  {
+   "package": "grep",
+   "version": "2.5.4-3",
+   "path": "debs/grep_2.5.4-3_iphoneos-arm.deb",
+   "size": 84338,
+   "sha256": "d518772e85b0c2438371913de18678b60fc8c5f999aa3e16ed639b05245cf618"
+  },
+  {
+   "package": "gzip",
+   "version": "1.6-7",
+   "path": "debs/gzip_1.6-7_iphoneos-arm.deb",
+   "size": 97818,
+   "sha256": "78a687909cbef8e67c2f1e706160aff67cab52d4409f21399208cd7cc84254bf"
+  },
+  {
+   "package": "lzma",
+   "version": "4.32.7-5",
+   "path": "debs/lzma_4.32.7-5_iphoneos-arm.deb",
+   "size": 94200,
+   "sha256": "eeb6f7a7859d3f5233bc422d01a54fbdde48490be438131ccbd14df4f24998e8"
+  },
+  {
+   "package": "ncurses",
+   "version": "5.7-15",
+   "path": "debs/ncurses_5.7-15_iphoneos-arm.deb",
+   "size": 335922,
+   "sha256": "d8fa54475605a6c48c3b1647e936da4b11b5029890174c8cb19cc99b6216b3da"
+  },
+  {
+   "package": "org.thebigboss.repo.icons",
+   "version": "1.0",
+   "path": "debs/org.thebigboss.repo.icons_1.0.deb",
+   "size": 11488,
+   "sha256": "30076cf7179cc1a25a8c33242b4ca6b8b70edf172d16b1368c232b16e4f93e9f"
+  },
+  {
+   "package": "pam",
+   "version": "32.1-4",
+   "path": "debs/pam_32.1-4_iphoneos-arm.deb",
+   "size": 54922,
+   "sha256": "5480e9721aec54d3e2c67b07cd676218947daa9d2120570a2bd243b4a0b86533"
+  },
+  {
+   "package": "pam-modules",
+   "version": "36.1-5",
+   "path": "debs/pam-modules_36.1-5_iphoneos-arm.deb",
+   "size": 5518,
+   "sha256": "c72d01a5b48b9d1ae91cbbed1e6d1b071ab4a5f806cc6f2f0f7edb889682640a"
+  },
+  {
+   "package": "profile.d",
+   "version": "0-2",
+   "path": "debs/profile.d_0-2_iphoneos-arm.deb",
+   "size": 928,
+   "sha256": "170b0a7bfdebb0b263e047ff72527df1d37cd86f7a06e915bf69088b1cff9d75"
+  },
+  {
+   "package": "readline",
+   "version": "6.0-8",
+   "path": "debs/readline_6.0-8_iphoneos-arm.deb",
+   "size": 103884,
+   "sha256": "bc26a670d3e0987085b6296f4f94f60c540c2e0e77f52e637aee7b452d9d18c0"
+  },
+  {
+   "package": "sed",
+   "version": "4.1.5-8",
+   "path": "debs/sed_4.1.5-8_iphoneos-arm.deb",
+   "size": 73272,
+   "sha256": "60c88d55b75517d1673980819a5b95dc5787c089f9951d9232048e8ff289acf7"
+  },
+  {
+   "package": "shell-cmds",
+   "version": "118-7",
+   "path": "debs/shell-cmds_118-7_iphoneos-arm.deb",
+   "size": 10900,
+   "sha256": "d5a2d17f76eb8d133d712401204da4f281127a9b929433f02b5d9541a64f7dd9"
+  },
+  {
+   "package": "system-cmds",
+   "version": "433.8-14",
+   "path": "debs/system-cmds_433.8-14_iphoneos-arm.deb",
+   "size": 84630,
+   "sha256": "33f5bf0ad1360c5a5134d95cb329fe80b30738caee064b613a5101d141afdbe9"
+  },
+  {
+   "package": "tar",
+   "version": "1.29-10",
+   "path": "debs/tar_1.29-10_iphoneos-arm.deb",
+   "size": 270662,
+   "sha256": "aab3c8563228b46e354eaffcead7eefe79d197a370d590952f37c6e99181941e"
+  },
+  {
+   "package": "uikittools",
+   "version": "1.1.12",
+   "path": "debs/uikittools_1.1.12_iphoneos-arm.deb",
+   "size": 31968,
+   "sha256": "6c8d484763f0fd83c70d9bd660d2a0daca6175b6898a624a3ca256f08d9399e0"
+  }
+ ],
+ "keep_stock": [
+  "firmware-sbin"
+ ],
+ "pseudo": [
+  {
+   "package": "firmware",
+   "version": "4.2.1",
+   "description": "almost impressive Apple frameworks",
+   "name": "iOS Firmware"
+  },
+  {
+   "package": "cy+os.ios",
+   "version": "4.2.1",
+   "description": "virtual operating system dependency"
+  },
+  {
+   "package": "cy+cpu.arm",
+   "version": "0",
+   "description": "virtual CPU dependency"
+  },
+  {
+   "package": "cy+model.ipod",
+   "version": "2.1",
+   "description": "virtual model dependency"
+  },
+  {
+   "package": "cy+kernel.darwin",
+   "version": "10.4.0",
+   "description": "virtual kernel dependency"
+  },
+  {
+   "package": "cy+lib.corefoundation",
+   "version": "550.52",
+   "description": "virtual corefoundation dependency"
+  }
+ ],
+ "mkdirs": [
+  "/var/lib/dpkg/updates",
+  "/var/lib/dpkg/triggers",
+  "/var/lib/apt/lists/partial",
+  "/var/cache/apt/archives/partial",
+  "/var/mobile/Library/Cydia",
+  "/var/mobile/Library/Caches/com.saurik.Cydia"
+ ],
+ "write": {
+  "/.cydia_no_stash": "",
+  "/var/lib/cydia/firmware.ver": "6\n"
+ }
+}

@@ -28,7 +28,7 @@ Use your own paths to the IPSW and to the SD card. On macOS the card is `/Volume
 
 It takes a few minutes and needs about 4 GB of free space on the PC while it works. It:
 1. decrypts the kernel and the iOS disk from your IPSW (and checks that it is the right file);
-2. patches the kernel and builds the iOS disk with the ios3ds programs;
+2. patches the kernel and builds the iOS disk with the ios3ds programs, and downloads Cydia (about 6.5 MB from Saurik's repository, apt.saurik.com) to pre-install it. Without internet it builds the disk without Cydia; add `--no-cydia` if you don't want it;
 3. copies the result to the card.
 
 Nothing else on the card is touched. If you leave out the SD card path, the files go to a folder `ios3ds-sd/` instead; copy what is **inside** it to the root of the SD card.
@@ -71,6 +71,7 @@ Or: hold **START** while powering on, and pick `ios3ds` in Luma's chainloader me
 ## What works, what doesn't
 
 - **Works:** home screen, touch, Home/lock/volume buttons, built-in apps such as Settings, Notes and Mail.
+- **Cydia** is on the second home-screen page, already set up (no "Preparing Filesystem" step). With Wi-Fi it refreshes its sources and installs packages. Its start page and package descriptions come from cydia.saurik.com over HTTPS, which iOS 4.2.1 can no longer verify ("certificate is invalid"); the package lists and installs use plain HTTP and work ([docs/cydia.md](cydia.md)).
 - **Wi-Fi** (experimental, untested on hardware) needs the Wi-Fi firmware from your own console. The launcher copies it for you: the first time you start `ios3ds` from the Homebrew Launcher it says "Wi-Fi firmware: reading NWM .code ..." and writes one file, `ios3ds/nwm.code`, to the SD card (it only reads the console's memory; after that it skips this step). Then Settings > Wi-Fi in iOS lists the networks around you. If the launcher shows a red `Wi-Fi fw: ...` line instead, iOS still boots without Wi-Fi; copy the firmware once with GodMode9 (hold START while powering on, choose GodMode9, press HOME, choose `Scripts...` -> `ios3ds-wifi-fw`, confirm with A). Details: [docs/wifi.md](wifi.md) section 3.
 - **Sound** working but no volume
 - No real clock: the date and time are wrong.

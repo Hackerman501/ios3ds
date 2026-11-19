@@ -47,9 +47,12 @@ def local_path(local, rootfs_add=None):
     return os.path.join(ROOT, local)
 
 
-def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add=None):
+def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add=None,
+          cydia=True, cydia_cache=None):
     """hfsplus: path of xpwn's hfsplus tool (default build/tools/hfsplus, built on
-    demand); rootfs_add: directory standing in for build/rootfs-add/ (release zip)."""
+    demand); rootfs_add: directory standing in for build/rootfs-add/ (release zip);
+    cydia: False leaves Cydia out even if the recipe has it (docs/cydia.md);
+    cydia_cache: where the downloaded debs are kept (default build/cydia)."""
     global HFS
     if hfsplus:
         HFS = hfsplus
@@ -76,6 +79,12 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             raise SystemExit("hfsplus grow failed: " + res.strip())
         if verbose:
             print("[mkrootfs] grew volume to %d MiB" % (os.path.getsize(out) >> 20))
+    if recipe.get("cydia") and cydia:
+        # before our own files: whatever the recipe writes below wins over a deb
+        import cydia as cydia_mod
+        cydia_mod.apply(out, hfs, recipe, cydia_cache, verbose)
+    elif verbose and recipe.get("cydia"):
+        print("[mkrootfs] Cydia left out (--no-cydia)")
     with tempfile.TemporaryDirectory() as td:
         for path, text in recipe.get("write", {}).items():
             tmp = os.path.join(td, "f")
@@ -156,8 +165,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--staging", default=os.path.join(ROOT, "build", "staging"))
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds", "rootfs.hfs"))
+    ap.add_argument("--no-cydia", action="store_true", help="leave Cydia out (docs/cydia.md)")
     a = ap.parse_args()
-    build(a.staging, a.out)
+    build(a.staging, a.out, cydia=not a.no_cydia)
 
 
 if __name__ == "__main__":

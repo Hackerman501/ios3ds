@@ -7,7 +7,8 @@
 #   make launcher             Homebrew Launcher app -> build/launcher/ios3ds.3dsx (devkitARM + libctru)
 #   make userland             our iOS binaries -> build/rootfs-add/ (scripts/build-ios-toolchain.sh)
 #   make hfsplus              xpwn's HFS+ editor -> build/tools/hfsplus
-#   make sd                   SD card tree -> build/sd/  (copy its contents to the card root)
+#   make sd                   SD card tree -> build/sd/  (copy its contents to the card root;
+#                             downloads Cydia's debs into build/cydia, CYDIA=0 to skip)
 #   make sdimg                same, plus a 2 GiB raw SD image for the emulator (build/sd.img)
 #   make qemu                 build QEMU with the 'nintendo3ds' dev machine (build/qemu)
 #   make emu                  boot build/sd.img in the emulator, print the SD log
@@ -18,6 +19,10 @@
 # Nothing Apple-owned is ever written outside build/ (gitignored).
 
 PYTHON  ?= python3
+# CYDIA=0: build the rootfs without the downloaded Cydia/APT base system (docs/cydia.md)
+ifneq ($(filter 0 no off,$(CYDIA)),)
+MKSD_FLAGS += --no-cydia
+endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
@@ -28,7 +33,7 @@ USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-i
 all: firm
 
 help:
-	@sed -n '3,18p' Makefile | sed 's/^# //'
+	@sed -n '3,19p' Makefile | sed 's/^# //'
 
 toolchain:
 	@scripts/setup-toolchain.sh

@@ -59,7 +59,8 @@ def build_tree(args):
         import mkboot  # noqa: E402
         mkboot.build(args.staging, os.path.join(tree, "ios3ds"), cmdline=args.cmdline,
                      patches=not args.no_patches, prebuilt=args.prebuilt,
-                     hfsplus=args.hfsplus, rootfs_add=args.rootfs_add)
+                     hfsplus=args.hfsplus, rootfs_add=args.rootfs_add,
+                     cydia=not args.no_cydia, cydia_cache=args.cydia_cache)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
     return tree
@@ -100,6 +101,9 @@ def parser():
     ap.add_argument("--prebuilt", help="dir with a prebuilt shim.bin + gpu.bin (else compiled)")
     ap.add_argument("--hfsplus", help="xpwn hfsplus tool (else build/tools/hfsplus)")
     ap.add_argument("--rootfs-add", help="dir standing in for build/rootfs-add/")
+    ap.add_argument("--no-cydia", action="store_true",
+                    help="no Cydia in the rootfs (else downloaded per rootfs/cydia.json, docs/cydia.md)")
+    ap.add_argument("--cydia-cache", help="where to keep the Cydia .debs (default build/cydia)")
     return ap
 
 

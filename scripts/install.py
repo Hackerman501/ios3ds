@@ -133,7 +133,7 @@ def fwprep(ipsw, staging, keys, force):
         die("extracting the IPSW failed (see the [fwprep] lines above)")
 
 
-def build_tree(staging, tree, prebuilt, hfsplus):
+def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None):
     import mksd
     args = mksd.parser().parse_args([])
     args.staging = staging
@@ -143,6 +143,8 @@ def build_tree(staging, tree, prebuilt, hfsplus):
     args.prebuilt = prebuilt
     args.hfsplus = hfsplus
     args.rootfs_add = os.path.join(prebuilt, "rootfs-add")
+    args.no_cydia = not cydia
+    args.cydia_cache = cydia_cache
     mksd.build_tree(args)
 
 
@@ -195,6 +197,8 @@ def main():
     ap.add_argument("--keys", help="firmware keys JSON (ipsw.me v4 format) instead of downloading")
     ap.add_argument("--staging", help="use an already extracted fwprep folder instead of the IPSW")
     ap.add_argument("--force", action="store_true", help="accept an IPSW other than iPod2,1 8C148")
+    ap.add_argument("--no-cydia", action="store_true",
+                    help="don't download and pre-install Cydia (docs/cydia.md)")
     ap.add_argument("--prebuilt", default=os.path.join(ROOT, "prebuilt"), help=argparse.SUPPRESS)
     ap.add_argument("--check", action="store_true",
                     help="only check this release and the tools on this PC, then exit")
@@ -214,6 +218,7 @@ def main():
     if a.check:
         import mkboot  # noqa: F401  (imports kernel/, fwlib: catches a broken unpack)
         import mkrootfs  # noqa: F401
+        import cydia  # noqa: F401
         import fwprep as _fwprep_check # noqa: F401
         say("OK: everything needed is here")
         return
@@ -247,7 +252,8 @@ def main():
 
     step(3, "Patching the kernel, building the iOS disk image (a few minutes)")
     tree = os.path.join(work, "sd")
-    build_tree(staging, tree, a.prebuilt, hfs)
+    build_tree(staging, tree, a.prebuilt, hfs, cydia=not a.no_cydia,
+               cydia_cache=os.path.join(work, "cydia"))
 
     step(4, "Writing the SD card files to %s" % sd)
     os.makedirs(os.path.dirname(sd), exist_ok=True)
@@ -263,6 +269,7 @@ def main():
         for leftover in ("hfsplus",):
             if os.path.exists(os.path.join(work, leftover)):
                 os.remove(os.path.join(work, leftover))
+        shutil.rmtree(os.path.join(work, "cydia"), ignore_errors=True)   # downloaded .debs
         try:
             os.rmdir(work)
         except OSError:

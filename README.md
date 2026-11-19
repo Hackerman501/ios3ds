@@ -49,6 +49,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/m2-first-panic.md](docs/m2-first-panic.md): first kernel output and panic
 - [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
 - [docs/wifi.md](docs/wifi.md): Wi-Fi: the ARM9 AR6014 driver, WPA2, the network mailbox, iOS bridge, firmware extraction and the QEMU model
+- [docs/cydia.md](docs/cydia.md): Cydia pre-installed (APT/dpkg base system downloaded from Saurik's repository at build time)
 - [docs/mcu.md](docs/mcu.md): the 3DS system controller (RTC, battery, HOME/POWER, sliders, accelerometer) in iOS
 - [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
@@ -75,6 +76,8 @@ make test                                               # offline unit tests
 ```
 
 `fwprep` fetches the publicly documented firmware keys for that single build from api.ipsw.me, or takes `--keys file.json`.
+
+`make sd` also downloads Cydia and its APT/dpkg base system (32 debs, 6.5 MB, pinned by sha256 in `rootfs/cydia.json`) from apt.saurik.com into `build/cydia/` and pre-installs them, like a 4.2.1 jailbreak did; they are never committed or shipped. Offline it warns and builds without Cydia; `make sd CYDIA=0` leaves it out ([docs/cydia.md](docs/cydia.md)).
 
 Optional:
 

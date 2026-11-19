@@ -54,7 +54,7 @@ SOURCES = [
     "kernel/dtgen.py", "kernel/patcher.py", "kernel/patches*.json",
     "tools/ios3ds-audio/dt_audio.py",
     "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
-    "rootfs/recipe.json", "rootfs/files/*",
+    "scripts/cydia.py", "rootfs/recipe.json", "rootfs/cydia.json", "rootfs/files/*",
     "README.md", "LICENSE", "docs/INSTALL.md",
 ]
 XPWN_FILES = ["hfs/*.c", "common/abstractfile.c", "common/base64.c", "includes/**/*.h", "LICENSE",

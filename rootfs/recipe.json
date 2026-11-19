@@ -37,6 +37,8 @@
   "com.apple.mobile.lockdown.plist"
  ],
  "grow_bytes": 1073741824,
+ "_cydia": "Cydia + APT/dpkg base system, downloaded at build time (scripts/cydia.py, docs/cydia.md); false = no Cydia",
+ "cydia": "rootfs/cydia.json",
  "remove": [
   "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",
   "/private/var/db/timezone/localtime"
