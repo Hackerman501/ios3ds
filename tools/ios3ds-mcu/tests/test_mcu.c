@@ -27,6 +27,7 @@ void log_color(u32 color, const char *fmt, ...)
     va_end(ap);
 }
 void log_flush(void) {}
+int sd_write_small(const char *path, const char *buf, u32 len) { (void)path; (void)buf; return (int)len; }
 
 /* ---- fake MCU ------------------------------------------------------------ */
 static u8 regs[256];
