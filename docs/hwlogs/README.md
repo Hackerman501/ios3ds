@@ -76,3 +76,7 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - **Memory:** eviction works on hardware (253, then 754 evictions). When MobileSafari launched, the 8 MiB arena was fragmented: a 704 KiB texture found only ~290 KiB free in 90 blocks, so frames went through CPU read-backs. The arena is now 12 MiB, with 8/4/2 MiB fallbacks.
 - **Volume:** media plays at CSND unity (amp step 19 → 32768), and the slider moves iOS's volume across its whole range.
 - The GPU mirror ran at 20–24 fps. No panic or md0 error in ~9 min.
+
+## run18–19 (Wi-Fi on hardware)
+- **run18 (`f3d36e4`):** the firmware came from the GodMode9 script. Scanning works (2 networks with SSID/BSSID/channel/RSSI). Association works, but the 4-way handshake failed: every AP re-sent message 1 and disconnected with 802.11 reason 14 (MIC failure).
+- **run19 (`b2df8c4`):** message 2 now carries the firmware's own association RSN IE, and the PTK uses the addresses from message 1. **Wi-Fi connects:** `[wifi] link up` to a phone hotspot, configured by configd, and Safari loaded google.com (user report).
