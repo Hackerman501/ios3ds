@@ -811,3 +811,9 @@ already power-of-two in memory (rectangle and `BindCoreSurface` textures
 included); the model's NPOT noise applies to any texture whose size registers
 are not powers of two, so the GL path would show it.
 
+## 17. Hardware run 17: the mirror and the display going off
+
+- The shim mirrors nothing while iOS' CLCD is disabled (display off). The ARM9 now treats that as "nothing to copy", not as "GPU frames stopped". After a wake it gives the GPU 1 s before it copies with the CPU (`gpumirror.c gm_live`).
+- Mirror vs GL: a VBlank that finds a GL request on the GPU counts a busy skip and marks the frame pending. GL requests then wait (`take`) until the next interrupt that finds the GPU free has started that frame, so GL work back to back cannot starve the screen copy. The flag is dropped whenever the mirror is not active, so GL never waits on a stopped mirror.
+- Run 17's depth probe: `reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL`. Reversed depth (§16) is confirmed on hardware. The scaled standard convention fails too, which the picasim model (§16) does not reproduce yet.
+
