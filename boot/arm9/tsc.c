@@ -209,6 +209,7 @@ bool tsc_read(bool *pen, u16 *tx, u16 *ty, int16_t *cx, int16_t *cy)
 /* ---- mailbox producer ---------------------------------------------------- */
 
 #define MOVE_THRESH 12      /* raw ADC units (~1 px) before a move is pushed */
+#define CPAD_THRESH 48      /* raw circle pad units (full tilt ~1200) before a change is pushed */
 
 static u32 absdiff(u32 a, u32 b) { return a > b ? a - b : b - a; }
 
@@ -254,8 +255,14 @@ void input_poll(u32 shim_pa)
 
     bool moved = (s.flags & INFLAG_PEN) &&
                  absdiff(s.tx, last.tx) + absdiff(s.ty, last.ty) >= MOVE_THRESH;
+    /* circle pad: publish when it moved by a noticeable amount (iOS scrolls
+       with it, tools/ios3ds-input/daemon/cpad.h) */
+    bool cmoved = (s.flags & INFLAG_CPAD) &&
+                  (!(last.flags & INFLAG_CPAD) ||
+                   absdiff((u16)(s.cx + 2048), (u16)(last.cx + 2048)) +
+                   absdiff((u16)(s.cy + 2048), (u16)(last.cy + 2048)) >= CPAD_THRESH);
     bool changed = s.buttons != last.buttons ||
-                   ((s.flags ^ last.flags) & INFLAG_PEN) || moved;
+                   ((s.flags ^ last.flags) & INFLAG_PEN) || moved || cmoved;
     m->polls = tick;
     if (!changed) return;
     if ((s.flags & INFLAG_PEN) && !moved && (last.flags & INFLAG_PEN)) {

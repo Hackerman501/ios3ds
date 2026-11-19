@@ -80,6 +80,7 @@ test:
 	$(MAKE) -C tools/ios3ds-pica test
 	$(MAKE) -C tools/ios3ds-gl host-test
 	$(MAKE) -C tools/ios3ds-wifi test
+	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_cpad tools/ios3ds-input/tests/test_cpad.c && $(BUILD)/test_cpad
 
 release:
 	$(PYTHON) scripts/mkrelease.py $(if $(VERSION),--version $(VERSION))

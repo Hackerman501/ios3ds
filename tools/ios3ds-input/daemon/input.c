@@ -95,6 +95,12 @@ void CFRelease(const void *cf);
 #define PAD_START  (1u << 3)
 #define PAD_R      (1u << 8)
 #define PAD_L      (1u << 9)
+#define PAD_RIGHT  (1u << 4)
+#define PAD_LEFT   (1u << 5)
+
+#include "cpad.h"
+static cpad_t cpad;
+static int opt_nocpad;
 
 static const struct { uint16_t btn, usage; } keymap[] = {
     { PAD_START,  kHIDUsage_Csmr_Menu },
@@ -389,6 +395,11 @@ static void apply(const insample_t *prev, const insample_t *cur)
             key_edge(i, (cur->buttons & keymap[i].btn) != 0);
 
     if (is && !was) {
+        if (cpad.finger) {                  /* a real touch ends the virtual finger first */
+            send_touch(cpad.x, cpad.y, 0, kIOHIDDigitizerEventRange | kIOHIDDigitizerEventTouch);
+            cpad.finger = 0;
+            cpad.swipe = 0;
+        }
         map_touch(cur, &nx, &ny);
         if (opt_debug) say("[input] down %d,%d", (int)(nx * 320), (int)(ny * 480));
         send_touch(nx, ny, 1, kIOHIDDigitizerEventRange | kIOHIDDigitizerEventTouch);
@@ -428,6 +439,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "flipy")) opt_flipy = 1;
         else if (!strcmp(argv[i], "stretch")) opt_stretch = 1;
         else if (!strcmp(argv[i], "debug")) opt_debug = 1;
+        else if (!strcmp(argv[i], "nocpad")) opt_nocpad = 1;
     }
 
     /* the shim registers the sysctl at root mount; no sysctl = old shim */
@@ -481,6 +493,19 @@ int main(int argc, char **argv)
         }
         loops++;
         key_tick();
+        if (synced && !screen_off && !opt_nocpad) {    /* circle pad / D-pad gestures */
+            cpad_out_t o;
+            unsigned dpad = ((state.buttons & PAD_LEFT) ? 1u : 0u) | ((state.buttons & PAD_RIGHT) ? 2u : 0u);
+            cpad_step(&cpad, state.cx, state.cy, (state.flags & INFLAG_CPAD) != 0,
+                      (state.flags & INFLAG_PEN) != 0, dpad, &o);
+            if (o.ev == CP_DOWN || o.ev == CP_UP) {
+                if (opt_debug) say("[input] cpad %s %d,%d", o.ev == CP_DOWN ? "down" : "up",
+                                   (int)(o.x * 320), (int)(o.y * 480));
+                send_touch(o.x, o.y, o.ev == CP_DOWN, kIOHIDDigitizerEventRange | kIOHIDDigitizerEventTouch);
+            } else if (o.ev == CP_MOVE) {
+                send_touch(o.x, o.y, 1, kIOHIDDigitizerEventPosition);
+            }
+        }
         /* screen off (ARM9 power saving, docs/mcu.md section 9): nothing to
            do with touches and iOS sleeps, so poll at 10 Hz instead of 60.
            Button samples queue up in the mailbox ring (30 deep), so a HOME

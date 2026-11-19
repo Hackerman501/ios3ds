@@ -398,3 +398,20 @@ table, `hfsplus` to pull plists out of `rootfs.hfs`.
    `ctr_tsc.c`, `tsc/touch.c`, `nintendo3ds.dtsi`; GodMode9 `arm11/source/hw/codec.c`
    (minimal init that works after a FIRM boot) and `arm9/source/system/i2c.c`
    (the ARM9 can reach the MCU).
+
+## 8. Circle pad and D-pad (2026-11-20)
+
+iOS 4 has no pointer, so the circle pad scrolls whatever is under the screen centre. `tools/ios3ds-input/daemon/cpad.h` is pure logic, host-tested by `tools/ios3ds-input/tests/test_cpad.c` (part of `make test`).
+
+- **Circle pad:** a virtual finger goes down at the centre and moves against the stick, so content follows the stick: stick down shows what is below.
+  - Speed is proportional to the tilt past a dead zone of 300 of about 1200 raw units, up to about 860 points/s.
+  - Near the screen edge the finger is held still, lifted and put down at the centre again (re-grip).
+  - When the stick is let go, the finger is held still for 4 ticks before lifting, so UIScrollView does not fling.
+- **D-pad left/right:** one page swipe (home screen pages, Photos).
+- **A real touch always wins:** the virtual finger lifts before the real finger's down is sent.
+- **ARM9 side (`boot/arm9/tsc.c`):** it now publishes a sample when the circle pad moves by 48 raw units or more. Before this, the circle pad only travelled along with button or pen changes.
+- **Kill switch:** add `nocpad` to the daemon's ProgramArguments.
+- **QEMU** (`-M nintendo3ds`: arrow keys = D-pad, I/J/K/L = circle pad):
+  - D-pad right turns to home page 2;
+  - holding the circle pad down for 1.2 s scrolls Settings by about 90 points.
+- **Hardware:** the real stick's raw range is not measured yet. Full tilt is assumed to be about 1200 raw units, as modelled. If scrolling is too slow or too fast on a 3DS, change `CPAD_FULL` / `CPAD_SPEED`.
