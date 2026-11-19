@@ -71,7 +71,7 @@ Or: hold **START** while powering on, and pick `ios3ds` in Luma's chainloader me
 ## What works, what doesn't
 
 - **Works:** home screen, touch, Home/lock/volume buttons, built-in apps such as Settings, Notes and Mail.
-- **Wi-Fi** is off until you copy the Wi-Fi firmware from your own console (experimental, untested on hardware): start GodMode9 (hold START while powering on, choose GodMode9), press HOME, choose `Scripts...` -> `ios3ds-wifi-fw`, confirm with A. It only reads the console's memory and writes one file, `ios3ds/nwm.code`, to the SD card. Then Settings > Wi-Fi in iOS lists the networks around you ([docs/wifi.md](wifi.md) section 3).
+- **Wi-Fi** (experimental, untested on hardware) needs the Wi-Fi firmware from your own console. The launcher copies it for you: the first time you start `ios3ds` from the Homebrew Launcher it says "Wi-Fi firmware: reading NWM .code ..." and writes one file, `ios3ds/nwm.code`, to the SD card (it only reads the console's memory; after that it skips this step). Then Settings > Wi-Fi in iOS lists the networks around you. If the launcher shows a red `Wi-Fi fw: ...` line instead, iOS still boots without Wi-Fi; copy the firmware once with GodMode9 (hold START while powering on, choose GodMode9, press HOME, choose `Scripts...` -> `ios3ds-wifi-fw`, confirm with A). Details: [docs/wifi.md](wifi.md) section 3.
 - **Sound** working but no volume
 - No real clock: the date and time are wrong.
 - 3D (OpenGL) apps are drawn in software and are slow.
@@ -80,7 +80,7 @@ Or: hold **START** while powering on, and pick `ios3ds` in Luma's chainloader me
 
 ios3ds **never writes to the 3DS's internal memory (NAND) or its firmware**; it has no code to do so. It only reads and writes files on the SD card. If it hangs, hold POWER for ~10 s; the next boot is your normal setup.
 
-**What the Homebrew Launcher app does:** a homebrew app can't start another system directly, so `ios3ds.3dsx` renames files on the SD card and reboots:
+**What the Homebrew Launcher app does:** a homebrew app can't start another system directly, so `ios3ds.3dsx` renames files on the SD card and reboots (the first time it also copies the Wi-Fi firmware to `ios3ds/nwm.code`, see "What works" above):
 1. creates `ios3ds/swap.flg` (a "swap in progress" note);
 2. renames your `boot.firm` (Luma) to `ios3ds/luma.firm`;
 3. renames `ios3ds/ios3ds.firm` to `boot.firm`;

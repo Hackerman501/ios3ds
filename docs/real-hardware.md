@@ -47,7 +47,7 @@ To get back: hold POWER ~10 s, then power on normally.
 
 **Why a homebrew app can't launch a `.firm` directly:** the userland firmlaunch (pm `LaunchFirm` → `svcKernelSetState(0, …)`) is hooked by Luma's `patchFirmlaunches`. The hook always reloads the file Luma itself booted from (`launchedPath`) and skips the chainloader menu (Luma3DS `arm9/source/patches.c`, `main.c` FIRMLAUNCH branch).
 
-**What we do: `tools/ios3ds-launcher` → `sd:/3ds/ios3ds.3dsx`.** It is a launcher. It only renames files on the SD card, then reboots:
+**What we do: `tools/ios3ds-launcher` → `sd:/3ds/ios3ds.3dsx`.** It is a launcher. It only renames files on the SD card, then reboots (once, before that, it copies the Wi-Fi firmware: if `ios3ds/nwm.code` is missing it reads NWM's `.code` read-only through Horizon's FS and writes that file; [wifi.md](wifi.md) §3.1):
 
 1. create `ios3ds/swap.flg`;
 2. rename `boot.firm` (Luma) → `ios3ds/luma.firm`;
