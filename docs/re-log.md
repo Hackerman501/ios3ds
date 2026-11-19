@@ -763,3 +763,15 @@ Design: docs/gpu.md §7 ("Presenting without the read-back"), docs/pica200.md §
 - **Test:** `emu/wifi_ui_test.py` does it all through the touch screen: 8/8 PASS in 358 s (docs/wifi.md §10.5). A second boot of the same image, nothing touched, joins the known network by WiFiManager's auto-join (password from the keychain) and shows the bars. `emu/wifi_test.py --case ok` (HTTP fetch, preset network) and `--case nocfg` (no firmware, no `wifi.cfg`) still PASS; `make test` passes; `emu/soak.py --cycles 10` PASS (no panic, stall, md0 error, crash or jetsam; Home always back; boot to SpringBoard + input 60 s).
 - **Security:** the keychain key is a constant in the dylib, so the keychain on the SD card is not bound to the console (docs/wifi.md §10.3).
 - **Unverified on hardware:** docs/wifi.md §10.6 (open scan without probed SSID, RSSI units, link-loss events, timing on a slow console).
+
+## 53. New 2DS XL (issue #1): the shim's .bss was never zeroed (2026-11-19)
+- **Log from the issue** (docs/hwlogs/n3ds-issue1-run1.txt, build fe45ac4): ARM11 MPCore r0p5, SCU/SMP on, XNU up to `BSD root: md0`.
+- **The fault:** `kernel abort type 4: fault_type=0x1, fault_addr=0xa5ff7918` at pc 0x80063000 (`lck_mtx_lock`), r0 = 0xa5ff7910, lr 0x80840bac (shim_mdevstrategy). The md0 mutex pointer was garbage.
+- **Cause:**
+  - `blk_lock` / `blk_lock_tried` are zero-initialised statics in the shim's `.bss`.
+  - kernel/shim/link.ld had `.bss` as its own NOBITS output section, so `objcopy -O binary` (scripts/mkboot.py) left it out of shim.bin. The ARM9 loads shim.bin and nothing more.
+  - `.bss` therefore held whatever RAM had: zero on the Old 3DS and in QEMU by luck, not on the New 2DS XL.
+- **Fix:** `.bss` input sections now go into the `.data` output section, so shim.bin carries them as zeros (23088 → 23300 bytes). The GPU part already did this. QEMU boot unchanged.
+- **Next on the New 3DS, if it boots further:**
+  - the `[hb] clock: … ratio` line shows whether the MPCore timers run at the assumed 134 MHz PERIPHCLK (the New 3DS can run the ARM11 at 804 MHz);
+  - the New 3DS has an L2 cache (L2C-310).

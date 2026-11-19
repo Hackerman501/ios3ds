@@ -10,8 +10,12 @@ SECTIONS
     . = 0x80840000;
     .text : { *(EXCLUDE_FILE(*pica*.o) .text EXCLUDE_FILE(*pica*.o) .text*) }
     .rodata : { *(EXCLUDE_FILE(*pica*.o) .rodata*) }
-    .data : { *(EXCLUDE_FILE(*pica*.o) .data*) }
-    .bss : { *(EXCLUDE_FILE(*pica*.o) .bss* EXCLUDE_FILE(*pica*.o) COMMON) }
+    /* .bss lives inside .data so that objcopy -O binary writes it into shim.bin
+       as zeros: the loader copies shim.bin and nothing else, and a separate
+       NOBITS .bss was left with whatever RAM held. Zero on the Old 3DS and in
+       QEMU by luck; on a New 2DS XL the md0 lock pointer read 0xa5ff7910 and
+       lck_mtx_lock faulted (issue #1). */
+    .data : { *(EXCLUDE_FILE(*pica*.o) .data*) *(EXCLUDE_FILE(*pica*.o) .bss* EXCLUDE_FILE(*pica*.o) COMMON) }
     __shim_end = .;
     ASSERT(__shim_end <= 0x80845F00, "shim code overlaps the probe snapshot (+0x5F00) / block mailbox (+0x6000)")
 

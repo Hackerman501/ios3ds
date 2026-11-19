@@ -1,0 +1,121 @@
+ios3ds m1-fe45ac4-dirty-20261118.1549  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0200 -> 0200
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-fe45ac4-dirty-20261118.1549 ARM11 stub at 0x1ff90338
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+[boot] 1.948 s: SD mounted, ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+[boot] 2.080 s: boot.cfg read
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 15536 bytes at 2081b000
+[boot] 5.478 s: kernel + devtree loaded
+shim: 23112 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+[boot] 6.949 s: rootfs opened (fast-seek map)
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+loaded 0:/ios3ds/gpu.bin: 42896 bytes at 208b0000
+[boot] 7.940 s: load= files loaded
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 15536
+[wifi] no 0:/ios3ds/wifi.cfg: no preset network
+[wifi] 0:/ios3ds/wifi-fw.bin: not found (-4): Wi-Fi off (docs/wifi.md section 3)
+[audio] CODEC id 11 rev 36: DAC up, speaker, I2S1_CNT e820
+[mcu] version 13/41: RTC 2026-11-18 16:01:00 Mon (offset 0 s) = Unix 1795017660
+[mcu] battery 1% 3460 mV 22 C, charger, charging, volume slider 0/63, 3D slider 0, shell open, IRQ mask set
+[gpu] PICA200: gpu=1 gpu_mirror=1 (every 2. VBlank, spin 0 us) gpu_clk=1 gpu_diag=1 ca_gpu=1; mailbox at 20847f00
+[boot] 12.460 s: Wi-Fi, audio, MCU, GPU set up
+[boot] 20.758 s: countdown over
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[boot] 21.707 s: XNU started
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+ios3ds-mcu: 3DS RTC present: not waiting for IORTC
+IOResources: not registry member at registerService()
+BSD root: md0, major 2, minor 0
+kernel abort type 4: fault_type=0x1, fault_addr=0xa5ff7918
+r0: 0xa5ff7910  r1: 0x00000fff  r2: 0x80bf9e00  r3: 0x80063000
+r4: 0xca163f80  r5: 0x00000002  r6: 0x80846000  r7: 0xc38b3c5c
+r8: 0x00000000  r9: 0x00000080 r10: 0xa5ff7910 r11: 0x00000200
+12: 0x80284664  sp: 0xc38b3bf4  lr: 0x80840bac  pc: 0x80063000
+cpsr: 0xa0000013 fsr: 0x00000005 far: 0xa5ff7918
+
+Debugger message: Fatal Exception
+OS version: Not set yet
+Kernel version: Darwin Kernel Version 10.4.0: Wed Oct 20 20:06:26 PDT 2010; root:xnu-1504.58.28~3/RELEASE_ARM_S5L8720X
+iBoot version: ios3ds-loader
+secure boot?: NO
+Paniclog version: 1
+Epoch Time:        sec       usec
+  Boot    : 0x48f48943 0x00000000
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x48f48943 0x0001d510
+
+Task 0x80ad9d3c: 401 pages, 31 threads: pid 0: kernel_task
+	thread 0x80284664
+		kernel backtrace: c38b3ac0
+		  lr: 0x80068ae9  fp: 0xc38b3afc
+		  lr: 0x8006a004  fp: 0xc38b3b08
+		  lr: 0x8006a9c4  fp: 0xc38b3b9c
+		  lr: 0x80066418  fp: 0xc38b3c5c
+		  lr: 0x80093d07  fp: 0xc38b3c70
+		  lr: 0x8007aa33  fp: 0xc38b3c8c
+		  lr: 0x8007aa8b  fp: 0xc38b3ca4
+		  lr: 0x8012610f  fp: 0xc38b3d60
+		  lr: 0x80126cd9  fp: 0xc38b3d80
+		  lr: 0x800884a5  fp: 0xc38b3eb0
+		  lr: 0x8024a61f  fp: 0xc38b3f9c
+		  lr: 0x8002009d  fp: 0xc38b3fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+[gpu] display mirror: off
+[hb] t=36s quiet 0s | abs 5685219 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +0 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[hb] t=46s quiet 10s | abs 9510256 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +9684 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[hb] t=56s quiet 20s | abs 13802465 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +20551 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[hb] t=66s quiet 30s | abs 17628272 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +30237 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[hb] t=76s quiet 40s | abs 21452252 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +39919 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[hb] t=86s quiet 50s | abs 25277880 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +49605 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[mcu] POWER held: iOS power-off slider
+[hb] t=97s quiet 61s | abs 29662933 dec 26 timer 23 irq 30 vbl 7 | md0 0 req 0 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +60707 ms (ratio 0/1000)
+[hb]  pc k801dbce0t k80062010t k801e921c k8018e5bct k80063004 k8018ad8ct k80062d58 k8005bd7at
+[mcu] POWER hold released
