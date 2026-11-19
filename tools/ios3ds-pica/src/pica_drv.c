@@ -185,7 +185,11 @@ uint32_t pica_drv_alloc(pica_drv_t *d, uint32_t owner, uint32_t size, uint32_t a
         if (d->nblocks < PICA_DRV_BLOCKS && try_alloc(d, owner, size, align, pa))
             return PICA_OK;
     }
-    d->p->log("[pica] arena full: %u bytes wanted, %u free in %u blocks\n", size, arena_free(d), d->nblocks);
+    /* A full arena is normal now: the GL engine evicts textures and retries
+       (docs/pica200.md 16). Say it for the first few and then every 256th. */
+    if (d->full_logs++ < 4 || !(d->full_logs & 255))
+        d->p->log("[pica] arena full: %u bytes wanted, %u free in %u blocks (%u times)\n", size, arena_free(d),
+                  d->nblocks, d->full_logs);
     return PICA_ERR_NO_MEM;
 }
 

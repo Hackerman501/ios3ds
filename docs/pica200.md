@@ -172,9 +172,13 @@ ALWAYS. (A full clear used to be a PSC memory fill; hardware run 13 showed
 the fill engine writes nothing into FCRAM, and the arena is FCRAM, §13.) A
 clear of all colour channels over the whole target skips the upload of the
 old picture. New depth buffers are initialised to "far" by a CPU write.
+Depth is stored reversed, as citro3d does (§16).
 
 **Textures.** Every texture is uploaded as tiled RGBA8, padded to a power of
-two (edge texels replicated), when its `be_seq` changes.
+two (edge texels replicated), when its `be_seq` changes. An axis that is not
+a power of two and wraps with `GL_REPEAT` is stretched to the power-of-two
+size instead (nearest), so it repeats with its own period (§16). GPU copies
+are evicted least-recently-used when the arena is full (§16).
 
 **State.** All register state of a draw is collected in one struct and sent
 when it differs from the last one in the list: viewport, scissor, cull mode,
@@ -196,9 +200,11 @@ into the arena and back (it was a PSC fill until run 13). Any
 wrong word or failed operation is logged (`[gl] pica: GPU self-check: …: not
 using the GPU`) and the context gets the software rasterizer.
 
-**Fallback.** If the GPU is unavailable, a target is larger than 1024, the
-arena is full or a GPU operation fails, the same draw goes to the software
-rasterizer, and one `[gl] pica: …` line says why.
+**Fallback.** If the GPU is unavailable, a target is larger than 1024 or a
+GPU operation fails, the same draw goes to the software rasterizer, and one
+`[gl] pica: …` line says why. A full arena first evicts textures; if that is
+not enough, the process writes its GPU images back and draws on the CPU from
+then on (§16).
 
 Not done yet: fog (drawn without, logged once), stencil, mipmaps, the slope
 term of polygon offset, NPOT textures with REPEAT wrap, flat shading,
@@ -728,3 +734,80 @@ are not validated either (§2), so this is not a new class of hole.
 In QEMU the display IOSurface turned out to be AppleM2CLCD's framebuffer at PA
 0x18000000 (VRAM, contiguous, 600 KiB). On hardware the same `[pica] present:`
 line answers it; any failure falls back to the read-back.
+
+## 16. Hardware run 15: depth, the arena, NPOT repeat
+
+Run 15 (`f45dc07`, `ca_gpu=1`, build/hwlogs/run15.txt) composited CA on the
+GPU and showed three faults.
+
+**Depth tests passed nothing.** gltest's cube was drawn only with
+`GL_DEPTH_TEST` off (`cube variant no depth test -> drawn`, every variant
+with depth -> `NOT drawn`), and scene 1 differed from the CPU in 12070 pixels
+(max 230). The back end stored GL's depth directly (`DEPTHMAP` scale
+far−near, offset far; `glClear` = a quad at z/w = 0, i.e. depth exactly 1.0)
+and tested `GL_LESS`. The model now stores a fragment depth of 1.0 as 0 (the
+conversion to 24-bit fixed point wrapping, `picasim.c fragment`); with the
+old convention the host gltest then fails with **12070 pixels, max 229** in
+scene 1 — run 15's numbers. That is the working explanation; the depth probe
+below confirms or refutes it on hardware.
+
+Fix (`pica_raster_t.depth_conv`, `pica_state.c`): citro3d's convention,
+which every hardware homebrew uses (`C3D_DepthMap(true, -1, 0)` with
+`GPU_GREATER`): stored = K·(1 − d), K = 1 − 2⁻¹⁰, so far is 0 and no value
+reaches 1.0; `DEPTHMAP_SCALE` = −K·(far − near), `DEPTHMAP_OFFSET` =
+K·(1 − far − bias); the test functions are mirrored (LESS↔GREATER,
+LEQUAL↔GEQUAL); new depth buffers start at 0. GL semantics are unchanged.
+
+**Depth probe** (`pica_be.c depth_probe`, `ca.c depth_scene`): at bring-up
+every process draws a 96×96 scene with a depth buffer (`glClear` of depth,
+`GL_LESS` with a hidden and a visible quad, `GL_GREATER`) on the CPU and on
+the GPU under each convention and logs, e.g. on the model:
+
+```
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 0 ok, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+```
+
+Reversed is used if it matches, else "standard" (K·d); if neither does,
+depth-tested drawing goes to the CPU (`IOS3DS_GL_ZCONV=0/1/2` forces one).
+On hardware, `unscaled FAIL` with the others `ok` confirms the wrap.
+
+**Arena exhaustion.** After a few minutes CA wanted a 1 MiB texture with
+829 KiB free in 78 blocks: `[gl] pica: GPU arena full (texture): sampled as
+opaque black`, then 128 KiB requests failing forever. Not a leak (deleted
+textures and renderbuffers were freed; exited processes' blocks are reclaimed
+when full): CA keeps a texture for every layer image it shows, many padded to
+512×512 (1 MiB), and every render target held a second, linear staging buffer
+of its full size (1 MiB for the 320×480 display) that is used only during a
+transfer. 8 MiB minus the mirror's 1 MiB texture does not hold all of that.
+Fixes:
+- every texture with GPU memory is on a list with the draw that last
+  sampled it; when an allocation fails the least recently used ones are
+  evicted (the engine keeps every image, the next use uploads it again)
+  until it fits; textures of the draw being built stay;
+- the linear staging buffer is allocated only for the upload / read-back
+  transfer and freed right after;
+- if memory cannot be had even then, the process writes every GPU image back
+  and draws on the CPU rasterizer from then on, with one line
+  (`[gl] pica: GPU arena full (…) …: this process draws on the CPU from now
+  on`); nothing is drawn black any more (the "black" path is left only for
+  textures larger than 1024);
+- the shim's `[pica] arena full` line is rate-limited (first 4, then every
+  256th, with a count): failures are now routine;
+- CA's 30 s line adds `GPU memory: N KiB held (T textures, K KiB), arena F
+  KiB free, E evictions`.
+
+Host check: gltest draws 24 textures of 512×512 (24 MiB through a 16 MiB
+model arena), each twice: 0 of 48 draws wrong, 39 evictions, GPU still on.
+
+**NPOT textures with `GL_REPEAT`** were padded to a power of two and their
+coordinates scaled by w/pw, so they repeated with the padding (edge texels)
+instead of their own period (the likely source of the stripe garbage in
+Settings' grouped table views on run 15's photos). Such an
+axis is now stretched to the power-of-two size on upload. CA's scene check
+gained a 20×12 2D texture repeated 2.5×3.5 times and a 20×12 rectangle
+(0x84F5) texture, and its limit is 1 % of pixels (run 15: 0, the model ~6).
+With the old code the check fails (750 pixels); now 6. All GPU textures were
+already power-of-two in memory (rectangle and `BindCoreSurface` textures
+included); the model's NPOT noise applies to any texture whose size registers
+are not powers of two, so the GL path would show it.
+

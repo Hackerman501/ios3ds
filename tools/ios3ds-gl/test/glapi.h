@@ -39,6 +39,7 @@
     F(void, glGenFramebuffersOES, (GLsizei n, GLuint *o), (n, o)) \
     F(void, glGenRenderbuffersOES, (GLsizei n, GLuint *o), (n, o)) \
     F(void, glGenTextures, (GLsizei n, GLuint *o), (n, o)) \
+    F(void, glDeleteTextures, (GLsizei n, const GLuint *o), (n, o)) \
     F0(GLenum, glGetError) \
     F(void, glGetIntegerv, (GLenum p, GLint *o), (p, o)) \
     F(void, glGetRenderbufferParameterivOES, (GLenum t, GLenum p, GLint *o), (t, p, o)) \

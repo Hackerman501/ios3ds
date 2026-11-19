@@ -37,6 +37,7 @@ typedef struct pica_drv {
     uint32_t gpu_cnt;
     uint32_t submits, timeouts;
     uint32_t nblocks;
+    uint32_t full_logs;                     /* failed allocations (log rate limit) */
     struct { uint32_t off, size, owner; } block[PICA_DRV_BLOCKS];   /* sorted by off */
 } pica_drv_t;
 

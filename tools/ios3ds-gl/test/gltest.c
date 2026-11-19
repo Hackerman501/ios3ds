@@ -555,6 +555,70 @@ static void rect_texture_check(const char *backend)
         fails++;
 }
 
+/* More texture memory than the GPU arena holds (hardware run 15: CA's
+   layers filled it and later textures sampled black): every texture must
+   still draw in its own colour, the back end evicts and re-uploads, and the
+   GPU stays on. */
+typedef struct {                        /* engine.h PicaStats */
+    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents;
+    unsigned arena_kb, tex_kb, ntex, evictions, arena_free_kb, gpu_on;
+} PicaStats;
+extern void pica_backend_stats2(PicaStats *s);
+
+static void arena_churn_check(const char *backend)
+{
+    enum { N = 24, D = 512 };
+    static const GLfloat tn[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
+    GLuint t[N];
+    uint32_t *px = malloc((size_t)D * D * 4);
+    int i, k, bad = 0;
+    GLubyte c[4];
+    PicaStats st;
+    if (!px)
+        return;
+    glBindFramebufferOES(GL_FRAMEBUFFER, off_fb);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glTexCoordPointer(2, GL_FLOAT, 0, tn);
+    glGenTextures(N, t);
+    for (k = 0; k < 2 * N; k++) {       /* each texture twice: the second round re-uploads evicted ones */
+        i = k % N;
+        if (k < N) {
+            uint32_t col = 0xFF000000u | (uint32_t)(i * 10) << 16 | (uint32_t)(255 - i * 10) << 8 | 0x40;
+            int j;
+            for (j = 0; j < D * D; j++)
+                px[j] = col;
+            glBindTexture(GL_TEXTURE_2D, t[i]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, D, D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        }
+        glBindTexture(GL_TEXTURE_2D, t[i]);
+        quad(10, 10, 30, 30, 0);
+        glReadPixels(20, 20, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c);
+        if (abs(c[2] - i * 10) > 2 || abs(c[1] - (255 - i * 10)) > 2 || abs(c[0] - 0x40) > 2)
+            bad++;
+    }
+    glDeleteTextures(N, t);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisable(GL_TEXTURE_2D);
+    free(px);
+    memset(&st, 0, sizeof st);
+    pica_backend_stats2(&st);
+    if (!strcmp(backend, "pica")) {
+        printf("gltest: %s: %d MiB of textures through the arena: %d of %d draws wrong, %u evictions, GPU %s %s\n",
+               backend, N * D * D * 4 >> 20, bad, 2 * N, st.evictions, st.gpu_on ? "on" : "OFF",
+               bad || !st.evictions || !st.gpu_on ? "FAIL" : "ok");
+        fails += bad || !st.evictions || !st.gpu_on;
+    } else {
+        printf("gltest: %s: %d of %d texture-churn draws wrong %s\n", backend, bad, 2 * N, bad ? "FAIL" : "ok");
+        fails += bad != 0;
+    }
+}
+
 static void one_pass(const char *backend, const char *ppm, unsigned char *out[2])
 {
     char path[1024];
@@ -577,6 +641,7 @@ static void one_pass(const char *backend, const char *ppm, unsigned char *out[2]
     }
     out[1] = grab();
     rect_texture_check(backend);
+    arena_churn_check(backend);
 }
 
 int main(int argc, char **argv)

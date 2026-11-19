@@ -31,14 +31,19 @@
 
 typedef struct PTex {
     uint32_t pa, pw, ph, bytes;
-    int w, h;
+    int w, h;                           /* the engine image's size (cache key) */
+    int uw, uh;                         /* the part of pw x ph the image fills */
+    int sx, sy;                         /* stretched to pw / ph (NPOT with REPEAT) */
     unsigned seq;
+    unsigned used;                      /* P.draw_id of the last draw that sampled it */
+    Tex *tex;
+    struct PTex *next;                  /* P.texs: every texture with GPU memory */
 } PTex;
 
 typedef struct PTarget {
     const uint32_t *key;                /* rt->color */
     int w, h, pw, ph;
-    uint32_t color_pa, lin_pa;
+    uint32_t color_pa;
     int gpu_valid;                      /* the GPU buffer holds the image */
     int dirty;                          /* ...and it is newer than rt->color */
     RT rt;                              /* where to write it back */
@@ -88,6 +93,11 @@ static struct {
     unsigned readbacks, readback_kb, uploads, upload_kb, presents;
     int present_checked;
     int no_present;                     /* the shim refused PRESENT once: read back from now on */
+    PTex *texs;
+    unsigned draw_id;
+    uint32_t arena_bytes, tex_bytes, ntex, evictions;
+    int zconv;                          /* PICA_Z_*, chosen by the depth probe */
+    int depth_broken;                   /* no convention drew the probe right: depth tests on the CPU */
 } P;
 
 enum { WARN_FOG = 1, WARN_TEXENV = 2, WARN_BIG = 4, WARN_MEM = 8, WARN_TEXBIG = 16 };
@@ -124,6 +134,105 @@ static uint32_t *scratch(size_t words)
 /* A constant-colour quad over a 64x64 RGBA8 target at `color`: the list a
    clear is made of (no PSC fills: the fill engine cannot write FCRAM, where
    the arena is - hardware run 13). Returns the list size in bytes. */
+/* ------------------------------------------------------------------ */
+/* GPU memory                                                          */
+/* ------------------------------------------------------------------ */
+
+static void flush_list(void);
+static void sync_target(PTarget *t);
+static void drop_target(PTarget *t);
+static void drop_depth(PDepth *d);
+
+static void arena_release(uint32_t pa, uint32_t bytes)
+{
+    if (!pa)
+        return;
+    P.dev->free(pa);
+    P.arena_bytes -= bytes;
+}
+
+/* drop the GPU copy of a texture; the engine keeps its image and the next
+   use uploads it again */
+static void evict_texture(PTex *p)
+{
+    PTex **pp;
+    for (pp = &P.texs; *pp; pp = &(*pp)->next)
+        if (*pp == p) {
+            *pp = p->next;
+            break;
+        }
+    arena_release(p->pa, p->bytes);
+    P.tex_bytes -= p->bytes;
+    P.ntex--;
+    if (p->tex)
+        p->tex->be_priv = NULL;
+    free(p);
+}
+
+/* GPU memory for this process. When the arena is full, the GPU copies of
+   the least recently sampled textures are dropped until the block fits
+   (hardware run 15: CA's layer textures filled the 8 MiB arena and later
+   ones sampled black). Textures the current draw samples stay. 0 = no room
+   even then. */
+static int arena_alloc(uint32_t bytes, uint32_t *pa)
+{
+    *pa = 0;
+    if (P.dev->alloc(bytes, 0, pa) == PICA_OK) {
+        P.arena_bytes += bytes;
+        return 1;
+    }
+    flush_list();                       /* queued draws may sample any texture */
+    if (P.state != 1)
+        return 0;
+    for (;;) {
+        PTex *q, *lru = NULL;
+        for (q = P.texs; q; q = q->next)
+            if (q->used != P.draw_id && (!lru || (int)(q->used - lru->used) < 0))
+                lru = q;
+        if (!lru)
+            return 0;
+        evict_texture(lru);
+        P.evictions++;
+        if (P.dev->alloc(bytes, 0, pa) == PICA_OK) {
+            P.arena_bytes += bytes;
+            return 1;
+        }
+    }
+}
+
+/* The GPU cannot do what this process needs (no arena memory even after
+   evicting every texture, or depth tests that do not work): write every
+   GPU image back, give the arena memory back, and render on the CPU from
+   now on. Never draws black or wrong; one log line. */
+static void cpu_from_now(const char *why, uint32_t bytes)
+{
+    pica_info_t info;
+    uint32_t held = P.arena_bytes;
+    int i;
+    if (P.state != 1)
+        return;
+    flush_list();
+    while (P.texs)
+        evict_texture(P.texs);
+    for (i = 0; i < MAX_DEPTHS; i++)
+        if (P.depth[i].key)
+            drop_depth(&P.depth[i]);
+    for (i = 0; i < MAX_TARGETS; i++)
+        if (P.target[i].key) {
+            sync_target(&P.target[i]);
+            drop_target(&P.target[i]);
+        }
+    memset(&info, 0, sizeof info);
+    P.dev->info(&info);
+    gl_log("pica: %s (%u KiB wanted; this process held %u KiB, arena %u KiB free): this process draws on the "
+           "CPU from now on", why, bytes >> 10, held >> 10, info.arena_free >> 10);
+    P.state = -1;
+    P.cur = NULL;
+    P.cur_depth = NULL;
+    P.list_open = 0;
+    P.nvtx = 0;
+}
+
 static uint32_t solid_list(uint32_t *list, uint32_t cap, uint32_t color, uint32_t vbuf, uint32_t tev_color)
 {
     static const float ident[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
@@ -245,6 +354,36 @@ static int self_check(void)
     return st == PICA_OK ? 0 : -1;
 }
 
+/* Hardware run 15: with depth stored as GL's d (a clear writes 1.0)
+   nothing passed GL_LESS on the PICA200, while QEMU's model drew it. Draw a
+   depth probe (ca.c depth_scene) with every convention and compare it with
+   the CPU rasterizer; use citro3d's reversed depth if it matches (what
+   homebrew uses on hardware), else the scaled standard one; if none
+   matches, depth-tested drawing goes to the CPU (cpu_from_now on first use).
+   IOS3DS_GL_ZCONV=0/1/2 forces a convention. One log line. */
+static void depth_probe(void)
+{
+    static const char *name[3] = { "reversed (citro3d)", "standard", "unscaled (run 15)" };
+    int d[3], m[3], c, pick = -1, lim = 96 * 96 / 50;   /* ca.c S x S */
+    const char *force = getenv("IOS3DS_GL_ZCONV");
+    for (c = 0; c < 3 && P.state == 1; c++) {
+        P.zconv = c;
+        d[c] = gl_scene_diff(1, &m[c]);
+        if (pick < 0 && c < 2 && d[c] >= 0 && d[c] <= lim)
+            pick = c;
+    }
+    if (P.state != 1)
+        return;
+    if (force && *force >= '0' && *force <= '2')
+        pick = *force - '0';
+    P.zconv = pick < 0 ? PICA_Z_REVERSED : pick;
+    P.depth_broken = pick < 0;
+    gl_log("pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): %s %d %s, %s %d %s, "
+           "%s %d %s: %s%s", name[0], d[0], d[0] >= 0 && d[0] <= lim ? "ok" : "FAIL", name[1], d[1],
+           d[1] >= 0 && d[1] <= lim ? "ok" : "FAIL", name[2], d[2], d[2] >= 0 && d[2] <= lim ? "ok" : "FAIL",
+           pick < 0 ? "none works, depth-tested drawing goes to the CPU" : "using ", pick < 0 ? "" : name[pick]);
+}
+
 int pica_backend_init(void)
 {
     pica_info_t info;
@@ -277,10 +416,12 @@ int pica_backend_init(void)
         gl_log("pica: no memory for the vertex buffer (%s)", pica_strerror(st));
         return 0;
     }
+    P.arena_bytes = sizeof(Vtx) * VTX_CAP;
     P.state = 1;
     gl_log("pica: GPU up (self-check passed): arena %u KiB at PA 0x%08x (%u KiB free), PDN_GPU_CNT 0x%x, %s",
            info.arena_size >> 10, info.arena_pa, info.arena_free >> 10, info.gpu_cnt, P.dev->name);
-    return 1;
+    depth_probe();
+    return P.state == 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -435,14 +576,19 @@ static uint32_t read_back(PTarget *t, uint32_t *dst)
 {
     uint32_t dim = (uint32_t)t->ph << 16 | (uint32_t)t->pw, st, *lin;
     int y, x;
+    uint32_t bytes = (uint32_t)t->pw * t->ph * 4, lin_pa;
     lin = scratch((size_t)t->pw * t->ph);
     if (!lin)
         return (uint32_t)-1;
-    st = P.dev->transfer(t->color_pa, dim, t->lin_pa, dim, PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
+    /* the linear staging buffer only lives for the transfer (run 15: arena) */
+    if (!arena_alloc(bytes, &lin_pa))
+        return (uint32_t)-1;
+    st = P.dev->transfer(t->color_pa, dim, lin_pa, dim, PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
     P.readbacks++;
-    P.readback_kb += (uint32_t)t->pw * t->ph * 4 >> 10;
+    P.readback_kb += bytes >> 10;
     if (st == PICA_OK)
-        st = P.dev->read(t->lin_pa, lin, (uint32_t)t->pw * t->ph * 4);
+        st = P.dev->read(lin_pa, lin, bytes);
+    arena_release(lin_pa, bytes);
     if (st != PICA_OK)
         return st;
     /* Transfer row r is GL row ph-1-r; a GPU word is R<<24|G<<16|B<<8|A and
@@ -521,15 +667,22 @@ static void sync_target(PTarget *t)
     }
     if ((st = read_back(t, t->rt.color)) != 0 && st != (uint32_t)-1)
         gpu_fail("reading a frame back", st);
+    else if (st == (uint32_t)-1)
+        gl_log("pica: no memory to read a %dx%d target back: its last GPU frame is lost", t->w, t->h);
 }
 
 /* bring rt->color into the GPU buffer */
 static int load_target(PTarget *t)
 {
-    uint32_t dim = (uint32_t)t->ph << 16 | (uint32_t)t->pw, st, *lin = scratch((size_t)t->pw * t->ph);
+    uint32_t dim = (uint32_t)t->ph << 16 | (uint32_t)t->pw, st, *lin = scratch((size_t)t->pw * t->ph), lin_pa;
+    uint32_t bytes = (uint32_t)t->pw * t->ph * 4;
     int y, x;
     if (!lin)
         return 0;
+    if (!arena_alloc(bytes, &lin_pa)) {
+        cpu_from_now("GPU arena full (render target upload)", bytes);
+        return 0;
+    }
     memset(lin, 0, (size_t)t->pw * t->ph * 4);
     for (y = 0; y < t->h; y++) {
         uint32_t *d = lin + (size_t)(t->ph - 1 - y) * t->pw;
@@ -537,10 +690,11 @@ static int load_target(PTarget *t)
         for (x = 0; x < t->w; x++)
             d[x] = s[x] << 8 | s[x] >> 24;
     }
-    st = P.dev->write(t->lin_pa, lin, (uint32_t)t->pw * t->ph * 4);
+    st = P.dev->write(lin_pa, lin, bytes);
     if (st == PICA_OK)
-        st = P.dev->transfer(t->lin_pa, dim, t->color_pa, dim,
+        st = P.dev->transfer(lin_pa, dim, t->color_pa, dim,
                              PPF_OUT_TILED | PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
+    arena_release(lin_pa, bytes);
     if (st != PICA_OK) {
         gpu_fail("uploading a render target", st);
         return 0;
@@ -556,9 +710,8 @@ static void drop_target(PTarget *t)
         P.list_open = 0;                /* its pending draws can no longer be seen */
         P.nvtx = 0;
     }
-    if (t->color_pa) P.dev->free(t->color_pa);
-    if (t->lin_pa) P.dev->free(t->lin_pa);
-    if (t->swz_pa) P.dev->free(t->swz_pa);
+    arena_release(t->color_pa, (uint32_t)t->pw * t->ph * 4);
+    arena_release(t->swz_pa, (uint32_t)t->w * t->h * 4);
     memset(t, 0, sizeof *t);
 }
 
@@ -568,7 +721,7 @@ static void drop_depth(PDepth *d)
         flush_list();
         P.cur_depth = NULL;
     }
-    if (d->pa) P.dev->free(d->pa);
+    arena_release(d->pa, (uint32_t)d->pw * d->ph * 4);
     memset(d, 0, sizeof *d);
 }
 
@@ -626,15 +779,15 @@ static PTarget *get_target(const RT *rt)
         t->pw = present ? (int)pica_pot((uint32_t)(rt->w < 64 ? 64 : rt->w)) : pad_dim(rt->w);
         t->ph = present ? (int)pica_pot((uint32_t)(rt->h < 64 ? 64 : rt->h)) : pad_dim(rt->h);
         bytes = (uint32_t)t->pw * t->ph * 4;
-        if (P.dev->alloc(bytes, 0, &t->color_pa) != PICA_OK || P.dev->alloc(bytes, 0, &t->lin_pa) != PICA_OK ||
-            (present && P.dev->alloc((uint32_t)rt->w * rt->h * 4, 0, &t->swz_pa) != PICA_OK)) {
-            warn_once(WARN_MEM, "GPU arena full (render target): drawn by the software rasterizer");
+        t->w = rt->w;
+        t->h = rt->h;
+        if (!arena_alloc(bytes, &t->color_pa) ||
+            (present && !arena_alloc((uint32_t)rt->w * rt->h * 4, &t->swz_pa))) {
             drop_target(t);
+            cpu_from_now("GPU arena full (render target)", bytes);
             return NULL;
         }
         t->key = rt->color;
-        t->w = rt->w;
-        t->h = rt->h;
     }
     t->rt = *rt;
     t->used = ++P.tick;
@@ -661,9 +814,9 @@ static PDepth *get_depth(const RT *rt, const PTarget *t)
         d = lru;
         if (d->key)
             drop_depth(d);
-        if (P.dev->alloc(bytes, 0, &d->pa) != PICA_OK) {
-            warn_once(WARN_MEM, "GPU arena full (depth buffer): depth test disabled");
+        if (!arena_alloc(bytes, &d->pa)) {
             memset(d, 0, sizeof *d);
+            cpu_from_now("GPU arena full (depth buffer)", bytes);
             return NULL;
         }
         d->key = rt->depth;
@@ -671,10 +824,10 @@ static PDepth *get_depth(const RT *rt, const PTarget *t)
         d->ph = t->ph;
         {   /* far: a constant, so tiling does not matter; written by the CPU because
                the fill engine cannot reach the (FCRAM) arena */
-            uint32_t *z = scratch(bytes / 4), k;
+            uint32_t *z = scratch(bytes / 4), k, far = pica_depth_stored((unsigned)P.zconv, 1.0f);
             if (z) {
                 for (k = 0; k < bytes / 4; k++)
-                    z[k] = 0x00FFFFFF;
+                    z[k] = far;
                 P.dev->write(d->pa, z, bytes);
             }
         }
@@ -696,6 +849,8 @@ static PTarget *bind_target(const RT *rt)
     if (!t || P.state != 1)
         return NULL;
     d = get_depth(rt, t);
+    if (P.state != 1)
+        return NULL;
     if (t != P.cur || d != P.cur_depth) {
         flush_list();
         P.cur = t;
@@ -734,11 +889,9 @@ static void pica_tex_deleted(Tex *t)
     PTex *p = t->be_priv;
     if (!p)
         return;
-    if (P.state == 1) {
+    if (P.state == 1)
         flush_list();                   /* pending draws may sample it */
-        P.dev->free(p->pa);
-    }
-    free(p);
+    evict_texture(p);
     t->be_priv = NULL;
 }
 
@@ -757,46 +910,85 @@ static void pica_tex_changed(GC *gc, Tex *t)
     }
 }
 
+/* REPEAT on an axis whose size is not a power of two: the GPU texture is
+   power-of-two (run 13: NPOT textures sample garbage), so a padded image
+   would repeat with its padding. Such an axis is stretched to the
+   power-of-two size instead (nearest), and its texture coordinates stay. */
+static int wraps(GLenum w)
+{
+    int v = pica_gl_wrap(w);
+    return v < 0 || v == PICA_REPEAT || v == PICA_MIRRORED_REPEAT;
+}
+
 /* the tiled GPU copy of a texture, uploaded when the image changed */
 static PTex *use_texture(Tex *t)
 {
     PTex *p = t->be_priv;
     uint32_t pw = pica_pot((uint32_t)t->w), ph = pica_pot((uint32_t)t->h), bytes = pw * ph * 4, st;
+    int sx = (uint32_t)t->w != pw && wraps(t->wrap_s), sy = (uint32_t)t->h != ph && wraps(t->wrap_t);
+    int uw = sx ? (int)pw : t->w, uh = sy ? (int)ph : t->h;
+    const uint32_t *src = t->px;
+    uint32_t *stretched = NULL, src_pitch = (uint32_t)t->pitch * 4;
     void *tiled;
     if (pw > MAX_DIM || ph > MAX_DIM) {
         warn_once(WARN_TEXBIG, "texture larger than 1024: sampled as opaque black");
         return NULL;
     }
-    if (p && p->seq == t->be_seq && p->w == t->w && p->h == t->h)
+    if (p && p->seq == t->be_seq && p->w == t->w && p->h == t->h && p->sx == sx && p->sy == sy) {
+        p->used = P.draw_id;
         return p;
+    }
     flush_list();                       /* earlier draws must see the old texels */
     if (P.state != 1)
         return NULL;
     if (p && p->bytes != bytes) {
-        P.dev->free(p->pa);
-        free(p);
-        t->be_priv = p = NULL;
+        evict_texture(p);
+        p = NULL;
     }
     if (!p) {
         p = calloc(1, sizeof *p);
-        if (!p || P.dev->alloc(bytes, 0, &p->pa) != PICA_OK) {
-            warn_once(WARN_MEM, "GPU arena full (texture): sampled as opaque black");
+        if (!p)
+            return NULL;
+        if (!arena_alloc(bytes, &p->pa)) {
             free(p);
+            cpu_from_now("GPU arena full (texture), even after evicting every texture", bytes);
             return NULL;
         }
         p->bytes = bytes;
+        p->tex = t;
+        p->next = P.texs;
+        P.texs = p;
+        P.tex_bytes += bytes;
+        P.ntex++;
         t->be_priv = p;
     }
+    p->used = P.draw_id;
+    if (sx || sy) {
+        int x, y;
+        stretched = malloc((size_t)uw * uh * 4);
+        if (!stretched)
+            return NULL;
+        for (y = 0; y < uh; y++) {
+            const uint32_t *row = t->px + (size_t)(sy ? (2 * y + 1) * t->h / (2 * uh) : y) * t->pitch;
+            for (x = 0; x < uw; x++)
+                stretched[(size_t)y * uw + x] = row[sx ? (2 * x + 1) * t->w / (2 * uw) : x];
+        }
+        src = stretched;
+        src_pitch = (uint32_t)uw * 4;
+    }
     tiled = scratch(pw * ph);
-    if (!tiled)
+    if (!tiled) {
+        free(stretched);
         return NULL;
-    if ((uint32_t)t->w != pw || (uint32_t)t->h != ph)
+    }
+    if ((uint32_t)uw != pw || (uint32_t)uh != ph)
         memset(tiled, 0, bytes);
     /* px words are 0xAARRGGBB = bytes B, G, R, A */
-    pica_tex_upload(tiled, PICA_TEX_RGBA8, pw, ph, 0, 0, t->px, PICA_SRC_BGRA8888,
-                    (uint32_t)t->w, (uint32_t)t->h, (uint32_t)t->pitch * 4);
-    if ((uint32_t)t->w != pw || (uint32_t)t->h != ph)
-        pica_tex_pad_edges(tiled, PICA_TEX_RGBA8, pw, ph, (uint32_t)t->w, (uint32_t)t->h);
+    pica_tex_upload(tiled, PICA_TEX_RGBA8, pw, ph, 0, 0, src, PICA_SRC_BGRA8888, (uint32_t)uw, (uint32_t)uh,
+                    src_pitch);
+    free(stretched);
+    if ((uint32_t)uw != pw || (uint32_t)uh != ph)
+        pica_tex_pad_edges(tiled, PICA_TEX_RGBA8, pw, ph, (uint32_t)uw, (uint32_t)uh);
     st = P.dev->write(p->pa, tiled, bytes);
     P.uploads++;
     P.upload_kb += bytes >> 10;
@@ -808,6 +1000,10 @@ static PTex *use_texture(Tex *t)
     p->ph = ph;
     p->w = t->w;
     p->h = t->h;
+    p->uw = uw;
+    p->uh = uh;
+    p->sx = sx;
+    p->sy = sy;
     p->seq = t->be_seq;
     P.last_valid = 0;                   /* re-send the texture state: drops the GPU's texel cache */
     return p;
@@ -896,6 +1092,8 @@ static void build_state(DState *s, GC *gc, const RT *rt, const PTarget *t)
     state_viewport(s, gc, t, gc->vp, gc->scissor_on, gc->scissor);
 
     pica_raster_defaults(r);
+    r->depth_conv = (uint8_t)P.zconv;
+    P.draw_id++;                        /* textures this draw samples are not evicted */
     if (gc->cull && gc->cull_mode != GL_FRONT_AND_BACK)
         r->cull = (gc->cull_mode == GL_BACK) == (gc->front_face == GL_CCW) ? PICA_CULL_BACK_CCW : PICA_CULL_FRONT_CCW;
     r->depth_test = gc->depth_test && P.cur_depth;
@@ -939,8 +1137,8 @@ static void build_state(DState *s, GC *gc, const RT *rt, const PTarget *t)
             s->tex[i].pa = p->pa;
             s->tex[i].width = (uint16_t)p->pw;
             s->tex[i].height = (uint16_t)p->ph;
-            s->tscale[i][0] = (float)p->w / (float)p->pw;
-            s->tscale[i][1] = (float)p->h / (float)p->ph;
+            s->tscale[i][0] = (float)p->uw / (float)p->pw;
+            s->tscale[i][1] = (float)p->uh / (float)p->ph;
         } else {                        /* no GPU copy: address 0 samples opaque black */
             s->tex[i].width = s->tex[i].height = 8;
             s->tscale[i][0] = s->tscale[i][1] = 1;
@@ -1048,8 +1246,11 @@ static void emit_draw(const DState *s, const Vtx *v, int n)
 
 static void pica_triangles(GC *gc, RT *rt, const Vtx *v, int n)
 {
-    PTarget *t = bind_target(rt);
+    PTarget *t;
     DState s;
+    if (P.depth_broken && gc->depth_test && rt->depth)
+        cpu_from_now("depth tests do not draw right on this GPU (depth probe)", 0);
+    t = bind_target(rt);
     if (t && !t->gpu_valid)
         load_target(t);
     if (!t || P.state != 1) {
@@ -1069,9 +1270,12 @@ static void pica_triangles(GC *gc, RT *rt, const Vtx *v, int n)
 
 static void pica_clear(GC *gc, RT *rt, GLbitfield mask)
 {
-    PTarget *t = bind_target(rt);
+    PTarget *t;
     int color = (mask & GL_COLOR_BUFFER_BIT) != 0, depth, full, all_ch, i;
     float cc[4];
+    if (P.depth_broken && (mask & GL_DEPTH_BUFFER_BIT) && rt->depth)
+        cpu_from_now("depth tests do not draw right on this GPU (depth probe)", 0);
+    t = bind_target(rt);
     if (!t) {
         sw_backend.clear(gc, rt, mask);
         return;
@@ -1111,6 +1315,7 @@ static void pica_clear(GC *gc, RT *rt, GLbitfield mask)
         vp[0] = vp[1] = 0; vp[2] = t->pw; vp[3] = t->ph;
         state_viewport(&s, gc, t, vp, 1, gc->scissor_on ? gc->scissor : vp);
         pica_raster_defaults(&s.rs);
+        s.rs.depth_conv = (uint8_t)P.zconv;
         s.rs.depth_test = (uint8_t)depth;
         s.rs.depth_func = PICA_ALWAYS;
         s.rs.write_mask = (uint8_t)((depth ? PICA_WRITE_DEPTH : 0) |
@@ -1214,6 +1419,18 @@ void pica_backend_stats2(PicaStats *s)
     s->uploads = P.uploads;
     s->upload_kb = P.upload_kb;
     s->presents = P.presents;
+    s->arena_kb = P.arena_bytes >> 10;
+    s->tex_kb = P.tex_bytes >> 10;
+    s->ntex = P.ntex;
+    s->evictions = P.evictions;
+    s->gpu_on = P.state == 1;
+    s->arena_free_kb = 0;
+    if (P.state == 1) {
+        pica_info_t info;
+        memset(&info, 0, sizeof info);
+        if (P.dev->info(&info) == PICA_OK)
+            s->arena_free_kb = info.arena_free >> 10;
+    }
 }
 
 void pica_backend_stats(unsigned *lists, unsigned *draws)
