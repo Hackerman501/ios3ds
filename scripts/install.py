@@ -214,7 +214,7 @@ def main():
     if a.check:
         import mkboot  # noqa: F401  (imports kernel/, fwlib: catches a broken unpack)
         import mkrootfs  # noqa: F401
-        import fwprep  # noqa: F401
+        import fwprep as _fwprep_check # noqa: F401
         say("OK: everything needed is here")
         return
 
