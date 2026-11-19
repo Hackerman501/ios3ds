@@ -123,6 +123,7 @@ static struct {
     u8 scan_done, auth_fails;
     u8 byte_mode;                   /* 1: mailbox through CMD52 (the FIFO self-test failed) */
     u8 verbose, switching, from_ios;
+    u8 nonet, rescan;               /* NO_NETWORK_AVAIL failures in a row; a directed rescan is running */
     u16 disc_reason, disc_code;
     u32 link_seq;
     /* [wifi-diag] */
@@ -512,6 +513,7 @@ static void link_up(void)
     wmi_send(WMI_SYNCHRONIZE, &one, 1);
     A.state = NET_ST_UP;
     A.auth_fails = 0;
+    A.nonet = 0;
     log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", T.ssid,
            A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3], A.bssid[4], A.bssid[5]);
 }
@@ -678,6 +680,8 @@ static void on_bssinfo(const u8 *d, u32 n)
     A.group_crypt = (u8)group;
 }
 
+static void target_lookup(void);
+
 static void do_connect(void)
 {
     int r = wmi_connect();
@@ -742,7 +746,14 @@ static void on_wmi(const u8 *b, u32 len)
             scan_seq++;
             logp("[wifi] scan done: %u networks\n", nscan);
         }
-        if (A.state == NET_ST_SCAN && !A.scan_done) do_connect();
+        if (A.state == NET_ST_SCAN && !A.scan_done) {
+            if (A.rescan) {                     /* after NO_NETWORK_AVAIL: fresh BSSID/channel, */
+                A.rescan = 0;                   /* every other try the firmware picks the AP */
+                target_lookup();
+                if (!(A.nonet & 1)) A.found = 0;
+            }
+            do_connect();
+        }
         break;
     case WMI_EV_CONNECT:
         /* u16 channel; u8 bssid[6]; u16 listen, beacon; u32 nw_type; u8 beacon_ie_len,
@@ -811,6 +822,21 @@ static void on_wmi(const u8 *b, u32 len)
             T.have = 0;
             A.state = NET_ST_IDLE;
             break;
+        }
+        if (A.disc_reason == 1 && A.state == NET_ST_SCAN) {
+            /* NO_NETWORK_AVAIL: the firmware did not find the AP (run21: a weak AP
+               on channel 13 failed every blind retry). Search for it by name
+               again, then connect: odd tries to the BSSID just seen, even tries
+               let the firmware pick. After 8 in a row, back off to 5 s. */
+            A.nonet++;
+            if (A.nonet <= 8 || !(A.nonet & 3)) {
+                log_warn("[wifi] \"%s\" not found by the firmware (try %u): searching for it, then %s\n",
+                         T.ssid, A.nonet, A.nonet & 1 ? "connecting to the BSSID seen" : "letting the firmware pick");
+                A.rescan = 1;
+                A.reconnect_at = 0;
+                if (scan_start() >= 0) break;
+                A.rescan = 0;
+            }
         }
         log_warn("[wifi] disconnected (WMI reason %u, 802.11 code %u), reconnecting in 5 s\n",
                  A.disc_reason, A.disc_code);
@@ -999,6 +1025,8 @@ int ar6k_command(const volatile wlan_cmd_t *c)
         T.have = 1;
         A.from_ios = 1;
         A.auth_fails = 0;
+        A.nonet = 0;
+        A.rescan = 0;
         target_lookup();
         logp("[wifi] iOS: join \"%s\" (%s), %s\n", T.ssid, T.security == WIFI_SEC_WPA2 ? "WPA2" : "open",
              A.found ? "in the scan list" : "not in the scan list: scanning");
