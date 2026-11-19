@@ -102,7 +102,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
 - **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. The `ios3ds.3dsx` launcher swaps `boot.firm` on the SD card and reboots instead. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
 - **Missing hardware support:**
   - touch is untested (buttons work in the emulator);
-  - Wi-Fi (WPA2, DHCP, DNS) works end to end in QEMU against a model of the AR6014 and an access point, but has never run on a console; it needs the Wi-Fi firmware from your own console's NWM module. iOS's Settings > Wi-Fi scans and joins (password on the on-screen keyboard) and the status bar shows the bars ([docs/wifi.md](docs/wifi.md) §10);
+  - Wi-Fi (WPA2, DHCP, DNS) works end to end in QEMU against a model of the AR6014 and an access point, but has never run on a console; it needs the Wi-Fi firmware from your own console's NWM module (one GodMode9 script, NAND read-only, docs/wifi.md §3). iOS's Settings > Wi-Fi scans and joins (password on the on-screen keyboard) and the status bar shows the bars ([docs/wifi.md](docs/wifi.md) §10);
   - the system controller (date and time, battery, HOME/POWER, sliders, brightness, accelerometer) is implemented but has only run in QEMU ([docs/mcu.md](docs/mcu.md));
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);

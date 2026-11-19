@@ -21,7 +21,7 @@ ARM11_FLAGS := -mcpu=mpcore -mfloat-abi=soft
 LDFLAGS     := -nostdlib -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 ARM9_SRC  := arm9/start.S arm9/main.c arm9/console.c arm9/log.c arm9/sdmmc.c arm9/diskio.c arm9/blksrv.c arm9/display.c arm9/tsc.c arm9/swap.c arm9/audio.c arm9/gpumirror.c arm9/i2c.c arm9/mcu.c arm9/powersave.c \
-             $(addprefix arm9/wifi/,wifi.c wifi_cfg.c wifi_ring.c wifi_frame.c wpa2.c sdio.c ar6k.c vnic.c) \
+             $(addprefix arm9/wifi/,wifi.c wifi_cfg.c wifi_ring.c wifi_frame.c wpa2.c sdio.c ar6k.c vnic.c nwmcode.c) \
              arm9/fatfs/ff.c arm9/fatfs/ffunicode.c common/util.c
 ARM11_SRC := arm11/start.S arm11/main.c common/util.c
 

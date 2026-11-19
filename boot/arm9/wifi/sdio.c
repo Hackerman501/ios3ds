@@ -12,6 +12,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "sdio.h"
+#include "util.h"
 
 #define TMIO2            0x10122000u
 #define CFG9_SDMMC_CTL   (*(vu16 *)0x10000020u)     /* bit2: controller 2 port 0 power, 0 = on */
@@ -59,6 +60,8 @@
 #define WAIT_LOOPS  2000000u        /* ~0.1 s per command at worst */
 
 static u32 last_status, rca;
+static sdio_diag_t D;
+const sdio_diag_t *sdio_diag(void) { return &D; }
 
 static inline u16 rd16(u32 r) { return *(vu16 *)(TMIO2 + r); }
 static inline void wr16(u32 r, u16 v) { *(vu16 *)(TMIO2 + r) = v; }
@@ -185,9 +188,13 @@ int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len)
 int sdio_init(void)
 {
     u32 resp = 0, ocr = 0;
-    int r;
+    int r, v;
 
+    memset(&D, 0, sizeof(D));
+    D.stage = "controller";
+    D.cfg9_before = CFG9_SDMMC_CTL;
     CFG9_SDMMC_CTL = (u16)(CFG9_SDMMC_CTL & ~0x0004);   /* port power on */
+    D.cfg9_after = CFG9_SDMMC_CTL;
     /* controller init, as boot/arm9/sdmmc.c does for controller 1 */
     mask16(R_DATA32CTL, 0x0800, 0);
     mask16(R_DATA32CTL, 0x1000, 0);
@@ -206,28 +213,43 @@ int sdio_init(void)
     wr16(R_STOP, 0x0100);
     set_clock(0x0020);
     waitcycles(335000);                     /* ~10 ms */
-    if ((rd16(R_OPT) & 0x00FF) != 0x00EE) return SDIO_ERR_TIMEOUT;  /* no controller here */
+    D.opt = rd16(R_OPT);
+    if ((D.opt & 0x00FF) != 0x00EE) return SDIO_ERR_TIMEOUT;  /* no controller here */
 
-    /* CMD5 until the card reports ready, echoing its OCR back */
+    /* CMD5 until the card reports ready, echoing its OCR back. Bounded: each
+       command ends on a response, a CMD timeout or ~0.1 s; at most 200 tries
+       1 ms apart. */
+    D.stage = "CMD5";
     for (int tries = 0;; tries++) {
+        D.cmd5_tries = (u32)tries + 1;
         r = command(5 | RSP_R3, ocr, NULL, NULL, 0, 0, &resp);
         if (r < 0) return r == SDIO_ERR_CARD ? SDIO_ERR_NOCARD : r;
+        if (!tries) D.ocr_first = resp;
+        D.ocr = resp;
         if (resp & 0x80000000u) break;
         ocr = resp & 0x00FFFFFFu;
         if (tries > 200) return SDIO_ERR_NOCARD;
         waitcycles(33500);
     }
+    D.stage = "CMD3 (RCA)";
     r = command(3 | RSP_R1, 0, NULL, NULL, 0, 0, &resp);
     if (r < 0) return r;
     rca = resp >> 16;
+    D.rca = rca;
+    D.stage = "CMD7 (select)";
     r = command(7 | RSP_R1B, rca << 16, NULL, NULL, 0, 0, NULL);
     if (r < 0) return r;
 
     /* CCCR: reset function enables, 4-bit bus + CD disable, power, block sizes */
+    D.stage = "CCCR";
     if ((r = sdio_w8(0, 0x02, 0x00)) < 0) return r;
+    if ((v = sdio_r8(0, 0x00)) >= 0) D.cccr_rev = (u8)v;
+    if ((v = sdio_r8(0, 0x01)) >= 0) D.sd_rev = (u8)v;
+    if ((v = sdio_r8(0, 0x08)) >= 0) D.caps = (u8)v;
     int bic = sdio_r8(0, 0x07);
     if (bic < 0) return bic;
     if ((r = sdio_w8(0, 0x07, (u8)(bic | 0x82))) < 0) return r;
+    if ((v = sdio_r8(0, 0x07)) >= 0) D.bic = (u8)v;
     mask16(R_OPT, 0x8000, 0);               /* controller: 4-bit */
     set_clock(0x0001);                      /* HCLK/4 = 16.8 MHz: inside SDIO default speed (25 MHz) */
     if ((r = sdio_w8(0, 0x12, 0x02)) < 0) return r;
@@ -235,12 +257,37 @@ int sdio_init(void)
     if ((r = sdio_w8(0, 0x111, SDIO_BLOCK >> 8)) < 0) return r;
     if ((r = sdio_w8(0, 0x10, SDIO_BLOCK & 0xFF)) < 0) return r;
     if ((r = sdio_w8(0, 0x11, SDIO_BLOCK >> 8)) < 0) return r;
+    D.stage = "function 1 enable";
     if ((r = sdio_w8(0, 0x02, 0x02)) < 0) return r;     /* enable function 1 */
     for (int tries = 0; tries < 1000; tries++) {
         int rdy = sdio_r8(0, 0x03);
+        D.ready_tries = (u32)tries + 1;
         if (rdy < 0) return rdy;
-        if (rdy & 0x02) return SDIO_OK;
+        if (rdy & 0x02) { D.stage = "done"; return SDIO_OK; }
         waitcycles(33500);
     }
     return SDIO_ERR_TIMEOUT;
+}
+
+int sdio_manfid(u16 *manf, u16 *card)
+{
+    u32 p = 0;
+    for (int i = 0; i < 3; i++) {
+        int b = sdio_r8(0, 0x09 + (u32)i);
+        if (b < 0) return b;
+        p |= (u32)b << (8 * i);
+    }
+    for (int n = 0; n < 16 && p < 0x20000; n++) {          /* walk at most 16 tuples */
+        int code = sdio_r8(0, p), link = code < 0 || code == 0xFF ? -1 : sdio_r8(0, p + 1);
+        if (code < 0 || code == 0xFF || link < 0) return SDIO_ERR_CARD;
+        if (code == 0x20 && link >= 4) {
+            int b[4];
+            for (int i = 0; i < 4; i++) if ((b[i] = sdio_r8(0, p + 2 + (u32)i)) < 0) return b[i];
+            *manf = (u16)(b[0] | b[1] << 8);
+            *card = (u16)(b[2] | b[3] << 8);
+            return 0;
+        }
+        p += 2 + (u32)link;
+    }
+    return SDIO_ERR_CARD;
 }

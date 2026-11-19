@@ -18,7 +18,10 @@ The files are removed from the image afterwards (so the image keeps the
 Cases: ok (WPA2, everything must pass), open (open network), nocfg (no
 wifi.cfg: Wi-Fi must stay off and nothing may touch the card), nofw (no
 firmware file: one log line, Wi-Fi off), wrongpsk (the 4-way handshake must
-fail at message 2, no link).
+fail at message 2, no link), nwm (no wifi-fw.bin: the ARM9 cuts the
+firmware out of a synthetic, BLZ-compressed sd:/ios3ds/nwm.code itself, as
+after the GodMode9 script; plus the [wifi-diag] lines), badnwm (an nwm.code
+that is not NWM: one error line, Wi-Fi off, card untouched).
 """
 import argparse
 import http.server
@@ -31,7 +34,9 @@ import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools", "ios3ds-wifi"))
+sys.path.insert(0, os.path.join(ROOT, "tools", "ios3ds-wifi", "tests"))
 import nwmfw  # noqa: E402
+import test_nwmfw  # noqa: E402  (synthetic NWM .code: random bytes, no Nintendo code)
 
 SSID = "ios3ds-qemu"
 PSK = "ios3ds-test-passphrase"
@@ -55,6 +60,18 @@ def dummy_fw(path):
         f.write(nwmfw.pack(parts))
 
 
+def dummy_nwm(path):
+    """a synthetic NWM .code with GBATEK's newer literal pool, BLZ-compressed
+    like the real ExeFS .code (GodMode9's extrcode writes it decompressed;
+    the ARM9 handles both)"""
+    class Few(random.Random):               # compressible, like ARM code
+        def getrandbits(self, k):
+            return (0x00, 0x01, 0xE5, 0x9F)[int(self.random() * 4)]
+    code, _ = test_nwmfw.make_code("newer", Few(7))
+    with open(path, "wb") as f:
+        f.write(test_nwmfw.blz_compress(code, 0x200))
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         hits.append(self.path)
@@ -73,7 +90,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
                     choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip",
-                             "settings"))
+                             "settings", "nwm", "badnwm"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
     ap.add_argument("--port", type=int, default=8080)
@@ -88,7 +105,8 @@ def main():
 
     cfg = os.path.join(a.out, "wifi.cfg")
     fw = os.path.join(a.out, "wifi-fw.bin")
-    for f in ("wifi.cfg", "wifi-fw.bin"):
+    nwm = os.path.join(a.out, "nwm.code")
+    for f in ("wifi.cfg", "wifi-fw.bin", "nwm.code"):
         mtools(["mdel", "::/ios3ds/" + f], a.sd, check=False)
     if a.case == "settings":                 # no wifi.cfg: iOS Settings drive the chip
         dummy_fw(fw)
@@ -103,7 +121,14 @@ def main():
         with open(cfg, "w") as f:
             f.write("\n".join(lines) + "\n")
         mtools(["mcopy", "-o", cfg, "::/ios3ds/wifi.cfg"], a.sd)
-        if a.case != "nofw":
+        if a.case == "nwm":
+            dummy_nwm(nwm)
+            mtools(["mcopy", "-o", nwm, "::/ios3ds/nwm.code"], a.sd)
+        elif a.case == "badnwm":
+            with open(nwm, "wb") as f:
+                f.write(bytes(random.Random(3).getrandbits(8) for _ in range(300000)))
+            mtools(["mcopy", "-o", nwm, "::/ios3ds/nwm.code"], a.sd)
+        elif a.case != "nofw":
             dummy_fw(fw)
             mtools(["mcopy", "-o", fw, "::/ios3ds/wifi-fw.bin"], a.sd)
 
@@ -136,7 +161,7 @@ def main():
         f.write(out)
     srv.shutdown()
     if not a.keep:
-        for f in ("wifi.cfg", "wifi-fw.bin"):
+        for f in ("wifi.cfg", "wifi-fw.bin", "nwm.code"):
             mtools(["mdel", "::/ios3ds/" + f], a.sd, check=False)
 
     def has(pat):
@@ -188,6 +213,29 @@ def main():
             ("chip idle without wifi.cfg", r"\[wifi\] idle: no network configured"),
             ("a80211 loaded in configd", r"\[a80211\] loaded"),
         ],
+        "nwm": [
+            ("firmware from nwm.code", r"\[wifi\] firmware from 0:/ios3ds/nwm\.code: \d+ bytes \(BLZ-compressed\), main type4"),
+            ("diag: pool + sizes", r"\[wifi-diag\] .*fw: newer pool at \.code\+[0-9a-f]+, text base 100000"),
+            ("diag: power readback", r"\[wifi-diag\] .*power: CFG11_WIFICNT \S+ -> 01"),
+            ("diag: CMD5/OCR", r"\[wifi-diag\] .*sdio: CMD5 x\d+: .*ready 1"),
+            ("diag: CIS Atheros", r"\[wifi-diag\] .*sdio: CIS manufacturer 0271"),
+            ("diag: BMI version", r"\[wifi-diag\] .*bmi: target version 2300006f \(AR6014 ROM\)"),
+            ("diag: main uploaded", r"\[wifi-diag\] .*fw: part 4 main \(BMI_LZ_DATA\): 42475 bytes"),
+            ("diag: board data", r"\[wifi-diag\] .*boot: hi_board_data_initialized = 1"),
+            ("diag: HTC services", r"\[wifi-diag\] .*htc: service 0100 -> status 0, endpoint 1"),
+            ("diag: WMI ready", r"\[wifi-diag\] .*wmi: WMI_READY"),
+            ("diag: channel list", r"\[wifi-diag\] .*wmi: channel list: 11 channels, 2\.4 GHz mask 0ffe"),
+            ("diag: bring-up summary", r"\[wifi-diag\] .*summary: bring-up OK"),
+            ("diag: scan result", r"\[wifi-diag\] .*scan: \"" + SSID + r"\" .* MHz \(ch \d+\) rssi"),
+            ("diag: scan complete", r"\[wifi-diag\] .*scan: SCAN_COMPLETE after \d+ ms"),
+            ("model: firmware running", r"ctr-wifi: .*firmware running"),
+            ("ARM9 link up", r"\[wifi\] link up"),
+            ("DHCP lease", r"\[nettest\] .*address 10\.0\.2\.\d+"),
+            ("HTTP fetch", r"\[nettest\] http .*" + TOKEN),
+        ],
+        "badnwm": [
+            ("not NWM logged", r"\[wifi\] 0:/ios3ds/nwm\.code \(300000 bytes\): no NWM firmware pool"),
+        ],
         "nocfg": [
             ("Wi-Fi off", r"\[wifi\] 0:/ios3ds/wifi-fw\.bin: not found .*Wi-Fi off"),
         ],
@@ -204,6 +252,7 @@ def main():
     forbidden = {
         "nocfg": [("card untouched", r"ctr-wifi: .*card powered")],
         "nofw": [("card untouched", r"ctr-wifi: .*card powered")],
+        "badnwm": [("card untouched", r"ctr-wifi: .*card powered")],
         "wrongpsk": [("no link", r"\[wifi\] link up")],
     }.get(a.case, [])
     forbidden += [("no kernel panic", r"panic\(cpu"), ("no ARM9 crash", r"ARM9 (data abort|exception)")]
@@ -216,7 +265,11 @@ def main():
         good = not has(pat)
         ok &= good
         print("[wifi-test] %-26s %s" % (name, "PASS" if good else "FAIL"))
-    if a.case in ("ok", "open"):
+    if a.case == "nwm":
+        for ln in out.splitlines():
+            if "[wifi-diag]" in ln and ("monitor:" in ln or "summary:" in ln):
+                print("[wifi-test] " + ln.strip())
+    if a.case in ("ok", "open", "nwm"):
         print("[wifi-test] host HTTP requests: %s" % (hits or "none"))
     print("[wifi-test] %s (log: %s)" % ("PASS" if ok else "FAIL", os.path.join(a.out, "run.txt")))
     return 0 if ok else 1

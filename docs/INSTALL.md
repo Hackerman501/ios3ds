@@ -71,7 +71,7 @@ Or: hold **START** while powering on, and pick `ios3ds` in Luma's chainloader me
 ## What works, what doesn't
 
 - **Works:** home screen, touch, Home/lock/volume buttons, built-in apps such as Settings, Notes and Mail.
-- **No Wi-Fi** by default (experimental, needs a config file, untested on hardware).
+- **Wi-Fi** is off until you copy the Wi-Fi firmware from your own console (experimental, untested on hardware): start GodMode9 (hold START while powering on, choose GodMode9), press HOME, choose `Scripts...` -> `ios3ds-wifi-fw`, confirm with A. It only reads the console's memory and writes one file, `ios3ds/nwm.code`, to the SD card. Then Settings > Wi-Fi in iOS lists the networks around you ([docs/wifi.md](wifi.md) section 3).
 - **Sound** working but no volume
 - No real clock: the date and time are wrong.
 - 3D (OpenGL) apps are drawn in software and are slow.

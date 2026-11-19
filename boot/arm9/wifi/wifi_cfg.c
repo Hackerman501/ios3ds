@@ -10,6 +10,8 @@
  *   mac=02:11:22:33:44:55    (qemu/loop only; the AR6014 reports its own)
  *   fw=0:/ios3ds/wifi-fw.bin
  *   verbose=0|1|2
+ *   diag=0|1                 ([wifi-diag] bring-up log, default 1)
+ *   fwmain=4|1               (main firmware taken from nwm.code, default 4)
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "wifi.h"
@@ -55,6 +57,8 @@ int wifi_cfg_parse(char *txt, wifi_cfg_t *c)
     int lineno = 0, sec_set = 0;
     memset(c, 0, sizeof(*c));
     copy_str(c->fw, "0:/ios3ds/wifi-fw.bin", sizeof(c->fw));
+    c->diag = 1;
+    c->fwmain = 4;
     char *line = txt;
     while (line && *line) {
         char *next = NULL;
@@ -113,6 +117,12 @@ int wifi_cfg_parse(char *txt, wifi_cfg_t *c)
             } else if (streq(k, "verbose")) {
                 if (vl != 1 || v[0] < '0' || v[0] > '9') return -lineno;
                 c->verbose = (u32)(v[0] - '0');
+            } else if (streq(k, "diag")) {
+                if (vl != 1 || (v[0] != '0' && v[0] != '1')) return -lineno;
+                c->diag = (u8)(v[0] - '0');
+            } else if (streq(k, "fwmain")) {
+                if (vl != 1 || (v[0] != '1' && v[0] != '4')) return -lineno;
+                c->fwmain = (u8)(v[0] - '0');
             }
             /* unknown keys: ignored, so newer configs work with older payloads */
         }

@@ -31,3 +31,18 @@ int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len);
 int sdio_read_bytes(u32 func, u32 addr, u8 *buf, u32 len);
 /* STAT1 | STAT0 << 16 of the last command, for the log. */
 u32 sdio_last_status(void);
+
+/* What sdio_init() saw, for the [wifi-diag] log (docs/wifi.md section 6). */
+typedef struct {
+    const char *stage;          /* last step started: "controller", "CMD5", ... */
+    u16 cfg9_before, cfg9_after;/* CFG9_SDMMCCTL around the port-power write */
+    u16 opt;                    /* SD_OPTION read back (0x..EE = controller answers) */
+    u32 ocr_first, ocr;         /* R4 of the first CMD5 (OCR 0) and of the ready one */
+    u32 cmd5_tries;
+    u32 rca;
+    u8  cccr_rev, sd_rev, caps, bic;   /* CCCR 0x00, 0x01, 0x08, 0x07 (after the write) */
+    u32 ready_tries;            /* polls of CCCR 0x03 until function 1 was ready */
+} sdio_diag_t;
+const sdio_diag_t *sdio_diag(void);
+/* CISTPL_MANFID from the common CIS (CMD52 reads): 0 = found, < 0 = not. */
+int sdio_manfid(u16 *manf, u16 *card);

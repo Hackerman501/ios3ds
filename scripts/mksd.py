@@ -8,6 +8,7 @@ of the real SD card). scripts/install.py calls this with a release's prebuilt
 files (--firm, --launcher, --prebuilt, --rootfs-add, --hfsplus) instead of build/:
   3ds/ios3ds.3dsx             Homebrew Launcher entry (if built): swaps boot.firm, reboots
   ios3ds/ios3ds.firm          the payload again, for the launcher
+  gm9/scripts/ios3ds-wifi-fw.gm9  GodMode9 script: NWM code -> ios3ds/nwm.code (Wi-Fi)
   luma/payloads/ios3ds.firm   the payload (hold START at boot for Luma's menu,
                               or rename to x_ios3ds.firm to boot it with X)
   ios3ds/boot.cfg             loader configuration (editable: cmdline=...)
@@ -47,6 +48,12 @@ def build_tree(args):
     if os.path.exists(launcher):
         os.makedirs(os.path.join(tree, "3ds"), exist_ok=True)
         shutil.copy(launcher, os.path.join(tree, "3ds", "ios3ds.3dsx"))
+    # GodMode9 script that copies the console's own NWM code (Wi-Fi firmware
+    # source) to sd:/ios3ds/nwm.code, read-only on NAND (docs/wifi.md section 3)
+    gm9 = os.path.join(ROOT, "tools", "ios3ds-wifi", "ios3ds-wifi-fw.gm9")
+    if os.path.exists(gm9):
+        os.makedirs(os.path.join(tree, "gm9", "scripts"), exist_ok=True)
+        shutil.copy(gm9, os.path.join(tree, "gm9", "scripts", "ios3ds-wifi-fw.gm9"))
     kernel = os.path.join(args.staging, "kernelcache.macho")
     if os.path.exists(kernel) and not args.no_kernel:
         import mkboot  # noqa: E402

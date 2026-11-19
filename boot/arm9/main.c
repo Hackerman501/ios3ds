@@ -887,7 +887,14 @@ void a9_main(int argc, char **argv)
     /* marker pattern in the page-table area: lets the monitor see the entry stub run */
     memset((void *)cfg.top_pa, 0xA5, 0x9000);
     /* Wi-Fi: wifi.cfg, WPA2 key derivation, network mailbox (docs/wifi.md) */
-    wifi_init();
+    {   /* scratch for unpacking sd:/ios3ds/nwm.code: the top 4 MiB of XNU's
+           memory, unused until XNU starts (after this), never a load= target */
+        u32 len = 0x400000, pa = cfg.phys_base + cfg.mem_size - len;
+        bool ok = pa >= cfg.top_pa + 0x100000;
+        for (u32 i = 0; i < cfg.nloads; i++)
+            if (cfg.load_pa[i] >= pa - 0x100000 && cfg.load_pa[i] < pa + len) ok = false;
+        wifi_init(ok ? pa : 0, ok ? len : 0);
+    }
 
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     {   /* time set in iOS Settings, saved by mcu.c, wins over boot.cfg rtc_offset */
