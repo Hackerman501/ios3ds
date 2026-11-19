@@ -54,6 +54,8 @@ typedef struct {
     u8  have_ptk, have_replay, done;
     u8  group_cipher;       /* RSN suite type in our IE: 4 = CCMP (default), 2 = TKIP */
     u8  replay[8];          /* last accepted replay counter (big endian) */
+    u8  own_ie[40];         /* RSN IE exactly as the firmware sent it in the association */
+    u8  own_ie_len;         /* request (CONNECT event); 0 = build our own (wpa2_rsn_ie) */
 } wpa2_t;
 
 void wpa2_start(wpa2_t *w, const u8 pmk[32], const u8 sta[6], const u8 ap[6],

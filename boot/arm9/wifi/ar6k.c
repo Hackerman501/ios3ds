@@ -539,6 +539,25 @@ static void on_eapol(const u8 *eth, u32 len)
 {
     u8 frame[14 + 160], out[2 + 14 + 8 + 160];
     u32 rlen = 0;
+    /* PTK inputs straight from the frame: the authenticator is its source,
+       the supplicant its destination (not what the CONNECT event parsing says) */
+    if (len >= 14 + 7 && !(eth[14 + 5] & 0x01) && (eth[14 + 6] & 0x80)) {      /* message 1: ACK, no MIC */
+        if (memcmp(eth + 6, A.wpa.ap, 6)) {
+            log_warn("[wifi] EAPOL source %02x:%02x:%02x:%02x:%02x:%02x != BSSID from CONNECT: using the source\n",
+                     eth[6], eth[7], eth[8], eth[9], eth[10], eth[11]);
+            memcpy(A.wpa.ap, eth + 6, 6);
+            memcpy(A.bssid, eth + 6, 6);
+        }
+        if (!(eth[0] & 1) && memcmp(eth, A.wpa.sta, 6)) {
+            log_warn("[wifi] EAPOL destination %02x:%02x:%02x:%02x:%02x:%02x != our MAC: using it\n",
+                     eth[0], eth[1], eth[2], eth[3], eth[4], eth[5]);
+            memcpy(A.wpa.sta, eth, 6);
+        }
+        DIAG("eapol m1: key info %02x%02x, descriptor %u, replay %02x%02x%02x%02x%02x%02x%02x%02x, key data %u",
+             eth[14 + 5], eth[14 + 6], eth[14 + 4], eth[14 + 9], eth[14 + 10], eth[14 + 11], eth[14 + 12],
+             eth[14 + 13], eth[14 + 14], eth[14 + 15], eth[14 + 16],
+             len >= 14 + 99 ? (u32)eth[14 + 97] << 8 | eth[14 + 98] : 0);
+    }
     int ev = wpa2_rx_eapol(&A.wpa, eth + 14, len - 14, frame + 14, sizeof(frame) - 14, &rlen);
     if (ev < 0) {
         log_warn("[wifi] EAPOL-Key rejected: %d\n", ev);
@@ -726,14 +745,41 @@ static void on_wmi(const u8 *b, u32 len)
         if (A.state == NET_ST_SCAN && !A.scan_done) do_connect();
         break;
     case WMI_EV_CONNECT:
-        /* u16 channel; u8 bssid[6]; ... (ath6kl struct wmi_connect_event) */
+        /* u16 channel; u8 bssid[6]; u16 listen, beacon; u32 nw_type; u8 beacon_ie_len,
+           assoc_req_len, assoc_resp_len; assoc_info[] (ath6kl struct wmi_connect_event) */
         if (n >= 8) memcpy(A.bssid, d + 2, 6);
-        logp("[wifi] associated, channel %u MHz\n", n >= 2 ? d[0] | (u32)d[1] << 8 : 0);
+        logp("[wifi] associated, channel %u MHz, BSSID %02x:%02x:%02x:%02x:%02x:%02x\n",
+             n >= 2 ? d[0] | (u32)d[1] << 8 : 0, A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3],
+             A.bssid[4], A.bssid[5]);
         if (T.security == WIFI_SEC_WPA2) {
             u8 sn[32];
             memset(sn, 0, sizeof(sn));
             snonce(sn);
             wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
+            /* our RSN IE as the firmware put it into the association request */
+            if (n >= 19) {
+                u32 bl = d[16], ql = d[17], rl = d[18];
+                const u8 *q = d + 19 + bl;
+                DIAG("connect: beacon IEs %u, assoc req %u, assoc resp %u bytes", bl, ql, rl);
+                if (19 + bl + ql <= n) {
+                    for (u32 start = 4; start <= 10 && !A.wpa.own_ie_len; start += 6)   /* assoc / reassoc */
+                        for (u32 i = start; i + 2 <= ql; i += 2 + q[i + 1]) {
+                            if (i + 2 + q[i + 1] > ql) break;
+                            if (q[i] == 0x30 && q[i + 1] + 2 <= sizeof(A.wpa.own_ie)) {
+                                A.wpa.own_ie_len = (u8)(q[i + 1] + 2);
+                                memcpy(A.wpa.own_ie, q + i, A.wpa.own_ie_len);
+                                break;
+                            }
+                        }
+                }
+                if (A.wpa.own_ie_len) {
+                    char hx[2 * 40 + 1];
+                    for (u32 i = 0; i < A.wpa.own_ie_len; i++) snprintf(hx + 2 * i, 3, "%02x", A.wpa.own_ie[i]);
+                    DIAG("connect: our association RSN IE %s (used in message 2)", hx);
+                } else {
+                    DIAG("connect: no RSN IE found in the association request: message 2 uses our own");
+                }
+            }
             A.wpa.group_cipher = A.group_crypt == CRYPT_TKIP ? 2 : 4;   /* must match our association IE */
             A.state = NET_ST_AUTH;
         } else {

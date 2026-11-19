@@ -411,7 +411,7 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
     if ((info & KI_PAIRWISE) && !(info & KI_MIC)) {
         /* message 1: ANonce. Unauthenticated, so do not latch the replay
            counter here (a forged M1 must not lock out the real AP). */
-        u8 ptk[48], ie[22];
+        u8 ptk[48], ie[40];
         memcpy(w->anonce, f + EK_NONCE, 32);
         wpa2_ptk(w->pmk, w->sta, w->ap, w->snonce, w->anonce, ptk);
         memcpy(w->kck, ptk, 16);
@@ -419,7 +419,16 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
         memcpy(w->tk, ptk + 32, 16);
         w->have_ptk = 1;
         w->done = 0;
-        u32 ielen = wpa2_rsn_ie(w, ie);
+        /* message 2 must carry the RSN IE of our association request byte for
+           byte; take the firmware's own copy when we have it (run18: every AP
+           rejected message 2, 802.11 reason 14) */
+        u32 ielen;
+        if (w->own_ie_len) {
+            memcpy(ie, w->own_ie, w->own_ie_len);
+            ielen = w->own_ie_len;
+        } else {
+            ielen = wpa2_rsn_ie(w, ie);
+        }
         int r = build_reply(w, f, KI_VER_AES | KI_PAIRWISE | KI_MIC, w->snonce, ie, ielen,
                             out, cap, outlen);
         return r ? r : WPA2_EV_M2_SENT;
