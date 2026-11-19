@@ -75,6 +75,8 @@ starts CSND, in case the ARM9 cannot reach those registers.
 | LLIs: 16-byte items in a driver-owned page, ≤ 0xE00 transfers each, I bit on the last item of a ring command; channels stay enabled across chained commands | 0x807d1ba4.., 0x807d01c4 |
 | `AppleARMFunction` lookups `waitForService` with no timeout, so DT `function-*` pointing at a deleted node hangs `start` | AppleARMPlatform 0x802e4698 |
 | Without `function-hp_detect` AppleEmbeddedAudio skips headphone detection and stays on the speaker route | 0x806533a4..c0 |
+| With it, AppleEmbeddedAudio reads the jack through the function (0x8065117c: non-zero = headphones) and re-reads it on `audio0`'s interrupt 0 (IOInterruptEventSource, 0x8065330c). A GPIO function `<gpio phandle, 'GPIO', pin, flags>` reads port `pin >> 8` bit `pin & 7` at page + port * 0x20 + 4 (AppleS5L8900XGPIO 0x8066db60), flags byte 1 = 1: not inverted (0x8066dcc4) | disassembly, QEMU re-log 57 |
+| On the headphone route iOS shuts the speaker amp down (`0x04`), plays the PCM unscaled and sets the volume on the CS42L58: reg 0x1a, 1 dB steps, bits 0-6 = dB as 7-bit two's complement (0x44 = -60 dB, 0x6c = -20 dB, 0x02 = +2 dB at full volume), bit 7 = mute (0x80, written around route changes); the driver's range table (0x8065fb38) and clamp (0x8065f3a4) use the same -60 dB, 1 dB steps | QEMU re-log 57, disassembly |
 | `startDMA` of AppleARMIISAudio (0x80611b48) prints "could not start DMA" when the per-direction start (0x80611474 -> 0x806113c8 -> I2S controller vtable 0x358) fails | 0x80611c54 |
 | AppleS5L8900XI2SController DMA start (0x8066d448): with `i2s-version` 0 (no such DT property: version 0, as the boot log says) and frame sync requested, it sets state 1, enables its interrupt, arms a timeout and sleeps until the state is 3 or 4; it returns kIOReturnNotReady unless it reached 3 | 0x8066d490..0x8066d52c |
 | That interrupt is GPIO pin 44: i2s0 `interrupts` = 0x2c with `interrupt-parent` = the GPIO controller (phandle 0x0090c9a0). Its action (0x8066caf0) moves state 1 -> 2 on the first edge and 2 -> 3 on the second (then disables itself and wakes the starter); the timeout (0x8066cb84) sets 4 | devicetree.txt, disassembly |
@@ -88,9 +90,12 @@ starts CSND, in case the ARM9 cannot reach those registers.
 keep `dmac0`, `i2c0`, `i2s0` (previously deleted), each on a fake register page
 (`FAKEIO`); delete `i2c0/accelerometer`, `i2c0/pmu`, `i2c0/tethered` (drivers
 that would make decisions from an I2C bus that answers with zeros); drop
-`audio0`'s `function-hp_detect`, `mikey`, `interrupts`, `interrupt-parent`
-(they point at deleted nodes). GPIO functions (codec reset, amp enable,
-I2C SDA/SCL) stay: the GPIO block is already a fake page.
+`audio0`'s `mikey` (it points at a deleted node) and rebuild its
+`function-hp_detect`, `interrupts`, `interrupt-parent` on what the 3DS has:
+pin 0x0d00 of the fake GPIO page (data word +0x1a4, bit 0, 1 = headphones;
+no other function uses port 13) and VIC0 source 12 (unassigned). GPIO
+functions (codec reset, amp enable, I2C SDA/SCL) stay: the GPIO block is
+already a fake page.
 
 **Kernel patch** (`kernel/patches-audio.json`, picked up by `kernel/patcher.py`):
 `iic-device-transfer` → `shim+0x24` → `shim_iic_transfer`: one 256-byte
@@ -136,8 +141,19 @@ after a real sync. Without it every output stream fails with kIOReturnNotReady.
   volume: it writes a fixed step 19 for media (13 for UI sounds) at stream
   start and applies the volume (keys, slider) to the PCM itself (re-log 54).
   `aud_service` applies a change to
-  the running CSND channels; `csnd_start` starts with the current value. Being
-  digital (before the CODEC), it applies to speaker and headphones alike.
+  the running CSND channels; `csnd_start` starts with the current value.
+  On iOS's headphone route the amp is off and the volume comes from the
+  CS42L58's reg 0x1a instead (section 3): `10^((dB - 2) / 20)`, +2 dB (iOS's
+  full volume) = unity, bit 7 = 0 (`hp_gain`, `AUD_HPVOL_REF_DB`), so full
+  volume is full scale on both outputs. The CODEC's own speaker/headphone
+  gains (ARM9) stay as libn3ds sets them.
+- Headphones (`hp_service`, run from `aud_service`): the ARM9 publishes the
+  debounced jack in `aud_mic_t.jack` (or `hp_disabled`); the shim mirrors it
+  into the fake GPIO detect pin and, once AppleEmbeddedAudio has programmed
+  VICVECTADDR12, delivers the jack interrupt like the DMA one (after it, one
+  vector per wake). `hp_route=0` / an unreliable jack: iOS is told
+  "unplugged" once and never again (`hp_state` = `AUD_HP_OFF`). Logs
+  `ios3ds-audio: headphones in|out, jack interrupt`.
 - `aud_cfg_t` / `aud_stat_t` in the shim's `.data` (magic `AUD0cfg!`); mkboot
   writes the fake dmac0/i2s0 page addresses, the ARM9 reads the statistics
   (`amp_step`, `volume` added for the volume mapping).
@@ -146,18 +162,28 @@ after a real sync. Without it every output stream fails with kIOReturnNotReady.
 **ARM9** (`boot/arm9/audio.c`): CODEC sound init before the jump, and
 `audio_poll` in the monitor loop logs stream starts/stops and iOS volume
 changes (`[audio] ...` in `sd:/ios3ds/log.txt`). It also polls the headphone
-jack (GPIO2 bit 0, debounced over 32 polls) and repeats the init's
-`CDC_REG_HEADSET_SEL` routing when it changes (`[audio] headphones plugged
-in/unplugged`), only if the CODEC answered at init. iOS keeps its speaker
-route either way (no `function-hp_detect`), so its volume steps keep coming
-from the amp.
+jack (GPIO2 bit 0, debounced over 32 polls), repeats the init's
+`CDC_REG_HEADSET_SEL` routing when it changes (only if the CODEC answered at
+init) and tells iOS through the shim (`boot.cfg hp_route=1`, the default):
+`[audio] headphones plugged in: CODEC output -> headphones, iOS route ->
+headphones (CODEC headset detect XX)`, then `[audio] iOS route -> ...` and
+`[audio] iOS headphone volume: CS42L58 XX (N dB) -> CSND volume ...`.
+Fail-safe for what hardware has not confirmed (GPIO2 bit 0 = jack, 1 =
+plugged): if the bit reads "plugged" at boot, iOS stays on the speaker route
+until it has read "unplugged" once (one `[audio] jack: ...` warning); more
+than 8 changes in 10 s and iOS stays on the speaker route until reboot (one
+warning). `hp_route=0` keeps iOS on the speaker route; the CODEC still
+follows the jack.
 
 **Test client** `tools/ios3ds-audio/tone` (`/usr/libexec/ios3ds-tone`,
 launchd job `com.ios3ds.tone`): plays a test tone through AudioQueue (left =
 tone, right = half amplitude) 30 s after launch; default once, 400 ms, 1 kHz,
 amplitude 6000. Arguments: `count interval_s ms hz amplitude delay_s`.
 AudioToolbox is loaded with dlopen; every failure is logged once
-(`tone: ...`) and the program exits. The shim logs `ios3ds-audio: ...` lines (stream start
+(`tone: ...`) and the program exits. Each tone logs iOS's route (`route "Speaker"` /
+`"Headphone"`); route changes are logged with their reason (`tone: route
+change, reason 2 (old device unavailable): "Headphone" -> "Speaker"`), and
+reason 2 pauses the playing tone as the iPod app pauses on unplug. The shim logs `ios3ds-audio: ...` lines (stream start
 with the first LLI, I2C traffic) into the XNU log ring.
 
 Memory: CSND rings at PA 0x208C0000..0x208C8000, between the XNU log ring and
@@ -190,6 +216,17 @@ mixed with their VOL halves and MASTER_VOL into a stereo sink that prints
 peak, RMS) and, with `IOS3DS_CSND_WAV=/path.wav` in QEMU's environment,
 records the mix. Not modelled: ADPCM, capture, I2S1, the CODEC (the SPI stub
 still makes `audio_init` read id 00 and carry on).
+
+The headphone jack is GPIO2 bit 0 (a 4-byte window over the Wi-Fi model's
+GPIO block) behind the machine property `headphones`:
+
+```
+python3 emu/run.py --icount 2 --time 300 --shots 168 \
+    --hmp "150=qom-set /machine headphones on;165=qom-set /machine mcu-volume 56;200=qom-set /machine headphones off"
+```
+
+QEMU prints `[jack] headphones plugged in|unplugged`; the volume HUD then
+says "headphones" (re-log 57).
 
 ```
 IOS3DS_CSND_WAV=$PWD/build/out.wav python3 emu/run.py --icount 2 --time 500 \
@@ -269,11 +306,16 @@ test feeds a counter through the RX emulation and checks every delivered frame
 2. Hardware: the speaker level. Amp step 19 (0 dB) is CSND unity; the
    CODEC's speaker gains are libn3ds' `hw_cal` defaults. The 3DS volume
    slider is not read.
-3. Hardware: headphone jack polling reads GPIO2 bit 0 from the ARM9
-   (unverified there; QEMU has no GPIO2 model).
+3. Hardware: the headphone jack (re-log 57). Plug and unplug once with
+   headphones and look for `[audio] headphones plugged in ... (CODEC headset
+   detect XX)` / `unplugged`; they settle that GPIO2 bit 0 is the jack and 1
+   means plugged (XX should differ between the two if the CODEC's own
+   detection agrees). Then: sound only in the headphones while plugged, and
+   the headphone level at a given iOS volume (`[audio] iOS headphone volume`).
+   `[audio] jack: ...` warnings mean the fail-safe kept iOS on the speaker.
 4. Microphone on hardware:
    - whether MIC_CNT's bits match GBATEK's DSi description (enable 15, empty 8, overrun 11, rate divider 2-3);
    - whether the CODEC's ADC needs more than libn3ds' microphoneInit plus page 0 registers 81/82;
    - how often the 1 ms service misses the 2.7 ms FIFO (`[audio] mic off` reports overruns). If it is often, a CDMA program could drain it instead.
    - The iOS input gain compensation assumes the same +23.65 dB for other categories (Voice Memos uses RecordAudio); check the level there.
-5. iOS's headphone route (`function-hp_detect`) is not driven yet. The ARM9 jack polling re-routes the CODEC only. Driving it would need a GPIO input plus its interrupt on the fake GPIO page, and the VAD would then switch output volume to the CODEC's headphone registers.
+5. iOS's headphone route is driven (re-log 57): route switch both ways, the headphone volume HUD, separate speaker/headphone volumes, `OldDeviceUnavailable` on unplug (what makes the iPod app pause). The headset remote/mic (`mikey`) is not.

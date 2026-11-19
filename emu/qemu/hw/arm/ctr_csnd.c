@@ -549,3 +549,61 @@ void ctr_mic_init(MemoryRegion *parent, hwaddr offset)
     memory_region_init_io(&M.io, NULL, &mic_ops, NULL, "ctr.mic", 0x100);
     memory_region_add_subregion(parent, offset, &M.io);
 }
+
+/* ======================================================================== */
+/*
+ * Headphone jack: GPIO2 bit 0 (0x10147010, libn3ds GPIO_2_HEADPH_JACK, 1 =
+ * plugged) is what the ARM9 polls (boot/arm9/audio.c). The rest of the GPIO
+ * block is the Wi-Fi model's (ctr_wifi.c); this 4-byte window lies over it
+ * and keeps whatever is written to it. Machine property for tests:
+ * HMP "qom-set /machine headphones on|off" (emu/run.py --hmp).
+ */
+static struct {
+    MemoryRegion io;
+    bool plugged;
+    uint32_t latch;
+} J;
+
+bool ctr_sound_headphones(void)
+{
+    return J.plugged;
+}
+
+static uint64_t jack_read(void *opaque, hwaddr a, unsigned size)
+{
+    uint32_t v = (J.latch & ~1u) | J.plugged;
+    return (v >> (a * 8)) & (size == 4 ? 0xFFFFFFFFu : (1u << (size * 8)) - 1);
+}
+
+static void jack_write(void *opaque, hwaddr a, uint64_t v, unsigned size)
+{
+    uint32_t m = (size == 4 ? 0xFFFFFFFFu : (1u << (size * 8)) - 1) << (a * 8);
+    J.latch = (J.latch & ~m) | ((uint32_t)(v << (a * 8)) & m);
+}
+
+static const MemoryRegionOps jack_ops = {
+    .read = jack_read, .write = jack_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 1, .max_access_size = 4 },
+    .impl = { .min_access_size = 1, .max_access_size = 4 },
+};
+
+static bool hp_get(Object *obj, Error **errp)
+{
+    return J.plugged;
+}
+
+static void hp_set(Object *obj, bool on, Error **errp)
+{
+    if (on != J.plugged) {
+        fprintf(stderr, "[jack] headphones %s\n", on ? "plugged in" : "unplugged");
+    }
+    J.plugged = on;
+}
+
+void ctr_jack_init(Object *machine, MemoryRegion *parent, hwaddr offset)
+{
+    memory_region_init_io(&J.io, NULL, &jack_ops, NULL, "ctr.gpio2-jack", 4);
+    memory_region_add_subregion_overlap(parent, offset, &J.io, 1);
+    object_property_add_bool(machine, "headphones", hp_get, hp_set);
+}

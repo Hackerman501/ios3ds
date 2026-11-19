@@ -46,6 +46,7 @@ static bool wait_clear(u8 page, u8 reg, u8 mask, u32 tries)  /* until (~reg & ma
 
 static bool codec_ok;   /* audio_init found the CODEC: jack polling may write its registers */
 static u8 jack;         /* headphone state the CODEC is routed for */
+static bool hp_route = true;    /* boot.cfg hp_route: tell iOS about the jack (kernel/shim/audio.c hp_service) */
 
 /* speaker or headphones, as libn3ds soundInit selects them (CDC_REG_HEADSET_SEL) */
 static void route(u8 hp)
@@ -135,29 +136,6 @@ bool audio_init(void)
     return true;
 }
 
-/* Headphones plugged or pulled while iOS runs: switch the CODEC's output the
-   same way audio_init chose it (iOS itself always stays on its speaker route,
-   docs/audio.md; its volume is CSND's, so it applies to both outputs). The
-   jack must read the same for JACK_STABLE polls in a row before it counts. */
-#define JACK_STABLE 32
-static void jack_poll(void)
-{
-    static u32 same;
-    static u8 last;
-    u8 hp;
-    if (!codec_ok || cdc_bus_dead()) return;
-    hp = GPIO2_DAT & 1;
-    if (hp != last) {
-        last = hp;
-        same = 0;
-        return;
-    }
-    if (hp == jack || ++same < JACK_STABLE) return;
-    route(hp);
-    log_ok("[audio] headphones %s: CODEC output -> %s\n", hp ? "plugged in" : "unplugged",
-           hp ? "headphones" : "speaker");
-}
-
 #define T9_VAL(n)   (*(vu16 *)(0x10003000u + (n) * 4))   /* main.c's wall clock: 65457 Hz */
 #define T9_HZ       65457u
 static u32 t9_ticks(void)
@@ -171,6 +149,65 @@ static u32 t9_ticks(void)
     return (u32)hi << 16 | lo;
 }
 
+/* Headphones plugged or pulled while iOS runs: switch the CODEC's output the
+   same way audio_init chose it, and tell iOS (aud_mic_t.jack -> the shim's
+   hp_service -> function-hp_detect + jack interrupt), which then switches its
+   route: speaker/headphone volume memory, pause on unplug. The jack must read
+   the same for JACK_STABLE polls in a row before it counts.
+   Unverified on hardware, so iOS is only told when it looks right:
+   - GPIO2 bit 0 = jack, 1 = plugged (libn3ds GPIO_2_HEADPH_JACK). Hardware
+     boots log "speaker" with nothing plugged (bit 0 reads 0). If it reads 1
+     at boot, iOS stays on the speaker route until the jack has read 0 once.
+   - the bit only moves with the plug: more than JACK_FLAP_MAX changes within
+     JACK_FLAP_S seconds and iOS stays on the speaker route until reboot.
+   Each change also logs the CODEC's own headset detection (page 100 reg 67,
+   TI layout: bits 6-5 = type detected) so the logs can confirm the bit. */
+#define JACK_STABLE 32
+#define JACK_FLAP_MAX 8
+#define JACK_FLAP_S 10
+static u8 ios_jack;                 /* what iOS is told */
+static bool jack_armed, jack_flaps; /* seen unplugged once / bit judged unreliable */
+
+static void jack_poll(void)
+{
+    static u32 same, flap_t0, flaps;
+    static u8 last;
+    static bool first = true;
+    u8 hp = GPIO2_DAT & 1;
+    if (first) {                                /* boot: the jack as audio_init saw it */
+        first = false;
+        if (!codec_ok) jack = hp;
+        last = jack;
+        jack_armed = !jack;
+        if (jack) log_warn("[audio] jack: GPIO2 bit 0 reads 'plugged' at boot: iOS stays on the speaker "
+                           "route until it reads 'unplugged' once (polarity unverified)\n");
+    }
+    if (hp != last) {
+        last = hp;
+        same = 0;
+        return;
+    }
+    if (hp == jack || ++same < JACK_STABLE) return;
+    if (codec_ok && !cdc_bus_dead()) route(hp);
+    else jack = hp;
+    if (!hp) jack_armed = true;
+    if (!flaps || t9_ticks() - flap_t0 > JACK_FLAP_S * T9_HZ) {
+        flap_t0 = t9_ticks();
+        flaps = 0;
+    }
+    if (++flaps > JACK_FLAP_MAX && !jack_flaps) {
+        jack_flaps = true;
+        log_warn("[audio] jack: GPIO2 bit 0 changed %u times in %u s: not a plug? iOS stays on the speaker "
+                 "route until reboot\n", (unsigned)flaps, JACK_FLAP_S);
+    }
+    ios_jack = hp && jack_armed && !jack_flaps;
+    if (jack_flaps) return;                     /* logged once above */
+    log_ok("[audio] headphones %s: CODEC output -> %s, iOS route -> %s (CODEC headset detect %02x)\n",
+           hp ? "plugged in" : "unplugged", hp ? "headphones" : "speaker",
+           !hp_route ? "speaker (hp_route=0)" : ios_jack ? "headphones" : "speaker",
+           codec_ok && !cdc_bus_dead() ? cdc_read8(P100, 67) : 0xFF);
+}
+
 /* ---- microphone -------------------------------------------------------------
    The kernel shim drains the MIC FIFO itself (ARM11, kernel/shim/audio.c) while
    iOS records and says so in aud_mic_t.want; the ARM9 owns the CODEC (SPI), so
@@ -179,6 +216,7 @@ static volatile aud_mic_t *const micr = (volatile aud_mic_t *)AUD_MIC_PA;
 static struct { bool enabled, adc; u32 state; } mic = { .enabled = true, .state = ~0u };
 
 void audio_set_mic(bool enabled) { mic.enabled = enabled; }
+void audio_set_hp_route(bool enabled) { hp_route = enabled; }
 
 static void mic_poll(volatile aud_stat_t *st)
 {
@@ -187,6 +225,8 @@ static void mic_poll(volatile aud_stat_t *st)
                                        "MIC block switched itself off", "no IO window" };
     bool want;
     micr->disabled = !mic.enabled;              /* our line: rewritten every pass */
+    micr->jack = ios_jack;
+    micr->hp_disabled = !hp_route || jack_flaps;
     micr->arm9_magic = AUD_MIC_MAGIC;
     if (micr->magic != AUD_MIC_MAGIC) return;   /* the shim has not used the mic yet */
     want = micr->want && mic.enabled;
@@ -225,7 +265,7 @@ void audio_poll(u32 shim_pa)
 {
     static volatile aud_blk_t *b;
     static bool searched;
-    static u32 starts, stops, csnd, step = ~0u;
+    static u32 starts, stops, csnd, step = ~0u, hp_state, hp_vol = AUD_HPVOL_NONE;
 
     jack_poll();
     if (!shim_pa) return;
@@ -253,6 +293,19 @@ void audio_poll(u32 shim_pa)
         step = s->amp_step;
         if (step == AUD_AMP_OFF) log_ok("[audio] iOS volume: muted (amp off) -> CSND volume 0\n");
         else log_ok("[audio] iOS volume: amp step %u -> CSND volume %u/32768\n", (unsigned)step, (unsigned)s->volume);
+    }
+    if (s->hp_state != hp_state) {                /* the shim told iOS (kernel/shim/audio.c hp_service) */
+        hp_state = s->hp_state;
+        log_ok("[audio] iOS route -> %s (jack change #%u passed to iOS), CSND volume %u/32768\n",
+               hp_state == 1 ? "headphones" : hp_state == AUD_HP_OFF ? "speaker for good (hp_route=0 or jack unreliable)"
+                                                                     : "speaker",
+               (unsigned)s->hp_changes, (unsigned)s->volume);
+    }
+    if (s->hp_vol != hp_vol && hp_state == 1) {
+        hp_vol = s->hp_vol;
+        if (hp_vol & 0x80) log_ok("[audio] iOS headphone volume: muted (CS42L58 %02x) -> CSND volume 0\n", (unsigned)hp_vol);
+        else log_ok("[audio] iOS headphone volume: CS42L58 %02x (%d dB) -> CSND volume %u/32768\n", (unsigned)hp_vol,
+                    (int)(hp_vol & 0x7F) - ((hp_vol & 0x40) ? 0x80 : 0), (unsigned)s->volume);
     }
     if (s->csnd_starts != csnd) {
         csnd = s->csnd_starts;

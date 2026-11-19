@@ -29,6 +29,11 @@ void *aud_host_p2v(u32 pa, u32 len)
 }
 void aud_host_log(int c) { if (loglen < sizeof(logbuf) - 1) logbuf[loglen++] = (char)c; }
 
+/* the fake S5L GPIO page and VICVECTADDR12 (headphone detection) */
+u32 aud_host_gpio[0x400];
+u32 aud_host_hp_vector;
+u32 aud_test_hp_inject(void);
+
 /* the MIC block: a FIFO the test fills (hmic_push) */
 static u32 hmic_cnt, hmic_q[4096], hmic_head, hmic_tail, hmic_next;
 u32 aud_host_mic_cnt_r(void) { return hmic_cnt | (hmic_head == hmic_tail ? MIC_CNT_EMPTY : 0); }
@@ -403,6 +408,78 @@ static void test_mic(void)
     CHECK(m->state == AUD_MIC_DISABLED && !(hmic_cnt & MIC_CNT_EN), "mic=0: MIC block untouched");
 }
 
+/* headphones: the ARM9's jack state -> the detect pin + a jack interrupt */
+static void test_headphones(void)
+{
+    volatile aud_mic_t *m = (volatile aud_mic_t *)aud_host_p2v(AUD_MIC_PA, sizeof(aud_mic_t));
+    volatile u32 *pin = &aud_host_gpio[AUD_HP_GPIO_OFF / 4];
+    u32 t = 100;
+    reset();
+    shim_audio.cfg.gpio_pa = 0x1FFB3000;
+    memset(aud_host_gpio, 0xFF, sizeof(aud_host_gpio));
+    aud_host_hp_vector = 0;
+    aud_service(t);
+    CHECK(!(*pin & AUD_HP_GPIO_BIT) && shim_audio.stat.hp_state == 0, "boot: pin says no headphones");
+    m->arm9_magic = AUD_MIC_MAGIC;
+    m->jack = 1;
+    aud_service(t += 1000);
+    CHECK((*pin & AUD_HP_GPIO_BIT) && shim_audio.stat.hp_state == 1, "plugged -> pin set");
+    CHECK(!aud_test_hp_inject(), "no handler programmed yet -> no interrupt (the driver reads the pin at start)");
+    aud_host_hp_vector = 0x8001234;
+    m->jack = 0;
+    aud_service(t += 1000);
+    CHECK(!(*pin & AUD_HP_GPIO_BIT) && aud_test_hp_inject(), "unplugged -> pin clear + jack interrupt");
+    aud_service(t += 1000);
+    CHECK(!aud_test_hp_inject() && shim_audio.stat.hp_changes == 2, "no change -> nothing (changes %u)",
+          shim_audio.stat.hp_changes);
+    m->jack = 1;
+    aud_service(t += 1000);
+    CHECK((*pin & AUD_HP_GPIO_BIT) && aud_test_hp_inject(), "plugged again");
+    CHECK(aud_host_gpio[AUD_HP_GPIO_OFF / 4 - 1] == 0xFFFFFFFFu, "only the detect word touched");
+    /* headphone route: CSND volume from the CS42L58's reg 0x1a, the amp's mute ignored */
+    {
+        int codec, amp;
+        u8 sub = AUD_HPVOL_REG, v = 4;
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);            /* iOS shuts the speaker amp down */
+        v = 0x7C;                                           /* -4 dB: 6 dB below full volume (+2 dB) */
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        CHECK(shim_audio.stat.hp_vol == 0x7C && shim_audio.stat.volume > 16300 && shim_audio.stat.volume < 16500,
+              "headphones 6 dB below full: %u", shim_audio.stat.volume);
+        v = 0x02;
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        CHECK(shim_audio.stat.volume == 0x8000, "headphones full volume (+2 dB) = unity");
+        v = 0x0C;
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        CHECK(shim_audio.stat.volume == 0x8000, "louder clamps");
+        v = 0x44;
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        CHECK(shim_audio.stat.volume == 26, "headphones -60 dB = 62 below full: %u", shim_audio.stat.volume);
+        v = 0x80;
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        CHECK(shim_audio.stat.volume == 0, "headphones muted");
+        v = 0x7C;
+        shim_iic_transfer(&codec, 2, 1, &sub, 1, &v);
+        m->jack = 0;                                        /* unplugged: back to the amp (still off) */
+        aud_service(t += 1000);
+        CHECK(aud_test_hp_inject() && shim_audio.stat.volume == 0, "speaker route: amp volume again");
+        v = AUD_AMP_REF_STEP << 3 | 3;
+        shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
+        CHECK(shim_audio.stat.volume == 0x8000, "speaker step 19 = unity, reg 0x1a ignored");
+        m->jack = 1;
+        aud_service(t += 1000);
+        CHECK(aud_test_hp_inject() && shim_audio.stat.volume > 16300 && shim_audio.stat.volume < 16500,
+              "plugged again: headphone volume remembered (%u)", shim_audio.stat.volume);
+    }
+    m->hp_disabled = 1;                 /* boot.cfg hp_route=0 */
+    aud_service(t += 1000);
+    CHECK(!(*pin & AUD_HP_GPIO_BIT) && aud_test_hp_inject() && shim_audio.stat.hp_state == AUD_HP_OFF,
+          "kill switch: back to the speaker route, once");
+    m->hp_disabled = 0;
+    aud_service(t += 1000);
+    CHECK(!(*pin & AUD_HP_GPIO_BIT) && !aud_test_hp_inject(), "off stays off");
+    shim_audio.cfg.gpio_pa = 0;
+}
+
 static void test_bad_addresses_and_halt(void)
 {
     reset();
@@ -492,7 +569,7 @@ static void test_iic(void)
 
 int main(void)
 {
-    CHECK(sizeof(aud_cfg_t) == 40 && sizeof(aud_stat_t) == 84, "layout shared with mkboot / the ARM9");
+    CHECK(sizeof(aud_cfg_t) == 44 && sizeof(aud_stat_t) == 96, "layout shared with mkboot / the ARM9");
     test_tx_stream();
     test_tx_chained();
     test_idle_silence_and_stop();
@@ -501,6 +578,7 @@ int main(void)
     test_csnd_resync();
     test_iic();
     test_mic();
+    test_headphones();
     if (fails) {
         printf("%d check(s) failed\n", fails);
         return 1;

@@ -37,6 +37,26 @@ AUDIO0_ADD = {"ain2b-intmic": b""}
 
 DMAC0_IRQ = 0x10    # /arm-io/dmac0 'interrupts' (VIC0 source 16)
 
+# Headphone detection, rebuilt on what the 3DS has (docs/audio.md, re-log):
+# AppleEmbeddedAudio reads the jack through function-hp_detect (0x8065117c:
+# non-zero = headphones) and re-reads it on audio0's interrupt 0
+# (IOInterruptEventSource, 0x8065330c). The iPod wires both to its PMU; here
+# the function is a pin of the (fake) SoC GPIO page that the shim sets from
+# the ARM9's jack polling, and the interrupt a free VIC0 source the shim
+# injects. Pin 0x0d00 = port 13 bit 0: data word at gpio page + 0x1a4
+# (AppleS5L8900XGPIO 0x8066db60: port * 0x20 + 4); no DT function uses port 13.
+# Flags 0x100: input, value not inverted (0x8066dcc4: raw ^ (flag byte 1 ^ 1)).
+GPIO_PHANDLE = 0x0090c9a0   # /arm-io/gpio
+VIC0_PHANDLE = 0x0090c3e0   # /arm-io/vic (VIC0)
+HP_PIN = 0x0d00
+HP_FLAGS = 0x00000100
+HP_IRQ = 0x0c               # unassigned VIC0 source
+AUDIO0_HP = {
+    "function-hp_detect": b"".join(v.to_bytes(4, "little") for v in (GPIO_PHANDLE, 0x4750494f, HP_PIN, HP_FLAGS)),
+    "interrupts": HP_IRQ.to_bytes(4, "little"),
+    "interrupt-parent": VIC0_PHANDLE.to_bytes(4, "little"),
+}
+
 
 def apply(root):
     """Called by dtgen.generate() after the DELETE pass. A tree without the
@@ -49,6 +69,13 @@ def apply(root):
     for name in AUDIO0_DROP:
         codec.delete(name)
     for name, value in AUDIO0_ADD.items():
+        codec.set(name, value)
+    gpio, vic = root.find("arm-io/gpio"), root.find("arm-io/vic")
+    if gpio is None or int.from_bytes(gpio.get("AAPL,phandle")[:4], "little") != GPIO_PHANDLE:
+        raise ValueError("dt_audio: /arm-io/gpio is not phandle %#x" % GPIO_PHANDLE)
+    if vic is None or int.from_bytes(vic.get("AAPL,phandle")[:4], "little") != VIC0_PHANDLE:
+        raise ValueError("dt_audio: /arm-io/vic is not phandle %#x" % VIC0_PHANDLE)
+    for name, value in AUDIO0_HP.items():
         codec.set(name, value)
     dmac = root.find("arm-io/dmac0")
     irq = dmac.get("interrupts")

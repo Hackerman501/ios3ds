@@ -13,3 +13,7 @@ void audio_poll(u32 shim_pa);
 
 /* boot.cfg mic=0: never touch the MIC block (iOS's input stays silent) */
 void audio_set_mic(bool enabled);
+
+/* boot.cfg hp_route=0: iOS is never told about the headphone jack and stays on
+   its speaker route (the CODEC still switches the analogue output) */
+void audio_set_hp_route(bool enabled);
