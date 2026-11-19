@@ -96,10 +96,77 @@ is off and the mailbox reports backend NONE.
 
 The AR6014 ROM cannot run Wi-Fi by itself; Nintendo's Xtensa firmware must be
 uploaded after every power-up. ios3ds never contains it. It comes from
-**your own console**, once, with GodMode9 (already on every boot9strap/Luma
-console set up with the usual guide):
+**your own console**, once, as `sd:/ios3ds/nwm.code` (NWM's ExeFS `.code`;
+the loader below cuts the firmware out of it at boot).
 
-1. Copy the SD card tree as usual (`make sd` / the installer). It now has
+### 3.1 Automatic: the launcher (`tools/ios3ds-launcher`)
+
+Start `ios3ds` from the Homebrew Launcher. If neither `sd:/ios3ds/nwm.code`
+nor `sd:/ios3ds/wifi-fw.bin` exists, the launcher reads NWM's `.code`
+through Horizon's FS service and writes it, before the usual "A: launch"
+screen:
+
+    Wi-Fi firmware: reading NWM .code
+    from this console (read-only)...
+      <k> / <k> KiB via FSPXI
+    Wrote /ios3ds/nwm.code
+    (<n> bytes). Keep it private.
+
+Once the file exists this step is skipped. Any failure
+is one red line (`Wi-Fi fw: cannot open NWM .code (FS xxxxxxxx, FSPXI
+xxxxxxxx): Wi-Fi off`, `unexpected size`, `read failed`, `SD write failed`,
+...), nothing is left on the card and the launch continues as before (Wi-Fi
+stays off; use 3.2).
+
+How it reads (`fetch_nwm_code()` in `tools/ios3ds-launcher/main.c`):
+
+- Archive `0x2345678A` (`ARCHIVE_SAVEDATA_AND_CONTENT`, "title access"),
+  binary archive lowpath (16 bytes) `{0x00002D02, 0x00040130, MEDIATYPE_NAND
+  (0), 0}`: title id low/high word, media type, padding. Same layout as
+  libctru `romfsMountFromTitle()` (`source/romfs_dev.c`), FBI
+  (`source/fbi/task/listtitles.c`, `action/extractsmdh.c`) and Checkpoint
+  (`3ds/source/smdh.cpp`).
+- Binary file lowpath (20 bytes) `{0, 0, 1, ".cod", "e\0\0\0"}`: title
+  access type 0 (high-level NCCH), TMD content index 0, NCCH access type 1
+  (`exefs:/.code`), 8-byte ExeFS name. 3dbrew "Filesystem services" (Title
+  Access Archive Path Data Format); FBI and Checkpoint use the same 20-byte
+  form with type 2 for `exefs:/icon` (`{0, 0, 2, "icon", 0}`), libctru with
+  type 0 for RomFS (all zero); Luma3DS's loader (`sysmodules/loader/source/
+  loader.c`, `codeContentPath`) opens `.code` with the same `{type 1,
+  ".code"}` tail in its program archive `0x2345678E`.
+- **fs:USER is tried first, FSPXI second.** 3dbrew lists `exefs:/.code` as
+  not allowed through fs:USER (only RomFS, System Menu Data and the seed
+  checks), FSPXI allows all access types. So after `FSUSER_OpenFileDirectly`
+  fails, the launcher borrows a client session to `PxiFS0` with Luma3DS's
+  `svcControlService(SERVICEOP_STEAL_CLIENT_SESSION)` (SVC 0xB0; Luma
+  `k11_extension/source/svc/ControlService.c`) exactly as Checkpoint does
+  (`3ds/source/archive.cpp`), then `FSPXI_OpenArchive` + `FSPXI_OpenFile`
+  with the same two lowpaths. FSPXI is only used when `svcGetSystemInfo
+  (0x10000)` says Luma3DS is running. Luma's 3dsx loader grants a .3dsx full
+  FS access (`hbldr.c`: `fs_access_info = 0xFFFFFFFF`).
+- **Read-only:** both opens are `FS_OPEN_READ` and the title-content archive
+  has no write path; the only write is `nwm.code.tmp` on the SD card,
+  renamed to `nwm.code` when complete (a power loss leaves no half file
+  under the real name).
+- **Compressed or not:** FS returns the ExeFS file as stored (Luma's loader
+  decompresses `.code` itself when the exheader flag `compress_exefs_code`
+  is set), so `nwm.code` is normally BLZ-compressed; `nwmcode.c` accepts both.
+- **Size check:** 64 KiB .. 4 MiB (4 MiB is the ARM9 loader's FCRAM scratch);
+  the number of bytes read must equal the file size. The firmware itself is
+  then checked by `nwmcode.c` at boot (pools, fixed block sizes).
+- The read buffer is zeroed and freed afterwards; the PxiFS0 handle closed
+  (FS keeps its own reference).
+
+Not verified on hardware: the launcher builds with devkitARM/libctru (CI job
+`firm`), but no console has run it yet. If it prints a red line, 3.2 does
+the same job.
+
+### 3.2 Fallback: GodMode9 (`tools/ios3ds-wifi/ios3ds-wifi-fw.gm9`)
+
+GodMode9 is already on every boot9strap/Luma console set up with the usual
+guide:
+
+1. Copy the SD card tree as usual (`make sd` / the installer). It has
    `gm9/scripts/ios3ds-wifi-fw.gm9`; or copy
    `tools/ios3ds-wifi/ios3ds-wifi-fw.gm9` to `sd:/gm9/scripts/` by hand.
 2. Start GodMode9 (Luma: hold START while powering on, pick GodMode9).
@@ -125,6 +192,8 @@ Without the script (same result): in GodMode9's file browser open
 `sd:/ios3ds/nwm.code`. Or on a PC: `tools/ios3ds-wifi/nwmfw.py <that .code>
 -o wifi-fw.bin` and copy `wifi-fw.bin` to `sd:/ios3ds/` (takes precedence
 over `nwm.code`).
+
+### 3.3 The ARM9 loader
 
 **The loader** (`ar6k_init`, `nwmcode.c`): `wifi-fw.bin` first; otherwise
 `nwm.code` is read into the top 4 MiB of FCRAM (free before XNU starts, never
@@ -163,8 +232,9 @@ whole bring-up to an HTTP fetch from iOS). GodMode9's `extrcode`, `find` and
 only drives the SD slot), CTRNAND's AES-CTR with the console-unique
 keyslot whose state depends on the boot chain, NCCH decryption (keyslot 2Ch,
 keyY from the NCCH signature), FAT on the decrypted partition and BLZ; none
-of it can be exercised in QEMU (no NAND crypto model), and a one-time
-GodMode9 run does all of it already. Reading would be safe, but the code to
+of it can be exercised in QEMU (no NAND crypto model), and Horizon's FS
+(3.1, under Luma before the reboot) or a one-time GodMode9 run (3.2) does all
+of it already. Reading would be safe, but the code to
 get there would ship untested.
 
 Upload order in `ar6k.c` (GBATEK "DSi SD/MMC Firmware Wifi Firmware"): stub
