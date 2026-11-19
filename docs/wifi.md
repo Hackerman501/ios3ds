@@ -310,7 +310,7 @@ Once the interface has a name the daemon starts `/usr/libexec/ios3ds-nettest
 `[nettest]` line per step: the DHCP address, the IPv4 default route (routing
 table via `sysctl NET_RT_DUMP`), `getaddrinfo(name)` (mDNSResponder with the
 DHCP DNS server) and an HTTP/1.0 GET of the URL over BSD sockets, then
-`all steps passed` or `FAILED`. Without `nettest=` nothing extra runs.
+`all steps passed` or `FAILED`. Without `nettest=` nothing extra runs. An `https://` URL is fetched through CFNetwork instead, with iOS's own TLS and certificate checks (docs/certificates.md section 5).
 
 Build: `make -C tools/ios3ds-wifi/daemon` (needs `scripts/ios-cc`), then the
 usual rootfs build picks up `build/rootfs-add/usr/libexec/ios3ds-wifid` and the

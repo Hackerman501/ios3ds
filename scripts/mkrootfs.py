@@ -86,6 +86,18 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
     elif verbose and recipe.get("cydia"):
         print("[mkrootfs] Cydia left out (--no-cydia)")
     with tempfile.TemporaryDirectory() as td:
+        ts = recipe.get("trust_store")
+        if ts:
+            # current root certificates as user anchors (scripts/certs.py, docs/certificates.md)
+            import certs
+            tmp = os.path.join(td, "TrustStore.sqlite3")
+            n = certs.write_db(tmp, certs.read_pem(os.path.join(ROOT, ts["pem"])))
+            if exists(out, ts["path"]):
+                hfs(out, "rm", ts["path"])
+            hfs(out, "add", tmp, ts["path"])        # owner: _securityd, from /private/var/Keychains
+            hfs(out, "chmod", "0644", ts["path"])
+            if verbose:
+                print("[mkrootfs] trust store %s: %d root certificates" % (ts["path"], n))
         for path, text in recipe.get("write", {}).items():
             tmp = os.path.join(td, "f")
             with open(tmp, "w") as f:

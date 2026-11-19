@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <dlfcn.h>
 
 /* ---- libSystem (stub SDK: Darwin arm32 layouts declared here) --------- */
 typedef uint32_t socklen_t;
@@ -193,8 +194,127 @@ static int resolve(const char *name, uint32_t *out)
     return n ? 0 : -1;
 }
 
+/* ---- HTTPS through CFNetwork (looked up at run time: the stub SDK has no CFNetwork) */
+typedef const void *CFTypeRef;
+typedef long CFIndex;
+typedef struct { CFIndex domain; int32_t error; } CFStreamError;
+static struct {
+    CFTypeRef (*StringCreateWithCString)(CFTypeRef, const char *, uint32_t);
+    CFTypeRef (*URLCreateWithString)(CFTypeRef, CFTypeRef, CFTypeRef);
+    void (*Release)(CFTypeRef);
+    CFTypeRef (*MessageCreateRequest)(CFTypeRef, CFTypeRef, CFTypeRef, CFTypeRef);
+    void (*MessageSetHeader)(CFTypeRef, CFTypeRef, CFTypeRef);
+    CFIndex (*MessageGetStatus)(CFTypeRef);
+    CFTypeRef (*StreamCreateForHTTP)(CFTypeRef, CFTypeRef);
+    unsigned char (*StreamSetProperty)(CFTypeRef, CFTypeRef, CFTypeRef);
+    CFTypeRef (*StreamCopyProperty)(CFTypeRef, CFTypeRef);
+    unsigned char (*StreamOpen)(CFTypeRef);
+    CFIndex (*StreamRead)(CFTypeRef, uint8_t *, CFIndex);
+    CFStreamError (*StreamGetError)(CFTypeRef);
+    void (*StreamClose)(CFTypeRef);
+    CFTypeRef *Version11, *ResponseHeader, *AutoRedirect, *True;
+} cf;
+
+static int cf_load(void)
+{
+    static int state;               /* 0 = not tried, 1 = ok, -1 = failed */
+    if (state) return state;
+    void *c = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    void *n = dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork", RTLD_NOW);
+    state = -1;
+    if (!c || !n) { say("[nettest] https: CFNetwork not loadable"); return state; }
+#define SYM(lib, field, name) if (!(*(void **)&cf.field = dlsym(lib, name))) { \
+        say("[nettest] https: no %s", name); return state; }
+    SYM(c, StringCreateWithCString, "CFStringCreateWithCString");
+    SYM(c, URLCreateWithString, "CFURLCreateWithString");
+    SYM(c, Release, "CFRelease");
+    SYM(c, StreamSetProperty, "CFReadStreamSetProperty");
+    SYM(c, StreamCopyProperty, "CFReadStreamCopyProperty");
+    SYM(c, StreamOpen, "CFReadStreamOpen");
+    SYM(c, StreamRead, "CFReadStreamRead");
+    SYM(c, StreamGetError, "CFReadStreamGetError");
+    SYM(c, StreamClose, "CFReadStreamClose");
+    SYM(c, True, "kCFBooleanTrue");
+    SYM(n, MessageCreateRequest, "CFHTTPMessageCreateRequest");
+    SYM(n, MessageSetHeader, "CFHTTPMessageSetHeaderFieldValue");
+    SYM(n, MessageGetStatus, "CFHTTPMessageGetResponseStatusCode");
+    SYM(n, StreamCreateForHTTP, "CFReadStreamCreateForHTTPRequest");
+    SYM(n, Version11, "kCFHTTPVersion1_1");
+    SYM(n, ResponseHeader, "kCFStreamPropertyHTTPResponseHeader");
+    SYM(n, AutoRedirect, "kCFStreamPropertyHTTPShouldAutoredirect");
+#undef SYM
+    return state = 1;
+}
+
+static const char *ssl_error_name(int e)
+{
+    switch (e) {
+    case -9807: return "errSSLXCertChainInvalid: certificate not trusted";
+    case -9808: return "errSSLBadCert";
+    case -9812: return "errSSLUnknownRootCert";
+    case -9813: return "errSSLNoRootCert";
+    case -9814: return "errSSLCertExpired";
+    case -9815: return "errSSLCertNotYetValid";
+    case -9806: return "errSSLClosedAbort: server closed the handshake (no common protocol/cipher?)";
+    case -9824: return "errSSLPeerHandshakeFail: no common cipher suite";
+    case -9836: return "errSSLPeerProtocolVersion: server refuses TLS 1.0";
+    case -9843: return "errSSLHostNameMismatch";
+    case -9800: return "errSSLProtocol";
+    default: return "";
+    }
+}
+
+static int https_get(const char *url)
+{
+    if (cf_load() < 0) return -1;
+    time_t t0 = time(NULL);
+    CFTypeRef s = cf.StringCreateWithCString(0, url, 0x08000100 /* UTF-8 */);
+    CFTypeRef u = s ? cf.URLCreateWithString(0, s, 0) : 0;
+    CFTypeRef get = cf.StringCreateWithCString(0, "GET", 0x08000100);
+    CFTypeRef ua = cf.StringCreateWithCString(0, "User-Agent", 0x08000100);
+    CFTypeRef uav = cf.StringCreateWithCString(0, "ios3ds-nettest", 0x08000100);
+    int rc = -1;
+    if (!u) { say("[nettest] https %s: bad URL", url); goto out; }
+    CFTypeRef req = cf.MessageCreateRequest(0, get, u, *cf.Version11);
+    cf.MessageSetHeader(req, ua, uav);
+    CFTypeRef rs = cf.StreamCreateForHTTP(0, req);
+    cf.StreamSetProperty(rs, *cf.AutoRedirect, *cf.True);
+    long total = 0;
+    CFIndex r = -1;
+    if (cf.StreamOpen(rs)) {
+        static uint8_t buf[4096];
+        while ((r = cf.StreamRead(rs, buf, sizeof buf)) > 0) total += r;
+    }
+    if (r < 0) {
+        CFStreamError e = cf.StreamGetError(rs);
+        say("[nettest] https %s -> %s error %d %s(%ld s)", url,
+            e.domain == 3 ? "SSL" : e.domain == 1 ? "POSIX" : e.domain == 12 ? "DNS" : "stream",
+            (int)e.error, e.domain == 3 ? ssl_error_name((int)e.error) : "", (long)(time(NULL) - t0));
+        if (e.domain != 3) say("[nettest]   (CFStreamError domain %ld)", (long)e.domain);
+    } else {
+        CFTypeRef resp = cf.StreamCopyProperty(rs, *cf.ResponseHeader);
+        long code = resp ? (long)cf.MessageGetStatus(resp) : 0;
+        say("[nettest] https %s -> %ld (TLS ok, %ld bytes, %ld s)", url, code, total, (long)(time(NULL) - t0));
+        if (resp) cf.Release(resp);
+        rc = code >= 200 && code < 400 ? 0 : -1;
+    }
+    cf.StreamClose(rs);
+    cf.Release(rs);
+    cf.Release(req);
+out:
+    if (u) cf.Release(u);
+    if (s) cf.Release(s);
+    cf.Release(get);
+    cf.Release(ua);
+    cf.Release(uav);
+    return rc;
+}
+
+static char https_list[1024];          /* body lines of the HTTP answer that are https:// URLs */
+
 static int http_get(const char *url)
 {
+    if (!strncmp(url, "https://", 8)) return https_get(url);
     char host[64], path[128];
     unsigned port = 80;
     const char *p = url;
@@ -251,7 +371,18 @@ static int http_get(const char *url)
     if (eol) *eol = 0;
     if (body) {
         body += 4;
-        body[strcspn(body, "\r\n")] = 0;
+        size_t l = strcspn(body, "\r\n");
+        for (char *q = body + l; (q = strstr(q, "https://")) != NULL; ) {
+            size_t ul = strcspn(q, "\r\n \t");
+            size_t have = strlen(https_list);
+            if (have + ul + 2 < sizeof https_list) {
+                memcpy(https_list + have, q, ul);
+                https_list[have + ul] = '\n';
+                https_list[have + ul + 1] = 0;
+            }
+            q += ul;
+        }
+        body[l] = 0;
     }
     say("[nettest] http %s:%u%s -> %s | %s (%d bytes, %ld s)", ip(a), port, path, resp,
         body ? body : "", got, (long)(time(NULL) - t0));
@@ -295,6 +426,12 @@ int main(int argc, char **argv)
         if (ok != 0) rc = 1;
     }
     if (http_get(argv[2]) != 0) rc = 1;
+    int hrc = 0;
+    for (char *q = https_list, *nl; *q && (nl = strchr(q, '\n')) != NULL; q = nl + 1) {
+        *nl = 0;
+        if (https_get(q) != 0) hrc = 1;
+    }
+    if (https_list[0]) say("[nettest] https checks done%s", hrc ? " (some failed)" : ", all ok");
     say("[nettest] %s", rc ? "FAILED" : "all steps passed");
     return rc;
 }

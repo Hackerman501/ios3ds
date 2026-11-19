@@ -259,6 +259,7 @@
     "_socket",
     "_socketpair",
     "_sscanf",
+    "_strchr",
     "_strcmp",
     "_strcspn",
     "_strlen",

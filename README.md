@@ -113,6 +113,8 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
   - The PICA200 back end has only run against our software GPU model, not on a real console; enable it per process with `IOS3DS_GL=pica`.
   - The GPU display mirror (the screen copy on the PICA200) self-tests at boot and falls back to the ARM9 copy; boot.cfg `gpu_mirror=0` / `gpu=0` switch it / all GPU use off.
 
+- **HTTPS:** the image adds current root certificates (Mozilla's RSA roots) to iOS's trust store, so Safari and Cydia accept today's certificates ([docs/certificates.md](docs/certificates.md)). iOS 4.2.1 still speaks only TLS 1.0, so sites that require TLS 1.2 or newer can't be opened; no certificate can fix that.
+
 ## Credits and prior art
 - [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research notes on booting 8C148, which were invaluable.
 - [devos50/qemu-ios](https://github.com/devos50/qemu-ios): iPod touch emulation and S5L8720 hardware notes.

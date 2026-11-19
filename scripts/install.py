@@ -219,6 +219,7 @@ def main():
         import mkboot  # noqa: F401  (imports kernel/, fwlib: catches a broken unpack)
         import mkrootfs  # noqa: F401
         import cydia  # noqa: F401
+        import certs  # noqa: F401  (needs sqlite3)
         import fwprep as _fwprep_check # noqa: F401
         say("OK: everything needed is here")
         return

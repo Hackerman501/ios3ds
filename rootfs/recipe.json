@@ -39,6 +39,11 @@
  "grow_bytes": 1073741824,
  "_cydia": "Cydia + APT/dpkg base system, downloaded at build time (scripts/cydia.py, docs/cydia.md); false = no Cydia",
  "cydia": "rootfs/cydia.json",
+ "_trust_store": "current root certificates (RSA roots of Mozilla's bundle) as user anchors in securityd's trust store, which every SecTrust evaluation (Safari, Cydia, NSURLConnection) consults; scripts/certs.py, docs/certificates.md",
+ "trust_store": {
+  "pem": "rootfs/certs/roots.pem",
+  "path": "/private/var/Keychains/TrustStore.sqlite3"
+ },
  "remove": [
   "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",
   "/private/var/db/timezone/localtime"

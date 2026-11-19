@@ -43,6 +43,7 @@ PSK = "ios3ds-test-passphrase"
 TOKEN = "ios3ds-wifi-test-%08x" % random.getrandbits(32)
 PART = 2048 * 512
 hits = []
+HTTPS = []
 
 
 def mtools(args, sd, check=True):
@@ -75,7 +76,7 @@ def dummy_nwm(path):
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         hits.append(self.path)
-        body = ("%s path=%s\n" % (TOKEN, self.path)).encode()
+        body = ("%s path=%s\n" % (TOKEN, self.path) + "".join(u + "\n" for u in HTTPS)).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
@@ -100,7 +101,10 @@ def main():
     ap.add_argument("--dns", default="example.com", help="name iOS resolves in the self-test")
     ap.add_argument("--debug", default="1", help="ctr-wifi model log level (0-3)")
     ap.add_argument("--keep", action="store_true", help="leave wifi.cfg / wifi-fw.bin on the image")
+    ap.add_argument("--https", action="append", default=[], help="https:// URL iOS fetches via CFNetwork")
+    ap.add_argument("--expect-https", choices=("ok", "any"), default="any")
     a = ap.parse_args()
+    HTTPS.extend(a.https)
     os.makedirs(a.out, exist_ok=True)
 
     cfg = os.path.join(a.out, "wifi.cfg")
@@ -271,6 +275,13 @@ def main():
                 print("[wifi-test] " + ln.strip())
     if a.case in ("ok", "open", "nwm"):
         print("[wifi-test] host HTTP requests: %s" % (hits or "none"))
+    for u in a.https:
+        m = re.search(r"\[nettest\] https " + re.escape(u) + r" -> (.*)", out)
+        res = m.group(1).strip() if m else "no result"
+        good = res.startswith(("2", "3"))
+        if a.expect_https == "ok":
+            ok &= good
+        print("[wifi-test] https %-40s %s" % (u, res))
     print("[wifi-test] %s (log: %s)" % ("PASS" if ok else "FAIL", os.path.join(a.out, "run.txt")))
     return 0 if ok else 1
 

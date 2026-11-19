@@ -124,10 +124,11 @@ still carry an armv6 (or generic ARM) slice.
 
 ## Known issues
 
-- **HTTPS pages fail** ("The certificate for this server is invalid"): Cydia's
-  home page and package depictions are on https://cydia.saurik.com, whose
-  certificate chain iOS 4.2.1's root store can't verify. Lists and .debs come over
-  HTTP and work. A newer root store would be a separate change.
+- **HTTPS:** fixed by the current root store the build adds
+  ([docs/certificates.md](certificates.md)): Cydia's home page and depictions on
+  https://cydia.saurik.com (same server) load. HTTPS repositories or depictions on servers that
+  require TLS 1.2+ (or use SHA-384-signed chains) still fail; iOS 4.2.1 has only
+  TLS 1.0.
 - Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh.
 - The startup daemon re-runs `firmware.sh` on every boot (stock behaviour); it
   is a few seconds of background shell work.
