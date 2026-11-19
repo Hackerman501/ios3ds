@@ -260,7 +260,7 @@ int main(void)
                "The 3DS reboots into ios3ds. Luma stays\n"
                "your boot.firm afterwards: ios3ds puts it\n"
                "back before it does anything else.\n\n"
-               "To leave iOS: hold POWER ~10 s.\n\n"
+               "To leave iOS: hold POWER for about 10 s.\n\n"
                "A: launch ios3ds    START: exit\n");
     }
 

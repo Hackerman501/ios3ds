@@ -96,3 +96,16 @@ Keys:
 - arrows = D-pad
 
 There is no touch input yet (no touchscreen model in the board).
+
+## Azahar: the `.3dsx` launcher
+
+The launcher is ordinary Horizon homebrew, so it runs in [Azahar](https://github.com/azahar-emu/azahar) (the AppImage; with AppImageLauncher installed, start it with `APPIMAGELAUNCHER_DISABLE=1`). Azahar cannot run `ios3ds.firm` itself: it emulates Horizon, not a FIRM chain-load to the ARM9.
+
+Set up Azahar's virtual SD card in `~/.local/share/azahar-emu/sdmc/`:
+- symlink the files of `build/sd/ios3ds/` into `sdmc/ios3ds/`;
+- create a dummy `sdmc/boot.firm` (`FIRM` and zeros) standing in for Luma.
+
+Then run `azahar.AppImage build/launcher/ios3ds.3dsx`. Checked on 2026-11-20 with Azahar 2126.2:
+- Missing files are reported (`Missing sdmc:/ios3ds/ios3ds.firm`, `Missing sdmc:/boot.firm`).
+- With `nwm.code` absent, the Wi-Fi firmware step runs. Azahar has no NWM system title, so it ends in one red line, `cannot open NWM .code (FS C8804478, no Luma3DS for FSPXI): Wi-Fi off`. No `nwm.code.tmp` is left behind, and the menu continues to `A: launch ios3ds`.
+- Don't press A in Azahar: it would rename the symlinks for a reboot that Azahar cannot do.
