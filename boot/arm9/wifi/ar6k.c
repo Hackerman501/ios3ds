@@ -11,9 +11,15 @@
  *
  * The chip has no usable ROM-only mode: BMI_DONE jumps to RAM (0x927000), so
  * the console's own firmware parts must be uploaded first. They come from
- * sd:/ios3ds/wifi-fw.bin, which tools/ios3ds-wifi/nwmfw.py cuts out of the
- * user's own NWM system module (GBATEK "3DS Files - Module NWM"). Nothing of
- * it is in this repository.
+ * sd:/ios3ds/wifi-fw.bin (tools/ios3ds-wifi/nwmfw.py) or straight from
+ * sd:/ios3ds/nwm.code, the user's own NWM system module code that the
+ * GodMode9 script tools/ios3ds-wifi/ios3ds-wifi-fw.gm9 copies off the console
+ * (nwmcode.c; GBATEK "3DS Files - Module NWM"). Nothing of it is in this
+ * repository.
+ *
+ * [wifi-diag] lines (wifi.cfg diag=1, the default) log every bring-up step
+ * with its time since power-up, so one hardware run shows where it stops;
+ * docs/wifi.md section 6 maps each line to the assumption it settles.
  *
  * Power-up follows libn3ds WIFI_init (CFG11_WIFICNT, GPIO 2_2 = SDIO select,
  * GPIO 3_12 = nRESET, ~2 ms); the BMI register setup before the upload and the
@@ -26,6 +32,8 @@
 #include "log.h"
 
 void waitcycles(u32 n);
+extern u32 wifi_scratch_pa, wifi_scratch_len;      /* wifi.c */
+#define NWM_CODE_PATH "0:/ios3ds/nwm.code"
 
 /* ---- 3DS-side power and reset ------------------------------------------ */
 #define CFG11_WIFICNT   (*(vu8 *)0x10140180u)   /* bit0: enable the Wi-Fi subsystem */
@@ -78,8 +86,10 @@ enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
        WMI_SET_DISC_TIMEOUT = 0x000D, WMI_SET_POWER_MODE = 0x0012,
        WMI_ADD_CIPHER_KEY = 0x0016, WMI_TARGET_ERROR_BITMASK = 0x0022,
        WMI_SET_KEEPALIVE = 0x003D, WMI_SET_HEARTBEAT_TIMEOUT = 0x0047,
+       WMI_GET_CHANNEL_LIST = 0x000E,              /* the reply comes back with the same id */
        WMI_EV_READY = 0x1001, WMI_EV_CONNECT = 0x1002, WMI_EV_DISCONNECT = 0x1003,
-       WMI_EV_BSSINFO = 0x1004, WMI_EV_SCAN_COMPLETE = 0x100A };
+       WMI_EV_BSSINFO = 0x1004, WMI_EV_CMD_ERROR = 0x1005, WMI_EV_REG_DOMAIN = 0x1006,
+       WMI_EV_SCAN_COMPLETE = 0x100A };
 /* WMI crypto types as the DSi/3DS firmware uses them (GBATEK "WMI Connect
    Functions": NONE 1, WEP 2, TKIP 3, AES 4 - not the ath6kl bit values) */
 enum { CRYPT_NONE = 1, CRYPT_TKIP = 3, CRYPT_AES = 4 };
@@ -115,6 +125,12 @@ static struct {
     u8 verbose, switching, from_ios;
     u16 disc_reason, disc_code;
     u32 link_seq;
+    /* [wifi-diag] */
+    u8 diag;
+    u32 t0;                         /* now_ms() at power-up: diag time base */
+    u32 t_part, t_scan, boot_polls, poll_max;
+    u32 ev_logged, scans_logged, nbssinfo;
+    u8 summary_done;
 } A;
 
 static u32 now_ms(void)
@@ -130,6 +146,27 @@ static u32 now_ms(void)
 
 static u8 pkt[0x680] __attribute__((aligned(4)));   /* mailbox packet scratch */
 
+#define DIAG(fmt, ...) do { if (A.diag) logp("[wifi-diag] %6u ms " fmt "\n", now_ms() - A.t0, ##__VA_ARGS__); } while (0)
+
+static const char *st_name(u32 s)
+{
+    static const char *const n[] = { "off", "power", "bmi", "fwload", "boot", "htc", "wmi",
+                                     "scan", "auth", "up", "failed", "idle" };
+    return s < ARRAY_SIZE(n) ? n[s] : "?";
+}
+
+/* up to 24 bytes as hex, for the diag log */
+static const char *hex(const u8 *p, u32 n)
+{
+    static char b[24 * 2 + 4];
+    static const char d[] = "0123456789abcdef";
+    u32 i, o = 0;
+    for (i = 0; i < n && i < 24; i++) { b[o++] = d[p[i] >> 4]; b[o++] = d[p[i] & 15]; }
+    if (i < n) { b[o++] = '.'; b[o++] = '.'; }
+    b[o] = 0;
+    return b;
+}
+
 /* The network to be on: from wifi.cfg at boot, or from iOS (WLAN_CMD_JOIN).
    have = 0: stay idle (no wifi.cfg, or iOS said "leave"). */
 static struct {
@@ -143,11 +180,31 @@ static wlan_bss_t scan_tab[WLAN_SCAN_MAX];
 static u32 nscan, scan_seq;
 static u8 user_scan;                /* a WLAN_CMD_SCAN is running */
 
+static int soc_read(u32 addr, u32 *v);
+
+/* A bring-up step failed: log it, park the chip in reset (nRESET low), and
+   stay "failed". iOS boots on; Settings shows Wi-Fi as unavailable. */
 static u32 fail(int err, const char *what)
 {
+    u32 st = A.state;
     A.err = err;
     A.state = NET_ST_FAILED;
     log_err("[wifi] %s failed: %d (sdio status %08x)\n", what, err, sdio_last_status());
+    DIAG("FAILED in stage %s: %s, error %d, sdio status %08x", st_name(st), what, err, sdio_last_status());
+    if (A.diag && st >= NET_ST_BOOT && st <= NET_ST_WMI) {
+        /* the host interest area (0x520000) says how far the firmware got */
+        u32 w[32];
+        int r = 0;
+        for (u32 i = 0; i < 32 && r >= 0; i++) r = soc_read(HOST_INTEREST + 4 * i, &w[i]);
+        if (r >= 0)
+            for (u32 i = 0; i < 32; i += 8)
+                DIAG("host interest +%02x: %08x %08x %08x %08x %08x %08x %08x %08x", 4 * i,
+                     w[i], w[i + 1], w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
+        else
+            DIAG("host interest unreadable (%d)", r);
+    }
+    GPIO_WIFI_EN = (u16)(GPIO_WIFI_EN & ~1u);
+    DIAG("summary: Wi-Fi stopped at stage %s; chip held in reset; iOS and md0 are not affected", st_name(st));
     return A.state;
 }
 
@@ -360,15 +417,19 @@ static int fw_step(void)
     if (kind == 0xFF) {
         const fw_part_t *c = fw_find(FW_STUB_CODE);
         u32 ret = 0;
+        u32 t = now_ms();
         r = bmi_cmd(BMI_EXECUTE, c->dst + 0x400000u, c->dst, 2);    /* code mirror, arg as NWM */
         if (r == 0) r = bmi_r32(&ret);
         log_ok("[wifi] stub executed: r=%d ret=%08x\n", r, ret);
+        DIAG("fw: BMI_EXECUTE %08x (stub, reads the calibration EEPROM) returned %08x in %u ms: %d",
+             c->dst + 0x400000u, ret, now_ms() - t, r);
         A.part++;
         return r;
     }
     const fw_part_t *p = fw_find(kind);
     if (A.part_off == 0) {
         logp("[wifi] fw part %u: %u bytes -> %08x\n", kind, p->len, p->dst);
+        A.t_part = now_ms();
         if (kind == FW_MAIN_LZ && (r = bmi_cmd(BMI_LZ_START, p->dst, 0, 1)) < 0) return r;
     }
     u32 n = p->len - A.part_off;
@@ -380,6 +441,9 @@ static int fw_step(void)
         A.part_off += n;
     }
     if (A.part_off >= p->len) {
+        static const char *const what[] = { "?", "stub data", "stub code", "database", "main (BMI_LZ_DATA)" };
+        DIAG("fw: part %u %s: %u bytes -> %08x in %u ms", kind, what[kind < 5 ? kind : 0], p->len, p->dst,
+             now_ms() - A.t_part);
         if (kind == FW_DATABASE) r = bmi_write_word(HOST_INTEREST + HI_DSET_LIST_HEAD, p->dst);
         A.part++;
         A.part_off = 0;
@@ -514,7 +578,10 @@ static int scan_start(void)
     if (r >= 0) r = wmi_send(WMI_SET_PROBED_SSID, &ps, sizeof(ps));
     if (r >= 0) r = wmi_send(WMI_START_SCAN, &sc, sizeof(sc));
     A.scan_done = 0;
-    A.t_state = now_ms();
+    A.t_state = A.t_scan = now_ms();
+    A.nbssinfo = 0;
+    DIAG("scan: SET_BSS_FILTER 1 (all), SET_PROBED_SSID \"%s\", START_SCAN all channels (home dwell 20 ms): %d",
+         T.have ? T.ssid : "", r);
     return r;
 }
 
@@ -528,6 +595,7 @@ static void scan_record(const u8 *d, u32 n)
     u32 i;
     for (i = 0; i < nscan; i++)
         if (!memcmp(scan_tab[i].bssid, d + 6, 6)) b = &scan_tab[i];
+    int fresh = !b;
     if (!b) {
         if (nscan >= WLAN_SCAN_MAX) return;
         b = &scan_tab[nscan++];
@@ -553,11 +621,28 @@ static void scan_record(const u8 *d, u32 n)
             b->ie_len = (u8)(b->ie_len + 2 + p[1]);
         }
     }
+    /* the first three scans: one line per network (BSSINFO layout, RSSI
+       units and channels are model assumptions, docs/wifi.md 6.1) */
+    if (fresh && A.scans_logged < 3) {
+        char ssid[33];
+        u32 mhz = b->channel_mhz, ch = mhz == 2484 ? 14 : mhz >= 2412 && mhz < 2484 ? (mhz - 2407) / 5 : 0;
+        memcpy(ssid, b->ssid, b->ssid_len);
+        ssid[b->ssid_len] = 0;
+        DIAG("scan: \"%s\" %02x:%02x:%02x:%02x:%02x:%02x %u MHz (ch %u) rssi %d snr %u %s, %s, %u IE bytes",
+             ssid, b->bssid[0], b->bssid[1], b->bssid[2], b->bssid[3], b->bssid[4], b->bssid[5], mhz, ch,
+             b->rssi, d[3], d[2] == 1 ? "beacon" : d[2] == 2 ? "probe resp" : "frame ?",
+             (b->flags & WLAN_BSS_RSN) ? "RSN" : (b->flags & WLAN_BSS_WPA) ? "WPA" :
+             (b->flags & WLAN_BSS_PRIVACY) ? "WEP" : "open", n - 28);
+    }
 }
 
 static void on_bssinfo(const u8 *d, u32 n)
 {
-    if (n < 28) return;
+    A.nbssinfo++;
+    if (n < 28) {
+        DIAG("scan: short BSSINFO (%u bytes): %s", n, hex(d, n));
+        return;
+    }
     scan_record(d, n);
     if (!T.have) return;
     const u8 *ie = d + 28, *end = d + n;
@@ -599,11 +684,21 @@ static void on_wmi(const u8 *b, u32 len)
         if (n >= 6) memcpy(A.mac, d, 6);
         log_ok("[wifi] WMI ready, MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
                A.mac[0], A.mac[1], A.mac[2], A.mac[3], A.mac[4], A.mac[5]);
+        DIAG("wmi: WMI_READY %u ms after HTC setup, %u bytes: %s (MAC, phy capability%s)",
+             now_ms() - A.t_state, n, hex(d, n), n > 7 ? ", more" : "");
+        if (A.diag) {
+            int r = wmi_send(WMI_GET_CHANNEL_LIST, NULL, 0);
+            DIAG("wmi: GET_CHANNEL_LIST sent: %d", r);
+        }
         u32 v = 0x7F;
         wmi_send(WMI_TARGET_ERROR_BITMASK, &v, 4);
         v = 0;                                  /* GBATEK: timeout 0 = no heartbeat (Type4 firmware needs this) */
         wmi_send(WMI_SET_HEARTBEAT_TIMEOUT, &v, 4);
         A.group_crypt = CRYPT_AES;
+        if (!A.summary_done) {
+            A.summary_done = 1;
+            DIAG("summary: bring-up OK in %u ms (power, SDIO, BMI, firmware, HTC, WMI)", now_ms() - A.t0);
+        }
         if (!T.have) {
             logp("[wifi] idle: no network configured, waiting for iOS (Settings > Wi-Fi)\n");
             A.state = NET_ST_IDLE;
@@ -619,6 +714,10 @@ static void on_wmi(const u8 *b, u32 len)
         on_bssinfo(d, n);
         break;
     case WMI_EV_SCAN_COMPLETE:
+        if (A.scans_logged < 10)
+            DIAG("scan: SCAN_COMPLETE after %u ms, status %s, %u BSSINFO events, %u networks",
+                 now_ms() - A.t_scan, n >= 4 ? hex(d, 4) : "-", A.nbssinfo, nscan);
+        A.scans_logged++;
         if (user_scan) {
             user_scan = 0;
             scan_seq++;
@@ -674,8 +773,30 @@ static void on_wmi(const u8 *b, u32 len)
         A.reconnect_at = now_ms() + 5000;
         if (!A.reconnect_at) A.reconnect_at = 1;
         break;
+    case WMI_EV_REG_DOMAIN:
+        DIAG("wmi: REG_DOMAIN %s", hex(d, n));
+        break;
+    case WMI_EV_CMD_ERROR:
+        /* u16 command id, u8 error (ath6kl wmi_cmd_error_event) */
+        log_warn("[wifi] WMI command %04x rejected by the firmware (error %u)\n",
+                 n >= 2 ? d[0] | (u32)d[1] << 8 : 0, n >= 3 ? d[2] : 0);
+        break;
+    case WMI_GET_CHANNEL_LIST: {
+        /* u8 reserved, u8 count, u16 MHz[count]: as a 2.4 GHz channel mask */
+        u32 cnt = n >= 2 ? d[1] : 0, mask = 0, other = 0;
+        for (u32 i = 0; i < cnt && 2 + 2 * i + 1 < n; i++) {
+            u32 mhz = d[2 + 2 * i] | (u32)d[3 + 2 * i] << 8;
+            if (mhz == 2484) mask |= 1u << 14;
+            else if (mhz >= 2412 && mhz <= 2472 && (mhz - 2407) % 5 == 0) mask |= 1u << ((mhz - 2407) / 5);
+            else other++;
+        }
+        DIAG("wmi: channel list: %u channels, 2.4 GHz mask %04x (bit n = channel n), %u others", cnt, mask, other);
+        break;
+    }
     default:
         if (A.verbose) logp("[wifi] WMI event %04x, %u bytes\n", id, n);
+        else if (A.ev_logged < 24) DIAG("wmi: event %04x, %u bytes: %s", id, n, hex(d, n));
+        A.ev_logged++;
         break;
     }
 }
@@ -696,6 +817,7 @@ static void on_htc(const u8 *b, u32 len)
     int r = 0;
     logp("[wifi] HTC ready: %u credits of %u bytes\n", len >= 6 ? b[2] | b[3] << 8 : 0,
          len >= 6 ? b[4] | b[5] << 8 : 0);
+    DIAG("htc: HTC_READY %u ms after the firmware started, %u bytes: %s", now_ms() - A.t_state, len, hex(b, len));
     for (int i = 0; i < 5 && r >= 0; i++) {
         u32 type;
         r = mbox_send(PKT_HTC, 0, 0, svc[i], 8);
@@ -708,6 +830,8 @@ static void on_htc(const u8 *b, u32 len)
             if (got >= 6 && type == PKT_HTC && q[0] == 3 && q[2] == svc[i][2] && q[3] == svc[i][3]) {
                 if (q[4] != 0 || q[5] == 0 || q[5] > 7) r = -120 - q[4];
                 eid[i] = q[5];
+                DIAG("htc: service %02x%02x -> status %u, endpoint %u, max message %u (%u polls)",
+                     q[3], q[2], q[4], q[5], got >= 8 ? q[6] | q[7] << 8 : 0, t);
                 break;
             }
             if (got == 0) waitcycles(3350);             /* nothing, or a credit report */
@@ -723,6 +847,10 @@ static void on_htc(const u8 *b, u32 len)
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_WMI;
     A.t_state = now_ms();
     A.err = r;
+    if (r < 0) {
+        A.state = NET_ST_HTC;
+        fail(r, "HTC service setup");
+    }
 }
 
 /* Drain one mailbox packet. Data frames end up in A.rxframe. */
@@ -776,8 +904,12 @@ static int user_scan_start(void)
     } sc = { 0, 0, 20, 0, 0, 0, 0 };
     nscan = 0;
     user_scan = 1;
+    A.t_scan = now_ms();
+    A.nbssinfo = 0;
     int r = wmi_send(WMI_SET_BSS_FILTER, &f, sizeof(f));
     if (r >= 0) r = wmi_send(WMI_START_SCAN, &sc, sizeof(sc));
+    if (A.scans_logged < 10)
+        DIAG("scan: request from iOS: SET_BSS_FILTER 1 (all), START_SCAN all channels, no probed SSID: %d", r);
     return r;
 }
 
@@ -890,6 +1022,47 @@ void ar6k_publish(volatile wlanmbox_t *w, u32 *published_scan)
 }
 
 /* ---- backend interface ------------------------------------------------------------ */
+/* sd:/ios3ds/nwm.code (GodMode9 "extrcode" of the console's NWM .app) ->
+   the container in fw_buf. 1 = no such file, 0 = done, < 0 = unusable. */
+static int fw_from_nwm(u32 main_type)
+{
+    u8 *buf = (u8 *)wifi_scratch_pa;
+    u32 len = 0;
+    if (!wifi_scratch_pa) {
+        log_warn("[wifi] no scratch memory for %s (boot.cfg layout)\n", NWM_CODE_PATH);
+        return 1;
+    }
+    u32 t = now_ms();
+    int r = sd_load(NWM_CODE_PATH, buf, wifi_scratch_len, &len);
+    if (r == -4 || r == -5) return 1;           /* FR_NO_FILE / FR_NO_PATH */
+    if (r < 0) {
+        log_err("[wifi] %s: cannot read (%d%s): Wi-Fi off\n", NWM_CODE_PATH, r,
+                r == -1000 ? ", larger than 4 MiB: not NWM's .code" : "");
+        return r;
+    }
+    nwm_info_t in;
+    r = nwm_extract(buf, len, wifi_scratch_len, main_type, fw_buf, sizeof(fw_buf), &fw_size, &in);
+    memset(buf, 0, in.code_size > len ? in.code_size : len);   /* no Nintendo code left in FCRAM */
+    if (r < 0) {
+        log_err("[wifi] %s (%u bytes%s): %s (%d): Wi-Fi off (docs/wifi.md section 3)\n", NWM_CODE_PATH, len,
+                in.blz ? ", BLZ" : "", nwm_strerror(r), r);
+        if (in.layout)
+            DIAG("fw: pool at .code+%x, main type1 %x type4 %x type5 %x bytes", in.pool_off,
+                 in.main_size[0], in.main_size[1], in.main_size[2]);
+        return r;
+    }
+    u32 m4 = in.main_size[1];
+    log_ok("[wifi] firmware from %s: %u bytes%s, main type%u, %u ms\n", NWM_CODE_PATH, len,
+           in.blz ? " (BLZ-compressed)" : "", in.main_type, now_ms() - t);
+    DIAG("fw: %s pool at .code+%x, text base %x, .code %u bytes; main type1 %x type4 %x type5 %x bytes "
+         "(type4 %s GBATEK's A053h/A482h/A5EBh); database end %s stub code start",
+         in.layout == NWM_NEWER ? "newer" : "older", in.pool_off, in.text_base, in.code_size,
+         in.main_size[0], m4, in.main_size[2],
+         m4 == 0xA053 || m4 == 0xA482 || m4 == 0xA5EB ? "is one of" : "is NOT one of",
+         in.db_end_is_stub ? "=" : "!=");
+    return 0;
+}
+
 static int ar6k_init(const wifi_cfg_t *cfg, u8 mac[6])
 {
     memset(&A, 0, sizeof(A));
@@ -904,17 +1077,36 @@ static int ar6k_init(const wifi_cfg_t *cfg, u8 mac[6])
         T.have = 1;
     }
     memset(mac, 0, 6);          /* known after WMI ready; wifi.c copies it then */
+    A.diag = cfg->diag;
+    A.t0 = now_ms();
+    const char *src = cfg->fw;
     int r = sd_load(cfg->fw, fw_buf, sizeof(fw_buf), &fw_size);
     if (r < 0) {
-        if (cfg->ssid_len)
-            log_warn("[wifi] %s: not found (%d). Create it with tools/ios3ds-wifi/nwmfw.py\n", cfg->fw, r);
-        else
-            logp("[wifi] %s: not found (%d): Wi-Fi off (docs/wifi.md section 3)\n", cfg->fw, r);
-        return -1;
+        int n = fw_from_nwm(cfg->fwmain);
+        if (n < 0) return -1;                   /* nwm.code there but unusable: logged */
+        if (n > 0) {
+            if (cfg->ssid_len)
+                log_warn("[wifi] %s: not found (%d), no %s either. Run tools/ios3ds-wifi/ios3ds-wifi-fw.gm9 "
+                         "in GodMode9 (docs/wifi.md section 3)\n", cfg->fw, r, NWM_CODE_PATH);
+            else
+                logp("[wifi] %s: not found (%d), no %s either: Wi-Fi off (docs/wifi.md section 3)\n",
+                     cfg->fw, r, NWM_CODE_PATH);
+            return -1;
+        }
+        src = NWM_CODE_PATH;
     }
     if ((r = fw_check()) < 0) {
-        log_err("[wifi] %s: bad container (%d)\n", cfg->fw, r);
+        log_err("[wifi] %s: bad container (%d)\n", src, r);
         return -1;
+    }
+    if (A.diag) {
+        static const char *const what[] = { "?", "stub data", "stub code", "database", "main" };
+        const fw_hdr_t *h = (const fw_hdr_t *)fw_buf;
+        for (u32 i = 0; i < h->nparts; i++) {
+            const fw_part_t *q = &h->part[i];
+            DIAG("fw: %s part %u %s: %u bytes (0x%x) -> %08x, crc32 %08x", src, q->kind,
+                 what[q->kind < 5 ? q->kind : 0], q->len, q->len, q->dst, nwm_crc32(fw_buf + q->off, q->len));
+        }
     }
     A.state = NET_ST_POWER;
     return 0;
@@ -941,31 +1133,79 @@ static void fifo_selftest(void)
         logp("[wifi] TMIO2 32-bit FIFO works (CMD53 read back the scratch pattern)\n");
 }
 
-static u32 ar6k_poll(void)
+static u32 ar6k_step(void)
 {
     u32 v = 0;
     int r;
+    /* bring-up watchdog: every step has its own bound; this catches a
+       sequence of slow-but-not-failing steps */
+    if (A.state >= NET_ST_BMI && A.state <= NET_ST_WMI && now_ms() - A.t0 > 30000)
+        return fail(-112, "bring-up watchdog (30 s since power-up)");
+    /* an iOS scan the firmware never completes: publish what came in */
+    if (user_scan && now_ms() - A.t_scan > 10000) {
+        user_scan = 0;
+        scan_seq++;
+        log_warn("[wifi] no SCAN_COMPLETE 10 s after the scan request: %u networks (%u BSSINFO)\n",
+                 nscan, A.nbssinfo);
+    }
     switch (A.state) {
     case NET_ST_POWER:
         /* libn3ds WIFI_init: CFG11 "wifi power" (really the MP regs), select
            the SDIO chip, release nRESET, then ~2 ms ("very close to 2 ms")
            before talking SDIO. We pulse reset first because Horizon may
            have left the chip running (warm reboot through Luma). */
-        CFG11_WIFICNT = 1;
-        GPIO_WIFI_MODE = (u16)(GPIO_WIFI_MODE & ~1u);
-        GPIO_WIFI_EN = (u16)(GPIO_WIFI_EN & ~1u);
-        waitcycles(33500);                              /* ~1 ms in reset */
-        GPIO_WIFI_EN = (u16)(GPIO_WIFI_EN | 1u);
-        waitcycles(67000);                              /* ~2 ms */
-        if ((r = sdio_init()) < 0) return fail(r, "SDIO enumeration");
+        {
+            A.t0 = now_ms();
+            u8 c0 = CFG11_WIFICNT;
+            u16 g2 = GPIO_WIFI_MODE, g3 = GPIO_WIFI_EN;
+            CFG11_WIFICNT = 1;
+            GPIO_WIFI_MODE = (u16)(GPIO_WIFI_MODE & ~1u);
+            GPIO_WIFI_EN = (u16)(GPIO_WIFI_EN & ~1u);
+            waitcycles(33500);                          /* ~1 ms in reset */
+            GPIO_WIFI_EN = (u16)(GPIO_WIFI_EN | 1u);
+            waitcycles(67000);                          /* ~2 ms */
+            DIAG("power: CFG11_WIFICNT %02x -> %02x (want bit 0 = 1), GPIO 2_2 %04x -> %04x (want bit 0 = 0: "
+                 "SDIO chip), GPIO 3_12 %04x -> %04x (want bit 0 = 1: nRESET released)",
+                 c0, CFG11_WIFICNT, g2, GPIO_WIFI_MODE, g3, GPIO_WIFI_EN);
+        }
+        {
+            u32 t = now_ms();
+            r = sdio_init();
+            const sdio_diag_t *sd = sdio_diag();
+            DIAG("sdio: CFG9_SDMMCCTL %04x -> %04x (want bit 2 = 0: port powered), SD_OPTION %04x (%s)",
+                 sd->cfg9_before, sd->cfg9_after, sd->opt,
+                 (sd->opt & 0xFF) == 0xEE ? "controller 2 answers" : "controller 2 NOT answering");
+            if (sd->cmd5_tries)
+                DIAG("sdio: CMD5 x%u: first R4 %08x, last %08x (ready %u, %u I/O functions, memory %u, OCR %06x)",
+                     sd->cmd5_tries, sd->ocr_first, sd->ocr, sd->ocr >> 31, (sd->ocr >> 28) & 7,
+                     (sd->ocr >> 27) & 1, sd->ocr & 0xFFFFFF);
+            if (sd->rca)
+                DIAG("sdio: RCA %04x, CCCR rev %02x, SD rev %02x, card caps %02x, bus interface %02x "
+                     "(want low bits 2 = 4-bit)", sd->rca, sd->cccr_rev, sd->sd_rev, sd->caps, sd->bic);
+            if (r < 0) {
+                DIAG("sdio: stopped at step \"%s\" after %u ms", sd->stage, now_ms() - t);
+                return fail(r, "SDIO enumeration");
+            }
+            DIAG("sdio: function 1 ready after %u polls; enumeration took %u ms", sd->ready_tries, now_ms() - t);
+            if (A.diag) {
+                u16 manf = 0, card = 0;
+                int m = sdio_manfid(&manf, &card);
+                if (m == 0)
+                    DIAG("sdio: CIS manufacturer %04x card %04x (%s)", manf, card,
+                         manf == 0x0271 ? "Atheros" : "not Atheros 0271");
+                else
+                    DIAG("sdio: no CISTPL_MANFID in the CIS (%d)", m);
+            }
+        }
         if ((r = soc_read(SOC_CHIP_ID, &v)) < 0) return fail(r, "chip id read");
         log_ok("[wifi] SDIO up, chip id %08x%s\n", v, v == CHIP_ID_AR6014 ? " (AR6014)" : " (unexpected)");
         fifo_selftest();
         if ((r = soc_write(SOC_RESET_CONTROL, 0x100)) < 0) return fail(r, "warm reset");
-        waitcycles(3350000);
+        A.t_state = now_ms();                           /* ~100 ms until the BMI ROM runs: not blocking */
         A.state = NET_ST_BMI;
         break;
     case NET_ST_BMI:
+        if (now_ms() - A.t_state < 100) break;
         if ((r = bmi_cmd(BMI_GET_TARGET_ID, 0, 0, 0)) < 0 || (r = bmi_r32(&v)) < 0)
             return fail(r, "BMI_GET_TARGET_ID");
         if (v == 0xFFFFFFFFu) {                         /* extended reply: size, version, type */
@@ -977,11 +1217,16 @@ static u32 ar6k_poll(void)
         log_ok("[wifi] BMI ROM version %08x (AR6014 ROM is 2300006F)\n", v);
         /* dsiwifi: hi_app_host_interest = 2, then scratch0 |= 8,
            WLAN_SYSTEM_SLEEP |= 1, CLOCK_CONTROL = 5, [0x4020] = 0 */
-        if ((r = bmi_write_word(HOST_INTEREST, 2)) < 0) return fail(r, "host interest");
-        if ((r = bmi_read_soc(SOC_SCRATCH0, &v)) < 0 || (r = bmi_write_soc(SOC_SCRATCH0, v | 8)) < 0 ||
-            (r = bmi_read_soc(SOC_WLAN_SYS_SLEEP, &v)) < 0 || (r = bmi_write_soc(SOC_WLAN_SYS_SLEEP, v | 1)) < 0 ||
-            (r = bmi_write_soc(SOC_CLOCK_CONTROL, 5)) < 0 || (r = bmi_write_soc(SOC_REG_4020, 0)) < 0)
-            return fail(r, "BMI clock setup");
+        {
+            u32 s0 = 0, sl = 0, ver = v;
+            if ((r = bmi_write_word(HOST_INTEREST, 2)) < 0) return fail(r, "host interest");
+            if ((r = bmi_read_soc(SOC_SCRATCH0, &s0)) < 0 || (r = bmi_write_soc(SOC_SCRATCH0, s0 | 8)) < 0 ||
+                (r = bmi_read_soc(SOC_WLAN_SYS_SLEEP, &sl)) < 0 || (r = bmi_write_soc(SOC_WLAN_SYS_SLEEP, sl | 1)) < 0 ||
+                (r = bmi_write_soc(SOC_CLOCK_CONTROL, 5)) < 0 || (r = bmi_write_soc(SOC_REG_4020, 0)) < 0)
+                return fail(r, "BMI clock setup");
+            DIAG("bmi: target version %08x (%s), scratch0 was %08x, WLAN_SYSTEM_SLEEP was %08x; clock setup done",
+                 ver, ver == 0x2300006F ? "AR6014 ROM" : "UNEXPECTED", s0, sl);
+        }
         A.state = NET_ST_FWLOAD;
         break;
     case NET_ST_FWLOAD:
@@ -993,14 +1238,18 @@ static u32 ar6k_poll(void)
                 (r = bmi_cmd(BMI_DONE, 0, 0, 0)) < 0)
                 return fail(r, "BMI_DONE");
             logp("[wifi] firmware started, waiting for it to come up\n");
+            DIAG("fw: upload done, BMI_DONE sent (hi_mbox_io_block_sz %u, hi_mbox_isr_yield 0x63)", SDIO_BLOCK);
             A.t_state = now_ms();
+            A.boot_polls = 0;
             A.state = NET_ST_BOOT;
         }
         break;
     case NET_ST_BOOT:
         if ((r = soc_read(HOST_INTEREST + HI_BOARD_DATA_INIT, &v)) < 0) return fail(r, "boot poll");
+        A.boot_polls++;
         if (v == 1) {
             log_ok("[wifi] firmware running (board data initialised)\n");
+            DIAG("boot: hi_board_data_initialized = 1 after %u ms (%u polls)", now_ms() - A.t_state, A.boot_polls);
             A.state = NET_ST_HTC;
             A.t_state = now_ms();
         } else if (now_ms() - A.t_state > 3000) {
@@ -1028,6 +1277,20 @@ static u32 ar6k_poll(void)
         break;
     }
     return A.state;
+}
+
+/* one driver step per monitor iteration; [wifi-diag] reports the longest
+   (the monitor serves md0 and the GPU mirror in between) */
+static u32 ar6k_poll(void)
+{
+    u32 t = now_ms(), st = A.state;
+    u32 r = ar6k_step();
+    u32 d = now_ms() - t;
+    if (d > A.poll_max) {
+        A.poll_max = d;
+        if (d >= 20) DIAG("monitor: one driver step took %u ms (state %s)", d, st_name(st));
+    }
+    return r;
 }
 
 static int ar6k_tx(const u8 *eth, u32 len)

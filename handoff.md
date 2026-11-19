@@ -74,7 +74,7 @@ The user is away. Everything after hardware run 13 is verified in QEMU only. The
 1. Hardware run of the GPU build: mirror self-test variant, fps, `[gl] pica: GPU up`, PICA vs software frame time (docs/pica200.md §11).
 2. `gettimeofday` early in boot (§2).
 3. Audio on hardware: `could not start DMA: device is not ready` ([docs/audio.md](docs/audio.md)).
-4. Wi-Fi on hardware: the NWM firmware extraction, then either Settings > Wi-Fi or `sd:/ios3ds/wifi.cfg` (SSID/PSK, `nettest=`); read the log against the checklist in [docs/wifi.md](docs/wifi.md) §6 and §10.6.
+4. Wi-Fi on hardware: run `gm9/scripts/ios3ds-wifi-fw.gm9` once in GodMode9 (writes `sd:/ios3ds/nwm.code`, NAND read-only; the ARM9 cuts the firmware out at boot), then Settings > Wi-Fi or `sd:/ios3ds/wifi.cfg` (SSID/PSK, `nettest=`); read the `[wifi-diag]` lines against [docs/wifi.md](docs/wifi.md) §6/§6.1 and §10.6 (re-log 56).
 5. CoreAnimation's GL compositor on the PICA engine (docs/gpu.md, open item).
 6. RTC and accelerometer: done (re-log 33, 40); hardware check pending.
 7. A fast swipe right didn't open Spotlight in QEMU (possibly test timing).

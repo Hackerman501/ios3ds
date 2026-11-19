@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Settings > Wi-Fi end to end in QEMU, driven through the touch screen.
 
-  emu/wifi_ui_test.py [--sd build/sd.img] [--out build/emu-wifi-ui] [--keep-cfg]
+  emu/wifi_ui_test.py [--sd build/sd.img] [--out build/emu-wifi-ui] [--keep-cfg] [--nwm]
+
+--nwm: a synthetic nwm.code (as the GodMode9 script leaves it) instead of
+wifi-fw.bin, i.e. exactly the files a console has after docs/wifi.md
+section 3; the ARM9 then cuts the firmware out at boot.
 
 Puts a dummy wifi-fw.bin on the SD image and removes wifi.cfg (the ARM9
 driver then brings the chip up idle and waits for iOS, docs/wifi.md section
@@ -82,16 +86,22 @@ def main():
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "emu-wifi-ui"))
     ap.add_argument("--boot-timeout", type=float, default=400)
+    ap.add_argument("--nwm", action="store_true", help="nwm.code instead of wifi-fw.bin")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="ios3ds-wifi-ui-")
     cfg_saved = os.path.join(tmp, "boot.cfg")
     wifi_test.mtools(["mcopy", "-o", "::/ios3ds/boot.cfg", cfg_saved], a.sd)
-    for f in ("wifi.cfg", "wifi-fw.bin"):
+    for f in ("wifi.cfg", "wifi-fw.bin", "nwm.code"):
         wifi_test.mtools(["mdel", "::/ios3ds/" + f], a.sd, check=False)
-    fw = os.path.join(tmp, "wifi-fw.bin")
-    wifi_test.dummy_fw(fw)
-    wifi_test.mtools(["mcopy", "-o", fw, "::/ios3ds/wifi-fw.bin"], a.sd)
+    if a.nwm:
+        fw = os.path.join(tmp, "nwm.code")
+        wifi_test.dummy_nwm(fw)
+        wifi_test.mtools(["mcopy", "-o", fw, "::/ios3ds/nwm.code"], a.sd)
+    else:
+        fw = os.path.join(tmp, "wifi-fw.bin")
+        wifi_test.dummy_fw(fw)
+        wifi_test.mtools(["mcopy", "-o", fw, "::/ios3ds/wifi-fw.bin"], a.sd)
     cfg = os.path.join(tmp, "boot-ca0.cfg")
     with open(cfg_saved) as f, open(cfg, "w") as g:
         g.write(re.sub(r"(?m)^ca_gpu=1$", "ca_gpu=0", f.read()))
@@ -196,6 +206,7 @@ def main():
             f.write(log_text())
         wifi_test.mtools(["mcopy", "-o", cfg_saved, "::/ios3ds/boot.cfg"], a.sd)
         wifi_test.mtools(["mdel", "::/ios3ds/wifi-fw.bin"], a.sd, check=False)
+        wifi_test.mtools(["mdel", "::/ios3ds/nwm.code"], a.sd, check=False)
         shutil.rmtree(tmp, ignore_errors=True)
         print("[wifi-ui] %d/%d checks passed in %.0f s; screenshots and log in %s"
               % (sum(ok for _, ok in checks), len(checks), time.time() - t0, a.out))

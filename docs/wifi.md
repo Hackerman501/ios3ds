@@ -53,6 +53,7 @@ end-to-end.
 | `wifi_frame.c` | Ethernet II <-> WMI data frames (LLC/SNAP RFC 1042 and bridge-tunnel). |
 | `wifi_ring.c` | ARM9 half of the mailbox. |
 | `wifi_cfg.c` | `sd:/ios3ds/wifi.cfg` parser. |
+| `nwmcode.c` | NWM `.code` -> firmware container at boot (section 3): in-place BLZ, GBATEK's literal pools, fixed block sizes. Same logic as `nwmfw.py`; the host tests compare both byte for byte. |
 | `wifi.c` | `wifi_init()` (before the XNU jump: config, PBKDF2, mailbox init) and `wifi_poll()` (each monitor loop pass: driver step, up to 4 frames each way). Loopback backend. |
 | `vnic.c` | Backend for a paravirtual QEMU NIC that was never built (section 7); `backend=qemu` fails cleanly. |
 
@@ -81,49 +82,111 @@ security=wpa2            # or open (default: wpa2 if psk given)
 backend=auto             # auto|ar6014|qemu|loop|off
 fw=0:/ios3ds/wifi-fw.bin
 verbose=0                # 1 = state changes, 2 = every frame
+diag=1                   # [wifi-diag] bring-up log (section 6), default on
+fwmain=4                 # main firmware cut from nwm.code: 4 (default) or 1
 mac=02:..                # qemu/loop backends only
 nettest=http://10.0.2.2:8080/ example.com   # optional iOS self-test (section 5)
 ```
 
-No file: the chip still comes up when `wifi-fw.bin` is there and waits idle
+No file: the chip still comes up when `wifi-fw.bin` or `nwm.code` is there and waits idle
 for iOS (Settings > Wi-Fi, section 10); without the firmware too, networking
 is off and the mailbox reports backend NONE.
 
 ## 3. Firmware (not shipped)
 
 The AR6014 ROM cannot run Wi-Fi by itself; Nintendo's Xtensa firmware must be
-uploaded after every power-up. ios3ds never contains it. The user extracts it
-from **their own console**:
+uploaded after every power-up. ios3ds never contains it. It comes from
+**your own console**, once, with GodMode9 (already on every boot9strap/Luma
+console set up with the usual guide):
 
-1. GodMode9: `[1:] SYSNAND CTRNAND/title/00040130/00002d02/content/<id>.app`
-   (NWM, the Wi-Fi sysmodule) -> "NCCH image options..." -> "Extract .code"
-   (menu wording may differ between GodMode9 versions).
-2. On a PC: `tools/ios3ds-wifi/nwmfw.py <tid>.code -o wifi-fw.bin`
-   (accepts decompressed or BLZ-compressed .code), copy to `sd:/ios3ds/`.
+1. Copy the SD card tree as usual (`make sd` / the installer). It now has
+   `gm9/scripts/ios3ds-wifi-fw.gm9`; or copy
+   `tools/ios3ds-wifi/ios3ds-wifi-fw.gm9` to `sd:/gm9/scripts/` by hand.
+2. Start GodMode9 (Luma: hold START while powering on, pick GodMode9).
+3. Press HOME -> `Scripts...` -> `ios3ds-wifi-fw`, confirm with A.
+   It shows the NWM file it read and writes `sd:/ios3ds/nwm.code`
+   ("ios3ds: wrote 0:/ios3ds/nwm.code").
+4. Boot ios3ds. The log shows
+   `[wifi] firmware from 0:/ios3ds/nwm.code: <n> bytes, main type4, <t> ms`.
 
-`nwmfw.py` finds the literal pool GBATEK describes (constants `524C00h`,
-`53FE18h`, `527000h`; "newer" and "older" layouts), checks the fixed sizes
-(stub data 38h, stub code 316h, database 1E8h) and writes a container:
-16-byte header (`'I3WF'`, version 1, part count, chip id) + 8 x
-`{kind, dst, off, len}` + blocks. Upload order in `ar6k.c` (GBATEK "DSi SD/MMC
-Firmware Wifi Firmware"): stub data -> 524C00h, stub code -> 527000h,
-BMI_EXECUTE(527000h + 400000h, 527000h), main via BMI_LZ_STREAM_START/DATA ->
-524C00h, database -> 53FE18h, `hi_dset_list_head` = 53FE18h, BMI_DONE.
-Default main variant is Type4 (`--main type1` to try the other).
-(dsiwifi's disabled upload code re-sends the stub data after the main
-firmware; GBATEK's order does not, and neither do we. Try that first if the
-firmware never reports `hi_board_data_initialized`.)
+What the script does: `find 1:/title/00040130/00002d02/content/*.app`
+(NWM, the Wi-Fi sysmodule; same title on Old and New 3DS, GBATEK "3DS Files -
+Module NWM"), then GodMode9's `extrcode` (decrypts the NCCH and decompresses
+its ExeFS `.code`) into `0:/ios3ds/nwm.code`. **NAND is only read**: the
+script uses no `allow` and GodMode9 never asks for the SysNAND write
+permission; the only write is the file on the SD card. A missing NWM or a
+cancel stops the script before anything is written. `nwm.code` is Nintendo's
+code: keep it on your card, do not share it.
 
-**Missing or broken firmware fails safe.** Without the file the ARM9 logs
-once `[wifi] 0:/ios3ds/wifi-fw.bin: not found (...). Create it with
-tools/ios3ds-wifi/nwmfw.py` and `backend ar6014 not available: networking
-off`, never powers the chip, and iOS sees "no backend" (ios3ds-wifid waits
-quietly). A file that is not an `I3WF` container logs `bad container` the
-same way. Firmware that uploads but does not start ends in state `failed`
-with one line naming the step (`no HTC_READY`, ...). QEMU checks the first
-case (`emu/wifi_test.py --case nofw`). The test's `wifi-fw.bin` is random
-bytes in the container layout; no Nintendo or Atheros code is in the
-repository or the test.
+Without the script (same result): in GodMode9's file browser open
+`[1:] SYSNAND CTRNAND/title/00040130/00002d02/content/<id>.app` -> A ->
+"NCCH image options..." -> "Extract .code" (GodMode9 writes it to
+`0:/gm9/out/`, named after the title id), then move/rename it to
+`sd:/ios3ds/nwm.code`. Or on a PC: `tools/ios3ds-wifi/nwmfw.py <that .code>
+-o wifi-fw.bin` and copy `wifi-fw.bin` to `sd:/ios3ds/` (takes precedence
+over `nwm.code`).
+
+**The loader** (`ar6k_init`, `nwmcode.c`): `wifi-fw.bin` first; otherwise
+`nwm.code` is read into the top 4 MiB of FCRAM (free before XNU starts, never
+a `load=` target) and processed in place:
+
+- BLZ-compressed (ExeFS form) or plain (`extrcode` form): both accepted; a
+  BLZ footer is only tried when the plain search finds nothing.
+- GBATEK's literal pools: constant `524C00h` (main / stub-data destination),
+  then either the "newer large pool" (`3EDh` at +4, `53FE18h` at +28h,
+  `527000h` at +34h) or the "older large pool" (`53FE18h` at +0Ch,
+  `527000h` at +18h; type1/type4 from its tail at +38h..+44h with `3EDh` at
+  +48h, or from the "older small pool").
+- Text base `100000h` (the 3DS sysmodule base) or `10000h` (GBATEK's
+  wording); the one where all addresses fall inside the file and the stub
+  data / stub code / database are exactly 38h / 316h / 1E8h bytes wins.
+- Then the 'I3WF' container in the 64 KiB upload buffer, the FCRAM copy is
+  zeroed. Every failure is one red line naming the reason (`no NWM firmware
+  pool`, `sizes differ from GBATEK`, `main firmware type not referenced`,
+  `BLZ decompression failed`) and Wi-Fi stays off; iOS boots either way.
+- `[wifi-diag]` lines then give the pool layout and offset, text base, the
+  sizes of type1/4/5 (and whether type4 is one of GBATEK's A053h/A482h/
+  A5EBh), whether the database ends where the stub code starts (GBATEK:
+  "SAME"), and size + CRC-32 of each uploaded block, so a failing console's
+  firmware can be identified without sharing it.
+
+Checked without the real file: GBATEK's pool tables (re-read for this
+section; offsets in `nwmcode.c`/`nwmfw.py` match field by field), synthetic
+`.code` files of all three pool layouts, plain and BLZ, with type1/4/5
+(`make -C tools/ios3ds-wifi test`: the ARM9 C code and `nwmfw.py` produce
+byte-identical containers), and QEMU (`emu/wifi_test.py --case nwm`: a
+BLZ-compressed synthetic `nwm.code` unpacked by the ARM9 at boot, then the
+whole bring-up to an HTTP fetch from iOS). GodMode9's `extrcode`, `find` and
+`ask` were checked against GodMode9's `scripting.c` and `HelloScript.gm9`.
+
+**Why not read NAND from the ARM9 directly:** it needs an eMMC driver (ours
+only drives the SD slot), CTRNAND's AES-CTR with the console-unique
+keyslot whose state depends on the boot chain, NCCH decryption (keyslot 2Ch,
+keyY from the NCCH signature), FAT on the decrypted partition and BLZ; none
+of it can be exercised in QEMU (no NAND crypto model), and a one-time
+GodMode9 run does all of it already. Reading would be safe, but the code to
+get there would ship untested.
+
+Upload order in `ar6k.c` (GBATEK "DSi SD/MMC Firmware Wifi Firmware"): stub
+data -> 524C00h, stub code -> 527000h, BMI_EXECUTE(527000h + 400000h,
+527000h), main via BMI_LZ_STREAM_START/DATA -> 524C00h, database -> 53FE18h,
+`hi_dset_list_head` = 53FE18h, BMI_DONE. Default main variant is Type4
+(`fwmain=1` in wifi.cfg or `nwmfw.py --main type1` to try the other; GBATEK:
+Type1 of newer NWM versions may hang, Type5 cannot find APs). (dsiwifi's
+disabled upload code re-sends the stub data after the main firmware;
+GBATEK's order does not, and neither do we. Try that first if the firmware
+never reports `hi_board_data_initialized`.)
+
+**Missing or broken firmware fails safe.** Without either file the ARM9 logs
+once `[wifi] 0:/ios3ds/wifi-fw.bin: not found (-4), no 0:/ios3ds/nwm.code
+either: Wi-Fi off`, never powers the chip, and iOS sees "no backend"
+(ios3ds-wifid waits quietly). A `wifi-fw.bin` that is not an `I3WF`
+container logs `bad container`. Firmware that uploads but does not start ends
+in state `failed` with one line naming the step (`no HTC_READY`, ...), the
+host interest area dumped and the chip held in reset. QEMU checks these
+(`emu/wifi_test.py --case nofw`, `--case badnwm`). The test firmware is
+random bytes in the container or `.code` layout; no Nintendo or Atheros code
+is in the repository or the tests.
 
 ## 4. Mailbox and kernel side
 
@@ -185,24 +248,77 @@ plist via `rootfs/recipe.json`.
 
 ## 6. Bring-up checklist on a console
 
-Put `wifi.cfg` (with `verbose=1` and, for the first runs,
-`nettest=http://<a PC on the LAN>:8080/ <some name>`) and `wifi-fw.bin` on
-the card. The 3DS console and `sd:/ios3ds/log.txt` show each step; QEMU
-prints the same lines (section 7.3). Each step settles one unverified
-assumption:
+Put `nwm.code` (section 3) on the card; `wifi.cfg` is optional (without it
+the chip comes up idle and iOS's Settings > Wi-Fi scans, section 10).
+`diag=1` (the default) adds `[wifi-diag] <ms since power-up> ms <stage>: ...`
+lines to the console and `sd:/ios3ds/log.txt`, one per bring-up step, in the
+spirit of the GPU diagnostics (docs/pica200.md section 11-12). One run shows
+where it stops; the last lines before a failure are always
 
-| Log line | Settles | If it fails |
+```
+[wifi] <step> failed: <error> (sdio status <STAT1|STAT0<<16>)
+[wifi-diag] ... FAILED in stage <state>: <step>, error <n>, sdio status ...
+[wifi-diag] ... host interest +00..+7c: ...   (only after the upload: how far the firmware got)
+[wifi-diag] ... summary: Wi-Fi stopped at stage <state>; chip held in reset; iOS and md0 are not affected
+```
+
+**Bounded everywhere.** Each SDIO command ends on a response, an error bit or
+~0.1 s; CMD5 is retried at most 200 times 1 ms apart; function-1 ready is
+polled at most 1000 times; the 100 ms after the warm reset no longer blocks
+the monitor (state BMI waits on the clock); firmware start 3 s, HTC_READY and
+WMI_READY 5 s each, a 30 s watchdog over the whole bring-up, the boot-time
+scan 10 s, an iOS scan without SCAN_COMPLETE is published after 10 s. A
+failure parks the chip in reset and only sets state `failed`; md0, the GPU
+mirror and iOS keep running. `monitor: one driver step took <n> ms` reports
+every new maximum of 20 ms or more, i.e. how long block I/O waited on Wi-Fi.
+
+| Log line | Settles | If it is wrong |
 |---|---|---|
-| `[wifi] SDIO up, chip id 0d000001 (AR6014)` | the ARM9 can power the chip (`CFG11_WIFICNT`, GPIO 2_2/3_12) and drive TMIO controller 2 at 0x10122000 by polling | CMD5 timeout: check `CFG9_SDMMCCTL` bit 2 (port power), longer reset delay, libn3ds `SDIO_init` (CMD0 first, CMD5 with OCR 3.2-3.3 V) |
-| `[wifi] TMIO2 32-bit FIFO works` | the ARM9 can use the FIFO at 0x1012210C (dsiwifi's 3DS ARM11 build uses a mirror at +0x200000 instead) | `FIFO check failed ... falls back to CMD52`: Wi-Fi still works, slowly; try the +0x200000 mirror next |
-| `[wifi] BMI ROM version 2300006f` | BMI over CMD52, COUNT4 credits | |
-| `[wifi] fw part 1..4`, `stub executed`, `firmware running (board data initialised)` | upload order, the stub setting `hi_board_data_initialized` (model assumption) | `firmware start (hi_board_data_initialized never set)`: re-send the stub data after main (dsiwifi's order), section 3 |
-| `[wifi] HTC ready: N credits of M bytes`, `HTC services connected: 0 (WMI endpoint 1, data 2/3/4/5)` | the Type4 firmware boots and answers HTC | `no HTC_READY`: try `--main type1`; compare BMI writes with dsiwifi |
-| `[wifi] WMI ready, MAC ...` | WMI with the 2-byte header | |
-| `[wifi] connect "..." ..., seen in scan` | BSS filter 1 + START_SCAN over all channels reports BSSINFO (dsiwifi scans per channel) | `not seen in scan`: the firmware searches by itself; if that fails, scan per channel like dsiwifi (`SET_CHANNEL_PARAMS` + `START_SCAN`) |
-| `[wifi] associated, channel ... MHz`, `EAPOL event 1`, `EAPOL event 2`, `link up` | our RSN IE in message 2 matches the firmware's association request (we send capabilities 0) | AP deauths after message 2 (`disconnected (WMI reason 4, 802.11 code 17)`): the firmware's IE differs, copy it from the CONNECT event's assoc request |
-| `[wifid] interface is en0`, `[wifid] en0 configured by configd` | IOUserEthernet + configd's automatic DHCP on hardware | `ipconfig set en0 DHCP: status ...` runs after 15 s |
-| `[nettest] en0 address ...`, `default route via ...`, `dns ... -> ...`, `http ... -> HTTP/1.0 200 OK`, `all steps passed` | data in both directions through the firmware with our keys | rx/tx only stall: try mailbox control word `2008h` for data (dsiwifi), section 9 |
+| `fw: newer pool at .code+..., text base 100000, ...; type4 is one of GBATEK's ...` + `fw: ... part N ...: <size>, crc32 ...` | the console's NWM matches GBATEK's pool layout and block sizes | red `nwm.code (...)` line names the check that failed; the type1/4/5 sizes it found are logged |
+| `power: CFG11_WIFICNT 00 -> 01, GPIO 2_2 .. -> .. (want bit 0 = 0), GPIO 3_12 .. -> .. (want bit 0 = 1)` | ARM9 writes to CFG11/GPIO take effect | a value that did not change: the register is not writable from the ARM9; power-up must move to the ARM11 stub |
+| `sdio: CFG9_SDMMCCTL a -> b (want bit 2 = 0), SD_OPTION 40ee (controller 2 answers)` | TMIO controller 2 at 0x10122000 is reachable from the ARM9 | `NOT answering`: the controller is not mapped/clocked for the ARM9 |
+| `sdio: CMD5 xN: first R4 ..., last ... (ready 1, 1 I/O functions, memory 0, OCR ...)` | the chip is powered, out of reset and answers SDIO; N = real CMD5 retries (model: 2) | `stopped at step "CMD5"` + `SDIO enumeration failed: -3`: no answer = power/reset/port-power problem (lines above say which register) |
+| `sdio: RCA ..., CCCR rev .., SD rev .., card caps .., bus interface 82` | CMD3/CMD7, CCCR access, 4-bit switch | stopped at `CMD3`/`CMD7`/`CCCR`: compare with libn3ds `SDIO_init` |
+| `sdio: function 1 ready after N polls`, `sdio: CIS manufacturer 0271 card ....` | function enable; the card is Atheros (the model's card id 0201 is a guess) | not 0271: a different chip revision; still try |
+| `[wifi] SDIO up, chip id 0d000001 (AR6014)` | the diagnostic window at function 1 0x474..0x47C | `(unexpected)`: window addresses differ |
+| `[wifi] TMIO2 32-bit FIFO works` | the FIFO at 0x1012210C from the ARM9 | `FIFO check failed`: CMD52 fallback (slow); try the +0x200000 mirror |
+| `bmi: target version 2300006f (AR6014 ROM), scratch0 was ..., WLAN_SYSTEM_SLEEP was ...` | warm reset + 100 ms, BMI credits at COUNT_DEC+16 | `BMI_GET_TARGET_ID failed`: longer reset wait, check credit register |
+| `fw: part 1/2/3/4 ... in <ms>`, `fw: BMI_EXECUTE 00927000 ... returned <x>` | BMI write/LZ stream; the stub runs and returns | which part fails; the stub's return value |
+| `boot: hi_board_data_initialized = 1 after <ms>` | the stub/firmware set the flag (model assumption; the model needs 50 ms) | `FAILED in stage boot` + host interest dump: re-send stub data after main (dsiwifi order), section 3 |
+| `htc: HTC_READY ..., <n> bytes: <hex>` | Type4 firmware boots and speaks HTC (model: 8 credits of 1664 bytes) | `FAILED in stage htc`: try `fwmain=1` |
+| `htc: service 0100 -> status 0, endpoint 1, max message ...` (0100..0104) | service connect layout and endpoints (model: 1..5 in order) | a non-zero status: the service is not offered by this firmware |
+| `wmi: WMI_READY ..., <n> bytes: <hex> (MAC, phy capability)` | WMI_READY layout (model: 7 bytes) | longer event: more fields (sw/abi version) we ignore, harmless |
+| `wmi: REG_DOMAIN <hex>` | regulatory domain reported after READY (model: 0) | absent: harmless |
+| `wmi: channel list: N channels, 2.4 GHz mask ....` | the channels the firmware will scan (model: 1-11, mask 0ffe; JPN/EUR consoles should show 1-13 = 3ffe) | `WMI command 000e rejected`: this firmware has no GET_CHANNEL_LIST; harmless |
+| `summary: bring-up OK in <ms>` | everything up to WMI | |
+| `scan: request from iOS: ...` then `scan: "<ssid>" <bssid> <MHz> (ch n) rssi <r> snr <s> beacon/probe resp, RSN/WPA/WEP/open` | BSS filter 1 + START_SCAN over all channels returns BSSINFO for every AP (dsiwifi scans per channel); BSSINFO layout; RSSI units (model: -40..-81 dBm) | no lines, `SCAN_COMPLETE ... 0 BSSINFO`: scan per channel like dsiwifi (`SET_CHANNEL_PARAMS` + `START_SCAN`); garbled SSIDs: BSSINFO layout differs |
+| `scan: SCAN_COMPLETE after <ms>, status ..., <n> BSSINFO events, <m> networks` | the event exists and how long a real scan takes (model: 30 ms per channel) | `no SCAN_COMPLETE 10 s after the scan request`: the list is still published |
+| `wmi: event <id>, <n> bytes: <hex>` (at most 24) | events we do not handle (GBATEK: Type4 sends 101Dh..1025h; 1025h is to be ignored) | |
+| `[wifi] iOS: scan` / `[a80211] scan done: N networks` | the networks reach Settings > Wi-Fi | |
+| (with `wifi.cfg`) `connect ...`, `associated`, `EAPOL event 1/2`, `link up` | association and our RSN IE (capabilities 0) | `disconnected (WMI reason 4, 802.11 code 17)`: copy the firmware's IE from the CONNECT event |
+| `[wifid] interface is en0`, `[nettest] ... all steps passed` | IOUserEthernet + DHCP + data path on hardware | rx/tx stall: data mailbox control word `2008h` (dsiwifi), section 9 |
+
+### 6.1 QEMU model guesses and the line that settles each
+
+| Model behaviour (emu/qemu/hw/arm/ctr_wifi.c) | Source | Confirmed / denied by |
+|---|---|---|
+| Card answers only after CFG11_WIFICNT=1, GPIO 2_2=0, GPIO 3_12=1 | libn3ds | `power:` readback + `sdio: CMD5 ... ready 1` |
+| CFG9_SDMMCCTL bit 2 = 0 powers port 2 | ctr_sdhc.h | `sdio: CFG9_SDMMCCTL a -> b` |
+| CMD5: OCR-0 inquiry "not ready", ready at the 2nd try | SDIO spec | `sdio: CMD5 xN` (N, both R4 values) |
+| RCA 1; CCCR/CIS contents; MANFID 0271/card 0201 | SDIO spec, guess | `sdio: RCA`, `sdio: CIS manufacturer` |
+| Chip id 0D000001 through the window at 0x474/0x478/0x47C | GBATEK, ath6kl | `[wifi] SDIO up, chip id` |
+| 32-bit FIFO at +0x10C works from the ARM9 | TMIO1 behaviour | `TMIO2 32-bit FIFO works` / `check failed` |
+| BMI ROM ready right after the warm reset (we wait 100 ms) | ath6kl | `bmi: target version` |
+| Stub EXECUTE returns at once | guess | `fw: BMI_EXECUTE ... returned ... in <ms>` |
+| Firmware runs 50 ms after BMI_DONE and the stub sets `hi_board_data_initialized` | GBATEK order, guess | `boot: hi_board_data_initialized = 1 after <ms>` or the host interest dump |
+| HTC_READY: 8 credits x 1664 bytes | ath6kl | `htc: HTC_READY ... <hex>` |
+| Endpoints 1..5 in connect order | ath6kl, dsiwifi | `htc: service 01xx -> ... endpoint` |
+| WMI_READY = MAC + phy capability (7 bytes), REG_DOMAIN 0 right after | ath6kl, guess | `wmi: WMI_READY ... <n> bytes`, `wmi: REG_DOMAIN` |
+| GET_CHANNEL_LIST supported, 11 channels | ath6kl, guess | `wmi: channel list` or `WMI command 000e rejected` |
+| BSS filter 1 + all-channel START_SCAN reports every AP; 30 ms per channel | guess (dsiwifi scans per channel) | `scan: "<ssid>" ...` lines, `SCAN_COMPLETE after <ms>` |
+| BSSINFO = u16 MHz, u8 frame type, u8 SNR, s16 RSSI (dBm), BSSID, ieMask, beacon body | ath6kl, dsiwifi | the parsed `scan:` line: readable SSID, 2412-2484 MHz, negative RSSI |
+| No events beyond the ones modelled | - | `wmi: event ...` lines |
+| Commands finish instantly, no SDIO busy | - | `monitor: one driver step took <n> ms`, the `<ms>` column |
 
 Not modelled and still to try on a console if WMI commands go unanswered:
 dsiwifi writes 3 to the word that `hi_app_host_interest` points at after
@@ -296,7 +412,16 @@ the log and removes the two files again. Cases: `--case ok` (WPA2, default),
 rejected, AP deauths after 4 tries, no link), psk hint after the third try), `nofifo` (model property
 `fifo32=off`: the driver's FIFO self-test fails and the mailbox runs over
 CMD52), `hidden` (AP only answers a directed probe), `tkip` (TKIP group key,
-MIC halves swapped). `--icount 2` gives hardware-like timing.
+MIC halves swapped), `nwm` (no `wifi-fw.bin`: a synthetic BLZ-compressed
+`nwm.code` with GBATEK's newer pool, cut up by the ARM9 at boot; also checks
+the `[wifi-diag]` lines of section 6), `badnwm` (an `nwm.code` that is not
+NWM: one red line, card never powered). `--icount 2` gives hardware-like
+timing. `emu/wifi_ui_test.py --nwm` runs the Settings test with `nwm.code`
+and no `wifi.cfg`, i.e. the files a console has after section 3.
+
+The test needs a QEMU with slirp (`-nic user`): `emu/build-qemu.sh`
+configures it with `--enable-slirp`; a build without it fails every check
+with `network backend 'user' is not compiled into this binary` in `run.txt`.
 
 Results (2026-11-18, re-log 45): `ok` PASS in plain QEMU and with
 `--icount 2` (SpringBoard on screen, `[nettest] all steps passed`, the host's

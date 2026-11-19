@@ -62,8 +62,14 @@ static const char *state_name(u32 s)
     return s < ARRAY_SIZE(n) ? n[s] : "?";
 }
 
-void wifi_init(void)
+/* FCRAM the driver may use while wifi_init() runs (XNU has not started yet):
+   nwm.code is read and unpacked there, then the area is cleared */
+u32 wifi_scratch_pa, wifi_scratch_len;
+
+void wifi_init(u32 scratch_pa, u32 scratch_len)
 {
+    wifi_scratch_pa = scratch_pa;
+    wifi_scratch_len = scratch_len;
     volatile netmbox_t *m = MBOX;
     u8 mac[6] = { 0 };
     be = NULL;

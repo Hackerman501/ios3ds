@@ -29,6 +29,8 @@ typedef struct {
     u8   mac[6];
     char fw[64];            /* firmware container, default 0:/ios3ds/wifi-fw.bin */
     u32  verbose;           /* 1 = log every state change, 2 = also frames */
+    u8   diag;              /* [wifi-diag] bring-up log (default 1; diag=0 turns it off) */
+    u8   fwmain;            /* main firmware type taken from nwm.code: 4 (default) or 1 */
     char nettest[64];       /* "<url> [dns name]": iOS self-test after DHCP (docs/wifi.md) */
 } wifi_cfg_t;
 
@@ -74,12 +76,30 @@ extern const wifi_backend_t wifi_backend_ar6014;    /* ar6k.c */
 extern const wifi_backend_t wifi_backend_vnic;      /* vnic.c */
 extern const wifi_backend_t wifi_backend_loop;      /* wifi.c */
 
+/* ---- NWM .code -> firmware container (nwmcode.c, docs/wifi.md section 3) ---- */
+enum { NWM_E_NOPOOL = -1, NWM_E_SIZES = -2, NWM_E_NOMAIN = -3, NWM_E_BLZ = -4, NWM_E_TOOBIG = -5 };
+enum { NWM_SDATA = 1, NWM_SCODE = 2, NWM_DB = 3, NWM_T1 = 4, NWM_T4 = 5, NWM_T5 = 6, NWM_NBLK = 7 };
+enum { NWM_NEWER = 1, NWM_OLDER = 2 };
+typedef struct {
+    u32 in_size, code_size;     /* file size; size after BLZ (= in_size if it was plain) */
+    u8  blz, layout, main_type, db_end_is_stub;
+    u32 text_base, pool_off;
+    u32 main_size[3];           /* type1, type4, type5 (0 = not referenced) */
+    u32 blk_size[4], blk_crc[4];/* container order: stub data, stub code, database, main */
+} nwm_info_t;
+/* code: len bytes of NWM's .code in a buffer of cap bytes (BLZ is undone in
+   place). main_type 1/4/5. Writes the 'I3WF' container to out. 0 or NWM_E_*. */
+int nwm_extract(u8 *code, u32 len, u32 cap, u32 main_type, u8 *out, u32 outcap, u32 *outlen,
+                nwm_info_t *info);
+const char *nwm_strerror(int e);
+u32 nwm_crc32(const u8 *p, u32 n);
+
 /* ---- monitor hooks (wifi.c) -------------------------------------------- */
 /* Once, after the SD card is mounted and before the jump into XNU: reads
    sd:/ios3ds/wifi.cfg, derives the PMK, initialises the mailbox at NET_PA and
    starts the backend. Never fails the boot: without a config the mailbox
    just reports NET_ST_OFF. */
-void wifi_init(void);
+void wifi_init(u32 scratch_pa, u32 scratch_len);
 /* Every monitor-loop iteration: one driver step + move pending frames.
    Returns true if it did work (the loop then skips its idle delay). */
 bool wifi_poll(void);

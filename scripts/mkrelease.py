@@ -53,6 +53,7 @@ SOURCES = [
     "scripts/install.py", "scripts/fwlib/*.py",
     "kernel/dtgen.py", "kernel/patcher.py", "kernel/patches*.json",
     "tools/ios3ds-audio/dt_audio.py",
+    "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
     "rootfs/recipe.json", "rootfs/files/*",
     "README.md", "LICENSE", "docs/INSTALL.md",
 ]

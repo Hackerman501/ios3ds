@@ -1,0 +1,28 @@
+# ios3ds: copy the Wi-Fi firmware source off YOUR console (GodMode9 script)
+#
+# Copy this file to sd:/gm9/scripts/ and run it from GodMode9:
+#   HOME menu -> Scripts... -> ios3ds-wifi-fw
+#
+# What it does (docs/wifi.md section 3 in the ios3ds repository):
+#   reads   1:/title/00040130/00002d02/content/*.app   (NWM, the Wi-Fi sysmodule)
+#   writes  0:/ios3ds/nwm.code                          (its decompressed ARM11 code)
+# The ios3ds ARM9 loader cuts the AR6014 firmware out of nwm.code at every
+# boot. NAND is only READ (no NAND write permission is asked for or needed);
+# the only write is the one file on the SD card.
+# nwm.code is Nintendo's code: keep it on your own card, do not share it.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+set ERRORMSG "ios3ds: stopped (NWM not found, unreadable,\nor cancelled). NAND was not changed.\nSee docs/wifi.md section 3."
+set SUCCESSMSG "ios3ds: wrote 0:/ios3ds/nwm.code\nBoot ios3ds; the log shows\n[wifi] firmware from 0:/ios3ds/nwm.code"
+
+# NWM, normal mode: the same title id on Old and New 3DS (GBATEK
+# "3DS Files - Module NWM"). SysNAND only (1:). If it is missing, 'find'
+# fails and the script stops with ERRORMSG before writing anything.
+find 1:/title/00040130/00002d02/content/*.app NWMAPP
+ask "ios3ds Wi-Fi firmware\n \nRead (NAND, read only):\n$[NWMAPP]\n \nWrite (SD card):\n0:/ios3ds/nwm.code\n \nContinue?"
+
+mkdir -o -s 0:/ios3ds
+rm -o -s 0:/ios3ds/nwm.code
+# extrcode: NCCH -> ExeFS .code, decrypted and decompressed by GodMode9
+extrcode $[NWMAPP] 0:/ios3ds/nwm.code

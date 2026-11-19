@@ -115,8 +115,9 @@ def find_pools(c):
                 "stub_code": (w(0x30), w(0x2C)),
                 "stub_data": (w(0x3C), w(0x38)),
             })
-        # older large pool: main.dst at +18h, type5 only; type1/type4 come
-        # from the older small pool (main.dst, t5, t1, t4, 3EDh at +1Ch)
+        # older large pool: main.dst at +18h, type5; type1/type4 from its tail
+        # (+38h..+44h, 3EDh at +48h) or from the older small pool (main.dst,
+        # t5, t1, t4, 3EDh at +1Ch)
         elif w(0x0C) == DB_DST and w(0x18) == CODE_DST:
             ent = {
                 "layout": "older",
@@ -125,6 +126,11 @@ def find_pools(c):
                 "stub_code": (w(0x20), w(0x1C)),
                 "stub_data": (w(0x28), w(0x24)),
             }
+            if w(0x48) == POOL_MAGIC2:
+                ent["main"]["type1"] = (w(0x3C), w(0x38))
+                ent["main"]["type4"] = (w(0x44), w(0x40))
+                found.append(ent)
+                continue
             for j in range(0, len(c) - 0x1F, 4):
                 if _u32(c, j) == MAIN_DST and _u32(c, j + 0x1C) == POOL_MAGIC2:
                     ent["main"]["type1"] = (_u32(c, j + 0x10), _u32(c, j + 0x0C))

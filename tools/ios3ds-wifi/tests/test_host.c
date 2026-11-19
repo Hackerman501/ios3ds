@@ -211,8 +211,14 @@ static void test_cfg(void)
     CHECK(c.ssid_len == 7 && memcmp(c.ssid, "My Net ", 7) == 0);
     CHECK(strcmp(c.psk, " correct horse") == 0 && c.security == WIFI_SEC_WPA2 && c.verbose == 1);
     CHECK(c.backend == WIFI_BE_AUTO && strcmp(c.fw, "0:/ios3ds/wifi-fw.bin") == 0);
+    CHECK(c.diag == 1 && c.fwmain == 4);                         /* defaults */
     CHECK(wifi_cfg_check(&c) == NULL);
 
+    {
+        char t[] = "diag=0\nfwmain=1\n", bad1[] = "diag=2\n", bad2[] = "fwmain=5\n";
+        CHECK(wifi_cfg_parse(t, &c) == 0 && c.diag == 0 && c.fwmain == 1);
+        CHECK(wifi_cfg_parse(bad1, &c) == -1 && wifi_cfg_parse(bad2, &c) == -1);
+    }
     char t2[] = "ssid=x\npsk=f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e\n";
     CHECK(wifi_cfg_parse(t2, &c) == 0 && c.have_pmk && c.pmk[0] == 0xF4 && c.pmk[31] == 0x2E);
 

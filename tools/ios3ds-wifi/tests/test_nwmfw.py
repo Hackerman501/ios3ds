@@ -5,13 +5,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
 import os
 import random
 import struct
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import nwmfw  # noqa: E402
 
 BASE = 0x00100000
+NWM_HOST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                        "build", "wifi-tests", "nwm_host")
 
 
 def blz_compress(plain, prefix):
@@ -71,6 +75,11 @@ def make_code(layout="newer", rnd=None, bad_stub=False):
                  addr["db"][1], addr["db"][0], 0x0053FE18,
                  addr["code"][1], addr["code"][0], 0x00527000,
                  addr["data"][1], addr["data"][0], 0x1, 0x2, 0x3)
+    elif layout == "older_tail":            # older large pool with type1/4 in its tail, no small pool
+        pool = w(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x00524C00, addr["t5"][1], addr["t5"][0],
+                 0x0053FE18, addr["db"][1], addr["db"][0], 0x00527000,
+                 addr["code"][1], addr["code"][0], addr["data"][1], addr["data"][0], 0x7, 0x8, 0x9,
+                 addr["t1"][1], addr["t1"][0], addr["t4"][1], addr["t4"][0], 0x3ED)
     else:
         small = w(0x00524C00, addr["t5"][1], addr["t5"][0], addr["t1"][1], addr["t1"][0],
                   addr["t4"][1], addr["t4"][0], 0x3ED)
@@ -101,6 +110,43 @@ class NwmfwTest(unittest.TestCase):
             self.assertEqual(off % 4, 0)
         self.assertLess(len(blob), 64 * 1024)          # ar6k.c fw_buf
         return info
+
+    def c_extract(self, code, main=4):
+        """boot/arm9/wifi/nwmcode.c (the ARM9 loader) on the same input"""
+        if not os.path.exists(NWM_HOST):
+            self.skipTest("build/wifi-tests/nwm_host not built (make -C tools/ios3ds-wifi test)")
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = os.path.join(td, "nwm.code"), os.path.join(td, "out.bin")
+            with open(src, "wb") as f:
+                f.write(code)
+            r = subprocess.run([NWM_HOST, src, dst, str(main)], capture_output=True, text=True)
+            if r.returncode:
+                return None, r.stdout
+            with open(dst, "rb") as f:
+                return f.read(), r.stdout
+
+    def test_c_loader_matches_python(self):
+        class Few(random.Random):
+            def getrandbits(self, k):
+                return (0x00, 0x01, 0xE5, 0x9F)[int(self.random() * 4)]
+        cases = [(make_code("newer")[0], 4), (make_code("newer")[0], 1), (make_code("older")[0], 4),
+                 (make_code("older_tail")[0], 4), (make_code("older_tail")[0], 1),
+                 (make_code("older")[0], 5), (blz_compress(make_code("newer", Few(3))[0], 0x200), 4)]
+        for code, main in cases:
+            parts, _ = nwmfw.extract(code, "type%d" % main)
+            got, out = self.c_extract(code, main)
+            self.assertIsNotNone(got, out)
+            self.assertEqual(got, nwmfw.pack(parts), out)
+        for bad in (bytes(4096), make_code("newer", bad_stub=True)[0]):
+            got, out = self.c_extract(bad)
+            self.assertIsNone(got)
+            with self.assertRaises(nwmfw.FwError):
+                nwmfw.extract(bad)
+
+    def test_older_tail_pool(self):
+        code, addr = make_code("older_tail")
+        self.assertEqual(self.check(code, addr)["layout"], "older")
+        self.check(code, addr, "type1", "t1")
 
     def test_newer_pool(self):
         code, addr = make_code("newer")

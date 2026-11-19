@@ -9,7 +9,7 @@ A9W    := $(ROOT)/boot/arm9/wifi
 SRC    := tests/test_host.c $(addprefix $(A9W)/,wifi_ring.c wifi_frame.c wifi_cfg.c wpa2.c)
 
 .PHONY: test daemon clean
-test: $(OUT)/test_host
+test: $(OUT)/test_host $(OUT)/nwm_host
 	$(OUT)/test_host
 	python3 -m unittest discover -s tests -p 'test_*.py' -v
 
@@ -18,6 +18,12 @@ $(OUT)/test_host: $(SRC) $(A9W)/wifi.h $(A9W)/wpa2.h shim/net_core.h $(ROOT)/boo
 	$(HOSTCC) -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
 	    -fsanitize=address,undefined -DWIFI_HOST_TEST \
 	    -I$(ROOT)/boot/common -I$(A9W) -Ishim $(SRC) -o $@
+
+$(OUT)/nwm_host: tests/nwm_host.c $(A9W)/nwmcode.c $(A9W)/wifi.h
+	@mkdir -p $(OUT)
+	$(HOSTCC) -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter \
+	    -fsanitize=address,undefined -DWIFI_HOST_TEST \
+	    -I$(ROOT)/boot/common -I$(A9W) -Ishim tests/nwm_host.c $(A9W)/nwmcode.c -o $@
 
 daemon:
 	$(MAKE) -C daemon
