@@ -130,8 +130,12 @@ after a real sync. Without it every output stream fails with kIOReturnNotReady.
   VA 0xBFC00000 is added on first use.
 - Volume: `shim_iic_transfer` recognises the amp's one-byte writes (no
   sub-address): `step << 3 | 3` sets the CSND volume of both channels to
-  `10^((dB(step) - 18) / 20)` (table `amp_gain`, step 31 = iOS's loudest =
-  unity), `0x04` (the driver's mute) sets 0. `aud_service` applies a change to
+  `10^(dB(step) / 20)` relative to step 19 = 0 dB = unity (table `amp_gain`,
+  `AUD_AMP_REF_STEP`; louder steps clamp), `0x04` (the driver's mute) sets 0.
+  Since the N81 routing (section 7) iOS no longer changes the amp with the
+  volume: it writes a fixed step 19 for media (13 for UI sounds) at stream
+  start and applies the volume (keys, slider) to the PCM itself (re-log 54).
+  `aud_service` applies a change to
   the running CSND channels; `csnd_start` starts with the current value. Being
   digital (before the CODEC), it applies to speaker and headphones alike.
 - `aud_cfg_t` / `aud_stat_t` in the shim's `.data` (magic `AUD0cfg!`); mkboot
@@ -262,7 +266,7 @@ test feeds a counter through the RX emulation and checks every delivered frame
    started`). If the stream starts but nothing is heard: confirm CSND is heard
    with I2S1 DSP volume 32 and that PDN_I2S_CNT/I2S1_CNT are set (the shim
    writes them again from the ARM11).
-2. Hardware: the speaker level. iOS's loudest step is CSND unity; the
+2. Hardware: the speaker level. Amp step 19 (0 dB) is CSND unity; the
    CODEC's speaker gains are libn3ds' `hw_cal` defaults. The 3DS volume
    slider is not read.
 3. Hardware: headphone jack polling reads GPIO2 bit 0 from the ARM9

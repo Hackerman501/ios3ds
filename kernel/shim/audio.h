@@ -66,7 +66,7 @@ typedef struct {
 #define AUD_RATE_DIV      1520u         /* 67027964 / 1520 = 44097.34 Hz */
 #define AUD_AMP_NONE      0xFFu         /* aud_stat_t.amp_step: iOS has not set a level yet */
 #define AUD_AMP_OFF       0x100u        /* ... the amp was shut down (volume 0) */
-#define AUD_AMP_REF_STEP  31u           /* LM48821 step of iOS's loudest setting (+18 dB) = CSND unity (audio.c amp_gain) */
+#define AUD_AMP_REF_STEP  19u           /* LM48821 step 19 (0 dB) = CSND unity: with the N81 routing (VirtualAudio patch) iOS writes a fixed step 19 for media and sets volume in software; louder steps clamp (audio.c amp_gain) */
 
 /* ---- 3DS CSND (0x10103000), from libn3ds include/arm11/drivers/csnd.h ----- */
 #define CSND_PA           0x10103000u

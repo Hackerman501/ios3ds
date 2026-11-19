@@ -775,3 +775,9 @@ Design: docs/gpu.md §7 ("Presenting without the read-back"), docs/pica200.md §
 - **Next on the New 3DS, if it boots further:**
   - the `[hb] clock: … ratio` line shows whether the MPCore timers run at the assumed 134 MHz PERIPHCLK (the New 3DS can run the ARM11 at 804 MHz);
   - the New 3DS has an L2 cache (L2C-310).
+
+## 54. Volume "does not change" on hardware (run14): output was 18 dB too low (2026-11-19)
+- **run14:** the slider changed iOS's volume (`[mcud] volume slider ... -> iOS volume`) and the HUD showed, but the shim saw no I2C traffic between stream starts, only `amp step 13`/`19` at start and `amp off` at stop. The user heard only keyboard clicks.
+- **QEMU (repeating 6000-amplitude tone, keys and `qom-set /machine mcu-volume`):** the CSND recording's level follows both, e.g. peak 936 → 353 after five volume-downs, 2650 at slider 63. Since the VirtualAudio N81 patch (§49), iOS applies media volume in software and leaves the amp at a fixed step 19 (0 dB).
+- **The bug:** the shim's amp mapping still took step 31 (+18 dB) as CSND unity, so all media played 18 dB too quietly. Full volume gave a peak of 2650 for a 6000 tone: barely audible on the 3DS speaker, while UI clicks remain short and percussive.
+- **Fix:** `AUD_AMP_REF_STEP` 31 → 19: step 19 = unity, louder steps clamp, step 13 (UI sounds) = −12 dB.

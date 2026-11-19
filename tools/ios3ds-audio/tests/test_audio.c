@@ -473,9 +473,9 @@ static void test_iic(void)
     {
         u8 v = 31 << 3 | 3;
         CHECK(shim_iic_transfer(&amp, 2, 0, NULL, 1, &v) == 0, "amp write ok");
-        CHECK(shim_audio.stat.amp_step == 31 && shim_audio.stat.volume == 0x8000, "loudest step = unity: %x",
+        CHECK(shim_audio.stat.amp_step == 31 && shim_audio.stat.volume == 0x8000, "step 31 clamps to unity: %x",
               shim_audio.stat.volume);
-        v = 25 << 3 | 3;                                    /* +12 dB: 6 dB below the loudest */
+        v = 16 << 3 | 3;                                    /* -6 dB: 6 dB below the reference step 19 */
         shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
         CHECK(shim_audio.stat.volume > 16300 && shim_audio.stat.volume < 16500, "-6 dB: %u", shim_audio.stat.volume);
         v = 4;                                              /* the driver's mute: mode byte, amp off */
@@ -483,10 +483,10 @@ static void test_iic(void)
         CHECK(shim_audio.stat.volume == 0, "mute");
         v = 11 << 3 | 3;                                    /* back on at the quietest step iOS used (-16 dB) */
         shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
-        CHECK(shim_audio.stat.volume == 654, "step 11: %u", shim_audio.stat.volume);
+        CHECK(shim_audio.stat.volume == 5195, "step 11: %u", shim_audio.stat.volume);
         v = 0x22;                                           /* another register of the amp: no volume change */
         shim_iic_transfer(&amp, 2, 0, NULL, 1, &v);
-        CHECK(shim_audio.stat.volume == 654, "non-volume byte ignored");
+        CHECK(shim_audio.stat.volume == 5195, "non-volume byte ignored");
     }
 }
 
