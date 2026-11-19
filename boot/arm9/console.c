@@ -20,41 +20,52 @@ typedef struct {
     bool hidden;        /* iOS owns this screen: keep the text, draw nothing */
     char text[30][50];
     u32 tcolor[30];
+    u32 dirty;          /* deferred mode: rows still to paint (bit r) */
 } con_t;
 
 static con_t cons[2];
 static bool have_fb;
-
-static void put_px_col(con_t *c, int x, int y, u32 rgb)
-{
-    for (int i = 0; i < 2; i++) {
-        if (!c->fb[i]) continue;
-        u8 *p = c->fb[i] + ((size_t)x * SCR_H + (SCR_H - 1 - y)) * BPP;
-        p[0] = rgb & 0xFF;           /* B */
-        p[1] = (rgb >> 8) & 0xFF;    /* G */
-        p[2] = (rgb >> 16) & 0xFF;   /* R */
-    }
-}
+/* Deferred painting (con_defer): text only goes into the buffers and the
+   monitor loop paints a few rows per pass (con_paint). Hardware run 17: with
+   the log on a visible screen every scrolled line repainted the whole
+   console (~30k pixels per row, byte writes into VRAM) inside the log call,
+   and a busy log brought the ARM9 loop down to 1 pass/s: buttons and the
+   touch screen were sampled that rarely. */
+static bool deferred;
 
 static void draw_char(con_t *c, int col, int row, char ch, u32 fg)
 {
     if (c->hidden) return;
     const unsigned char *g = font8x8_basic[(unsigned char)ch & 0x7F];
     int x0 = col * 8, y0 = row * 8;
-    for (int y = 0; y < 8; y++) {
+    u8 fb0 = fg & 0xFF, fg1 = (fg >> 8) & 0xFF, fg2 = (fg >> 16) & 0xFF;
+    u8 bg0 = CON_BG & 0xFF, bg1 = (CON_BG >> 8) & 0xFF, bg2 = (CON_BG >> 16) & 0xFF;
+    for (int i = 0; i < 2; i++) {
+        if (!c->fb[i]) continue;
         for (int x = 0; x < 8; x++) {
-            put_px_col(c, x0 + x, y0 + y, (g[y] >> x) & 1 ? fg : CON_BG);
+            /* screen column x0 + x; screen row y0 + y is at SCR_H - 1 - (y0 + y) */
+            u8 *p = c->fb[i] + ((size_t)(x0 + x) * SCR_H + (SCR_H - 1 - y0)) * BPP;
+            for (int y = 0; y < 8; y++, p -= BPP) {
+                bool on = (g[y] >> x) & 1;
+                p[0] = on ? fb0 : bg0;
+                p[1] = on ? fg1 : bg1;
+                p[2] = on ? fg2 : bg2;
+            }
         }
     }
 }
 
+static void draw_row(con_t *c, int r)
+{
+    for (int col = 0; col < c->cols; col++)
+        draw_char(c, col, r, c->text[r][col], c->tcolor[r]);
+}
+
 static void redraw(con_t *c)
 {
-    for (int r = 0; r < c->rows; r++) {
-        for (int col = 0; col < c->cols; col++) {
-            draw_char(c, col, r, c->text[r][col], c->tcolor[r]);
-        }
-    }
+    for (int r = 0; r < c->rows; r++)
+        draw_row(c, r);
+    c->dirty = 0;
 }
 
 static void clear(con_t *c)
@@ -98,7 +109,8 @@ static void newline(con_t *c)
         memset(c->text[c->rows - 1], ' ', sizeof(c->text[0]));
         c->cy = c->rows - 1;
         c->tcolor[c->cy] = c->color;
-        if (have_fb) redraw(c);
+        if (deferred) c->dirty = (1u << c->rows) - 1;
+        else if (have_fb) redraw(c);
     } else {
         c->tcolor[c->cy] = c->color;
         memset(c->text[c->cy], ' ', sizeof(c->text[0]));
@@ -115,7 +127,8 @@ void con_putc(int which, char ch)
     if (c->cx >= c->cols) newline(c);
     c->text[c->cy][c->cx] = ch;
     c->tcolor[c->cy] = c->color;
-    if (have_fb) draw_char(c, c->cx, c->cy, ch, c->color);
+    if (deferred) c->dirty |= 1u << c->cy;
+    else if (have_fb) draw_char(c, c->cx, c->cy, ch, c->color);
     c->cx++;
 }
 
@@ -132,8 +145,34 @@ void con_line(int which, int row, u32 color, const char *s)
     memset(c->text[row], ' ', sizeof(c->text[0]));
     for (int i = 0; i < c->cols && s[i]; i++) c->text[row][i] = s[i];
     c->tcolor[row] = color;
-    if (have_fb) {
-        for (int col = 0; col < c->cols; col++) draw_char(c, col, row, c->text[row][col], color);
+    if (deferred) c->dirty |= 1u << row;
+    else if (have_fb) draw_row(c, row);
+}
+
+void con_defer(bool on)
+{
+    deferred = on;
+    if (!on)
+        for (int i = 0; i < 2; i++)
+            while (cons[i].dirty) con_paint(30);
+}
+
+/* paint at most max_rows of the rows changed since the last call */
+void con_paint(int max_rows)
+{
+    for (int i = 0; i < 2 && max_rows > 0; i++) {
+        con_t *c = &cons[i];
+        if (!c->dirty) continue;
+        if (!have_fb || c->hidden) {        /* con_show repaints everything when shown */
+            c->dirty = 0;
+            continue;
+        }
+        for (int r = 0; r < c->rows && max_rows > 0; r++)
+            if (c->dirty & (1u << r)) {
+                c->dirty &= ~(1u << r);
+                draw_row(c, r);
+                max_rows--;
+            }
     }
 }
 

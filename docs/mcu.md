@@ -409,6 +409,9 @@ sleep. Patch `clcd-backlight-retry-off` clears the flag instead: after a
 wake there are 0 such lines (`build/emu-p3`); one remains at the lock
 (`disable_backlight`).
 
+
+**Run 17 (button presses lost after many locks).** The ARM9 loop samples the buttons and the MCU, so anything that slows the loop delays or loses them. With the log console visible (screen mode "bottom" or "top") the console painting did that: 1-15 passes/s. Consoles are now painted a few rows per pass, and CPU screen copies poll the buttons as well (re-log 57).
+
 ## 10. Notification LED (opt-in)
 
 `notify_led=1` in boot.cfg: at ≤ 10 % battery, not charging, the ARM9

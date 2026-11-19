@@ -494,6 +494,19 @@ static void dump_probes(const char *why)
 /* ------------------------------------------------------------------------ */
 /* monitor                                                                  */
 
+/* buttons and touch while a CPU screen copy runs (display_set_poll): at most
+   every 10 ms */
+static void poll_buttons(void)
+{
+    static u32 last;
+    u32 t = clk_ticks();
+    if (t - last < T9_HZ / 100)
+        return;
+    last = t;
+    input_poll(cfg.shim_pa);
+    mcu_poll(t);
+}
+
 static void __attribute__((noreturn)) monitor(const char *phase)
 {
     volatile xnu_ring_t *ring = cfg.ring_pa ? (volatile xnu_ring_t *)cfg.ring_pa : NULL;
@@ -504,6 +517,10 @@ static void __attribute__((noreturn)) monitor(const char *phase)
 
     log_color(CON_GREY, "[monitor] %s - ARM9 stays here forwarding logs.\n", phase);
     clk_start();
+    /* from here on the consoles are painted a few rows per loop pass, never
+       inside a log call (run 17: a visible log console starved the loop) */
+    con_defer(true);
+    display_set_poll(poll_buttons);
     /* sync the log every 0.5 s, not after every write: a power cut loses at
        most 0.5 s, a hang loses nothing (the ARM9 keeps syncing) */
     log_sync_each(false);
@@ -564,7 +581,8 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         bool io_busy = tnow - last_io < T9_HZ / 10;
         u32 blit_gap = io_busy ? T9_HZ / 2 : T9_HZ / 15;
         /* the PICA200 copies the screen while its frames keep coming (gpumirror.c) */
-        bool gpu_copy = gm_live(tnow);
+        bool disp_on = cfg.display_regs && display_active(cfg.display_regs);
+        bool gpu_copy = gm_live(tnow, disp_on);
         if (cfg.display_regs && tnow - last_blit >= blit_gap && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;
@@ -659,6 +677,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 }
             }
         }
+        con_paint(2);                   /* ~1 ms per row on hardware */
         u32 now_t = clk_ticks();
         if (now_t - last_sync >= T9_HZ / 2) {
             log_flush();

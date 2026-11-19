@@ -5,6 +5,9 @@
 void gm_init(u32 shim_pa, u32 tick_hz, const u32 cfgv[7], int mode);
 void gm_want(bool on);
 void gm_set_mode(int mode, u32 (*now)(void));
-bool gm_live(u32 now);
+/* display_on: iOS' display is on (CLCD enabled). While it is off the GPU has
+   nothing to copy; that is not "frames stopped", and after it comes back the
+   GPU gets a second to resume before the CPU copies again. */
+bool gm_live(u32 now, bool display_on);
 u32 gm_shown(void);     /* display_set_shown() mask from the shim's PDC select readout */
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown);

@@ -107,6 +107,11 @@ static const uint32_t gpu_part_hdr[4] = { GPU_PART_MAGIC, 1, GPU_PART_PA, GM_BLO
 static pica_drv_t drv;
 static uint32_t bringup_state;               /* 0 = not tried, 1 = done (drv.state says how it went) */
 static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror frame */
+/* A VBlank found the GPU busy with GL: the mirror goes next. New GL requests
+   wait (take) and the next interrupt with the GPU free starts the frame, so
+   a GL client drawing back to back cannot starve the screen copy (QEMU
+   lockburst: the ARM9 saw no GPU frames for 1 s and copied with the CPU). */
+static volatile uint32_t m_pending;
 
 /* ---- the ARM9 <-> ARM11 display mailbox (gmbox_t at shim+0x7F00) ---- */
 extern uint32_t cfg_clcd_pa;                /* entry.S: fake CLCD page (PA), patched in by mkboot */
@@ -363,7 +368,7 @@ static int take(void)
     uint32_t cpsr, got;
     __asm__ volatile("mrs %0, cpsr" : "=r"(cpsr));
     __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr | 0x80) : "memory");
-    got = !busy;
+    got = !busy && !m_pending;
     if (got)
         busy = 1;
     __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory");
@@ -704,8 +709,10 @@ void shim_gpu_irq(uint32_t id)
             dc_clean(&GM->pdc_magic, 12);
         }
     }
-    if (m_state != GM_ST_ACTIVE)
+    if (m_state != GM_ST_ACTIVE) {
+        m_pending = 0;                  /* never leave GL waiting for a mirror that stopped */
         return;
+    }
     t0 = m_ticks();
     spin = GM->spin_us * (TICK_HZ / 1000u) / 1000u;
     if (busy == 2) {                    /* a frame in flight: next operation if the last one is done */
@@ -713,9 +720,15 @@ void shim_gpu_irq(uint32_t id)
         m_after(pm_poll(&mir, spin));
         goto out;
     }
-    if (id != PICA_IRQ_PDC0 || ++m_vbl < (GM->vbl_div ? GM->vbl_div : 1))
-        return;
-    m_vbl = 0;
+    if (m_pending) {
+        if (busy)                       /* GL still running: its end frees the GPU */
+            return;
+        m_pending = 0;                  /* GPU free: the frame skipped earlier starts now */
+    } else {
+        if (id != PICA_IRQ_PDC0 || ++m_vbl < (GM->vbl_div ? GM->vbl_div : 1))
+            return;
+        m_vbl = 0;
+    }
     gm_fetch();
     if (GM->ack_seq != GM->seq) {
         GM->ack_seq = GM->seq;          /* nothing built from an older line 0 is in flight */
@@ -725,6 +738,7 @@ void shim_gpu_irq(uint32_t id)
         return;
     if (busy) {
         GM->busy_skips++;
+        m_pending = 1;
         return;
     }
     /* the iOS framebuffer as AppleM2CLCD scans it out (fake CLCD page) */
