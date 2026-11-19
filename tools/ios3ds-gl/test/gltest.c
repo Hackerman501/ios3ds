@@ -43,6 +43,16 @@ static void make_texture(void)
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_CROP_RECT_OES, crop);     /* for glDrawTexiOES */
 }
 
+/* cube() variants, for narrowing down hardware failures (run14: the PICA200
+   pass drew no cube while every 2D check passed) */
+#define CV_NODEPTH 1
+#define CV_NOCULL  2
+#define CV_NOLIGHT 4
+#define CV_ORTHO   8
+#define CV_USHORT  16
+#define CV_ARRAYS  32
+static int cube_flags;
+
 static void cube(float t)
 {
     static const GLfloat v[] = {
@@ -68,17 +78,20 @@ static void cube(float t)
     glViewport(W / 8, H / 32, W * 3 / 4, H * 3 / 8);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glFrustumf(-1, 1, -1, 1, 2, 10);
+    if (cube_flags & CV_ORTHO)
+        glOrthof(-2.5f, 2.5f, -2.5f, 2.5f, 2, 10);
+    else
+        glFrustumf(-1, 1, -1, 1, 2, 10);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glTranslatef(0, 0, -5);
     glRotatef(30 + t * 40, 1, 0, 0);
     glRotatef(40 + t * 60, 0, 1, 0);
-    glEnable(GL_DEPTH_TEST);
+    if (!(cube_flags & CV_NODEPTH)) glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
-    glEnable(GL_CULL_FACE);
+    if (!(cube_flags & CV_NOCULL)) glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glEnable(GL_LIGHTING);
+    if (!(cube_flags & CV_NOLIGHT)) glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
     glLightfv(GL_LIGHT0, GL_POSITION, lpos);
@@ -90,7 +103,26 @@ static void cube(float t)
     glVertexPointer(3, GL_FLOAT, 0, v);
     glNormalPointer(GL_FLOAT, 0, n);
     glColorPointer(4, GL_FLOAT, 0, c);
-    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_BYTE, idx);
+    if (cube_flags & CV_ARRAYS) {               /* non-indexed: expand the triangles */
+        static GLfloat ev[36 * 3], en[36 * 3], ec[36 * 4];
+        int i;
+        for (i = 0; i < 36; i++) {
+            memcpy(ev + i * 3, v + idx[i] * 3, 12);
+            memcpy(en + i * 3, n + idx[i] * 3, 12);
+            memcpy(ec + i * 4, c + idx[i] * 4, 16);
+        }
+        glVertexPointer(3, GL_FLOAT, 0, ev);
+        glNormalPointer(GL_FLOAT, 0, en);
+        glColorPointer(4, GL_FLOAT, 0, ec);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+    } else if (cube_flags & CV_USHORT) {
+        static unsigned short idx16[36];
+        int i;
+        for (i = 0; i < 36; i++) idx16[i] = idx[i];
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, idx16);
+    } else {
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_BYTE, idx);
+    }
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_COLOR_ARRAY);
     glDisable(GL_LIGHTING);
@@ -349,6 +381,33 @@ static void check(const char *what, float x, float y, int r, int g, int b, int t
     fails += !ok;
 }
 
+/* Draw only the cube with each variant and report whether its centre is
+   drawn (background 26,31,64). Logged only for the GPU pass when it failed. */
+static void cube_variants(void)
+{
+    static const struct { int f; const char *name; } v[] = {
+        {0, "as in scene 1"}, {CV_NODEPTH, "no depth test"}, {CV_NOCULL, "no culling"},
+        {CV_NOLIGHT, "no lighting"}, {CV_ORTHO, "orthographic"}, {CV_USHORT, "16-bit indices"},
+        {CV_ARRAYS, "glDrawArrays"}, {CV_NODEPTH | CV_NOCULL | CV_NOLIGHT, "no depth/cull/lighting"},
+        {CV_NODEPTH | CV_NOCULL | CV_NOLIGHT | CV_ORTHO | CV_ARRAYS, "all of these"},
+    };
+    unsigned i;
+    for (i = 0; i < sizeof v / sizeof v[0]; i++) {
+        GLubyte p[4];
+        glViewport(0, 0, W, H);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(26 / 255.f, 31 / 255.f, 64 / 255.f, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        cube_flags = v[i].f;
+        cube(0);
+        glFinish();
+        glReadPixels((int)SX(160), (int)SY(105), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+        printf("gltest: cube variant %-24s: centre %3d %3d %3d -> %s\n", v[i].name, p[0], p[1], p[2],
+               near(p, 26, 31, 64, 6) ? "NOT drawn" : "drawn");
+    }
+    cube_flags = 0;
+}
+
 static void run_checks(void)
 {
     const char *ver = (const char *)glGetString(GL_VERSION);
@@ -506,6 +565,8 @@ static void one_pass(const char *backend, const char *ppm, unsigned char *out[2]
     make_texture();
     draw_scene(0);
     run_checks();
+    if (getenv("IOS3DS_GLTEST_VARIANTS"))
+        cube_variants();
     if (ppm)
         write_ppm(ppm);
     out[0] = grab();
@@ -546,6 +607,7 @@ int main(int argc, char **argv)
 #else /* iOS */
 extern int gettimeofday(struct timeval *, void *);     /* the stub SDK has no <sys/time.h> */
 extern int setenv(const char *, const char *, int);
+extern char *getenv(const char *);
 
 typedef void *id;
 typedef void *SEL;
@@ -674,6 +736,8 @@ int main(int argc, char **argv)
                     compare("scene 2", sw2, hw);
                 free(hw);
                 printf("gltest: PICA200 %s (%d failed)\n", fails > before ? "FAIL" : "PASS", fails - before);
+                if (fails > before || getenv("IOS3DS_GLTEST_VARIANTS"))
+                    cube_variants();
                 ctx = ctx2;             /* the on-screen demo below runs on the GPU */
             }
         }
