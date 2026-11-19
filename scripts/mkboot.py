@@ -80,7 +80,7 @@ def build_shim(outdir):
         raise SystemExit("no arm-none-eabi toolchain (scripts/setup-toolchain.sh)")
     gcc, objcopy = m.group(1) + "gcc", m.group(1) + "objcopy"
     sd = os.path.join(ROOT, "kernel", "shim")
-    flags = ["-mcpu=mpcore", "-marm", "-mfloat-abi=soft", "-O2", "-ffreestanding", "-fno-builtin",
+    flags = ["-mcpu=mpcore", "-marm", "-mfloat-abi=soft", "-Os", "-ffreestanding", "-fno-builtin",
              "-fno-tree-loop-distribute-patterns", "-nostdlib", "-Wall", "-Wextra",
              # iOS' ABI lets callees clobber r9; keep our C code off it so calls into the kernel are safe
              "-ffixed-r9",
@@ -102,10 +102,13 @@ def build_shim(outdir):
         objs = []
         for s in srcs:
             o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
-            subprocess.run([gcc] + flags + ["-c", s, "-o", o], check=True)
+            # main shim part: -Os (it must end below +0x5F00; CI's newer gcc
+            # overflowed it at -O2); the GPU part (*pica*) keeps -O2
+            opt = ["-O2"] if "pica" in os.path.basename(s) else []
+            subprocess.run([gcc] + flags + opt + ["-c", s, "-o", o], check=True)
             objs.append(o)
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +
-                       ["-o", elf, "-Wl,--no-warn-rwx-segments"], check=True)
+                       ["-lgcc", "-o", elf, "-Wl,--no-warn-rwx-segments"], check=True)
         out = os.path.join(outdir, "shim.bin")
         subprocess.run([objcopy, "-O", "binary", "-R", ".gpu", elf, out], check=True)
         gpart = os.path.join(td, "gpu_part.bin")
