@@ -286,6 +286,19 @@ is OFF`): the screen keeps working, slower. Kill switch: boot.cfg `ca_gpu=0`
   are at different animation times.
 - Cost: see re-log 46 (with the read-back) and 51 (without).
 
+### Hardware run 15: depth, arena, NPOT repeat (re-log 54)
+
+- **GPU memory is bounded by eviction.** Texture copies are dropped least
+  recently used when the arena is full and re-uploaded on their next use;
+  render targets no longer keep a linear staging buffer. If even that cannot
+  satisfy an allocation, the process writes its GPU images back and draws on
+  our CPU rasterizer from then on (slower, never black; one line). The
+  `[gl] CA:` line reports held memory, free arena and evictions.
+- **Depth** is stored reversed (citro3d's convention); a probe at bring-up
+  picks the convention that matches the CPU rasterizer (docs/pica200.md §16).
+- **The scene check** now includes NPOT layers (a repeated 2D texture and a
+  rectangle texture), with a 1 % limit.
+
 ### Presenting without the read-back (re-log 51)
 
 Until re-log 51 every CA frame was rendered into an arena target and then
