@@ -534,7 +534,14 @@ static void fragment(Target *t, int x, int y, float depth, const uint8_t prim[4]
         return;
     if (t->depth) {
         uint8_t *dp = t->depth + tiled_off(x, fy, t->fbw, t->dbpp);
-        uint32_t bits = t->dfmt == 0 ? 16 : 24, z = (uint32_t)(depth * (float)((1u << bits) - 1)), ref;
+        /* Hardware run 15 (docs/pica200.md 16): with depth 1.0 written by a
+           clear, no later fragment passed GL_LESS. Modelled as the
+           conversion to fixed point wrapping: 1.0 -> 2^bits -> 0. Values
+           below 1.0 convert as before. */
+        uint32_t bits = t->dfmt == 0 ? 16 : 24, ref, z;
+        z = depth >= 1.0f ? 0 : (uint32_t)(depth * (float)((1u << bits) - 1));
+        if (depth >= 1.0f)
+            sim_quirk(s, 64, "picasim: fragment depth 1.0 stored as 0 (hardware run 15)", 0);
         ref = dp[0] | dp[1] << 8 | (bits == 24 ? dp[2] << 16 : 0);
         if ((dm & 1) && !compare(dm >> 4, z, ref))
             return;

@@ -94,7 +94,21 @@ typedef struct {
     uint32_t blend_color;
     float    depth_near, depth_far;     /* glDepthRange */
     float    depth_bias;                /* glPolygonOffset, already in depth units */
+    uint8_t  depth_conv;                /* PICA_Z_*: how GL depth is stored (docs/pica200.md 16) */
 } pica_raster_t;
+
+/* How GL window depth d (glDepthRange, glDepthFunc, glClearDepth semantics)
+   becomes the stored 24-bit value. Hardware run 15: with LEGACY (stored = d,
+   a clear to 1.0 lands exactly on 1.0) nothing passed a depth test.
+   REVERSED is citro3d's convention (C3D_DepthMap(true, -1, 0), GPU_GREATER):
+   stored = K * (1 - d), comparisons mirrored, far = 0. STANDARD keeps
+   stored = K * d. K = 1 - 2^-10 keeps every stored value below 1.0. */
+enum { PICA_Z_REVERSED = 0, PICA_Z_STANDARD = 1, PICA_Z_LEGACY = 2 };
+#define PICA_Z_K (1.0f - 1.0f / 1024.0f)
+/* the stored 24-bit value for GL depth d under a convention (CPU-side initialisation) */
+uint32_t pica_depth_stored(unsigned conv, float d);
+/* the GPU test function for a GL one under a convention */
+unsigned pica_depth_func(unsigned conv, unsigned func);
 
 /* GL defaults: no cull, no tests, write everything, range 0..1. */
 void pica_raster_defaults(pica_raster_t *r);

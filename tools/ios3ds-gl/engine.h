@@ -235,8 +235,12 @@ extern const Backend sw_backend;
 extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */
 int pica_backend_init(void);            /* 1 = the GPU is usable */
 int pica_ca_gate(void);
-typedef struct { unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents; } PicaStats;
+typedef struct {
+    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents;
+    unsigned arena_kb, tex_kb, ntex, evictions, arena_free_kb, gpu_on;
+} PicaStats;
 void pica_backend_stats2(PicaStats *s);
+int gl_scene_diff(int which, int *maxd);   /* ca.c: CPU vs GPU pixels off by > 24 (0 CA scene, 1 depth probe) */
 int ca_scene_check(void);               /* ca.c: GPU vs CPU on a CA-like scene, 1 = close enough */
 void ca_frame(void);                    /* ca.c: one CA swap (statistics) */                 /* 1 = CoreAnimation may composite with this engine (on the GPU) */
 void pica_forget(const void *mem);

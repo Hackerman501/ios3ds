@@ -208,13 +208,14 @@ static void test_state(void)
     n = run(&c);
     CHECK_EQ(last(wr, n, P3D_DEPTHMAP_ENABLE), 1);
     CHECK_EQ(last(wr, n, P3D_FACECULLING_CONFIG), 0);
-    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_SCALE), 0x3F0000);        /* far - near = 1 */
-    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_OFFSET), 0x3F0000);       /* far = 1 */
+    /* reversed depth (citro3d's convention, hardware run 15): stored = K (1 - d) */
+    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_SCALE), 0xBEFF80);        /* -K (far - near) = -(1 - 2^-10) */
+    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_OFFSET), 0);              /* K (1 - far) */
     CHECK_EQ(last(wr, n, P3D_FRAGOP_ALPHA_TEST), 1 << 4);       /* off, ALWAYS */
     CHECK_EQ(last(wr, n, P3D_STENCIL_TEST), 1u << 4 | 0xFFu << 8 | 0xFFu << 24);
     CHECK_EQ(last(wr, n, P3D_STENCIL_OP), 0);
-    /* depth test off: LESS kept, colour writes on, depth write forced off */
-    CHECK_EQ(last(wr, n, P3D_DEPTH_COLOR_MASK), 4 << 4 | 0xF << 8);
+    /* depth test off: LESS kept (as GREATER: reversed), colour writes on, depth write forced off */
+    CHECK_EQ(last(wr, n, P3D_DEPTH_COLOR_MASK), 6 << 4 | 0xF << 8);
     CHECK_EQ(last(wr, n, P3D_BLEND_FUNC), 1 << 16 | 1 << 24);   /* ONE, ZERO */
     CHECK_EQ(last(wr, n, P3D_COLOR_OPERATION), 0x00E40100);
 
@@ -230,11 +231,22 @@ static void test_state(void)
     pica_emit_raster(&c, &r);
     n = run(&c);
     CHECK_EQ(last(wr, n, P3D_BLEND_FUNC), 1 << 16 | 7 << 20 | 1 << 24 | 7u << 28);
-    CHECK_EQ(last(wr, n, P3D_DEPTH_COLOR_MASK), 1 | 5 << 4 | 0x1F << 8);
+    CHECK_EQ(last(wr, n, P3D_DEPTH_COLOR_MASK), 1 | 7 << 4 | 0x1F << 8);      /* LEQUAL -> GEQUAL */
     CHECK_EQ(last(wr, n, P3D_FRAGOP_ALPHA_TEST), 1 | 6 << 4 | 0x80 << 8);
     CHECK_EQ(last(wr, n, P3D_FACECULLING_CONFIG), 2);
+    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_SCALE), 0xBDFF80);        /* -K 0.5 */
+    CHECK_EQ(last(wr, n, P3D_DEPTHMAP_OFFSET), 0x3CFF80);       /* K 0.25 */
+    CHECK_EQ(pica_depth_stored(PICA_Z_REVERSED, 1.0f), 0);
+    CHECK_EQ(pica_depth_stored(PICA_Z_REVERSED, 0.0f), 0xFFC000);  /* K (2^24 - 1), float rounding */
+    /* run 15's convention: stored = d, functions as given */
+    r.depth_conv = PICA_Z_LEGACY;
+    pica_cmd_init(&c, buf, 4096);
+    pica_emit_raster(&c, &r);
+    n = run(&c);
+    CHECK_EQ(last(wr, n, P3D_DEPTH_COLOR_MASK), 1 | 5 << 4 | 0x1F << 8);
     CHECK_EQ(last(wr, n, P3D_DEPTHMAP_SCALE), 0x3E0000);        /* 0.5 */
     CHECK_EQ(last(wr, n, P3D_DEPTHMAP_OFFSET), 0x3E8000);       /* 0.75 */
+    r.depth_conv = PICA_Z_REVERSED;
     r.logic_op_enable = 1; r.logic_op = 11;
     pica_cmd_init(&c, buf, 4096);
     pica_emit_raster(&c, &r);
@@ -728,7 +740,7 @@ static void test_sim(void)
             pat[i] = 0x0000FFFFu;
         CHECK_EQ(dev->write(color, pat, sizeof pat), PICA_OK);
         for (unsigned i = 0; i < 64 * 64; i++)
-            pat[i] = 0x00FFFFFFu;
+            pat[i] = pica_depth_stored(PICA_Z_REVERSED, 1.0f);    /* far */
         CHECK_EQ(dev->write(depth, pat, sizeof pat), PICA_OK);
     }
 

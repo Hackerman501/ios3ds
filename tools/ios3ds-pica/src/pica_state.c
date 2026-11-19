@@ -99,10 +99,25 @@ void pica_raster_defaults(pica_raster_t *r)
     r->depth_far = 1.0f;
 }
 
+unsigned pica_depth_func(unsigned conv, unsigned func)
+{
+    static const uint8_t mirror[8] = { PICA_NEVER, PICA_ALWAYS, PICA_EQUAL, PICA_NOTEQUAL,
+                                       PICA_GREATER, PICA_GEQUAL, PICA_LESS, PICA_LEQUAL };
+    return conv == PICA_Z_REVERSED ? mirror[func & 7] : func & 7;
+}
+
+uint32_t pica_depth_stored(unsigned conv, float d)
+{
+    float s = conv == PICA_Z_REVERSED ? PICA_Z_K * (1.0f - d) : conv == PICA_Z_STANDARD ? PICA_Z_K * d : d;
+    s = s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;
+    return (uint32_t)(s * 16777215.0f + 0.5f) & 0xFFFFFFu;
+}
+
 void pica_emit_raster(pica_cmd_t *c, const pica_raster_t *r)
 {
     uint32_t v[4];
     uint32_t wmask = r->write_mask;
+    unsigned func;
 
     /* The GPU writes depth whenever the write bit is set, tested or not;
        GL only writes depth while the depth test is enabled. */
@@ -111,20 +126,30 @@ void pica_emit_raster(pica_cmd_t *c, const pica_raster_t *r)
 
     pica_cmd_write(c, P3D_DEPTHMAP_ENABLE, 1);          /* z-buffer, not w-buffer */
     pica_cmd_write(c, P3D_FACECULLING_CONFIG, r->cull & 3);
-    /* clip z/w is in [-1 (near), 0 (far)]:  depth = z/w * scale + offset */
-    v[0] = pica_f24(r->depth_far - r->depth_near);
-    v[1] = pica_f24(r->depth_far + r->depth_bias);
+    /* clip z/w is in [-1 (near), 0 (far)]:  depth = z/w * scale + offset.
+       GL: d = far + z/w * (far - near) (+ bias). */
+    if (r->depth_conv == PICA_Z_REVERSED) {          /* K * (1 - d) */
+        v[0] = pica_f24(-PICA_Z_K * (r->depth_far - r->depth_near));
+        v[1] = pica_f24(PICA_Z_K * (1.0f - r->depth_far - r->depth_bias));
+    } else if (r->depth_conv == PICA_Z_STANDARD) {   /* K * d */
+        v[0] = pica_f24(PICA_Z_K * (r->depth_far - r->depth_near));
+        v[1] = pica_f24(PICA_Z_K * (r->depth_far + r->depth_bias));
+    } else {                                        /* d (run 15) */
+        v[0] = pica_f24(r->depth_far - r->depth_near);
+        v[1] = pica_f24(r->depth_far + r->depth_bias);
+    }
     pica_cmd_write_seq(c, P3D_DEPTHMAP_SCALE, v, 2);
+    func = pica_depth_func(r->depth_conv, r->depth_func);
 
     v[0] = (r->alpha_test ? 1u : 0u) | (r->alpha_func & 7u) << 4 | (uint32_t)r->alpha_ref << 8;
     v[1] = (r->stencil_test ? 1u : 0u) | (r->stencil_func & 7u) << 4 |
            (uint32_t)r->stencil_write_mask << 8 | (uint32_t)r->stencil_ref << 16 |
            (uint32_t)r->stencil_mask << 24;
     v[2] = (r->stencil_sfail & 7u) | (r->stencil_zfail & 7u) << 4 | (r->stencil_zpass & 7u) << 8;
-    v[3] = (r->depth_test ? 1u : 0u) | (r->depth_func & 7u) << 4 | (wmask & 0x1F) << 8;
+    v[3] = (r->depth_test ? 1u : 0u) | (func & 7u) << 4 | (wmask & 0x1F) << 8;
     pica_cmd_write_seq(c, P3D_FRAGOP_ALPHA_TEST, v, 4);
     /* gas depth function must mirror the depth function (citro3d does the same) */
-    pica_cmd_write_masked(c, P3D_GAS_DELTAZ_DEPTH, 0x8, ((0xAF02u >> ((r->depth_func & 7) << 1)) & 3) << 24);
+    pica_cmd_write_masked(c, P3D_GAS_DELTAZ_DEPTH, 0x8, ((0xAF02u >> ((func & 7) << 1)) & 3) << 24);
 
     pica_cmd_write(c, P3D_BLEND_COLOR, r->blend_color);
     if (r->blend && !r->logic_op_enable)

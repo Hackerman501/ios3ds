@@ -38,24 +38,34 @@ typedef void (*F_ptr)(GC *, GLint, GLenum, GLsizei, const void *);
 typedef void (*F_draw)(GC *, GLenum, GLint, GLsizei);
 typedef void (*F_read)(GC *, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *);
 typedef GLenum (*F_err)(GC *);
+typedef void (*F_f)(GC *, GLfloat);
+typedef void (*F_b)(GC *, GLboolean);
+typedef void (*F_store)(GC *, GLenum, GLenum, GLsizei, GLsizei);
+typedef void (*F_fbrb)(GC *, GLenum, GLenum, GLenum, GLuint);
 #define FN(tab, f, T) ((T)(tab)[SLOT_##f])
 
 enum { S = 96 };                        /* scene size */
 #define FBO 0x8D40                      /* GL_FRAMEBUFFER_OES */
 #define COL0 0x8CE0                     /* GL_COLOR_ATTACHMENT0_OES */
+#define RBUF 0x8D41                     /* GL_RENDERBUFFER_OES */
 
 /* draw the scene through gc's dispatch table into a texture-backed FBO; read it back */
 static int scene(GC *gc, void **t, uint8_t *out)
 {
     static const float quad[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
-    static uint32_t px[32 * 32];
+    static const float rep_uv[8] = { 0, 0, 2.5f, 0, 0, 3.5f, 2.5f, 3.5f };
+    static const float rect_uv[8] = { 0, 0, 20, 0, 0, 12, 20, 12 };     /* texels of 20x12 */
+    static uint32_t px[32 * 32], np[20 * 12];
     static float v[8];
-    GLuint tex[2] = { 0, 0 }, fb = 0;
+    GLuint tex[4] = { 0, 0, 0, 0 }, fb = 0;
     int x, y;
     for (y = 0; y < 32; y++)                /* RGBA bytes: alpha ramp, colour cells */
         for (x = 0; x < 32; x++)
             px[y * 32 + x] = (uint32_t)(x * 8) << 24 | ((x ^ y) & 4 ? 0x2080F0u : 0xF0C040u);
-    FN(t, glGenTextures, F_gen)(gc, 2, tex);
+    for (y = 0; y < 12; y++)                /* opaque blocks, not a power of two (hardware run 15) */
+        for (x = 0; x < 20; x++)
+            np[y * 20 + x] = 0xFF000000u | ((x < 10) ^ (y < 6) ? 0xF0F0F0u : y < 6 ? 0x30C030u : 0x5050A0u);
+    FN(t, glGenTextures, F_gen)(gc, 4, tex);
     FN(t, glBindTexture, F_ui)(gc, GL_TEXTURE_2D, tex[0]);
     FN(t, glTexImage2D, F_teximg)(gc, GL_TEXTURE_2D, 0, GL_RGBA, S, S, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     FN(t, glGenFramebuffersOES, F_gen)(gc, 1, &fb);
@@ -85,6 +95,29 @@ static int scene(GC *gc, void **t, uint8_t *out)
     FN(t, glColor4f, F_4f)(gc, 1, 1, 1, 1);
     v[0] = 8; v[1] = 8; v[2] = 72; v[3] = 8; v[4] = 8; v[5] = 72; v[6] = 72; v[7] = 72;
     FN(t, glDrawArrays, F_draw)(gc, GL_TRIANGLE_STRIP, 0, 4);
+    /* NPOT layers, as CA's are: a 2D texture repeated (pattern colours), and
+       a rectangle texture (0x84F5, texel coordinates) clamped */
+    FN(t, glBindTexture, F_ui)(gc, GL_TEXTURE_2D, tex[2]);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    FN(t, glTexImage2D, F_teximg)(gc, GL_TEXTURE_2D, 0, GL_RGBA, 20, 12, 0, GL_RGBA, GL_UNSIGNED_BYTE, np);
+    FN(t, glTexCoordPointer, F_ptr)(gc, 2, GL_FLOAT, 0, rep_uv);
+    v[0] = 74; v[1] = 42; v[2] = 94; v[3] = 42; v[4] = 74; v[5] = 92; v[6] = 94; v[7] = 92;
+    FN(t, glDrawArrays, F_draw)(gc, GL_TRIANGLE_STRIP, 0, 4);
+    FN(t, glDisable, F_u)(gc, GL_TEXTURE_2D);
+    FN(t, glBindTexture, F_ui)(gc, GL_TEXTURE_RECTANGLE_IOS, tex[3]);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_RECTANGLE_IOS, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_RECTANGLE_IOS, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_RECTANGLE_IOS, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    FN(t, glTexParameteri, F_uuu)(gc, GL_TEXTURE_RECTANGLE_IOS, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    FN(t, glTexImage2D, F_teximg)(gc, GL_TEXTURE_RECTANGLE_IOS, 0, GL_RGBA, 20, 12, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                                  np);
+    FN(t, glEnable, F_u)(gc, GL_TEXTURE_RECTANGLE_IOS);
+    FN(t, glTexCoordPointer, F_ptr)(gc, 2, GL_FLOAT, 0, rect_uv);
+    v[0] = 74; v[1] = 26; v[2] = 94; v[3] = 26; v[4] = 74; v[5] = 38; v[6] = 94; v[7] = 38;
+    FN(t, glDrawArrays, F_draw)(gc, GL_TRIANGLE_STRIP, 0, 4);
+    FN(t, glDisable, F_u)(gc, GL_TEXTURE_RECTANGLE_IOS);
+    FN(t, glTexCoordPointer, F_ptr)(gc, 2, GL_FLOAT, 0, quad);
     /* a translucent fill, rotated */
     FN(t, glDisable, F_u)(gc, GL_TEXTURE_2D);
     FN(t, glBlendFunc, F_uu)(gc, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -98,11 +131,72 @@ static int scene(GC *gc, void **t, uint8_t *out)
     FN(t, glReadPixels, F_read)(gc, 0, 0, S, S, GL_RGBA, GL_UNSIGNED_BYTE, out);
     FN(t, glBindFramebufferOES, F_ui)(gc, FBO, 0);
     FN(t, glDeleteFramebuffersOES, F_del)(gc, 1, &fb);
-    FN(t, glDeleteTextures, F_del)(gc, 2, tex);
+    FN(t, glDeleteTextures, F_del)(gc, 4, tex);
     return FN(t, glGetError, F_err)(gc) == GL_NO_ERROR;
 }
 
-int ca_scene_check(void)
+/* The depth probe (hardware run 15: GL_DEPTH_TEST drew nothing on the
+   PICA200, everything in QEMU's model). Depth buffer, glClear of depth,
+   GL_LESS and GL_GREATER: green at 0.5 over all; red at 0.75 (hidden);
+   blue at 0.25 on the left half (shown); yellow at 0.9 with GL_GREATER on
+   the top half (shown). */
+static void zquad(GC *gc, void **t, float *v, float x0, float y0, float x1, float y1, float z)
+{
+    v[0] = x0; v[1] = y0; v[3] = x1; v[4] = y0; v[6] = x0; v[7] = y1; v[9] = x1; v[10] = y1;
+    v[2] = v[5] = v[8] = v[11] = z;
+    FN(t, glDrawArrays, F_draw)(gc, GL_TRIANGLE_STRIP, 0, 4);
+}
+
+static int depth_scene(GC *gc, void **t, uint8_t *out)
+{
+    static float v[12];
+    GLuint tex = 0, fb = 0, rb = 0;
+    FN(t, glGenTextures, F_gen)(gc, 1, &tex);
+    FN(t, glBindTexture, F_ui)(gc, GL_TEXTURE_2D, tex);
+    FN(t, glTexImage2D, F_teximg)(gc, GL_TEXTURE_2D, 0, GL_RGBA, S, S, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    FN(t, glGenFramebuffersOES, F_gen)(gc, 1, &fb);
+    FN(t, glBindFramebufferOES, F_ui)(gc, FBO, fb);
+    FN(t, glFramebufferTexture2DOES, F_fbtex)(gc, FBO, COL0, GL_TEXTURE_2D, tex, 0);
+    FN(t, glGenRenderbuffersOES, F_gen)(gc, 1, &rb);
+    FN(t, glBindRenderbufferOES, F_ui)(gc, RBUF, rb);
+    FN(t, glRenderbufferStorageOES, F_store)(gc, RBUF, GL_DEPTH_COMPONENT16, S, S);
+    FN(t, glFramebufferRenderbufferOES, F_fbrb)(gc, FBO, GL_DEPTH_ATTACHMENT, RBUF, rb);
+    FN(t, glViewport, F_4i)(gc, 0, 0, S, S);
+    FN(t, glMatrixMode, F_u)(gc, GL_PROJECTION);
+    FN(t, glLoadIdentity, F_v)(gc);
+    FN(t, glOrthof, F_6f)(gc, 0, S, 0, S, -1, 1);       /* window depth = (1 - eye z) / 2 */
+    FN(t, glMatrixMode, F_u)(gc, GL_MODELVIEW);
+    FN(t, glLoadIdentity, F_v)(gc);
+    FN(t, glClearColor, F_4f)(gc, 0, 0, 0, 1);
+    FN(t, glClearDepthf, F_f)(gc, 1.0f);
+    FN(t, glClear, F_u)(gc, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    FN(t, glEnable, F_u)(gc, GL_DEPTH_TEST);
+    FN(t, glDepthFunc, F_u)(gc, GL_LESS);
+    FN(t, glEnableClientState, F_u)(gc, GL_VERTEX_ARRAY);
+    FN(t, glVertexPointer, F_ptr)(gc, 3, GL_FLOAT, 0, v);
+    FN(t, glColor4f, F_4f)(gc, 0, 1, 0, 1);
+    zquad(gc, t, v, 0, 0, S, S, 0.0f);                  /* 0.5 */
+    FN(t, glColor4f, F_4f)(gc, 1, 0, 0, 1);
+    zquad(gc, t, v, 0, 0, S, S, -0.5f);                 /* 0.75: behind */
+    FN(t, glColor4f, F_4f)(gc, 0, 0, 1, 1);
+    zquad(gc, t, v, 0, 0, S / 2, S, 0.5f);              /* 0.25: in front */
+    FN(t, glDepthFunc, F_u)(gc, GL_GREATER);
+    FN(t, glColor4f, F_4f)(gc, 1, 1, 0, 1);
+    zquad(gc, t, v, 0, S / 2, S, S, -0.8f);             /* 0.9, GL_GREATER: shown */
+    FN(t, glDisable, F_u)(gc, GL_DEPTH_TEST);
+    FN(t, glDepthFunc, F_u)(gc, GL_LESS);
+    FN(t, glReadPixels, F_read)(gc, 0, 0, S, S, GL_RGBA, GL_UNSIGNED_BYTE, out);
+    FN(t, glBindFramebufferOES, F_ui)(gc, FBO, 0);
+    FN(t, glDeleteFramebuffersOES, F_del)(gc, 1, &fb);
+    FN(t, glDeleteRenderbuffersOES, F_del)(gc, 1, &rb);
+    FN(t, glDeleteTextures, F_del)(gc, 1, &tex);
+    return FN(t, glGetError, F_err)(gc) == GL_NO_ERROR;
+}
+
+/* Draw scene `which` (0 = CA-like, 1 = depth probe) on the CPU rasterizer
+   and on the PICA200; the number of pixels that differ by more than 24 in
+   a channel, -1 on a GL error. */
+int gl_scene_diff(int which, int *maxd)
 {
     static void *tab[2][GLI_NSLOTS];
     static uint8_t img[2][S * S * 4];
@@ -117,14 +211,12 @@ int ca_scene_check(void)
         }
         gc->be = be[i];
         gl_install_dispatch(gc, tab[i]);
-        ok = scene(gc, tab[i], img[i]);
+        ok = which ? depth_scene(gc, tab[i], img[i]) : scene(gc, tab[i], img[i]);
         gl_gc_free(gc);
         gl_share_release(sh);
     }
-    if (!ok) {
-        gl_log("CA scene check: GL error while drawing");
-        return 0;
-    }
+    if (!ok)
+        return -1;
     for (i = 0; i < S * S; i++) {
         int k, d = 0;
         for (k = 0; k < 4; k++) {
@@ -135,9 +227,20 @@ int ca_scene_check(void)
         if (d > 24)
             edge++;                     /* polygon edges: the GPU's fill rule differs slightly */
     }
+    *maxd = max;
+    return edge;
+}
+
+int ca_scene_check(void)
+{
+    int max = 0, edge = gl_scene_diff(0, &max);
+    if (edge < 0) {
+        gl_log("CA scene check: GL error while drawing");
+        return 0;
+    }
     gl_log("CA scene check: GPU vs CPU rasterizer: %d of %d pixels differ by more than 24 (max %d)%s",
-           edge, S * S, max, edge > S * S / 50 ? ": too many" : "");
-    return edge <= S * S / 50;
+           edge, S * S, max, edge > S * S / 100 ? ": too many" : "");
+    return edge <= S * S / 100;         /* 1 %: hardware run 15 had 0, QEMU's model ~30 */
 }
 
 /* ------------------------------------------------------------------ */
@@ -184,13 +287,15 @@ void ca_frame(void)
         return;
     pica_backend_stats2(&s);
     gl_log("CA: %llu frames; per frame over the last 300: render thread CPU %llu us, %u.%u command lists, "
-           "%u.%u GPU presents, %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB)",
+           "%u.%u GPU presents, %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB); "
+           "GPU memory: %u KiB held (%u textures, %u KiB), arena %u KiB free, %u evictions%s",
            (unsigned long long)frames - 1,
            (unsigned long long)((cpu - cpu0) / 300), (s.lists - s0.lists) / 300, (s.lists - s0.lists) * 10 / 300 % 10,
            (s.presents - s0.presents) / 300, (s.presents - s0.presents) * 10 / 300 % 10,
            (s.readbacks - s0.readbacks) / 300, (s.readbacks - s0.readbacks) * 10 / 300 % 10,
            (s.readback_kb - s0.readback_kb) / 300, (s.uploads - s0.uploads) / 300,
-           (s.uploads - s0.uploads) * 10 / 300 % 10, (s.upload_kb - s0.upload_kb) / 300);
+           (s.uploads - s0.uploads) * 10 / 300 % 10, (s.upload_kb - s0.upload_kb) / 300, s.arena_kb, s.ntex,
+           s.tex_kb, s.arena_free_kb, s.evictions, s.gpu_on ? "" : " (GPU off: CPU rasterizer)");
     cpu0 = cpu;
     s0 = s;
 }
