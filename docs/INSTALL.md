@@ -72,7 +72,7 @@ Or: hold **START** while powering on, and pick `ios3ds` in Luma's chainloader me
 
 - **Works:** home screen, touch, Home/lock/volume buttons, built-in apps such as Settings, Notes and Mail.
 - **No Wi-Fi** by default (experimental, needs a config file, untested on hardware).
-- **No sound yet** (work in progress).
+- **Sound** working but no volume
 - No real clock: the date and time are wrong.
 - 3D (OpenGL) apps are drawn in software and are slow.
 
