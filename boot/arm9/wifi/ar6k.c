@@ -124,6 +124,7 @@ static struct {
     u8 byte_mode;                   /* 1: mailbox through CMD52 (the FIFO self-test failed) */
     u8 verbose, switching, from_ios;
     u8 nonet, rescan;               /* NO_NETWORK_AVAIL failures in a row; a directed rescan is running */
+    u8 cancelling;                  /* our WMI_DISCONNECT that ends the firmware's own retries */
     u16 disc_reason, disc_code;
     u32 link_seq;
     /* [wifi-diag] */
@@ -475,6 +476,11 @@ static int wmi_connect(void)
     if (A.found) {
         p.channel = A.channel;
         memcpy(p.bssid, A.bssid, 6);
+        /* ath6kl CONNECT_ASSOC_POLICY_USER | CONNECT_PROFILE_MATCH_DONE: this BSSID,
+           the host already matched its security. The firmware's own matching
+           answered NO_NETWORK_AVAIL for an AP our scans see fine (run21/22:
+           FRITZ!Box on channel 13; WPA2/WPA3 mixed RSN IEs are a suspect). */
+        if (A.nonet & 1) p.ctrl_flags = 0x0001 | 0x0008;
     }
     /* dsiwifi's pre-connect settings: max performance power mode, 5 s
        disconnect timeout, no keepalive */
@@ -747,6 +753,7 @@ static void on_wmi(const u8 *b, u32 len)
             logp("[wifi] scan done: %u networks\n", nscan);
         }
         if (A.state == NET_ST_SCAN && !A.scan_done) {
+            A.cancelling = 0;
             if (A.rescan) {                     /* after NO_NETWORK_AVAIL: fresh BSSID/channel, */
                 A.rescan = 0;                   /* every other try the firmware picks the AP */
                 target_lookup();
@@ -804,6 +811,10 @@ static void on_wmi(const u8 *b, u32 len)
         A.link_seq++;
         if (A.state == NET_ST_AUTH && ++A.auth_fails == 3)
             log_err("[wifi] the WPA2 handshake failed 3 times: wrong password?\n");
+        if (A.cancelling && A.disc_reason == 3) {   /* the answer to our cancel: rescan runs */
+            A.cancelling = 0;
+            break;
+        }
         if (!T.have) {                          /* iOS asked to leave (or never joined) */
             logp("[wifi] disconnected (WMI reason %u): idle\n", A.disc_reason);
             A.state = NET_ST_IDLE;
@@ -834,6 +845,11 @@ static void on_wmi(const u8 *b, u32 len)
                          T.ssid, A.nonet, A.nonet & 1 ? "connecting to the BSSID seen" : "letting the firmware pick");
                 A.rescan = 1;
                 A.reconnect_at = 0;
+                /* the firmware keeps retrying this connect on its own and then
+                   ignores START_SCAN (run22: no scan results after the first
+                   failure, not even for other networks): cancel it first */
+                A.cancelling = 1;
+                wmi_send(WMI_DISCONNECT, &(u32){0}, 4);
                 if (scan_start() >= 0) break;
                 A.rescan = 0;
             }
@@ -1002,8 +1018,15 @@ static void target_lookup(void)
     A.channel = best->channel_mhz;
     memcpy(A.bssid, best->bssid, 6);
     for (u32 i = 0; i + 2 <= best->ie_len; i += 2 + best->ie[i + 1])
-        if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6)
+        if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6) {
             A.group_crypt = best->ie[i + 7] == 2 ? CRYPT_TKIP : CRYPT_AES;
+            u32 l = 2 + best->ie[i + 1];
+            if (l > 40) l = 40;
+            if (i + l > best->ie_len) l = best->ie_len - i;
+            char hx[2 * 40 + 1];
+            for (u32 k = 0; k < l; k++) snprintf(hx + 2 * k, 3, "%02x", best->ie[i + k]);
+            DIAG("target \"%s\": %u MHz, rssi %d, RSN IE %s", T.ssid, A.channel, best->rssi, hx);
+        }
 }
 
 int ar6k_command(const volatile wlan_cmd_t *c)
