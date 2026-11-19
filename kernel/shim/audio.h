@@ -25,6 +25,7 @@ typedef struct {
     uint32_t rate_div;      /* CSND timer divider: Fs = 67027964 / rate_div (1520 -> 44097.3 Hz) */
     uint32_t flags;         /* AUD_F_* */
     uint32_t stat_off;      /* offset of the aud_stat_t that follows, from the first magic (bytes) */
+    uint32_t gpio_pa;       /* fake S5L GPIO page (PA): the headphone-detect pin lives there (mkboot) */
 } aud_cfg_t;
 
 /* ---- statistics, written by the shim, read by the ARM9 monitor (the shim
@@ -50,6 +51,9 @@ typedef struct {
     uint32_t mic_samples;   /* microphone samples handed to iOS's input stream */
     uint32_t mic_underruns; /* input words that had to repeat the last sample (ring empty) */
     uint32_t mic_resyncs;   /* read position re-aligned to the ARM9's write position */
+    uint32_t hp_state;      /* headphones as iOS sees them: 0 out, 1 in, AUD_HP_OFF = route switching off */
+    uint32_t hp_changes;    /* jack changes passed to iOS (detect pin + interrupt) */
+    uint32_t hp_vol;        /* last CS42L58 headphone volume (reg 0x1a) iOS wrote, AUD_HPVOL_NONE */
 } aud_stat_t;
 
 typedef struct {
@@ -132,7 +136,9 @@ typedef struct {
     uint32_t arm9_magic;    /* AUD_MIC_MAGIC: the next field is valid */
     uint32_t disabled;      /* boot.cfg mic=0: the shim never touches the MIC block */
     uint32_t adc_on;        /* the ARM9 has powered the ADC */
-    uint32_t pad1[5];
+    uint32_t jack;          /* 1 = headphones plugged (GPIO2 bit 0, debounced by the ARM9) */
+    uint32_t hp_disabled;   /* boot.cfg hp_route=0: iOS never hears about the jack */
+    uint32_t pad1[3];
     int16_t s[AUD_MIC_SAMPLES];
 } aud_mic_t;
 /* 3DS MIC block (GBATEK "DSi Microphone", same design on the 3DS) */
@@ -152,3 +158,20 @@ typedef struct {
    again so apps see the 3DS mic at the level the CODEC's PGA gives it */
 #define AUD_MIC_GAIN_Q15  2151u
 #define AUD_MIC_HOLD_TICKS 1047000u     /* keep the mic on 1 s after the input stream stopped */
+
+/* ---- headphone detection for iOS (tools/ios3ds-audio/dt_audio.py): audio0's
+   function-hp_detect is pin 0x0d00 of the fake GPIO page (data word +0x1a4,
+   bit 0, 1 = headphones) and its interrupt VIC0 source 12; the shim mirrors
+   aud_mic_t.jack into both. ----------------------------------------------- */
+#define AUD_HP_GPIO_OFF   0x1A4u        /* port 13 * 0x20 + 4 */
+#define AUD_HP_GPIO_BIT   (1u << 0)
+#define AUD_HP_VIC_SRC    12u
+#define AUD_HP_OFF        0x100u        /* aud_stat_t.hp_state: boot.cfg hp_route=0 */
+/* On its headphone route iOS sets the volume on the CS42L58 (reg 0x1a, 1 dB
+   steps: bits 0-6 = dB as 7-bit two's complement, -60 = 0x44 at volume 0,
+   +2 dB = 0x02 at full volume; bit 7 = mute) and plays the PCM unscaled;
+   the speaker amp is shut down (0x04). The shim then takes CSND's volume
+   from that register (AUD_HPVOL_REF_DB = unity) instead of the amp. */
+#define AUD_HPVOL_REG     0x1Au
+#define AUD_HPVOL_REF_DB  2             /* iOS's full headphone volume (dB) = CSND unity */
+#define AUD_HPVOL_NONE    0x100u        /* aud_stat_t.hp_vol: iOS has not written it */

@@ -81,7 +81,7 @@ AUD_DATA volatile aud_blk_t shim_audio = { .cfg = {
     .pcm_pa = AUD_PCM_PA, .ring_frames = AUD_RING_FRAMES, .lead_frames = AUD_LEAD_FRAMES,
     .rate_div = AUD_RATE_DIV, .flags = AUD_F_CSND | AUD_F_LOG,
     .stat_off = sizeof(aud_cfg_t),
-}, .stat = { .amp_step = AUD_AMP_NONE, .volume = 0x8000 } };
+}, .stat = { .amp_step = AUD_AMP_NONE, .volume = 0x8000, .hp_vol = AUD_HPVOL_NONE } };
 #define shim_audio_cfg  shim_audio.cfg
 #define shim_audio_stat shim_audio.stat
 
@@ -95,11 +95,14 @@ static struct {
     u32 next_valid, next;               /* tick of the next audio deadline */
     u32 k_valid, k_deadline, clamped;   /* XNU's own timer deadline; 1 = the private timer runs short for audio */
     u32 io_ok;
-    u32 vol, vol_applied;               /* CSND channel volume (0..0x8000) from the speaker amp's gain */
+    u32 vol, vol_applied;               /* CSND channel volume (0..0x8000): out_vol() */
+    u32 amp_vol;                        /* ... from the speaker amp's gain */
+    u32 hp_reg, hp_reg_valid;           /* the CS42L58 headphone volume iOS wrote (AUD_HPVOL_REG) */
     u32 mic_want;                       /* last value given to aud_mic_t.want */
     u32 rx_last;                        /* tick of the last service that saw the input stream */
     u32 mic_synced, mic_rd, mic_frac, mic_step, rx_phase;
     u32 mic_on, mic_t_data;
+    u32 hp_init, hp_state, hp_inject;   /* headphones as iOS sees them; a jack interrupt to deliver */
     int32_t dbg_prev;
     u32 dbg_jumps, dbg_maxd;            /* RX output: frame-to-frame jumps > 16 and the largest (logged at rx stop) */
     int32_t mic_last;
@@ -178,6 +181,14 @@ static inline void csnd_w16(u32 off, u32 v) { CSND_REG16(off) = (u16)v; }
 static inline void csnd_w32(u32 off, u32 v) { CSND_REG32(off) = v; }
 static inline u32 csnd_r16(u32 off) { return CSND_REG16(off); }
 static inline u32 csnd_r32(u32 off) { return CSND_REG32(off); }
+static inline volatile u32 *hp_pin_word(void)
+{
+    return (volatile u32 *)(shim_audio_cfg.gpio_pa - AXI_PA + AXI_VA + AUD_HP_GPIO_OFF);
+}
+static inline u32 hp_vector(void)                   /* VICVECTADDR12 as AppleARMPL192VIC programmed it */
+{
+    return REG32(REG32(SHIM_VA + SHIM_CFG_VIC0) - AXI_PA + AXI_VA + 0x100 + AUD_HP_VIC_SRC * 4);
+}
 static inline u32 mic_cnt_r(void) { return REG16(IO_VA + (MIC_CNT_PA - IO_PA)); }
 static inline void mic_cnt_w(u32 v) { REG16(IO_VA + (MIC_CNT_PA - IO_PA)) = (u16)v; }
 static inline u32 mic_data_r(void) { return REG32(IO_VA + (MIC_DATA_PA - IO_PA)); }
@@ -221,6 +232,10 @@ static inline void csnd_w32(u32 off, u32 v) { csnd_w16(off, v); csnd_w16(off + 2
 static inline u32 csnd_r16(u32 off) { return aud_host_csnd[off] | (u32)aud_host_csnd[off + 1] << 8; }
 static inline u32 csnd_r32(u32 off) { return csnd_r16(off) | csnd_r16(off + 2) << 16; }
 static void i2s_out_enable(void) { }
+extern u32 aud_host_gpio[0x400];
+extern u32 aud_host_hp_vector;
+static inline volatile u32 *hp_pin_word(void) { return &aud_host_gpio[AUD_HP_GPIO_OFF / 4]; }
+static inline u32 hp_vector(void) { return aud_host_hp_vector; }
 extern u32 aud_host_mic_cnt_r(void);
 extern void aud_host_mic_cnt_w(u32 v);
 extern u32 aud_host_mic_data_r(void);
@@ -320,6 +335,36 @@ static u32 amp_step_to_vol(u32 step)
 {
     u32 r, v = udivmod(amp_gain[step & 31] * 0x8000u, amp_gain[AUD_AMP_REF_STEP], &r);
     return v > 0x8000u ? 0x8000u : v;
+}
+
+/* headphone route (audio.h AUD_HPVOL_REG): hp_gain[n] = 32768 * 10^(-n / 20),
+   n = 0..63 dB below AUD_HPVOL_REF_DB, the level iOS writes at full volume
+   (+2 dB, QEMU run of re-log 57) = CSND unity, as amp step 19 on the speaker
+   route: full volume is full scale on both outputs */
+static const u16 hp_gain[64] = {
+    32768, 29205, 26029, 23198, 20675, 18427, 16423, 14637, 13045, 11627, 10362, 9235,
+    8231, 7336, 6538, 5827, 5193, 4629, 4125, 3677, 3277, 2920, 2603, 2320,
+    2068, 1843, 1642, 1464, 1305, 1163, 1036, 924, 823, 734, 654, 583,
+    519, 463, 413, 368, 328, 292, 260, 232, 207, 184, 164, 146,
+    130, 116, 104, 92, 82, 73, 65, 58, 52, 46, 41, 37,
+    33, 29, 26, 23,
+};
+
+static u32 hpvol_to_vol(u32 reg)
+{
+    int32_t db = (int32_t)(reg & 0x7F) - ((reg & 0x40) ? 0x80 : 0);
+    int32_t att = (int32_t)AUD_HPVOL_REF_DB - db;
+    if (reg & 0x80) return 0;                           /* mute */
+    if (att <= 0) return 0x8000u;                       /* louder than iOS's full volume: clamp */
+    return att > 63 ? 0 : hp_gain[att];
+}
+
+/* CSND's volume: the CS42L58's headphone volume while iOS is on its headphone
+   route (the amp is shut down then), the amp's otherwise */
+static u32 out_vol(void)
+{
+    if (A.hp_state == 1 && A.hp_reg_valid) return hpvol_to_vol(A.hp_reg);
+    return A.amp_vol;
 }
 
 static void csnd_channel(u32 ch, u32 pa, u32 bytes, u32 vol)
@@ -645,6 +690,52 @@ static u32 ticks_to_item_end(volatile u32 *r)
     return t ? t : 1;
 }
 
+/* ---- headphones ----------------------------------------------------------
+   AppleEmbeddedAudio learns about the jack through audio0's
+   function-hp_detect (a pin on the fake GPIO page) and re-reads it on audio0's
+   interrupt (VIC0 source 12), both set up in dt_audio.py. The ARM9 polls the
+   3DS jack (GPIO2 bit 0, debounced) and publishes it in aud_mic_t.jack; the
+   shim mirrors it into the pin and raises the interrupt on every change. iOS
+   then switches its output route (and its volume memory) between speaker and
+   headphones; the 3DS CODEC switches the analogue output itself (the ARM9's
+   jack polling). boot.cfg hp_route=0 keeps iOS on the speaker route. */
+static void hp_service(void)
+{
+    volatile aud_mic_t *m = mic_ring();
+    volatile u32 *pin;
+    u32 want;
+    if (!shim_audio_cfg.gpio_pa || !m) return;
+    pin = hp_pin_word();
+    if (!A.hp_init) {                           /* before AppleEmbeddedAudio starts: no headphones */
+        A.hp_init = 1;
+        A.hp_state = 0;
+        *pin &= ~AUD_HP_GPIO_BIT;
+        shim_audio_stat.hp_state = 0;
+    }
+    dinval(&m->arm9_magic, 32);                 /* the ARM9's line */
+    if (m->arm9_magic != AUD_MIC_MAGIC) return;
+    want = m->hp_disabled ? AUD_HP_OFF : (m->jack ? 1 : 0);
+    if (want == A.hp_state) return;
+    if (want == AUD_HP_OFF && !A.hp_state) {    /* switched off while out: nothing to tell iOS */
+        A.hp_state = AUD_HP_OFF;
+        shim_audio_stat.hp_state = AUD_HP_OFF;
+        return;
+    }
+    if (A.hp_state == AUD_HP_OFF) return;       /* off stays off */
+    if (want == 1) *pin |= AUD_HP_GPIO_BIT;
+    else *pin &= ~AUD_HP_GPIO_BIT;
+    A.hp_state = want;
+    shim_audio_stat.hp_state = want;
+    shim_audio_stat.hp_changes++;
+    A.vol = out_vol();
+    shim_audio_stat.volume = A.vol;
+    A.hp_inject = hp_vector() != 0;             /* no vector yet: the driver reads the pin when it starts */
+    if (logging()) {
+        log_str(want == 1 ? "ios3ds-audio: headphones in" : "ios3ds-audio: headphones out");
+        log_str(A.hp_inject ? ", jack interrupt\n" : " (no jack interrupt handler yet)\n");
+    }
+}
+
 /* ---- the emulator: advance everything to tick `now` ----------------------- */
 void aud_service(u32 now)
 {
@@ -653,6 +744,7 @@ void aud_service(u32 now)
     u32 wr0, v;
 
     shim_audio_stat.services++;
+    hp_service();
 
     /* write-1-to-clear registers: the page is plain RAM, so apply the writes now */
     v = d[DMAC_INT_TC_CLEAR];
@@ -843,17 +935,27 @@ int shim_iic_transfer(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 
     if (sublen) a = sub[sublen - 1];
     a &= 0x7F;                                  /* CS42L58: bit 7 of the MAP byte = auto-increment */
     if (op == 2 && !sublen && len == 1 && ((buf[0] & 7) == 3 || buf[0] == 4)) {   /* LM48821 (see amp_gain) */
-        A.vol = buf[0] == 4 ? 0 : amp_step_to_vol(buf[0] >> 3);
+        A.amp_vol = buf[0] == 4 ? 0 : amp_step_to_vol(buf[0] >> 3);
+        A.vol = out_vol();
         shim_audio_stat.amp_step = buf[0] == 4 ? AUD_AMP_OFF : buf[0] >> 3u;
         shim_audio_stat.volume = A.vol;
         if (logging() && (u32)buf[0] != regs[0]) {
-            if (buf[0] == 4) log_str("ios3ds-audio: amp off -> CSND volume 0\n");
-            else {
+            if (buf[0] == 4) {
+                log_kv("ios3ds-audio: amp off -> CSND volume ", A.vol);
+                log_putc('\n');
+            } else {
                 log_kv("ios3ds-audio: amp step ", buf[0] >> 3);
                 log_kv(" -> CSND volume ", A.vol);
                 log_putc('\n');
             }
         }
+    }
+    if (op == 2 && sublen && a <= AUD_HPVOL_REG && AUD_HPVOL_REG < a + len) {    /* CS42L58 headphone volume */
+        A.hp_reg = buf[AUD_HPVOL_REG - a];
+        A.hp_reg_valid = 1;
+        A.vol = out_vol();
+        shim_audio_stat.hp_vol = A.hp_reg;
+        shim_audio_stat.volume = A.vol;
     }
     if (op == 2) {
         for (u32 i = 0; i < len; i++) {
@@ -927,7 +1029,7 @@ u32 shim_audio_irq(u32 iar)
     if (id == 42) {
         /* VBlank: shim_irq may inject the CLCD interrupt now; ours follows
            through the private timer a moment later */
-        if (A.inject) {
+        if (A.inject || A.hp_inject) {
             REG32(PRIV_VA + PT_CTRL) = 0;
             REG32(PRIV_VA + PT_LOAD) = 2;
             REG32(PRIV_VA + PT_CTRL) = PT_CTRL_RUN;
@@ -937,7 +1039,7 @@ u32 shim_audio_irq(u32 iar)
     }
 
     early = A.clamped && A.k_valid && (int)(A.k_deadline - now) > 0;
-    if (!early && !A.inject) {
+    if (!early && !A.inject && !A.hp_inject) {
         A.clamped = 0;
         return 0;                   /* XNU's deadline: its FIQ handler takes it */
     }
@@ -967,11 +1069,22 @@ u32 shim_audio_irq(u32 iar)
         shim_audio_stat.injected++;
         return 2;
     }
+    if (A.hp_inject) {
+        /* the jack interrupt, after any DMA interrupt (one vector at a time) */
+        u32 vic = REG32(SHIM_VA + SHIM_CFG_VIC0) - AXI_PA + AXI_VA;
+        u32 v = REG32(vic + 0x100 + AUD_HP_VIC_SRC * 4);
+        A.hp_inject = 0;
+        if (v) {
+            REG32(vic + 0xF00) = v;
+            return 2;
+        }
+    }
     return 1;
 }
 
 #else   /* host tests reach the internals through these */
 u32 aud_test_inject(void) { u32 v = A.inject; A.inject = 0; return v; }
+u32 aud_test_hp_inject(void) { u32 v = A.hp_inject; A.hp_inject = 0; return v; }
 u32 aud_test_next(u32 *valid) { *valid = A.next_valid; return A.next; }
 u32 aud_test_wr(void) { return A.wr; }
 void aud_test_reset(void)
@@ -982,7 +1095,8 @@ void aud_test_reset(void)
     for (u32 i = 0; i < sizeof(shim_audio_stat); i++) p[i] = 0;
     p = (u8 *)iic_dev;
     for (u32 i = 0; i < sizeof(iic_dev); i++) p[i] = 0;
-    A.vol = 0x8000;
+    A.vol = A.amp_vol = 0x8000;
+    shim_audio_stat.hp_vol = AUD_HPVOL_NONE;
     iic_logged = 0;
 }
 #endif

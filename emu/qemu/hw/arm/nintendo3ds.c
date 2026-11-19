@@ -2377,6 +2377,8 @@ static void ctr_init(MachineState *machine)
     /* Wi-Fi: TMIO2 + AR6014 + access point -> -nic user,model=ctr-wifi (ctr_wifi.c) */
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
     ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
+    /* headphone jack GPIO2 bit 0 + machine property "headphones" (ctr_csnd.c) */
+    ctr_jack_init(OBJECT(machine), &s->io_shared, 0x10147010 - CTR_IO_SHARED_BASE);
     {
         /* libn3ds spi.h / i2c.h bases and interrupt.h IRQ ids, bus 1..3 */
         static const hwaddr nspi_base[3] = { 0x10160800, 0x10142800, 0x10143800 };

@@ -67,7 +67,9 @@ typedef void (*AQInputCallback)(void *user, AudioQueueRef aq, AudioQueueBufferRe
 #define kAudioSessionCategory_RecordAudio   FOURCC('r', 'e', 'c', 'a')
 #define kAudioSessionProperty_AudioInputAvailable FOURCC('a', 'i', 'a', 'v')
 #define kAudioSessionProperty_AudioRoute    FOURCC('r', 'o', 'u', 't')
+#define kAudioSessionProperty_AudioRouteChange FOURCC('r', 'o', 'c', 'h')
 #define kCFStringEncodingUTF8               0x08000100u
+#define kCFNumberSInt32Type                 3
 
 static OSStatus (*AQNewOutput)(const AudioStreamBasicDescription *, AQOutputCallback, void *,
                                void *, void *, uint32_t, AudioQueueRef *);
@@ -83,6 +85,13 @@ static OSStatus (*ASGetProperty)(uint32_t, uint32_t *, void *);
 static OSStatus (*AQNewInput)(const AudioStreamBasicDescription *, AQInputCallback, void *,
                               void *, void *, uint32_t, AudioQueueRef *);
 static unsigned char (*CFStringGetCStr)(const void *, char *, long, uint32_t);
+typedef void (*ASPropertyListener)(void *user, uint32_t id, uint32_t size, const void *data);
+static OSStatus (*ASAddListener)(uint32_t, ASPropertyListener, void *);
+static int32_t (*CFRunLoopRunInMode)(const void *mode, double seconds, unsigned char once);
+static const void **kCFRunLoopDefaultMode;
+static const void *(*CFDictionaryGetValue)(const void *, const void *);
+static const void *(*CFStringCreateWithCString)(const void *, const char *, uint32_t);
+static unsigned char (*CFNumberGetValue)(const void *, long, void *);
 
 #define RATE    44100
 #define NBUF    3
@@ -93,6 +102,7 @@ static struct {
     int amp;
     uint32_t left;          /* frames still to play */
     volatile int drained;   /* buffers that came back after the tone ended */
+    volatile int paused;    /* the route went away under us (headphones unplugged) */
 } T;
 
 static void say(const char *fmt, ...)
@@ -157,10 +167,58 @@ static int load(void)
     SYM(ASSetActive, "AudioSessionSetActive");
     SYM(ASGetProperty, "AudioSessionGetProperty");
     SYM(AQNewInput, "AudioQueueNewInput");
+    *(void **)&ASAddListener = dlsym(h, "AudioSessionAddPropertyListener");
     h = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
-    if (h) *(void **)&CFStringGetCStr = dlsym(h, "CFStringGetCString");
+    if (h) {
+        *(void **)&CFStringGetCStr = dlsym(h, "CFStringGetCString");
+        *(void **)&CFRunLoopRunInMode = dlsym(h, "CFRunLoopRunInMode");
+        *(void **)&kCFRunLoopDefaultMode = dlsym(h, "kCFRunLoopDefaultMode");
+        *(void **)&CFDictionaryGetValue = dlsym(h, "CFDictionaryGetValue");
+        *(void **)&CFStringCreateWithCString = dlsym(h, "CFStringCreateWithCString");
+        *(void **)&CFNumberGetValue = dlsym(h, "CFNumberGetValue");
+    }
 #undef SYM
     return 1;
+}
+
+/* wait on the main run loop, where AudioSession delivers its listeners */
+static void nap(int ms)
+{
+    if (CFRunLoopRunInMode && kCFRunLoopDefaultMode) CFRunLoopRunInMode(*kCFRunLoopDefaultMode, ms / 1000.0, 0);
+    else usleep((useconds_t)ms * 1000);
+}
+
+static const char *route_name(char *name, int len)
+{
+    void *route = NULL;
+    uint32_t sz = sizeof route;
+    if (!ASGetProperty(kAudioSessionProperty_AudioRoute, &sz, &route) && route && CFStringGetCStr)
+        CFStringGetCStr(route, name, len, kCFStringEncodingUTF8);
+    return name;
+}
+
+/* kAudioSessionProperty_AudioRouteChange: log the reason and the new route;
+   reason 2 (kAudioSessionRouteChangeReason_OldDeviceUnavailable, headphones
+   unplugged) pauses the tone, as the iPod app pauses its music */
+static void route_changed(void *user, uint32_t id, uint32_t size, const void *data)
+{
+    int32_t reason = -1;
+    char name[64] = "?", old[64] = "?";
+    (void)user; (void)size;
+    if (id != kAudioSessionProperty_AudioRouteChange) return;
+    if (data && CFDictionaryGetValue && CFStringCreateWithCString && CFNumberGetValue) {
+        const void *k = CFStringCreateWithCString(NULL, "OutputDeviceDidChange_Reason", kCFStringEncodingUTF8);
+        const void *v = k ? CFDictionaryGetValue(data, k) : NULL;
+        if (v) CFNumberGetValue(v, kCFNumberSInt32Type, &reason);
+        k = CFStringCreateWithCString(NULL, "OutputDeviceDidChange_OldRoute", kCFStringEncodingUTF8);
+        v = k ? CFDictionaryGetValue(data, k) : NULL;
+        if (v && CFStringGetCStr) CFStringGetCStr(v, old, sizeof old, kCFStringEncodingUTF8);
+    }
+    route_name(name, sizeof name);
+    say("tone: route change, reason %d%s: \"%s\" -> \"%s\"%s", (int)reason,
+        reason == 1 ? " (new device available)" : reason == 2 ? " (old device unavailable)" : "",
+        old, name, reason == 2 && T.left ? ": pausing, as the iPod app does on unplug" : "");
+    if (reason == 2) T.paused = 1;
 }
 
 static int play(int ms, int hz, int amp)
@@ -193,8 +251,10 @@ static int play(int ms, int hz, int amp)
     }
     st = AQStart(aq, NULL);
     if (st) goto out;
-    for (waited = 0; T.drained < NBUF && waited < ms + 5000; waited += 20) usleep(20000);
-    AQStop(aq, 0);
+    T.paused = 0;
+    for (waited = 0; T.drained < NBUF && !T.paused && waited < ms + 5000; waited += 20) nap(20);
+    AQStop(aq, T.paused);
+    if (T.paused) say("tone: paused after %d ms (route went away)", waited);
 out:
     AQDispose(aq, 1);
     return st;
@@ -343,7 +403,7 @@ static int record(int ms)
     st = AQStart(aq, NULL);
     if (st) goto out;
     for (waited = 0; !R.done && waited < ms + 5000; waited += 20) usleep(20000);
-    AQStop(aq, 1);
+    AQStop(aq, T.paused);
     say("tone: rec %u of %u frames in %u buffers: nonzero %u, peak %u, rms %.0f, ~%.0f Hz, "
         "ramp steps ok %u bad %u, first %d %d %d %d %d %d %d %d",
         R.frames, R.want, R.bufs, R.nonzero, R.peak, R.frames ? sqrt(R.sq / R.frames) : 0.0,
@@ -417,9 +477,13 @@ int main(int argc, char **argv)
     if (st) say("tone: audio category %d (carrying on)", (int)st);
     st = ASSetActive(1);
     if (st) say("tone: AudioSessionSetActive %d (carrying on)", (int)st);
+    if (ASAddListener && (st = ASAddListener(kAudioSessionProperty_AudioRouteChange, route_changed, NULL)))
+        say("tone: route change listener %d (carrying on)", (int)st);
     for (i = 0; i < count; i++) {
-        if (i) sleep((unsigned)interval);
-        say("tone: #%d %d Hz, %d ms, amplitude %d (L), %d (R)", i + 1, hz, ms, amp, amp / 2);
+        char name[64] = "?";
+        if (i) nap(interval * 1000);
+        say("tone: #%d %d Hz, %d ms, amplitude %d (L), %d (R), route \"%s\"", i + 1, hz, ms, amp, amp / 2,
+            route_name(name, sizeof name));
         st = play(ms, hz, amp);
         if (st) {
             say("tone: AudioQueue error %d: giving up", (int)st);
