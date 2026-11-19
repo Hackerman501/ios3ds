@@ -69,3 +69,10 @@ Past the old hang: IOKit, audio CODEC init, display mirror on, `BSD root: md0`, 
 - **Audio:** an output stream started and the boot tone played. Whether it was audible isn't in the log.
 - **GL on the PICA200: gltest FAIL.** The cube isn't drawn, and scenes 1 and 2 differ a lot from the software rasterizer. The GPU copy and the GPU self-tests pass, so the problem is in the 3D/GL path (depth, vertices or lighting). GL apps still use the CPU rasterizer, so it isn't visible yet.
 - Wi-Fi stayed off: no `wifi-fw.bin` on the card (expected).
+
+## run16 (`574b5e3`, GPU fixes, ca_gpu=1)
+- **Depth probe confirms the wrap theory:** reversed (citro3d) depth 0 pixels off; standard and unscaled 4608 off. gltest's cube draws, and **gltest PICA200 PASSES on hardware** for the first time.
+- **CoreAnimation on the GPU:** scene check (now with NPOT/repeat layers) 0 pixels off; present check passed.
+- **Memory:** eviction works on hardware (253, then 754 evictions). When MobileSafari launched, the 8 MiB arena was fragmented: a 704 KiB texture found only ~290 KiB free in 90 blocks, so frames went through CPU read-backs. The arena is now 12 MiB, with 8/4/2 MiB fallbacks.
+- **Volume:** media plays at CSND unity (amp step 19 → 32768), and the slider moves iOS's volume across its whole range.
+- The GPU mirror ran at 20–24 fps. No panic or md0 error in ~9 min.

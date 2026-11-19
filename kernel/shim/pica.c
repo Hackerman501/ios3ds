@@ -168,7 +168,9 @@ static void gpu_diag_after(void);
 
 static void bringup(void)
 {
-    static const uint32_t sizes[] = { 0x800000, 0x400000, 0x200000 };
+    /* 12 MiB first: run16 (CA on the GPU) fragmented 8 MiB (a 704 KiB texture
+       found 290 KiB free in 90 blocks) and fell back to CPU read-backs */
+    static const uint32_t sizes[] = { 0xC00000, 0x800000, 0x400000, 0x200000 };
     vu32 *pdn, *cfg11;
     uint32_t cnt = 0, prot = 0, pa = 0, size = 0, i, st;
     void *va = 0;
