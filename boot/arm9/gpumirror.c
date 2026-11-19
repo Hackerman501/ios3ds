@@ -78,13 +78,23 @@ void gm_set_mode(int mode, u32 (*now)(void))
 }
 
 /* Is the GPU copying the screen right now? Logs every change. */
-bool gm_live(u32 now)
+bool gm_live(u32 now, bool display_on)
 {
     static u32 last_state = 0xFFFFFFFFu, last_frames, last_change;
     static int was_live = -1;
+    static bool was_off;
     if (!gm)
         return false;
     u32 st = gm->state, frames = gm->frames;
+    if (!display_on) {
+        was_off = true;                 /* the shim skips frames while the CLCD is off */
+        return false;
+    }
+    if (was_off) {
+        was_off = false;
+        last_frames = frames;           /* grace: frames resume within a few VBlanks */
+        last_change = now;
+    }
     if (st != last_state) {
         last_state = st;
         const char *s = st < ARRAY_SIZE(st_name) ? st_name[st] : "?";

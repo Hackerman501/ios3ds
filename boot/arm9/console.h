@@ -20,3 +20,7 @@ void con_putc(int which, char c);
 void con_puts(int which, const char *s);
 void con_line(int which, int row, u32 color, const char *s);
 void con_show(int which, bool on);
+/* on: text only goes into the buffers; con_paint() draws changed rows (the
+   monitor loop, a few per pass). off: draw what is pending, then immediately. */
+void con_defer(bool on);
+void con_paint(int max_rows);

@@ -71,6 +71,16 @@ void display_fbs(u32 out[4])
    pair with memcpy instead of re-reading the source. */
 #define POLL_EVERY 8
 
+/* md0 requests, and (display_set_poll) the buttons and touch screen: a CPU
+   copy takes 150-430 ms on hardware and must not starve either (run 17) */
+static void (*poll_extra)(void);
+void display_set_poll(void (*fn)(void)) { poll_extra = fn; }
+static void poll_io(void)
+{
+    blksrv_poll();
+    if (poll_extra) poll_extra();
+}
+
 /* bottom LCD (320x240): column c <- iOS row c*3/2, memory row rr (from the
    bottom) <- iOS column (3*rr-40)/2; 13 px black margins top and bottom */
 static void blit_bottom_slow(const u8 *src, u32 w, u32 h, u32 stride)
@@ -87,7 +97,7 @@ static void blit_bottom_slow(const u8 *src, u32 w, u32 h, u32 stride)
         ix_w = w;
     }
     for (u32 c = 0; c < 320; c++) {
-        if (c % POLL_EVERY == 0) blksrv_poll();
+        if (c % POLL_EVERY == 0) poll_io();
         u32 iy = c * 3 / 2;
         const u32 *row = (const u32 *)(src + (iy < h ? iy : h - 1) * stride);
         u8 *d = fb0 + c * SCR_H * 3;
@@ -172,7 +182,7 @@ static void blit_bottom(const u8 *src, u32 w, u32 h, u32 stride)
     }
     rowbuf[w] = 0;
     for (u32 c = 0; c < 320; c++) {
-        if (c % POLL_EVERY == 0) blksrv_poll();
+        if (c % POLL_EVERY == 0) poll_io();
         u32 iy = c * 3 / 2;
         wcopy(rowbuf, (const u32 *)(src + (iy < h ? iy : h - 1) * stride), w);
         pack_column(ix);
@@ -195,7 +205,7 @@ static void blit_top(const u8 *src, u32 w, u32 h, u32 stride)
         ix_w = w;
     }
     for (u32 c = 0; c < outw; c++) {
-        if (c % POLL_EVERY == 0) blksrv_poll();
+        if (c % POLL_EVERY == 0) poll_io();
         wcopy(rowbuf, (const u32 *)(src + (c * 4 / 3) * stride), w);
         pack_column(ix);
         store_column(top_fb, x0 + c, shown);
@@ -239,7 +249,7 @@ static void display_blit_slow(u32 regs_pa)
     u8 *fb0 = top_fb[0] ? top_fb[0] : top_fb[1], *fb1 = top_fb[0] ? top_fb[1] : NULL;
     if (!fb0) return;
     for (u32 c = 0; c < outw; c++) {
-        if (c % POLL_EVERY == 0) blksrv_poll();
+        if (c % POLL_EVERY == 0) poll_io();
         /* memory goes bottom-to-top: source column 0 at the bottom
            (rotate the 3DS 90 deg clockwise to read it upright) */
         const u32 *row = (const u32 *)(src + (c * 4 / 3) * stride);
