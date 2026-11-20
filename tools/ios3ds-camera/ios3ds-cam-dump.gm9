@@ -1,0 +1,27 @@
+# ios3ds: copy the camera sysmodule's code off YOUR console (GodMode9 script)
+#
+# Copy this file to sd:/gm9/scripts/ and run it from GodMode9:
+#   HOME menu -> Scripts... -> ios3ds-cam-dump
+#
+# Why: ios3ds drives the 3DS cameras without Horizon, and no public document
+# describes the camera interface start-up (docs/camera.md section 7). The
+# CAMERA sysmodule does exactly that, so its register writes are read out of
+# its code once, on a PC (docs/camera.md). Only the derived register sequence
+# ever goes into the ios3ds repository.
+#   reads   1:/title/00040130/00001602/content/*.app   (CAMERA sysmodule)
+#   writes  0:/ios3ds/cam.code                          (its decompressed ARM11 code)
+# NAND is only READ (no NAND write permission is asked for or needed); the
+# only write is the one file on the SD card. ios3ds itself never loads it.
+# cam.code is Nintendo's code: keep it to yourself, do not share it.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+set ERRORMSG "ios3ds: stopped (CAMERA module not found,\nunreadable, or cancelled).\nNAND was not changed."
+set SUCCESSMSG "ios3ds: wrote 0:/ios3ds/cam.code\nPut the SD card back into the PC."
+
+find 1:/title/00040130/00001602/content/*.app CAMAPP
+ask "ios3ds camera module\n \nRead (NAND, read only):\n$[CAMAPP]\n \nWrite (SD card):\n0:/ios3ds/cam.code\n \nContinue?"
+
+mkdir -o -s 0:/ios3ds
+rm -o -s 0:/ios3ds/cam.code
+extrcode $[CAMAPP] 0:/ios3ds/cam.code
