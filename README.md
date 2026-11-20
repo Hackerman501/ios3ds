@@ -44,9 +44,9 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 |---|---|
 | **Old 3DS** | ✅ supported, the main test console |
 | **Old 3DS XL** | ✅ supported (same hardware as the Old 3DS) |
-| **Old 2DS** | ✅ supported (same hardware as the Old 3DS; the sleep switch acts like closing the lid) |
+| **Old 2DS** | ✅ supported (same hardware as the Old 3DS) |
 | **New 2DS XL** | ✅ boots to the home screen with sound, power button and battery ([#1](https://github.com/devilAPI/ios3ds/issues/1)) |
-| New 3DS, New 3DS XL, New 2DS XL extras | runs in Old 3DS mode; the extra CPU cores, RAM, C-stick and ZL/ZR are not used |
+| New 3DS, New 3DS XL | untested; expected to behave like the New 2DS XL. On all New models the extra CPU cores, RAM, C-stick and ZL/ZR are not used |
 
 All models need Luma3DS (boot9strap). Reports for any model are welcome in the [issues](https://github.com/devilAPI/ios3ds/issues).
 
