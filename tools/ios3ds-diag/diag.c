@@ -72,6 +72,7 @@ static int iobusy(int secs)
    link from another app would. One "[urltest]" line per URL. */
 #include <errno.h>
 #include <stdint.h>
+time_t time(time_t *);
 struct sin4 { uint8_t len, family; uint16_t port; uint32_t addr; char zero[8]; };
 int socket(int, int, int);
 int connect(int, const void *, unsigned);
@@ -86,7 +87,8 @@ static int urlpoll(const char *ip, int port)
         (void *(*)(void *, const char *, long, unsigned, void *))dlsym(cf, "CFURLCreateWithBytes");
     void (*rel)(void *) = (void (*)(void *))dlsym(cf, "CFRelease");
     int (*open_url)(void *, int) = (int (*)(void *, int))dlsym(sbs, "SBSOpenSensitiveURLAndUnlock");
-    unsigned a, b, c, d, fails = 0;
+    unsigned a, b, c, d;
+    time_t t0 = time(NULL);
     char last[256] = "";
     if (!mkurl || !rel || !open_url || sscanf(ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) return 1;
     for (;;) {
@@ -102,9 +104,10 @@ static int urlpoll(const char *ip, int port)
                 got += n;
         close(s);
         buf[got] = 0;
-        if (!got && ++fails == 20 && !last[0]) {
-            /* no network for ~40 s: open the first page anyway, which is a
-               user opening Safari before Wi-Fi is up (emu/safari_test.py --nolink) */
+        if (!got && !last[0] && time(NULL) - t0 >= 40) {
+            /* no answer for 40 s (a connect without a link can itself take
+               75 s): open the first page anyway, as a user opening Safari
+               before Wi-Fi is up would (emu/safari_test.py --nolink) */
             snprintf(buf, sizeof(buf), "HTTP/1.0 200 OK\r\n\r\nhttp://%s:%d/p1.html", ip, port);
             got = (long)strlen(buf);
             printf("[urltest] no answer from %s:%d for 40 s: opening its first page anyway\n", ip, port);

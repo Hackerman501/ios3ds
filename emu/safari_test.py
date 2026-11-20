@@ -141,7 +141,8 @@ def main():
     ap.add_argument("--nolink", action="store_true",
                     help="wrong Wi-Fi passphrase: no network; page 1 is opened anyway after 40 s, its alert is reported")
     ap.add_argument("--www", help="serve this directory too (e.g. pages saved with wget -p -k -E -nd)")
-    ap.add_argument("--urls", default="", help="comma-separated pages of --www to load instead of the generated ones")
+    ap.add_argument("--urls", default="",
+                    help="comma-separated pages of --www (or absolute http(s) URLs) to load instead of the generated ones")
     ap.add_argument("--mem-size", help="boot.cfg mem_size override (less RAM for XNU), e.g. 0x06000000")
     ap.add_argument("--host", default="10.0.2.2",
                     help="name in the URLs, e.g. 10.0.2.2.nip.io to make Safari resolve it (slirp's DNS asks the host's)")
@@ -204,7 +205,7 @@ def main():
             with lock:
                 start = len(state["hits"])
             name = urls[n - 1] if urls else "p%d.html" % n
-            url = "http://%s:%d/%s" % (a.host, a.port, name)
+            url = name if name.startswith(("http://", "https://")) else "http://%s:%d/%s" % (a.host, a.port, name)
             state["next"] = url
             t1 = time.time()
             ok, why = False, "timeout"
@@ -217,7 +218,11 @@ def main():
                 if alerts:
                     ok, why = False, "; ".join(alerts)
                     break
-                if urls:                    # a saved page: its HTML, then 60 s without a new request
+                if url == name:             # a page on the internet (slirp): no alert for 120 s
+                    if time.time() - t1 > 120:
+                        ok, why = True, "(no alert in 120 s)"
+                        break
+                elif urls:                  # a saved page: its HTML, then 60 s without a new request
                     with lock:
                         last = state["hits"][-1][0] if len(state["hits"]) > start else 0
                     if "/" + name in paths and time.time() - last > 60:
