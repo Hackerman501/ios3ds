@@ -132,4 +132,31 @@ static void cpad_step(cpad_t *c, int cx, int cy, int valid, int pen, unsigned dp
     }
 }
 
+/* iOS is upright with the console turned 90 degrees clockwise (README):
+   console up = screen right, console right = screen down. The D-pad, circle
+   pad and C-stick are turned the same way so they act in screen directions;
+   rotate = 0 keeps console directions (daemon argument norotate). */
+#define PADB_RIGHT (1u << 4)
+#define PADB_LEFT  (1u << 5)
+#define PADB_UP    (1u << 6)
+#define PADB_DOWN  (1u << 7)
+
+/* 3DS pad bits -> cpad_step dpad bits (bit0 screen left, 1 right, 2 up, 3 down) */
+static unsigned dpad_screen(unsigned b, int rotate)
+{
+    if (!rotate)
+        return ((b & PADB_LEFT) ? 1u : 0u) | ((b & PADB_RIGHT) ? 2u : 0u) |
+               ((b & PADB_UP) ? 4u : 0u) | ((b & PADB_DOWN) ? 8u : 0u);
+    return ((b & PADB_DOWN) ? 1u : 0u) | ((b & PADB_UP) ? 2u : 0u) |
+           ((b & PADB_LEFT) ? 4u : 0u) | ((b & PADB_RIGHT) ? 8u : 0u);
+}
+
+/* a stick (x right, y up, console axes) -> screen axes */
+static void stick_screen(int cx, int cy, int rotate, int *sx, int *sy)
+{
+    if (!rotate) { *sx = cx; *sy = cy; return; }
+    *sx = cy;           /* console up = screen right */
+    *sy = -cx;          /* console left = screen up */
+}
+
 #endif

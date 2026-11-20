@@ -90,6 +90,19 @@ def main():
         img.save(os.path.join(a.out, name + ".png"))
         return img
 
+    def settled(name, first=4.0, limit=30.0):
+        """screenshot once two shots 2 s apart (after `first` s) are the same"""
+        t_start = time.time()
+        time.sleep(first)
+        prev = shot(name)
+        while time.time() - t_start < limit:
+            time.sleep(2)
+            img = shot(name)
+            if ImageStat.Stat(ImageChops.difference(img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
+                return img, time.time() - t_start
+            prev = img
+        return prev, time.time() - t_start
+
     def tap(x, y, hold=0.15):
         dx, dy = viewer.ios_to_display(x / 320.0, y / 480.0)
         q.pointer(dx, dy, True)
@@ -149,8 +162,12 @@ def main():
             time.sleep(c["settle"])
             app = shot("c%03d_app" % i)
             key("ret")                          # Home (START)
-            time.sleep(6)
-            home = shot("c%03d_home" % i)
+            # wait until the screen stops changing (up to 30 s) instead of a
+            # fixed 6 s: with --icount the guest runs slower when the host is
+            # busy (other emulators), and a fixed wait screenshots the close
+            # animation halfway, then the recovery's second Home opens Spotlight
+            home, t_wait = settled("c%03d_home" % i)
+            c["home_wait"] = round(t_wait, 1)
             diff = ImageStat.Stat(ImageChops.difference(home.convert("L"), home_ref.convert("L"))).mean[0]
             c["home_diff"] = round(diff, 2)
             c["app_diff"] = round(ImageStat.Stat(ImageChops.difference(
@@ -185,7 +202,7 @@ def main():
                 key("ret")
                 time.sleep(3)
                 drag(40, 420, 300, 420, 0.8)
-                time.sleep(8)
+                settled("c%03d_unlock" % i)     # the icons fly in after an unlock
                 # iOS fades the screen in after an unlock (and the emulated
                 # backlight dims it): compare at the reference's brightness so
                 # only content differences count (re-log 63)
@@ -197,7 +214,7 @@ def main():
                 if mu > 5:
                     u = u.point(lambda v, k=mr / mu: min(255, int(v * k + 0.5)))
                 c["after_unlock_diff"] = round(ImageStat.Stat(ImageChops.difference(u, ref)).mean[0], 2)
-            log("cycle %d tap (%d,%d): app diff %.1f, home diff %.1f" % (i, x, y, c["app_diff"], diff))
+            log("cycle %d tap (%d,%d): app diff %.1f, home diff %.1f (home settled after %.0f s)" % (i, x, y, c["app_diff"], diff, c["home_wait"]))
             results["cycles"].append(c)
             if proc.poll() is not None:
                 log("QEMU exited early")

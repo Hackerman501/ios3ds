@@ -27,17 +27,19 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2, Safari | needs the console's own Wi-Fi firmware, copied automatically |
-| ✅ | Cydia | pre-installed on home page 2 |
+| ✅ | Wi-Fi: scan, WPA2 (also routers in WPA2 + WPA3 mode), Safari | needs the console's own Wi-Fi firmware, copied automatically. Fixed, waiting for a console test: the connection dropped after a few minutes (the router's group key renewal went unanswered) |
+| ✅ | Cydia | pre-installed |
+| ⚠️ | Safari | loads pages; the first load sometimes fails with "cannot allocate memory", a retry works |
+| ⚠️ | Screen rotation (accelerometer) | landscape works; portrait came up upside down, fixed, waiting for a console test |
+| ⚠️ | D-pad, circle pad | work; now turned 90° to match the upright iOS screen, waiting for a console test |
+| ❌ | Cameras | the sensors are found and start, but no picture arrives yet: being worked on |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
-| 🧪 | Cameras (Camera.app, photos) | outer = back, inner = front; 320×240 preview, no video |
-| 🧪 | Accelerometer, gyroscope (CoreMotion) | |
-| 🧪 | Circle pad scrolling, D-pad page swipes | |
+| 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
 | ❌ | 3D screen, IR, NFC, video recording | |
 
-✅ confirmed on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not supported
+✅ confirmed on a real 3DS · ⚠️ works on a console, with a known problem · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
 ### Compatibility
 
@@ -129,10 +131,10 @@ Alternatively, hold **START** while powering on and pick `ios3ds` in Luma's chai
 | **HOME** or **START** | Home button |
 | **POWER** (press) or **SELECT** | lock / sleep |
 | **L / R** | volume down / up |
-| **Circle pad** | scroll |
-| **D-pad ← →** | previous / next page |
+| **Circle pad** | scroll (in the direction of the upright iOS screen) |
+| **D-pad** | with the 3DS turned so iOS is upright: ← → previous / next page, ↑ ↓ scroll by about a page |
 | **X** | screen layout: iOS on top + touch copy below → iOS on the bottom only → iOS on top only |
-| **C-stick** (New 3DS) | flick ← → = previous / next page, ↑ ↓ = scroll by about a page |
+| **C-stick** (New 3DS) | like the D-pad: flick ← → = previous / next page, ↑ ↓ = scroll by about a page |
 | **ZL / ZR** (New 3DS) | scroll to the top / screenshot |
 | **POWER** (hold ~10 s) | leave iOS: the 3DS switches off; the next power-on is your normal Luma + HOME Menu |
 | SELECT + START (hold) | debugging only: crash iOS on purpose and write a report to the log |

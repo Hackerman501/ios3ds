@@ -102,7 +102,7 @@ void CFRelease(const void *cf);
 #include "n3ds.h"
 static cpad_t cpad;
 static cstick_t cstick;
-static int opt_nocpad, opt_non3ds;
+static int opt_nocpad, opt_non3ds, opt_norotate;
 
 static const struct { uint16_t btn, usage; } keymap[] = {
     { PAD_START,  kHIDUsage_Csmr_Menu },
@@ -272,6 +272,36 @@ static void gs_load(void)
     if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
 }
 
+/* SpringBoard shows something modal over the frontmost app? bit 0 locked,
+   1 alert item, 2 full-screen alert: from ios3ds-applog.dylib in SpringBoard
+   (notify state com.ios3ds.sb.modal), plus SBGetScreenLockStatus for the lock
+   screen in case that dylib is not there */
+static int sb_modal(void)
+{
+    static int tok = -1, tried;
+    static uint32_t (*get)(int, uint64_t *);
+    static void (*lockst)(mach_port_t, unsigned char *, unsigned char *);
+    int m = 0;
+    if (!tried) {
+        tried = 1;
+        uint32_t (*reg)(const char *, int *) = (uint32_t (*)(const char *, int *))dlsym(RTLD_DEFAULT, "notify_register_check");
+        get = (uint32_t (*)(int, uint64_t *))dlsym(RTLD_DEFAULT, "notify_get_state");
+        if (reg && reg("com.ios3ds.sb.modal", &tok) != 0) tok = -1;
+        void *h = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", 1);
+        if (h) lockst = (void (*)(mach_port_t, unsigned char *, unsigned char *))dlsym(h, "SBGetScreenLockStatus");
+    }
+    if (tok >= 0 && get) {
+        uint64_t st = 0;
+        if (get(tok, &st) == 0) m = (int)(st & 7);
+    }
+    if (!(m & 1) && lockst && sbs_port) {
+        unsigned char locked = 0, pass = 0;
+        lockst(sbs_port(), &locked, &pass);
+        if (locked) m |= 1;
+    }
+    return m;
+}
+
 static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
 {
     static char app[256];
@@ -308,11 +338,15 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
        (no app) SpringBoard gets it through the system event port */
     if (touch && !(mask & kIOHIDDigitizerEventPosition)) {   /* new touch: re-resolve */
         char id[256] = "";
-        if (sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
+        int modal = sb_modal();
+        /* SpringBoard's lock screen or an alert over the app: the touch is
+           SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
+        if (!modal && sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
         if (strcmp(id, app)) {
             strncpy(app, id, sizeof app - 1);
             app_port = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
-            if (opt_debug) say("[input] touch target %s", id[0] ? id : "SpringBoard");
+            if (opt_debug) say("[input] touch target %s%s", id[0] ? id : "SpringBoard",
+                               modal ? (modal & 1 ? " (lock screen)" : " (alert)") : "");
         }
     }
     if (app_port && gs_send_event) gs_send_event(&e.rec, app_port);
@@ -451,6 +485,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "debug")) opt_debug = 1;
         else if (!strcmp(argv[i], "nocpad")) opt_nocpad = 1;
         else if (!strcmp(argv[i], "non3ds")) opt_non3ds = 1;
+        else if (!strcmp(argv[i], "norotate")) opt_norotate = 1;
     }
 
     /* the shim registers the sysctl at root mount; no sysctl = old shim */
@@ -506,14 +541,17 @@ int main(int argc, char **argv)
         key_tick();
         if (synced && !screen_off && !opt_nocpad) {    /* circle pad / D-pad gestures */
             cpad_out_t o;
-            unsigned dpad = ((state.buttons & PAD_LEFT) ? 1u : 0u) | ((state.buttons & PAD_RIGHT) ? 2u : 0u);
+            unsigned dpad = dpad_screen(state.buttons, !opt_norotate);
+            int sx, sy;
             if (!opt_non3ds) {          /* New 3DS C-stick flicks: pages and page scrolls (n3ds.h) */
                 static int said;
                 if ((box.ext & INEXT_VALID) && !said++) say("[input] New 3DS C-stick, ZL/ZR: on");
-                dpad |= cstick_dirs(&cstick, INEXT_X(box.ext), INEXT_Y(box.ext), (box.ext & INEXT_VALID) != 0);
+                stick_screen(INEXT_X(box.ext), INEXT_Y(box.ext), !opt_norotate, &sx, &sy);
+                dpad |= cstick_dirs(&cstick, sx, sy, (box.ext & INEXT_VALID) != 0);
                 if (state.buttons & INBTN_ZL) dpad |= 16u;     /* ZL: tap the status bar (scroll to top) */
             }
-            cpad_step(&cpad, state.cx, state.cy, (state.flags & INFLAG_CPAD) != 0,
+            stick_screen(state.cx, state.cy, !opt_norotate, &sx, &sy);
+            cpad_step(&cpad, sx, sy, (state.flags & INFLAG_CPAD) != 0,
                       (state.flags & INFLAG_PEN) != 0, dpad, &o);
             if (o.ev == CP_DOWN || o.ev == CP_UP) {
                 if (opt_debug) say("[input] cpad %s %d,%d", o.ev == CP_DOWN ? "down" : "up",

@@ -9,8 +9,13 @@ if [[ ! -d "$Q/.git" ]]; then
     git clone -q --depth 1 --branch "$VER" https://gitlab.com/qemu-project/qemu.git "$Q"
 fi
 # QEMU core patches (idempotent)
+# (an updated patch replaces its older version: the files it touches are
+# reset first, otherwise a changed patch was silently skipped)
 for p in "$ROOT"/emu/qemu/patches/*.patch; do
-    git -C "$Q" apply --check "$p" 2>/dev/null && git -C "$Q" apply "$p" && echo "applied $(basename "$p")"
+    git -C "$Q" apply --check -R "$p" 2>/dev/null && continue        # this exact version is in
+    files=$(grep '^+++ b/' "$p" | sed 's|^+++ b/||')
+    git -C "$Q" apply --check "$p" 2>/dev/null || git -C "$Q" checkout -- $files
+    git -C "$Q" apply "$p" && echo "applied $(basename "$p")" || { echo "patch $(basename "$p") does not apply"; exit 1; }
 done
 # our machine: symlink so edits in emu/ are picked up by ninja
 ln -sf "$ROOT/emu/qemu/hw/arm/nintendo3ds.c" "$Q/hw/arm/nintendo3ds.c"

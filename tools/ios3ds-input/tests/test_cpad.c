@@ -67,6 +67,23 @@ int main(void)
     cpad_step(&c, 0, 0, 1, 0, 1, &o);
     CHECK(o.ev == CP_DOWN && o.x < 0.2f, "D-pad left swipes the other way (%f)", o.x);
 
+    /* rotation: console turned 90 degrees clockwise (iOS upright) */
+    CHECK(dpad_screen(PADB_DOWN, 1) == 1 && dpad_screen(PADB_UP, 1) == 2, "D-pad down/up = screen left/right");
+    CHECK(dpad_screen(PADB_LEFT, 1) == 4 && dpad_screen(PADB_RIGHT, 1) == 8, "D-pad left/right = screen up/down");
+    CHECK(dpad_screen(PADB_LEFT, 0) == 1 && dpad_screen(PADB_RIGHT, 0) == 2 && dpad_screen(PADB_UP, 0) == 4,
+          "norotate keeps console directions");
+    {
+        int sx, sy;
+        stick_screen(0, 1000, 1, &sx, &sy);
+        CHECK(sx == 1000 && sy == 0, "stick up = screen right (%d,%d)", sx, sy);
+        stick_screen(1000, 0, 1, &sx, &sy);
+        CHECK(sx == 0 && sy == -1000, "stick right = screen down (%d,%d)", sx, sy);
+        stick_screen(-1000, 0, 1, &sx, &sy);
+        CHECK(sy == 1000, "stick left = screen up");
+        stick_screen(3, 4, 0, &sx, &sy);
+        CHECK(sx == 3 && sy == 4, "norotate: unchanged");
+    }
+
     printf("%s: %d checks, %d failed\n", fails ? "FAIL" : "ok", checks, fails);
     return fails != 0;
 }

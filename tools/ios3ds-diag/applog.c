@@ -15,6 +15,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <dlfcn.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,8 +123,70 @@ static void hook_alerts(void)
     if (m) orig_appear = p_setImplementation(m, (IMP)hook_appear);
 }
 
+/*
+ * Always on, in SpringBoard only: publish whether SpringBoard itself shows
+ * something modal (lock screen, an alert item such as "Low Battery", or a
+ * full-screen SBAlert such as the power-off slider) as the Darwin notify
+ * state "com.ios3ds.sb.modal" (bit 0 locked, 1 alert item, 2 SBAlert). The
+ * input daemon sends touches to the frontmost app's port, and the frontmost
+ * app stays the app while SpringBoard's lock screen or an alert is over it:
+ * touch "locked up" after a popup or a lock (issue #1, New 2DS XL log). The
+ * daemon reads this state at every touch-down (tools/ios3ds-input).
+ */
+static int modal_token = -1, modal_last = -1;
+static uint32_t (*p_notify_set_state)(int, uint64_t);
+
+static int sb_responds(id o, const char *name)
+{
+    return o && p_msgSend(o, p_sel("respondsToSelector:"), p_sel(name)) != 0;
+}
+
+static id sb_call(id o, const char *name)
+{
+    return sb_responds(o, name) ? p_msgSend(o, p_sel(name)) : 0;
+}
+
+static void modal_tick(void *timer, void *info)
+{
+    (void)timer; (void)info;
+    int m = 0;
+    if (sb_call(sb_call(p_getClass("SBAwayController"), "sharedAwayController"), "isLocked")) m |= 1;
+    if (sb_call(sb_call(p_getClass("SBAlertItemsController"), "sharedInstance"), "hasVisibleAlert")) m |= 2;
+    id app = sb_call(p_getClass("UIApplication"), "sharedApplication");
+    if (sb_call(app, "topMostAlert")) m |= 4;
+    if (m != modal_last) {
+        modal_last = m;
+        p_notify_set_state(modal_token, (uint64_t)m);
+    }
+}
+
+static void modal_start(void)
+{
+    void *objc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW);
+    void *cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    if (!objc || !cf) return;
+    p_getClass = (id (*)(const char *))dlsym(objc, "objc_getClass");
+    p_sel = (SEL (*)(const char *))dlsym(objc, "sel_registerName");
+    p_msgSend = (id (*)(id, SEL, ...))dlsym(objc, "objc_msgSend");
+    uint32_t (*reg)(const char *, int *) = (uint32_t (*)(const char *, int *))dlsym(RTLD_DEFAULT, "notify_register_check");
+    p_notify_set_state = (uint32_t (*)(int, uint64_t))dlsym(RTLD_DEFAULT, "notify_set_state");
+    void *(*mk)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *) =
+        (void *(*)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *))
+            dlsym(cf, "CFRunLoopTimerCreate");
+    double (*now)(void) = (double (*)(void))dlsym(cf, "CFAbsoluteTimeGetCurrent");
+    void *(*main_rl)(void) = (void *(*)(void))dlsym(cf, "CFRunLoopGetMain");
+    void (*add)(void *, void *, void *) = (void (*)(void *, void *, void *))dlsym(cf, "CFRunLoopAddTimer");
+    void **common = (void **)dlsym(cf, "kCFRunLoopCommonModes");
+    if (!p_getClass || !p_sel || !p_msgSend || !reg || !p_notify_set_state || !mk || !now || !main_rl || !add || !common)
+        return;
+    if (reg("com.ios3ds.sb.modal", &modal_token) != 0) return;
+    void *t = mk(NULL, now() + 1.0, 0.1, 0, 0, modal_tick, NULL);
+    if (t) add(main_rl(), t, *common);
+}
+
 __attribute__((constructor)) static void applog_init(void)
 {
+    if (!strcmp(getprogname(), "SpringBoard")) modal_start();
     char ba[512];
     size_t n = sizeof(ba) - 1;
     if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) != 0) return;
