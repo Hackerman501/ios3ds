@@ -227,7 +227,8 @@ static void port_line(Port *p, Sensor *s)
         p->armed = false;
         LOG("[cam] port %d: transfer starts at frame %u (%ux%u)\n", (int)(p - K.p), p->frame, w, h);
     }
-    if (p->line < h && (p->cnt & CAM_CNT_EN) && !p->armed && !p->overrun) {
+    /* CAM0's bit 4 is the reset of both blocks (CAMERA sysmodule, re-log 71) */
+    if (p->line < h && (p->cnt & CAM_CNT_EN) && (K.p[0].cnt & 0x10) && !p->armed && !p->overrun) {
         for (uint32_t x = 0; x < w; x += 2) {
             if (p->count == FIFO_WORDS) {
                 p->overrun = true;
@@ -274,7 +275,7 @@ static void regs_write(void *opaque, hwaddr a, uint64_t v, unsigned size)
     int n = (int)(p - K.p);
     if (a == 0x00) {
         uint32_t old = p->cnt;
-        p->cnt = (uint32_t)v & 0xEF1C;
+        p->cnt = (uint32_t)v & (n ? 0xEF0C : 0xEF1C);   /* bit 4 does not stick on CAM1 (run 25) */
         if ((p->cnt & CAM_CNT_EN) && !(old & CAM_CNT_EN)) {
             p->armed = true;
             LOG("[cam] port %d: CAM_CNT %04x: transfer on (waits for a frame start)\n", n, p->cnt);

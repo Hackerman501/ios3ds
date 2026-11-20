@@ -95,8 +95,17 @@ the frame size (section 6). The I2C buses and the camera clock are the ARM9's
 | Host test | `tools/ios3ds-camera/tests/test_cam.c`, `tests/test_camera.py` |
 
 ### 3.1 Sensor set-up (ARM9)
+First the CAM blocks, in the order the 3DS CAMERA sysmodule uses
+(re-log 71): CAM0's CAM_CNT bit 4 (the reset of both blocks; it does not
+exist on CAM1) held low while the camera clock (CFG11_CAMERA_CNT bit 0, the
+module's `pdn:c` call) comes on, released with the clock running, clock off;
+then on both blocks transfer off, overrun cleared, 256-byte transfer unit,
+trimming off, CAM_CNT bits 8-9 = 2, bit 10 on, bit 11 off, bit 14 on; then
+the clock on for good. Then the sensor:
 GBATEK's DSi Aptina code list (reset, wakeup, PLL as on the DSi, YUV output,
-sizes, AE window, sequencer refresh) with output size A = 320x240, then
+sizes, AE window, sequencer refresh; the cam module's base script is the
+same list plus 1 ms/10 ms waits, MCU 0xA111 = 0x0A and flicker-detection MCU
+values, which are written too) with output size A = 320x240, then
 "activate" (standby off, parallel output on). The read mode is GBATEK's
 (0x24 for the 0x7A camera, 0x25 = x-flip for the others); which of them
 gives a true or a mirrored picture is unverified (section 7). Each wait gives up after
@@ -109,7 +118,8 @@ previous sensor into standby first.
   code) and the FIFO windows (0x10300000 → VA 0xBFB00000), allocates three
   150 KiB frame buffers once, and posts the request to the ARM9.
 - Once the ARM9 reports the sensor streaming, the interrupt path sets
-  `CAM_CNT = 0x10 | 0x8000` (bit 4 must be set, bit 15 transfer; the transfer
+  the set-up variant's CAM_CNT with bit 15 (variant 0 = the cam module's
+  0xC610; bit 4 must stay set on CAM0, stopping clears bit 15 only; the transfer
   starts at a frame start) and from then on, every 1 ms, reads `CAM_STAT`'s
   fill count and copies that many words from the window into the frame being
   filled. Window reads always continue at the next address (a word is only
@@ -175,6 +185,15 @@ every 10 s: no word ever reached the CAM1 FIFO. A third start timed out in
 the sequencer refresh (`init failed (step 5)`). The shim's FIFO drain itself
 is not in question yet: without overruns the FIFO never filled at all.
 
+**From the CAMERA sysmodule (re-log 71):** what run 25 lacked is the block
+reset with the clock running (CAM0 bit 4 had been set by whatever ran
+before, with the clock off), bit 14 on both blocks, a transfer unit of whole
+lines, and a stop that leaves bit 4 alone (the shim wrote CAM_CNT = 0, which
+holds both blocks in reset). All four are now as the module does them;
+variant 0 is the module's set-up (0xC610, 2560-byte unit). The next log
+should show `after the cam module's block reset/init` with CAM0 `4610`,
+CAM1 `4600`, then data in variant 0.
+
 **Run 25 (re-log 70):** with these diagnostics: the sensor reports streaming
 (SEQ_STATE 3, parallel output on, awake), yet neither block ever sees sync or
 data in any variant; CFG11 bit 1 does not stick; CAM_CNT bit 4 sticks on CAM0
@@ -188,7 +207,8 @@ What the code does about it (all logged):
   data arrives on CAM0 instead of CAM1, the shim moves there
   (`CAM0`/`CAM1` in the stats line).
 - **Set-up variants**, 2 s each, cycled until data appears
-  (`CAM_VAR_CNT_LIST`/`CAM_VAR_CLR_LIST` in `boot/common/cam_proto.h`): CAM_CNT
+  (`CAM_VAR_CNT_LIST`/`CAM_VAR_CLR_LIST` in `boot/common/cam_proto.h`): the
+  cam module's 0xC610 with +6 = 9 (4 lines of 320 pixels) first, then
   0x8010; 0x8610 (the DSi's init bits 8-9 = 2, 10 = 1); 0x8E10 (+ bit 11);
   0x8610 with +6 = 0x22 (GBATEK suspects +6 is the DSi's CAM_MCNT, "on" =
   0x22); 0xC610 + DRQ with +6 = 0x22.
