@@ -347,7 +347,12 @@ through the CPU:
    must hit the check and still PASS.
 6. **Fallback.** If `PRESENT` fails once (refusal, older shim, GPU error) the
    engine logs it, stops presenting for the rest of the process and uses the
-   read-back as before. `IOS3DS_GL_NO_PRESENT=1` forces the read-back;
+   read-back as before; from then on one read-back staging buffer stays
+   allocated instead of 1 MiB being taken from the arena (and textures being
+   evicted for it) on every frame (re-log 75). Presenting only the refused
+   surface through the CPU and the VRAM display through the GPU was tried and
+   left a stale home screen in the QEMU soak (re-log 75).
+   `IOS3DS_GL_NO_PRESENT=1` forces the read-back;
    `IOS3DS_GL_PRESENT_ALL=1` presents every eligible target (host test).
 
 **XNU's modified-bit emulation.** The first attempt was refused: `not

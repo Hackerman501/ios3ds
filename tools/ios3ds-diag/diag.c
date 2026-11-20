@@ -65,19 +65,93 @@ static int iobusy(int secs)
     return 0;
 }
 
+/* "ios3ds-diag -urlpoll a.b.c.d port": QEMU test aid (emu/safari_test.py).
+   Every 2 s it GETs http://a.b.c.d:port/next (BSD sockets, HTTP/1.0); a body
+   that starts with "http" and differs from the last one is opened with
+   SpringBoardServices' SBSOpenSensitiveURLAndUnlock, i.e. in Safari, as a
+   link from another app would. One "[urltest]" line per URL. */
+#include <errno.h>
+#include <stdint.h>
+time_t time(time_t *);
+struct sin4 { uint8_t len, family; uint16_t port; uint32_t addr; char zero[8]; };
+int socket(int, int, int);
+int connect(int, const void *, unsigned);
+long send(int, const void *, size_t, int);
+long recv(int, void *, size_t, int);
+static int urlpoll(const char *ip, int port)
+{
+    void *cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_NOW);
+    if (!cf || !sbs) return 1;
+    void *(*mkurl)(void *, const char *, long, unsigned, void *) =
+        (void *(*)(void *, const char *, long, unsigned, void *))dlsym(cf, "CFURLCreateWithBytes");
+    void (*rel)(void *) = (void (*)(void *))dlsym(cf, "CFRelease");
+    int (*open_url)(void *, int) = (int (*)(void *, int))dlsym(sbs, "SBSOpenSensitiveURLAndUnlock");
+    unsigned a, b, c, d;
+    time_t t0 = time(NULL);
+    char last[256] = "";
+    if (!mkurl || !rel || !open_url || sscanf(ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) return 1;
+    for (;;) {
+        char buf[1024], *body;
+        long n, got = 0;
+        struct sin4 sa = { sizeof sa, 2, (uint16_t)((port >> 8) | ((port & 255) << 8)), a | b << 8 | c << 16 | d << 24, { 0 } };
+        int s = socket(2, 1, 0);
+        sleep(2);
+        if (s < 0) continue;
+        if (connect(s, &sa, sizeof sa) == 0 &&
+            send(s, "GET /next HTTP/1.0\r\n\r\n", 22, 0) == 22)
+            while (got < (long)sizeof(buf) - 1 && (n = recv(s, buf + got, sizeof(buf) - 1 - got, 0)) > 0)
+                got += n;
+        close(s);
+        buf[got] = 0;
+        if (!got && !last[0] && time(NULL) - t0 >= 40) {
+            /* no answer for 40 s (a connect without a link can itself take
+               75 s): open the first page anyway, as a user opening Safari
+               before Wi-Fi is up would (emu/safari_test.py --nolink) */
+            snprintf(buf, sizeof(buf), "HTTP/1.0 200 OK\r\n\r\nhttp://%s:%d/p1.html", ip, port);
+            got = (long)strlen(buf);
+            printf("[urltest] no answer from %s:%d for 40 s: opening its first page anyway\n", ip, port);
+        }
+        if (!(body = strstr(buf, "\r\n\r\n"))) continue;
+        body += 4;
+        for (n = 0; body[n] && body[n] != '\r' && body[n] != '\n' && body[n] != ' '; n++) ;
+        body[n] = 0;
+        if (strncmp(body, "http", 4) || !strcmp(body, last) || strlen(body) >= sizeof(last)) continue;
+        strcpy(last, body);
+        void *u = mkurl(0, body, (long)strlen(body), 0x08000100 /* UTF-8 */, 0);
+        int r = u ? open_url(u, 1) : -1;
+        if (u) rel(u);
+        printf("[urltest] open %s -> %d\n", body, r);
+        fflush(stdout);
+    }
+}
+
 int main(int argc, char **argv)
 {
     char ba[512];
     size_t n = sizeof(ba) - 1;
+    const char *gate = "ios3ds_diag=";
+    char g[64];
     if (argc >= 2 && !strcmp(argv[1], "-iobusy")) return iobusy(argc >= 3 ? atoi(argv[2]) : 0);
+    if (argc >= 4 && !strcmp(argv[1], "-urlpoll")) return urlpoll(argv[2], atoi(argv[3]));
+    /* "-g name": the job runs with boot-arg name=1 instead of ios3ds_diag=1,
+       e.g. ios3ds_mem=1 for the [mem] report (diag=1's [smp] sampler prints
+       the same lines after every round) */
+    if (argc >= 4 && !strcmp(argv[1], "-g")) {
+        snprintf(g, sizeof(g), "%s=", argv[2]);
+        gate = g;
+        argv += 2;
+        argc -= 2;
+    }
     if (argc < 2) {
-        fprintf(stderr, "usage: ios3ds-diag program [args...]\n");
+        fprintf(stderr, "usage: ios3ds-diag [-g bootarg] program [args...]\n");
         return 2;
     }
     if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) != 0) return 0;
     ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
-    const char *p = strstr(ba, "ios3ds_diag=");
-    if (!p || p[12] == '0' || p[12] == 0) return 0;
+    const char *p = strstr(ba, gate);
+    size_t gl = strlen(gate);
+    if (!p || p[gl] == '0' || p[gl] == 0 || p[gl] == ' ') return 0;
     execv(argv[1], argv + 1);
     perror(argv[1]);
     return 1;

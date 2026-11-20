@@ -140,6 +140,7 @@ typedef struct {
     u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
     u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
     u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
+    u32 n3ds_ram;        /* New 3DS: 1 = XNU gets the 128 MiB FCRAM extension too (256 MiB) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -189,6 +190,7 @@ static int parse_bootcfg(char *txt)
     cfg.hp_route = 1;
     cfg.n3ds_clock = 1;
     cfg.n3ds_hid = 1;
+    cfg.n3ds_ram = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -207,6 +209,7 @@ static int parse_bootcfg(char *txt)
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
+        { "n3ds_ram", &cfg.n3ds_ram },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
@@ -726,12 +729,59 @@ static void __attribute__((noreturn)) monitor(const char *phase)
    ARM9 timer). The result word goes into the shim (SHIM_N3DS_OFF): the shim
    programs its timer prescaler and tick shift from it. docs/n3ds.md */
 static u32 n3ds_res;
+
+/* Apple device tree (flattened): node = nprops, nchildren, props, children;
+   prop = name[32], length (bit 31: placeholder), value padded to 4 bytes.
+   Returns the end of the node; sets *reg to the value of /memory's "reg". */
+static const u8 *dt_walk(const u8 *n, const u8 *end, int depth, u32 **reg)
+{
+    u32 np, nc, i, len;
+    const u8 *p = n + 8, *name = NULL, *r = NULL;
+    if (n + 8 > end) return end;
+    np = ((const u32 *)n)[0];
+    nc = ((const u32 *)n)[1];
+    for (i = 0; i < np && p + 36 <= end; i++) {
+        len = ((const u32 *)p)[8] & 0x7FFFFFFFu;
+        if (!strncmp((const char *)p, "name", 5)) name = p + 36;
+        if (!strncmp((const char *)p, "reg", 4) && len >= 8) r = p + 36;
+        p += 36 + ((len + 3) & ~3u);
+    }
+    if (depth == 1 && name && r && !strncmp((const char *)name, "memory", 7)) *reg = (u32 *)r;
+    for (i = 0; i < nc && p < end; i++) p = dt_walk(p, end, depth + 1, reg);
+    return p;
+}
+
+/* New 3DS with n3ds_ram=1: the ARM11 stub found RAM of its own at
+   0x28000000-0x2FFFFFFF (PDN_LGR_CNT bit 0): XNU's memSize and the device
+   tree's /memory become 256 MiB. Everything ios3ds reserves stays in the
+   first 9 MiB; the GPU arena is kept below 0x28000000 by the shim
+   (pica.c). docs/n3ds.md section 6. */
+static void n3ds_ram(void)
+{
+    boot_args_t *ba = (boot_args_t *)cfg.bootargs_pa;
+    u32 *reg = NULL;
+    if (!(n3ds_res & N3RES_RAM)) {
+        log_warn("[n3ds] FCRAM extension not usable (no RAM of its own at 0x28000000): iOS keeps 128 MiB\n");
+        return;
+    }
+    dt_walk((const u8 *)cfg.devtree_pa, (const u8 *)cfg.bootargs_pa, 0, &reg);
+    if (!reg || reg[0] != cfg.phys_base || reg[1] != FCRAM_SIZE) {
+        log_warn("[n3ds] device tree /memory not found: iOS keeps 128 MiB\n");
+        return;
+    }
+    reg[1] = FCRAM_N3DS_SIZE;
+    ba->memSize = FCRAM_N3DS_SIZE;
+    cfg.mem_size = FCRAM_N3DS_SIZE;
+    logp("[n3ds] FCRAM extension: iOS gets 256 MiB (boot_args memSize, device tree /memory reg)\n");
+}
+
 static void n3ds_setup(void)
 {
     volatile shared_t *sh = SHARED;
     sh->n3ds_res = 0;
     sh->cal_state = 0;
-    sh->n3ds_req = (cfg.n3ds_clock ? N3REQ_CLOCK : 0) | (cfg.n3ds_l2 ? N3REQ_L2 : 0);
+    sh->n3ds_req = (cfg.n3ds_clock ? N3REQ_CLOCK : 0) | (cfg.n3ds_l2 ? N3REQ_L2 : 0) |
+                   (cfg.n3ds_ram && cfg.mem_size == FCRAM_SIZE ? N3REQ_RAM : 0);
     sh->a9_cmd = A9CMD_N3DS;
     for (u32 t0 = clk_ticks(); !(sh->n3ds_res & N3RES_DONE) && clk_ticks() - t0 < 3 * T9_HZ;) {
         if (sh->cal_state == 1) {
@@ -768,6 +818,8 @@ static void n3ds_setup(void)
     } else {
         logp("[n3ds] model: Old 3DS (CFG11_SOCINFO %x), PERIPHCLK %u Hz\n", sh->n3ds_socinfo, sh->n3ds_periph_hz);
     }
+    if ((n3ds_res & N3RES_NEW) && cfg.n3ds_ram && cfg.mem_size == FCRAM_SIZE)
+        n3ds_ram();
     if (cfg.shim[0] && cfg.shim_pa)
         *(vu32 *)(cfg.shim_pa + SHIM_N3DS_OFF) = n3ds_res;
 }

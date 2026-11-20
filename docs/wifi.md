@@ -289,7 +289,9 @@ waits until the mailbox has a backend and MAC, creates an
 `IOEthernetController` with `kIOEthernetHardwareAddress` = the AR6014's MAC,
 makes its socket non-blocking and loops: drain iOS's TX queue into one
 write, read the next RX batch, `WritePacket` each frame, mirror the link
-state with `SetLinkStatus`, `poll()` the socket for at most 4 ms when idle.
+state with `SetLinkStatus`, `poll()` the socket for at most 4 ms when idle
+(20 ms after ~0.25 s without a frame either way: a frame iOS sends still
+wakes it at once; re-log 75).
 It finds the interface's BSD name by its MAC in the link-level address list
 (`getifaddrs`, `AF_LINK`): IONetworkStack names the interface asynchronously,
 so the registry's "BSD Name" is often not there yet. In QEMU it is `en0` (the

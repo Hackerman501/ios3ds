@@ -198,6 +198,29 @@ static void l2_enable(void)
     if (sh->n3ds_l2_ctrl & 1u) sh->n3ds_res |= N3RES_L2;
 }
 
+/* Is 0x28000000-0x2FFFFFFF RAM of its own? MMU and caches are off. Each
+   probe word is written with a pattern and its Old 3DS alias (-128 MiB, the
+   page below the kernel at 0x20000000 / the top of the old FCRAM, which
+   nothing has loaded yet) with another; both must read back. Saved and
+   restored, so a mirror or open bus changes nothing. */
+static int ext_ram_ok(void)
+{
+    static const u32 at[3] = { 0x28000000u, 0x2BFFF000u, 0x2FFFFFF0u };
+    int ok = 1;
+    for (u32 i = 0; i < 3 && ok; i++) {
+        vu32 *hi = (vu32 *)at[i], *lo = (vu32 *)(at[i] - 0x08000000u);
+        u32 shi = *hi, slo = *lo;
+        *lo = 0x5A5AA5A5u ^ i;
+        *hi = 0xC3A5963Cu ^ i;
+        if (*hi != (0xC3A5963Cu ^ i) || *lo != (0x5A5AA5A5u ^ i)) ok = 0;
+        *hi = ~(0xC3A5963Cu ^ i);
+        if (*hi != ~(0xC3A5963Cu ^ i) || *lo != (0x5A5AA5A5u ^ i)) ok = 0;
+        *hi = shi;
+        *lo = slo;
+    }
+    return ok;
+}
+
 static void a11_n3ds(void)
 {
     u32 req = sh->n3ds_req, res = 0, soc = CFG11_SOCINFO, hz, r, pre, shift = 0;
@@ -226,6 +249,13 @@ static void a11_n3ds(void)
         }
         GICD_CLR_EN(IRQ_SOCMODE / 32) = 1u << (IRQ_SOCMODE % 32);
         if ((PDN_SOCMODE & 7u) == 5u) res |= N3RES_804;
+        if (req & N3REQ_RAM) {
+            if (!(PDN_LGR_CNT & 1u)) {                      /* extension off (n3ds_clock=0) */
+                PDN_LGR_CNT = PDN_LGR_CNT | 1u;
+                wait_cycles(403);
+            }
+            if (ext_ram_ok()) res |= N3RES_RAM;
+        }
         sh->n3ds_socmode = PDN_SOCMODE;
         sh->n3ds_lgr_cnt = PDN_LGR_CNT;
     }
@@ -240,9 +270,11 @@ static void a11_n3ds(void)
     if (r == 3) shift = 1;
     sh->n3ds_res = res;
     if ((req & N3REQ_L2) && (res & N3RES_804) && (soc & 4u)) l2_enable();   /* L2 only with the LGR2 clock mode */
-    a11_printf("[a11] %s 3DS: SOCINFO %x, SOCMODE %x, LGR_CNT %x, PERIPHCLK %u Hz, timer /%u >>%u%s\n",
+    a11_printf("[a11] %s 3DS: SOCINFO %x, SOCMODE %x, LGR_CNT %x, PERIPHCLK %u Hz, timer /%u >>%u%s%s\n",
                (res & N3RES_NEW) ? "New" : "Old", soc, sh->n3ds_socmode, sh->n3ds_lgr_cnt, hz,
-               pre + 1, shift, (res & N3RES_TIMEOUT) ? ", CLOCK SWITCH TIMED OUT" : "");
+               pre + 1, shift, (res & N3RES_TIMEOUT) ? ", CLOCK SWITCH TIMED OUT" : "",
+               !(req & N3REQ_RAM) || !(res & N3RES_NEW) ? "" : (res & N3RES_RAM) ? ", FCRAM extension OK" :
+               ", FCRAM extension NOT usable");
     sh->n3ds_res = sh->n3ds_res | pre | (shift << 8) | N3RES_DONE;
 }
 

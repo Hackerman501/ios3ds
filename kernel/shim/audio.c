@@ -139,7 +139,7 @@ static inline volatile u32 *dmac_regs(void) { return (volatile u32 *)(shim_audio
 /* XNU maps all of RAM at VIRT_BASE (static map set up by the entry stub) */
 static inline void *p2v(u32 pa, u32 len)
 {
-    if (pa < PHYS_BASE || pa + len < pa || pa + len > PHYS_BASE + FCRAM_SIZE) return NULL;
+    if (pa < PHYS_BASE || pa + len < pa || pa + len > PHYS_BASE + FCRAM_N3DS_SIZE) return NULL;   /* CPU only */
     return (void *)(pa - PHYS_BASE + VIRT_BASE);
 }
 

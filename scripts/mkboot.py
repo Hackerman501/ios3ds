@@ -122,6 +122,7 @@ def build_shim(outdir):
             if len(parts) == 3 and parts[1] in "Tt":
                 syms[parts[2]] = int(parts[0], 16)
     blob = open(out, "rb").read()
+    print("[mkboot] shim main part %d of %d bytes, GPU part %d of %d bytes" % (len(blob), 0x5F00, len(gpu), GPU_PART_SIZE))
     if len(blob) > 0x6000 or blob[4:8] != b"SHIM":
         raise SystemExit("bad shim build (%d bytes)" % len(blob))
     build_gpu_bin(outdir, gpu)
@@ -305,10 +306,12 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "camera=1",
         "# New 3DS / New 2DS only, ignored on other models (docs/n3ds.md). n3ds_clock=0 keeps the",
         "# ARM11 at 268 MHz; n3ds_l2=1 turns on the 2 MiB L2 cache (experimental, write-through);",
-        "# n3ds_hid=0 never reads the C-stick / ZL / ZR chip",
+        "# n3ds_hid=0 never reads the C-stick / ZL / ZR chip; n3ds_ram=0 keeps iOS at 128 MiB instead of",
+        "# the 256 MiB of FCRAM a New 3DS has (the extension is probed first)",
         "n3ds_clock=1",
         "n3ds_l2=0",
         "n3ds_hid=1",
+        "n3ds_ram=1",
         "# diag=1: diagnostics for bring-up (docs/boot-perf.md): adds the boot-arg ios3ds_diag=1,",
         "# which starts the test launchd jobs (ios3ds-gltest, the [smp] sampler)",
         "diag=0",

@@ -9,7 +9,8 @@
  *                                 ARM9-only IO, DTCM, boot9 vector ROM)
  *   - ARM11 MPCore core 0 ("arm11mpcore"); core 1 is "parked" (not created)
  *   - MPCore private region @0x17E00000 (SCU, GIC, private timer, watchdog)
- *   - FCRAM 128 MiB @0x20000000, VRAM 6 MiB @0x18000000, AXI WRAM 512 KiB
+ *   - FCRAM 128 MiB @0x20000000 (New 3DS: 256 MiB, the extension at
+ *     0x28000000 is ARM11-only), VRAM 6 MiB @0x18000000, AXI WRAM 512 KiB
  *     @0x1FF80000, DSP RAM @0x1FF00000, shared between both CPUs
  *   - TMIO SD host controller @0x10006000 (ARM9) backed by QEMU's SD card
  *   - PDC0/PDC1 framebuffer registers @0x10400400/500 + a 400x480 display
@@ -96,6 +97,7 @@
 #define CTR_AXIWRAM_SIZE     (512 * KiB)
 #define CTR_FCRAM_BASE       0x20000000
 #define CTR_FCRAM_SIZE       (128 * MiB)
+#define CTR_FCRAM_N3DS_SIZE  (256 * MiB)       /* New 3DS: + 128 MiB at 0x28000000 */
 #define CTR_DTCM_BASE        0xFFF00000
 #define CTR_DTCM_SIZE        (16 * KiB)
 #define CTR_BOOTROM_HI       0xFFFF0000
@@ -2551,7 +2553,8 @@ static void ctr_init(MachineState *machine)
     qdev_realize(DEVICE(&s->cluster9), NULL, &error_fatal);
 
     /* ---- shared RAM ---- */
-    memory_region_init_ram(&s->fcram, NULL, "ctr.fcram", CTR_FCRAM_SIZE, &error_fatal);
+    memory_region_init_ram(&s->fcram, NULL, "ctr.fcram", ctr_new3ds ? CTR_FCRAM_N3DS_SIZE : CTR_FCRAM_SIZE,
+                           &error_fatal);
     memory_region_init_ram(&s->vram, NULL, "ctr.vram", CTR_VRAM_SIZE, &error_fatal);
     memory_region_init_ram(&s->axiwram, NULL, "ctr.axiwram", CTR_AXIWRAM_SIZE, &error_fatal);
     memory_region_init_ram(&s->dspram, NULL, "ctr.dspram", CTR_DSPRAM_SIZE, &error_fatal);

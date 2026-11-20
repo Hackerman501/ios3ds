@@ -11,7 +11,9 @@
  * then it sets CFLOG_FORCE_STDERR=1 (CFLog/NSLog also write to stderr) and
  * points stdout and stderr at /dev/console, and logs every alert's title and
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
- * popup). Otherwise it does nothing.
+ * popup), and MobileSafari's page-load errors with domain, code and userInfo.
+ * Otherwise only the load errors (MobileSafari, re-log 75) and SpringBoard's
+ * modal state (below) are on.
  *
  * Cydia Substrate (docs/cydia.md): every executable inside a .app bundle
  * (SpringBoard, which inserts us through its launchd plist, and every app, which
@@ -95,6 +97,58 @@ static id hook_appear(id self, SEL cmd, int animated)
     return r;
 }
 
+/* MobileSafari's page-load failures (TabDocument, WebFrameLoadDelegate): the
+   NSError behind "Cannot Open Page" with its domain, code and userInfo, whose
+   _kCFStreamErrorDomainKey / _kCFStreamErrorCodeKey name the layer it came
+   from (1 = POSIX socket call, 12 = getaddrinfo). The alert alone says only
+   "Cannot allocate memory" (hardware reports, re-log 75). Always on in
+   MobileSafari (one console line per failed load); the console is opened
+   for these lines only unless applog is on. */
+static IMP orig_fail[2];
+static int errfd = 2, quiet_app;
+static void say_error(const char *what, id err)
+{
+    char line[1024];
+    id dom = err ? p_msgSend(err, p_sel("domain")) : 0;
+    long code = err ? (long)p_msgSend(err, p_sel("code")) : 0;
+    id info = err ? p_msgSend(err, p_sel("userInfo")) : 0;
+    id desc = info ? p_msgSend(info, p_sel("description")) : 0;
+    const char *d = dom ? (const char *)p_msgSend(dom, p_sel("UTF8String")) : "?";
+    const char *i = desc ? (const char *)p_msgSend(desc, p_sel("UTF8String")) : "";
+    int l = snprintf(line, sizeof(line), "[applog] %s load error (%s): %s %ld %s\n", getprogname(), what,
+                     d ? d : "?", code, i ? i : "");
+    if (l > (int)sizeof(line) - 1) l = sizeof(line) - 1;
+    for (int k = 0; k < l - 1; k++)
+        if (line[k] == '\n') line[k] = ' ';
+    if (quiet_app && errfd == 2) {
+        int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
+        if (fd < 0) return;
+        errfd = fd;
+    }
+    write(errfd, line, l);
+}
+
+static id hook_fail0(id self, SEL cmd, id wv, id err, id frame);
+static id hook_fail1(id self, SEL cmd, id wv, id err, id frame);
+static void hook_load_errors(void)
+{
+    id td = p_getClass("TabDocument");
+    Method m = td ? p_getInstanceMethod(td, p_sel("webView:didFailProvisionalLoadWithError:forFrame:")) : 0;
+    if (m && !orig_fail[0]) orig_fail[0] = p_setImplementation(m, (IMP)hook_fail0);
+    m = td ? p_getInstanceMethod(td, p_sel("webView:didFailLoadWithError:forFrame:")) : 0;
+    if (m && !orig_fail[1]) orig_fail[1] = p_setImplementation(m, (IMP)hook_fail1);
+}
+static id hook_fail0(id self, SEL cmd, id wv, id err, id frame)
+{
+    say_error("provisional", err);
+    return ((id (*)(id, SEL, id, id, id))orig_fail[0])(self, cmd, wv, err, frame);
+}
+static id hook_fail1(id self, SEL cmd, id wv, id err, id frame)
+{
+    say_error("load", err);
+    return ((id (*)(id, SEL, id, id, id))orig_fail[1])(self, cmd, wv, err, frame);
+}
+
 static void hook_alerts(void)
 {
     void *h = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW);
@@ -126,6 +180,7 @@ static void hook_alerts(void)
     id av = p_getClass("UIAlertView");
     Method m = av ? p_getInstanceMethod(av, p_sel("popupAlertAnimated:animationType:atOffset:")) : 0;
     if (m) orig_popup = p_setImplementation(m, (IMP)hook_popup);
+    hook_load_errors();
     p_className = (const char *(*)(id))dlsym(h, "object_getClassName");
     id vc = p_getClass("UIViewController");
     m = vc ? p_getInstanceMethod(vc, p_sel("viewDidAppear:")) : 0;
@@ -220,7 +275,21 @@ __attribute__((constructor)) static void applog_init(void)
     ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
     const char *p = strstr(ba, "ios3ds_diag=");
     const char *q = strstr(ba, "ios3ds_applog=");
-    if (!(p && p[12] && p[12] != '0') && !(q && q[14] && q[14] != '0')) return;
+    if (!(p && p[12] && p[12] != '0') && !(q && q[14] && q[14] != '0')) {
+        if (!strcmp(getprogname(), "MobileSafari")) {
+            void *h = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW);
+            if (!h) return;
+            p_getClass = (id (*)(const char *))dlsym(h, "objc_getClass");
+            p_getInstanceMethod = (Method (*)(id, SEL))dlsym(h, "class_getInstanceMethod");
+            p_setImplementation = (IMP (*)(Method, IMP))dlsym(h, "method_setImplementation");
+            p_sel = (SEL (*)(const char *))dlsym(h, "sel_registerName");
+            p_msgSend = (id (*)(id, SEL, ...))dlsym(h, "objc_msgSend");
+            if (!p_getClass || !p_getInstanceMethod || !p_setImplementation || !p_sel || !p_msgSend) return;
+            quiet_app = 1;
+            hook_load_errors();
+        }
+        return;
+    }
     setenv("CFLOG_FORCE_STDERR", "1", 1);
     int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
     if (fd < 0) return;

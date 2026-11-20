@@ -93,6 +93,7 @@ static struct {
     unsigned readbacks, readback_kb, uploads, upload_kb, presents;
     int present_checked;
     int no_present;                     /* the shim refused PRESENT once: read back from now on */
+    uint32_t rb_pa, rb_bytes;           /* read-back staging kept while no_present (every frame needs it) */
     PTex *texs;
     unsigned draw_id;
     uint32_t arena_bytes, tex_bytes, ntex, evictions;
@@ -173,7 +174,13 @@ static void evict_texture(PTex *p)
    the least recently sampled textures are dropped until the block fits
    (hardware run 15: CA's layer textures filled the 8 MiB arena and later
    ones sampled black). Textures the current draw samples stay. 0 = no room
-   even then. */
+   even then. A big block (render target, depth buffer, read-back staging)
+   is placed from the top of the arena and textures from the bottom
+   (pica_drv.c), so for one the textures highest in the arena go first: that
+   frees the space next to the big blocks, about as much as is missing,
+   where LRU order dropped textures from everywhere (test_pica's alloc test:
+   about 4x fewer bytes evicted and uploaded again). */
+#define BIG_BLOCK 0x40000u              /* PICA_DRV_BIG */
 static int arena_alloc(uint32_t bytes, uint32_t *pa)
 {
     *pa = 0;
@@ -187,7 +194,7 @@ static int arena_alloc(uint32_t bytes, uint32_t *pa)
     for (;;) {
         PTex *q, *lru = NULL;
         for (q = P.texs; q; q = q->next)
-            if (q->used != P.draw_id && (!lru || (int)(q->used - lru->used) < 0))
+            if (q->used != P.draw_id && (!lru || (bytes >= BIG_BLOCK ? q->pa > lru->pa : (int)(q->used - lru->used) < 0)))
                 lru = q;
         if (!lru)
             return 0;
@@ -217,6 +224,9 @@ static void cpu_from_now(const char *why, uint32_t bytes)
     for (i = 0; i < MAX_DEPTHS; i++)
         if (P.depth[i].key)
             drop_depth(&P.depth[i]);
+    if (P.rb_pa)                        /* sync_target below reads back without it */
+        arena_release(P.rb_pa, P.rb_bytes);
+    P.rb_pa = 0;
     for (i = 0; i < MAX_TARGETS; i++)
         if (P.target[i].key) {
             sync_target(&P.target[i]);
@@ -561,8 +571,12 @@ static int present_target(PTarget *t)
     st = P.dev->present(t->swz_pa, dim, t->rt.color, (uint32_t)t->w * t->h * 4,
                         PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8) | (t->rt.flip ? 0 : PPF_FLIP_V));
     if (st != PICA_OK) {
-        gl_log("pica: writing a surface back on the GPU failed (%s): reading it back through the CPU from now on",
-               pica_strerror(st));
+        /* For the whole process, not just this surface: in QEMU's soak (re-log
+           75) presenting the VRAM display while a scattered snapshot surface
+           was read back left a stale home screen (a tap after a page swipe
+           did nothing); with every surface read back it passes. */
+        gl_log("pica: writing surface %p (%dx%d) back on the GPU failed (%s): reading surfaces back through the "
+               "CPU from now on", (void *)t->rt.color, t->w, t->h, pica_strerror(st));
         P.no_present = 1;
         return -1;
     }
@@ -580,15 +594,32 @@ static uint32_t read_back(PTarget *t, uint32_t *dst)
     lin = scratch((size_t)t->pw * t->ph);
     if (!lin)
         return (uint32_t)-1;
-    /* the linear staging buffer only lives for the transfer (run 15: arena) */
-    if (!arena_alloc(bytes, &lin_pa))
-        return (uint32_t)-1;
+    /* the linear staging buffer only lives for the transfer (run 15: arena),
+       unless every frame is read back (no_present): then one buffer is kept,
+       instead of taking 1 MiB from the arena and evicting textures for it on
+       every frame (hardware runs 21 and 24: "arena full: 1048576 bytes
+       wanted" 256 times, 1 MiB read back per frame) */
+    if (P.rb_pa && P.rb_bytes >= bytes) {
+        lin_pa = P.rb_pa;
+    } else {
+        if (P.rb_pa) {
+            arena_release(P.rb_pa, P.rb_bytes);
+            P.rb_pa = 0;
+        }
+        if (!arena_alloc(bytes, &lin_pa))
+            return (uint32_t)-1;
+        if (P.no_present) {
+            P.rb_pa = lin_pa;
+            P.rb_bytes = bytes;
+        }
+    }
     st = P.dev->transfer(t->color_pa, dim, lin_pa, dim, PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8));
     P.readbacks++;
     P.readback_kb += bytes >> 10;
     if (st == PICA_OK)
         st = P.dev->read(lin_pa, lin, bytes);
-    arena_release(lin_pa, bytes);
+    if (lin_pa != P.rb_pa)
+        arena_release(lin_pa, bytes);
     if (st != PICA_OK)
         return st;
     /* Transfer row r is GL row ph-1-r; a GPU word is R<<24|G<<16|B<<8|A and

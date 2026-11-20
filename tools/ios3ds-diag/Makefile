@@ -6,9 +6,10 @@ LOG  ?= $(ROOT)/build/rootfs-add/usr/lib/ios3ds-applog.dylib
 
 all: $(OUT) $(LOG)
 
-$(OUT): diag.c
+# ent.plist: SpringBoard wants com.apple.springboard.opensensitiveurl for -urlpoll
+$(OUT): diag.c ent.plist
 	mkdir -p $(dir $@)
-	$(CC) -Os -Wall -Wextra diag.c -o $@
+	IOS_CC_ENTITLEMENTS=$(CURDIR)/ent.plist $(CC) -Os -Wall -Wextra diag.c -o $@
 
 # app NSLog -> /dev/console with diag=1 (applog.c, re-log 62)
 $(LOG): applog.c
