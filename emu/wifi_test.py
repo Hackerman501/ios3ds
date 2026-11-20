@@ -90,7 +90,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
-                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip", "mixed", "wpa3",
+                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip", "mixed", "wpa3", "rekey",
                              "settings", "nwm", "badnwm"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
@@ -157,6 +157,8 @@ def main():
         extra += ["-global", "ctr-wifi.security=wpa2-wpa3"]
     if a.case == "wpa3":
         extra += ["-global", "ctr-wifi.security=wpa3"]
+    if a.case == "rekey":                   # group key rekeys (hardware run 23: reason 16)
+        extra += ["-global", "ctr-wifi.rekey=30"]
     cmd = [sys.executable, os.path.join(ROOT, "emu", "run.py"), "--time", str(a.time),
            "--sd", a.sd, "--out", a.out, "--extra", " ".join(extra)]
     if a.icount:
@@ -217,6 +219,12 @@ def main():
             ("4-way: message 4 OK", r"4-way: message 4 OK"),
             ("ARM9 link up", r"\[wifi\] link up"),
         ],
+        "rekey": [
+            ("ARM9 link up", r"\[wifi\] link up"),
+            ("rekey 1 answered", r"ctr-wifi: .*group rekey: message 2 OK \(rekey 1\)"),
+            ("rekey 2 answered", r"ctr-wifi: .*group rekey: message 2 OK \(rekey 2\)"),
+            ("new group key installed", r"\[wifi\] group key renewed by the AP"),
+        ],
         "wpa3": [
             ("WPA3-only refused once", r"\[wifi\] .* is WPA3-only"),
         ],
@@ -270,6 +278,7 @@ def main():
         "nofw": [("card untouched", r"ctr-wifi: .*card powered")],
         "badnwm": [("card untouched", r"ctr-wifi: .*card powered")],
         "wrongpsk": [("no link", r"\[wifi\] link up")],
+        "rekey": [("no group key timeout", r"reason 16")],
     }.get(a.case, [])
     forbidden += [("no kernel panic", r"panic\(cpu"), ("no ARM9 crash", r"ARM9 (data abort|exception)")]
     ok = True
