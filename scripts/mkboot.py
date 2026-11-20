@@ -105,7 +105,11 @@ def build_shim(outdir):
             o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
             # main shim part: -Os (it must end below +0x5F00; CI's newer gcc
             # overflowed it at -O2); the GPU part (*pica*) keeps -O2
-            opt = ["-O2"] if "pica" in os.path.basename(s) or "cam" in os.path.basename(s) else []
+            # GPU part and camera: -O2 for the hot paths; the PICA diagnostics at
+            # -Os (the GPU part must end below 0x808B8000, and devkitARM's gcc
+            # emits more code than the Arm GNU toolchain)
+            b = os.path.basename(s)
+            opt = ["-O2"] if ("pica" in b or "cam" in b) and "diag" not in b else []
             subprocess.run([gcc] + flags + opt + ["-c", s, "-o", o], check=True)
             objs.append(o)
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +
