@@ -131,7 +131,20 @@ stage_ldid() {
         make install
     ) > "$TC/plist-build.log" 2>&1 || die "libplist build failed, see $TC/plist-build.log"
     fetch_git "$LDID_URL" "$LDID_REV" "$SRC/ldid"
-    make -C "$SRC/ldid" -j"$JOBS" CXX="$CXX_HOST" VERSION=2.1.5-procursus7 \
+    # ldid 2.1.5 does not build against OpenSSL 4 headers (issue #7): use an
+    # installed OpenSSL 3 header set then (CPATH, so ldid's own CXXFLAGS stay)
+    local ssl_inc="" ssl_major
+    ssl_major=$(sed -n 's/^# *define OPENSSL_VERSION_MAJOR *\([0-9]*\).*/\1/p' /usr/include/openssl/opensslv.h 2>/dev/null | head -1)
+    if [[ -n "$ssl_major" && "$ssl_major" -ge 4 ]]; then
+        for d in /usr/include/openssl-3 /usr/include/openssl3 /usr/local/opt/openssl@3/include /opt/homebrew/opt/openssl@3/include; do
+            [[ -f "$d/openssl/opensslv.h" ]] && { ssl_inc=$d; break; }
+        done
+        [[ -n "$ssl_inc" ]] || die "ldid needs OpenSSL 3 headers, the system has OpenSSL $ssl_major: install OpenSSL 3 (e.g. the openssl-3 / libssl3-dev package) and run this again"
+        say "ldid: OpenSSL $ssl_major system headers, building against $ssl_inc"
+    fi
+    local envpre=()
+    [[ -n "$ssl_inc" ]] && envpre=(env "CPATH=${ssl_inc}${CPATH:+:$CPATH}")
+    "${envpre[@]}" make -C "$SRC/ldid" -j"$JOBS" CXX="$CXX_HOST" VERSION=2.1.5-procursus7 \
         LIBPLIST_INCLUDES="-I$TC/include" LIBPLIST_LIBS="$TC/lib/libplist-2.0.a" \
         > "$TC/ldid-build.log" 2>&1 || die "ldid build failed, see $TC/ldid-build.log"
     install -m 755 "$SRC/ldid/ldid" "$TC/bin/ldid"

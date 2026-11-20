@@ -211,7 +211,7 @@ The project has its own QEMU machine (`-M nintendo3ds`, [docs/emulator.md](docs/
 
 ## Build from source
 
-Linux. Requirements: Python 3 with `cryptography`, an `arm-none-eabi` toolchain (Arm GNU Toolchain or devkitARM), `mtools`, `dosfstools`, `sfdisk`, git.
+Linux. Requirements: Python 3 with `cryptography`, an `arm-none-eabi` toolchain (Arm GNU Toolchain or devkitARM), `mtools`, `dosfstools`, `sfdisk`, git. The iOS toolchain builds `ldid`, which needs OpenSSL 3 headers; on systems with OpenSSL 4 also install OpenSSL 3 (the script finds `/usr/include/openssl-3` and similar).
 
 ```sh
 make toolchain                                       # check the tools
