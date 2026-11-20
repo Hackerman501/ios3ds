@@ -31,7 +31,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Cydia | pre-installed |
 | ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
 | ✅ | D-pad page swipes | turned 90° to match the upright iOS screen |
-| ❌ | Cameras | the sensors are found and start, but no picture arrives yet: being worked on |
+| ❌ | Cameras | the sensors are found and start, but no picture arrives yet: a fix based on Nintendo's camera module is being tested |
 | ✅ | Circle pad scrolling | in the direction of the upright iOS screen |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
@@ -180,6 +180,12 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 - **iOS 4.2.1 is the newest possible:** later versions need an ARMv7 CPU, and the 3DS's ARM11 is ARMv6.
 - **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out, so by default they still speak TLS 1.0 only (GitHub, Wikipedia, apple.com, … don't open there). A kernel patch can relax the sandbox (`make sd SANDBOX=1`), but then Safari runs out of memory loading TLSFix on the 128 MB device, so it is off by default ([docs/cydia.md](docs/cydia.md)). Sites with expired or untrusted certificates are refused everywhere.
 - **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
+- **Tweaks (Cydia Substrate):** Substrate is pre-installed and held at its version; don't remove or "upgrade" it in Cydia. Tweaks load into SpringBoard and apps, not into system daemons (injecting into launchd hangs iOS 4.2.1 on the 3DS, so ios3ds blocks it and repairs `/etc/launchd.conf` at boot).
+- **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
+- **Cameras:** not working on hardware yet (the sensors start, no picture arrives); being worked on. No video recording and no 3D photos.
+- **No hardware for:** Bluetooth (the 3DS has none), the 3D screen, IR, NFC.
+- **Updates reset iOS:** installing a new version rebuilds the iOS disk, so settings, saved Wi-Fi networks and installed Cydia packages start fresh.
+- **Leaving iOS** means holding POWER (a hard power-off); there is no clean shutdown back to the 3DS yet.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 
 ---
