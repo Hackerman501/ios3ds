@@ -44,6 +44,12 @@ class Recipe(unittest.TestCase):
         sb = self.r["write"]["/private/var/mobile/Library/Preferences/com.apple.springboard.plist"]
         self.assertTrue(plistlib.loads(sb.encode())["SBDisableMailAutoLaunch"])
 
+    def test_no_boot_tone(self):
+        # the diag=1 boot beep after the iOS sound is gone (audio is confirmed
+        # on hardware); /usr/libexec/ios3ds-tone stays for manual tests
+        self.assertNotIn("/System/Library/LaunchDaemons/com.ios3ds.tone.plist", self.r["add"].values())
+        self.assertIn("/usr/libexec/ios3ds-tone", self.r["add"].values())
+
     def test_diag_jobs_are_gated(self):
         for plist in ("rootfs/files/com.ios3ds.sample.plist", "tools/ios3ds-gl/test/com.ios3ds.gltest.plist",
                       "tools/ios3ds-audio/tone/com.ios3ds.tone.plist", "tools/ios3ds-diag/com.ios3ds.iobusy.plist"):
