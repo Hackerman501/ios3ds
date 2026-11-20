@@ -23,7 +23,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | | Feature | Notes |
 |:-:|---|---|
 | ✅ | Boot to the home screen, built-in apps | about a minute from power-on |
-| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls). Fixed for the next build: touch could stop reacting after a popup or after unlocking |
+| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls); slide to unlock and popups over apps work since build m1-0.3.0-27 |
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
