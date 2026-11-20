@@ -158,7 +158,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 
 ## Troubleshooting
 
-- **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please attach `log.txt` to bug reports.
+- **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please [open an issue](https://github.com/devilAPI/ios3ds/issues/new/choose) and attach `log.txt`.
 - **Settings:** they live in **`sd:/ios3ds/boot.cfg`**, a text file. Useful switches:
 
   | Switch | Effect |

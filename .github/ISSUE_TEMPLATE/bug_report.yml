@@ -1,0 +1,58 @@
+name: Bug report
+description: Something doesn't work on your 3DS. Please attach sd:/ios3ds/log.txt.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing ios3ds! Every boot writes a log to **`sd:/ios3ds/log.txt`**; the previous boot's log is kept as `log_prev.txt`.
+        Without the log we can't see what went wrong, so please attach it below.
+        Tip: set `diag=1` in `sd:/ios3ds/boot.cfg` before reproducing the problem; that makes the log much more detailed.
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      options:
+        - Old 3DS
+        - Old 3DS XL
+        - Old 2DS
+        - New 3DS
+        - New 3DS XL
+        - New 2DS XL
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ios3ds version
+      description: The first line of log.txt, e.g. `ios3ds m1-0.3.0-15-g2df20ef-20261120.1057`, or the release you installed.
+      placeholder: ios3ds m1-...
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Booted ios3ds, opened Settings > Wi-Fi
+        2. Tapped my network and entered the password
+        3. It says "Unable to join the network"
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: log.txt
+      description: |
+        **Drag `sd:/ios3ds/log.txt` from your SD card into this box** (GitHub uploads it as an attachment). If the problem happened in the boot before, attach `log_prev.txt` too.
+      placeholder: Drag log.txt here
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Photos of the screen, your boot.cfg changes, Wi-Fi router type and security mode (e.g. FRITZ!Box, WPA2 + WPA3), etc.
+    validations:
+      required: false
