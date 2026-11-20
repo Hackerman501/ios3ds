@@ -80,6 +80,7 @@ struct sysctl_oid {
 #define k_copyin              KPA(0x80067c84, int, u32, void *, u32)
 #define k_copyout             KPA(0x80067d04, int, const void *, u32, u32)
 #define IOMallocContiguous    KPT(0x801a70e0, void *, u32, u32, uint32_t *)
+#define IOFreeContiguous      KPT(0x801a727c, void, void *, u32)
 #define ml_io_map             KPT(0x80067780, void *, u32, u32)
 #define IODelay               KPT(0x801a6c2c, void, u32)
 #define IOSleep               KPT(0x801a6c40, void, u32)
@@ -131,7 +132,7 @@ static void l2_inv_kbuf(const volatile void *p, uint32_t len)
 {
     uint32_t v = (uint32_t)p;
     if (v - arena_va < arena_size) shim_l2_inv(arena_pa + (v - arena_va), len);
-    else if (v - 0x80000000u < 0x08000000u) shim_l2_inv(v - 0x60000000u, len);
+    else if (v - 0x80000000u < FCRAM_N3DS_SIZE) shim_l2_inv(v - 0x60000000u, len);
 }
 static void dc_inval(volatile void *p, uint32_t len)
 {
@@ -236,6 +237,12 @@ static void bringup(void)
     for (i = 0; i < sizeof sizes / sizeof sizes[0] && !va; i++) {
         size = sizes[i];
         va = IOMallocContiguous(size, 0x1000, &pa);
+        if (va && pa + size > 0x20000000u + FCRAM_SIZE) {
+            /* New 3DS with n3ds_ram: not in the extension, whether the GPU
+               reaches it is unverified (docs/n3ds.md section 6) */
+            IOFreeContiguous(va, size);
+            va = 0;
+        }
     }
     if (!va || !pa) {
         k_printf("[pica] no physically contiguous memory for the GPU arena (tried down to %u KiB)\n", size >> 10);
@@ -269,7 +276,7 @@ static void bringup(void)
    0). So a process can only aim the GPU at memory it could write itself. */
 static uint32_t fcram_va(uint32_t pa, int *ok)
 {
-    *ok = pa >= 0x20000000u && pa < 0x28000000u;
+    *ok = pa >= 0x20000000u && pa < 0x20000000u + FCRAM_N3DS_SIZE;    /* New 3DS: page tables up there too */
     return pa + 0x60000000u;            /* XNU's linear map of FCRAM at 0x80000000 */
 }
 

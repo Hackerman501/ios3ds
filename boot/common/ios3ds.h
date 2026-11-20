@@ -27,6 +27,7 @@ typedef volatile unsigned int vu32;
 #define A11_RAM_VECTORS     0x1FFFFFA0u     /* boot11 exception vectors jump here (6 x 8 bytes) */
 #define FCRAM_BASE          0x20000000u
 #define FCRAM_SIZE          0x08000000u
+#define FCRAM_N3DS_SIZE     0x10000000u      /* New 3DS: + the 128 MiB extension (docs/n3ds.md section 6) */
 #define VRAM_BASE           0x18000000u
 #define HID_PAD             (*(vu16 *)0x10146000u)   /* active low */
 
@@ -63,6 +64,7 @@ enum {
 /* New 3DS extras (docs/n3ds.md). ARM9 -> stub request bits (shared_t.n3ds_req) */
 #define N3REQ_CLOCK  (1u << 0)     /* 804 MHz (boot.cfg n3ds_clock) */
 #define N3REQ_L2     (1u << 1)     /* L2C-310 on, write-through (boot.cfg n3ds_l2) */
+#define N3REQ_RAM    (1u << 2)     /* FCRAM extension for XNU (boot.cfg n3ds_ram) */
 /* stub -> ARM9 result (shared_t.n3ds_res); the ARM9 copies it into the shim
    word SHIM_N3DS_OFF, which tells the shim how its timers run */
 #define N3RES_DONE        (1u << 31)
@@ -70,6 +72,7 @@ enum {
 #define N3RES_804         (1u << 17)  /* PDN_LGR_SOCMODE = 804 MHz, acknowledged */
 #define N3RES_L2          (1u << 18)  /* L2C-310 enabled (write-through) */
 #define N3RES_TIMEOUT     (1u << 19)  /* clock switch not acknowledged: back in CTR mode */
+#define N3RES_RAM         (1u << 20)  /* 0x28000000-0x2FFFFFFF is RAM of its own (probed): XNU gets 256 MiB */
 #define N3RES_PRESCALE(r) ((r) & 0xFFu)          /* MPCore timer prescaler (0 = 127) */
 #define N3RES_TBSHIFT(r)  (((r) >> 8) & 0xFu)    /* timer ticks = XNU ticks << shift */
 #define SHIM_N3DS_OFF     0x0Cu       /* shim word (kernel/shim/entry.S cfg_n3ds) */
