@@ -1,6 +1,7 @@
 """Host tests of the MCU drivers (docs/mcu.md): the ARM9 driver
-(boot/arm9/mcu.c) against a fake MCU, and the Thumb encodings of the MCU
-kernel patches (kernel/patches-mcu.json)."""
+(boot/arm9/mcu.c) against a fake MCU, the gyroscope driver (boot/arm9/gyro.c)
+and its rad/s conversion and axis map against fake chips, and the encodings
+of the MCU kernel patches (kernel/patches-mcu.json)."""
 import json
 import os
 import shutil
@@ -23,6 +24,22 @@ class Arm9McuDriver(unittest.TestCase):
                             os.path.join(ROOT, "boot", "arm9", "mcu.c"),
                             os.path.join(ROOT, "tools", "ios3ds-mcu", "tests", "test_mcu.c"),
                             "-o", exe], check=True)
+            r = subprocess.run([exe], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue(r.stdout.strip().endswith("ok"), r.stdout)
+
+
+@unittest.skipUnless(shutil.which("cc"), "no host C compiler")
+class Arm9GyroDriver(unittest.TestCase):
+    def test_host(self):
+        with tempfile.TemporaryDirectory() as td:
+            exe = os.path.join(td, "test_gyro")
+            subprocess.run(["cc", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
+                            "-I" + os.path.join(ROOT, "boot", "common"),
+                            "-I" + os.path.join(ROOT, "boot", "arm9"),
+                            os.path.join(ROOT, "boot", "arm9", "gyro.c"),
+                            os.path.join(ROOT, "tools", "ios3ds-mcu", "tests", "test_gyro.c"),
+                            "-lm", "-o", exe], check=True)
             r = subprocess.run([exe], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue(r.stdout.strip().endswith("ok"), r.stdout)
@@ -83,6 +100,29 @@ class McuPatches(unittest.TestCase):
         self.assertEqual(tokens["iortc-wait-mcu"], "shim+0x34")
         self.assertEqual(tokens["pe-halt-mcu"], "shim+0x38")
         self.assertEqual(tokens["pe-set-gmt"], "shim+0x3c")
+
+    def test_gyro_vtable(self):
+        """AppleLIS331DLH vtable 0x806200d0: +0x3b4 getPrimaryUsage -> an ARM
+        'mov r0,#9' (even address), +0x3c0 dispatch -> the ARM shim slot +0x2C"""
+        u = self.p["gyro-usage"]
+        self.assertEqual(int(u["va"], 16), 0x806200d0 + 0x3b4)
+        self.assertEqual(struct.unpack("<I", bytes.fromhex(u["orig"]))[0], 0x8061b978)
+        tgt = struct.unpack("<I", bytes.fromhex(u["new"]))[0]
+        self.assertEqual(tgt, 0x8034433c)
+        self.assertEqual(tgt & 3, 0)
+        d = self.p["gyro-dispatch"]
+        self.assertEqual(int(d["va"], 16), 0x806200d0 + 0x3c0)
+        self.assertEqual(struct.unpack("<I", bytes.fromhex(d["orig"]))[0], 0x80546771)
+        self.assertEqual(d["new"], "@shim+0x2c@")
+        with open(os.path.join(ROOT, "kernel", "shim", "entry.S")) as f:
+            self.assertRegex(f.read(), r"b shim_gyro_dispatch\s+@ \+0x2C")
+
+    def test_gyro_dyld_patch(self):
+        with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
+            fp = [p for p in json.load(f)["file_patches"] if "getProviders" in p["why"]]
+        self.assertEqual(len(fp), 1)
+        o, n = (struct.unpack("<I", bytes.fromhex(fp[0][k]))[0] for k in ("orig", "new"))
+        self.assertEqual(n, o | 0x40)           # only the gyro provider bit
 
     def test_commpage_branch(self):
         """beq -> b: the unconditional branch must land on the same epilogue"""

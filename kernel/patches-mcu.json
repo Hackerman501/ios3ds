@@ -54,5 +54,19 @@
   "orig": "18009fe518109fe518309fe5",
   "new": "0030a0e3a03ec4e5000000ea",
   "why": "AppleM2CLCD::safe_enable_backlight (0x807a95d0): without a backlight service (the n72 PMU backlight is not in our device tree) it logged 'Where is my backlight?' and left its pending flag (+0xea0) set, so it ran again on every frame after each wake (~3/s, re-log 41/42). ldr r0; ldr r1; ldr r3 (IOLog args) -> mov r3,#0; strb r3,[r4,#0xea0]; b to the epilogue: the enable counts as done, no retries, no log. The 3DS backlight is driven by ios3ds (MCU / LCD PWM) instead"
+ },
+ {
+  "name": "gyro-usage",
+  "va": "0x80620484",
+  "orig": "78b96180",
+  "new": "3c433480",
+  "why": "AppleLIS331DLH vtable (0x806200d0) +0x3b4 getPrimaryUsage: 0x8061b978 (mov r0,#3: accelerometer) -> 0x8034433c (an existing ARM 'mov r0,#9; bx lr' in another kext). Only the gyro node (/arm-io/i2c0/gyro, dt_mcu.py) instantiates this class on the n72, so its IOHIDEventService registers PrimaryUsagePage 0xff00 / PrimaryUsage 9, the service CoreMotion's CLIoHidManager matches for gyro events (re-log 64)"
+ },
+ {
+  "name": "gyro-dispatch",
+  "va": "0x80620490",
+  "orig": "71675480",
+  "new": "@shim+0x2c@",
+  "why": "AppleLIS331DLH vtable +0x3c0 dispatchAccelerometerEvent (AppleEmbeddedHIDEventService 0x80546771, called by the driver's ReportInterval timer through 0x8061c294) -> shim_gyro_dispatch (ARM, shim +0x2C), which sends dispatchGyroEvent (vtable +0x3c4, IOHIDEvent type 20) with the ARM9's gyro sample (deg/s, 16.16) instead (docs/mcu.md 11)"
  }
 ]

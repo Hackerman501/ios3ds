@@ -14,6 +14,9 @@
  *                                       halt/restart = MCU power off by the ARM9
  *   battery an IOPMPowerSource ("ios3ds MCU battery"), created and refreshed
  *           from the sysctls below (thread context)
+ *   gyro    an AppleLIS331DLH on /arm-io/i2c0/gyro whose vtable dispatches
+ *           gyro events (patches gyro-usage / gyro-dispatch): CoreMotion's
+ *           rotation rates from the ARM9's gyro samples (docs/mcu.md 11)
  *   sysctl  kern.ios3ds_mcu     RD, 256 bytes: the mailbox (mcubox_t)
  *           kern.ios3ds_mcuctl  RW, mcuctl_t: the daemon's requests
  *                                       (accelerometer on/off, LCD backlight)
@@ -278,13 +281,15 @@ static void backlight_set(u32 level)   /* level 0..1000 (iOS brightness x factor
 }
 
 static u32 acc_daemon, acc_driver;      /* who wants accelerometer samples */
+static u32 gyro_driver;                 /* the gyro service's driver is powered */
 
 static void acc_request(void)
 {
     volatile mcubox_t *b = BOX;
     u32 want = acc_daemon || acc_driver;
-    if (b->req_acc == want) return;
+    if (b->req_acc == want && b->req_gyro == gyro_driver) return;
     b->req_acc = want;
+    b->req_gyro = gyro_driver;
     b->req_seq = b->req_seq + 1;
     dclean(&b->req_seq, 32);
 }
@@ -305,11 +310,12 @@ static void acc_request(void)
  * ReportInterval SpringBoard sets.
  */
 #define ACC_I2C_ADDR    0x1D            /* = tools/ios3ds-mcu/dt_mcu.py */
+#define GYRO_I2C_ADDR   0x6B            /* = dt_mcu.py GYRO_I2C_ADDR */
 #define ACC_COUNTS_G    55
 #define kIOReturnNoDevice 0xE00002C0
 
 static struct { void *nub; int acc; } iic_nubs[6];
-static u8 lis[0x40];
+static u8 lis[2][0x40];                 /* register files: accelerometer, gyro */
 static u32 acc_g;                       /* running mean of |a| in MCU units (1 g) */
 static u32 acc_logged;
 
@@ -336,7 +342,8 @@ static u32 isqrt(u32 v)
     return r;
 }
 
-/* the I2C address from the nub's 'reg' property, cached per nub */
+/* the I2C address from the nub's 'reg' property, cached per nub:
+   1 = accelerometer, 2 = gyro, 0 = someone else */
 static int nub_is_acc(void *nub)
 {
     for (unsigned i = 0; i < sizeof iic_nubs / sizeof iic_nubs[0]; i++) {
@@ -346,7 +353,7 @@ static int nub_is_acc(void *nub)
             int acc = 0;
             if (d && data_length(d) >= 4) {
                 const u8 *p = data_bytes(d);
-                acc = p && p[0] == ACC_I2C_ADDR && !p[1] && !p[2] && !p[3];
+                acc = p && !p[1] && !p[2] && !p[3] ? (p[0] == ACC_I2C_ADDR) | (p[0] == GYRO_I2C_ADDR) << 1 : 0;
             }
             iic_nubs[i].nub = nub;
             iic_nubs[i].acc = acc;
@@ -381,11 +388,60 @@ static void acc_sample(int8_t out[3])
     out[2] = (int8_t)-out[2];           /* the DT 'orientation' 4 negates z again */
 }
 
-/* AppleARMIICDevice transfer for the accelerometer: -1 = not ours */
+/* ---- gyroscope: a second AppleEmbeddedAccelerometer driver ----------------
+ * /arm-io/i2c0/gyro (dt_mcu.py) matches AppleLIS331DLH, a class the n72 does
+ * not otherwise use. Two words of its vtable are patched (patches-mcu.json):
+ * getPrimaryUsage (+0x3b4) returns 9, the usage CoreMotion's CLIoHidManager
+ * looks for (page 0xff00), and dispatchAccelerometerEvent (+0x3c0) comes here
+ * (shim +0x2C). The driver keeps doing the rest: IOHIDEventService, its
+ * ReportInterval timer, power on/off through CTRL_REG1, which we turn into
+ * req_gyro for the ARM9. Its own x/y/z (the emulated LIS331DLH registers, all
+ * 0) are dropped: the event carries the ARM9's sample at full resolution. */
+static u32 gyro_logged;
+
+void shim_gyro_dispatch(void *svc, u32 ts_lo, u32 ts_hi, u32 x, u32 y, u32 z, u32 t, u32 st, u32 opt)
+{
+    volatile mcubox_t *b = BOX;
+    (void)x; (void)y; (void)z; (void)t; (void)st;   /* the driver's own (emulated, zero) sample */
+    dinval(b->gyro, 32);
+    /* AppleEmbeddedHIDEventService::dispatchGyroEvent (IOHIDFamily 0x80546718):
+       ts, x, y, z, type, subtype, 4 more fields, options */
+    ((void (*)(void *, u32, u32, int32_t, int32_t, int32_t, u32, u32, u32, u32, u32, u32, u32))
+        (*(void ***)svc)[0x3c4 / 4])(svc, ts_lo, ts_hi, b->gyro[0], b->gyro[1], b->gyro[2], 0, 0, 0, 0, 0, 0, opt);
+    if (++gyro_logged == 1 || gyro_logged == 1000)
+        IOLog("ios3ds-mcu: gyro event #%u: %d %d %d deg/s/65536 (ARM9 sample %u)\n", (unsigned)gyro_logged,
+              (int)b->gyro[0], (int)b->gyro[1], (int)b->gyro[2], (unsigned)b->gyro_samples);
+}
+
+/* AppleARMIICDevice transfer for the accelerometer and the gyro: -1 = not ours */
 int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
 {
-    if (!nub || !nub_is_acc(nub)) return -1;
+    int kind = nub ? nub_is_acc(nub) : 0;
+    if (!kind) return -1;
     volatile mcubox_t *b = BOX;
+    if (kind == 2) {                    /* gyro behind an AppleLIS331DLH */
+        u8 *r = lis[1];
+        u32 st = b->gyro_state;
+        if (!mcu_live() || (st != GYRO_ST_ITG && st != GYRO_ST_ST)) {
+            if (!gyro_logged++)
+                IOLog("ios3ds-mcu: no gyro for iOS (state %u)\n", (unsigned)st);
+            return (int)kIOReturnNoDevice;
+        }
+        u32 a = sublen && sub ? (sub[sublen - 1] & 0x3F) : 0;
+        for (u32 i = 0; i < len; i++, a = (a + 1) & 0x3F) {
+            if (op == 2) {
+                r[a] = a == 0x21 ? buf[i] & 0x7F : buf[i];      /* BOOT (bit 7) done at once */
+                if (a == 0x20 && gyro_driver != ((buf[i] & 0xE0) != 0)) {
+                    gyro_driver = !gyro_driver;                 /* PM bits: normal mode = powered */
+                    acc_request();
+                    IOLog("ios3ds-mcu: gyro %s\n", gyro_driver ? "on" : "off");
+                }
+            } else {
+                buf[i] = a == 0x0F ? 0x32 : a == 0x27 ? 0x0F : r[a];   /* WHO_AM_I LIS331DLH, STATUS */
+            }
+        }
+        return 0;
+    }
     if (!mcu_live() || b->acc_off) {
         if (!acc_logged++)
             IOLog("ios3ds-mcu: accelerometer hidden from iOS (%s)\n", b->acc_off ? "boot.cfg mcu_acc=0" : "no MCU");
@@ -396,8 +452,8 @@ int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
     int sampled = 0;
     for (u32 i = 0; i < len; i++, a = (a + 1) & 0x3F) {
         if (op == 2) {
-            lis[a] = buf[i];
-            if (a == 0x21) lis[a] &= (u8)~0x40;         /* BOOT: reload done at once */
+            lis[0][a] = buf[i];
+            if (a == 0x21) lis[0][a] &= (u8)~0x40;      /* BOOT: reload done at once */
             if (a == 0x20) {
                 acc_driver = (buf[i] & 0x40) != 0;      /* PD: sensor powered */
                 acc_request();
@@ -405,7 +461,7 @@ int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
                       acc_driver ? "powered on" : "powered off", buf[i]);
             }
         } else {
-            u8 v = lis[a];
+            u8 v = lis[0][a];
             if (a == 0x0F) v = 0x3B;                    /* WHO_AM_I: LIS302DL */
             else if (a == 0x27) v = 0x0F;               /* STATUS: new X/Y/Z data */
             else if (a == 0x31 || a == 0x35) v = 0;     /* FF_WU_SRC: no events */

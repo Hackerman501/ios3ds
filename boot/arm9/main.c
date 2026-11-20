@@ -24,6 +24,7 @@
 #include "gpumirror.h"
 #include "gpu_mirror.h"
 #include "mcu.h"
+#include "gyro.h"
 #include "powersave.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
@@ -123,6 +124,8 @@ typedef struct {
     u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag, ca_gpu;  /* PICA200 (gpumirror.c, docs/pica200.md) */
     u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
     u32 mcu_acc;         /* 0: no accelerometer for iOS */
+    u32 gyro;            /* 0: no gyroscope for iOS (docs/mcu.md section 11) */
+    char gyro_axes[16];  /* iOS x,y,z from the gyro chip's axes, e.g. -y,x,z */
     u32 powersave;       /* 0: no power saving while iOS' screen is off */
     u32 notify_led;      /* 1: notification LED blinks red on low battery */
     u32 diag;            /* 1: diagnostics on (boot-arg ios3ds_diag=1 for the test daemons, docs/boot-perf.md) */
@@ -173,6 +176,7 @@ static int parse_bootcfg(char *txt)
     cfg.ca_gpu = 1;
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
+    cfg.gyro = 1;
     cfg.powersave = 1;
     cfg.mic = 1;
     cfg.hp_route = 1;
@@ -191,7 +195,7 @@ static int parse_bootcfg(char *txt)
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
-        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
+        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
@@ -229,6 +233,9 @@ static int parse_bootcfg(char *txt)
                         cfg.load_pa[cfg.nloads] = parse_u32(comma + 1, NULL);
                         cfg.nloads++;
                     }
+                    known = true;
+                } else if (!strncmp(key, "gyro_axes", 10)) {
+                    strlcpy_(cfg.gyro_axes, val, sizeof(cfg.gyro_axes));
                     known = true;
                 } else if (!strncmp(key, "rootfs", 7)) {
                     strlcpy_(cfg.rootfs, val, sizeof(cfg.rootfs));
@@ -507,6 +514,7 @@ static void poll_buttons(void)
     last = t;
     input_poll(cfg.shim_pa);
     mcu_poll(t);
+    gyro_poll(t);
 }
 
 static void __attribute__((noreturn)) monitor(const char *phase)
@@ -568,6 +576,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         if (wifi_poll()) busy = true;
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
         mcu_poll(clk_ticks());      /* RTC, battery, sliders, HOME/POWER (docs/mcu.md) */
+        gyro_poll(clk_ticks());     /* gyroscope while iOS wants it (docs/mcu.md 11) */
         static bool ios_display, x_latched;
         static int screen_mode;
         /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
@@ -930,6 +939,7 @@ void a9_main(int argc, char **argv)
     }
     mcu_init(cfg.shim_pa, cfg.mcu != 0, cfg.rtc_offset, T9_HZ);   /* RTC before the kernel's calendar (docs/mcu.md) */
     mcu_config_acc(cfg.mcu_acc != 0);
+    gyro_init(cfg.shim_pa, cfg.gyro != 0, cfg.gyro_axes, T9_HZ);
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
     mcu_set_led(cfg.notify_led != 0);
     audio_set_mic(cfg.mic != 0);

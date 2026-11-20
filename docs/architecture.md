@@ -68,6 +68,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 - The ARM9 polls the MCU over I2C and fills the MCU mailbox (shim + 0x6400).
 - `PEGetGMTTimeOfDay` / `PESetGMTTimeOfDay` / `PEHaltRestart` go to the shim: the calendar starts from the 3DS RTC, and a shutdown powers the console off through the MCU.
 - The shim registers an `IOPMPowerSource` for SpringBoard's battery icon; HOME and POWER reach iOS as input-mailbox buttons; `ios3ds-mcud` handles volume, brightness and the accelerometer.
+- The 3DS gyroscope (I2C bus 3) reaches CoreMotion through Apple's AppleLIS331DLH driver on an added `gyro` DT node, with two vtable words patched so it is a gyro HID service ([mcu.md](mcu.md) §11).
 
 **Root disk:**
 - The device tree's memory-map gets a `RAMDisk` entry the size of the root filesystem, and the boot-args include `rd=md0`.

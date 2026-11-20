@@ -36,6 +36,7 @@
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
+#include "qapi/visitor.h"
 #include "hw/sysbus.h"
 #include "hw/boards.h"
 #include "hw/loader.h"
@@ -600,6 +601,16 @@ typedef struct {
     uint32_t led_lit;           /* qom mcu-led-steps: steps (of 32) with any colour */
 } CtrMcu;
 
+/* Gyroscope: an InvenSense ITG-3200-family chip (the Old 3DS' ITG-3270) on
+   I2C bus 3, device 0xD0 (libn3ds I2C_DEV_GYRO2). docs/mcu.md section 11. */
+typedef struct {
+    uint8_t  regs[0x40];
+    uint8_t  reg;               /* register pointer (auto-increments) */
+    bool     got_reg;
+    int32_t  rate[3];           /* qom gyro-x/-y/-z: rotation rate, millidegrees per second */
+    uint32_t reads;             /* qom gyro-reads: data register reads (GYRO_XOUT_H) */
+} CtrGyro;
+
 typedef struct {
     uint16_t reload, cnt;
     uint32_t counter;           /* value at 'stamp' (16 bit, kept wider for math) */
@@ -647,6 +658,7 @@ typedef struct {
     CtrCodec codec;
     CtrI2c i2c[3];
     CtrMcu mcu;
+    CtrGyro gyro;
     qemu_irq mcu_irq;              /* GIC 113 (GPIO3 bit 9, falling edge) */
     MemoryRegion lcd;              /* LCD registers 0x10202000 (backlight PWM) */
     uint32_t lcd_abl[2];           /* top / bottom backlight level */
@@ -1361,10 +1373,44 @@ static void mcu_reset(CtrMachine *s)
 #define I2C_CNT_IRQ_EN  (1u << 6)
 #define I2C_CNT_EN      (1u << 7)
 #define I2C_ADDR_MCU    0x4A        /* 0x25 << 1, bus 2 */
+#define I2C_ADDR_GYRO   0xD0        /* 0x68 << 1, bus 3 */
+
+/* ITG-3200 registers: WHO_AM_I 0x00 (= address bits, 0x68), SMPLRT_DIV 0x15,
+   DLPF_FS 0x16, INT_STATUS 0x1A (bit 0 data ready), TEMP_OUT 0x1B, GYRO_XOUT_H
+   0x1D..0x22 (big endian, 14.375 LSB per deg/s at FS_SEL 3), PWR_MGM 0x3E
+   (bit 6 SLEEP: outputs hold 0 here). */
+static uint8_t gyro_read_reg(CtrMachine *s, uint8_t reg)
+{
+    CtrGyro *g = &s->gyro;
+    reg &= 0x3F;
+    if (reg == 0x00) {
+        return 0x68;
+    }
+    if (reg == 0x1A) {
+        return 0x01;
+    }
+    if (reg == 0x1B || reg == 0x1C) {
+        return reg == 0x1B ? 0xE0 : 0x00;      /* some temperature */
+    }
+    if (reg >= 0x1D && reg <= 0x22) {
+        int i = (reg - 0x1D) >> 1;
+        int64_t raw = 0;
+        if (!(g->regs[0x3E] & 0x40)) {
+            raw = ((int64_t)g->rate[i] * 14375 + (g->rate[i] < 0 ? -500000 : 500000)) / 1000000;
+            raw = raw > 32767 ? 32767 : raw < -32768 ? -32768 : raw;
+        }
+        if (reg == 0x1D) {
+            g->reads++;
+        }
+        return (reg - 0x1D) & 1 ? (uint8_t)raw : (uint8_t)((uint16_t)raw >> 8);
+    }
+    return g->regs[reg];
+}
 
 static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
 {
     bool mcu = b->bus == 1 && (b->addr & 0xFE) == I2C_ADDR_MCU;
+    bool gyro = b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_GYRO;
     bool ack = false;
 
     if (cnt & I2C_CNT_ERROR) {                  /* abort after a NACK */
@@ -1374,11 +1420,24 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             b->addr = b->data;
             b->active = true;
             mcu = b->bus == 1 && (b->addr & 0xFE) == I2C_ADDR_MCU;
-            b->dev_ok = mcu;
+            gyro = b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_GYRO;
+            b->dev_ok = mcu || gyro;
             ack = b->dev_ok;
             if (mcu && !(b->addr & 1)) {
                 s->mcu.got_reg = false;         /* a write transfer starts with the register */
             }
+            if (gyro && !(b->addr & 1)) {
+                s->gyro.got_reg = false;
+            }
+        } else if (b->active && b->dev_ok && gyro && !(b->addr & 1)) {
+            if (!s->gyro.got_reg) {
+                s->gyro.reg = b->data & 0x3F;
+                s->gyro.got_reg = true;
+            } else {
+                s->gyro.regs[s->gyro.reg] = b->data;
+                s->gyro.reg = (s->gyro.reg + 1) & 0x3F;
+            }
+            ack = true;
         } else if (b->active && b->dev_ok && !(b->addr & 1)) {
             if (!s->mcu.got_reg) {
                 s->mcu.reg = b->data;
@@ -1393,7 +1452,10 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             ack = true;
         }
     } else {                                    /* receive one byte */
-        if (b->active && b->dev_ok && (b->addr & 1)) {
+        if (b->active && b->dev_ok && gyro && (b->addr & 1)) {
+            b->data = gyro_read_reg(s, s->gyro.reg);
+            s->gyro.reg = (s->gyro.reg + 1) & 0x3F;
+        } else if (b->active && b->dev_ok && (b->addr & 1)) {
             b->data = mcu_read_reg(s, s->mcu.reg);
             if (!mcu_reg_is_stream(s->mcu.reg)) {
                 s->mcu.reg++;
@@ -1535,8 +1597,37 @@ static void ctr_prof_init(CtrMachine *s)
     timer_mod(s->prof_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCALE_MS);
 }
 
+/*
+ * Gyroscope for tests (HMP: qom-set /machine gyro-y 30000 = 30 deg/s about
+ * the console's y axis): gyro-x/-y/-z in millidegrees per second; read only:
+ * gyro-awake (PWR_MGM SLEEP clear), gyro-reads (data reads so far).
+ */
+static void gyro_prop_get(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    visit_type_int32(v, name, (int32_t *)opaque, errp);
+}
+
+static void gyro_prop_set(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    int32_t val;
+    if (visit_type_int32(v, name, &val, errp)) {
+        *(int32_t *)opaque = val;
+    }
+}
+
+static bool gyro_prop_get_awake(Object *obj, Error **errp)
+{
+    return !(ctr->gyro.regs[0x3E] & 0x40);
+}
+
 static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
 {
+    static const char *const axes[3] = { "gyro-x", "gyro-y", "gyro-z" };
+    for (int i = 0; i < 3; i++) {
+        object_property_add(obj, axes[i], "int32", gyro_prop_get, gyro_prop_set, NULL, &s->gyro.rate[i]);
+    }
+    object_property_add_bool(obj, "gyro-awake", gyro_prop_get_awake, NULL);
+    object_property_add_uint32_ptr(obj, "gyro-reads", &s->gyro.reads, OBJ_PROP_FLAG_READ);
     object_property_add_uint8_ptr(obj, "mcu-battery", &s->mcu.regs[0x0B], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-volume", &s->mcu.regs[0x09], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-orient", &s->mcu.orient, OBJ_PROP_FLAG_READWRITE);

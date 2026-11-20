@@ -6,6 +6,8 @@
  * the userland daemon (tools/ios3ds-mcu/daemon: volume, brightness,
  * accelerometer, shell). HOME / POWER go through the input mailbox
  * (input_proto.h INBTN_HOME / INBTN_POWER). See docs/mcu.md.
+ * The gyroscope (I2C bus 3, boot/arm9/gyro.c) shares the mailbox: line 3
+ * carries its samples, line 4 iOS' request (docs/mcu.md section 11).
  *
  * Only fixed-width C types: included by the ARM9, the ARM11 shim, the iOS
  * daemon and host tests.
@@ -40,6 +42,15 @@ enum {                                      /* mcubox_t.state */
 #define MCUF_SHELL_OPEN (1u << 1)
 #define MCUF_ADAPTER    (1u << 3)
 #define MCUF_CHARGING   (1u << 4)
+
+/* mcubox_t.gyro_state (boot/arm9/gyro.c) */
+enum {
+    GYRO_ST_OFF = 0,        /* ARM9 without gyro support, or not probed yet */
+    GYRO_ST_ITG = 1,        /* InvenSense ITG-3200 family (Old 3DS ITG-3270), 14.375 LSB per deg/s */
+    GYRO_ST_ST = 2,         /* STMicro L3G family (WHO_AM_I 0x0F), 2000 deg/s range, 70 mdeg/s per LSB */
+    GYRO_ST_ABSENT = 3,     /* nothing answered on I2C bus 3 */
+    GYRO_ST_DISABLED = 4,   /* boot.cfg gyro=0 */
+};
 
 /* mcubox_t.req_power */
 enum { MCU_PWR_NONE = 0, MCU_PWR_OFF = 1, MCU_PWR_REBOOT = 2 };
@@ -76,7 +87,12 @@ typedef struct {
     int16_t  acc[3];
     uint16_t _p3;
     uint32_t acc_samples;
-    uint32_t _r3[5];
+    int32_t  gyro[3];       /* rotation rate in iOS device axes, deg/s as 16.16 fixed (IOFixed) */
+    uint32_t gyro_samples;  /* bumped after every gyro[] update */
+    uint8_t  gyro_state;    /* GYRO_ST_* */
+    uint8_t  gyro_dev;      /* 8-bit I2C address of the chip found (bus 3) */
+    uint8_t  gyro_id;       /* its WHO_AM_I */
+    uint8_t  _p3b;
     /* line 4: ARM11 -> ARM9 requests (the shim cleans this line after writing) */
     uint32_t req_seq;       /* bumped after the fields below changed */
     uint32_t req_power;     /* MCU_PWR_*: iOS halted / restarted */
@@ -84,7 +100,8 @@ typedef struct {
     uint32_t backlight;     /* 1 + LCD backlight level the shim last set (1 = screen off), 0 = never set */
     int32_t  user_delta;    /* seconds iOS' clock is ahead of rtc_utc (Settings > Date & Time) */
     uint32_t user_delta_seq;/* bumped whenever iOS sets the time; the ARM9 saves the offset */
-    uint32_t _r4[2];
+    uint32_t req_gyro;      /* 1 = the gyroscope is wanted (wake it and sample at 100 Hz) */
+    uint32_t _r4;
     /* line 5: ARM9 acknowledgements */
     uint32_t ack_seq;       /* == req_seq once the ARM9 acted on it */
     uint32_t ps_on;         /* boot.cfg powersave: the shim may mask VBlank while the CLCD is off */
@@ -97,6 +114,7 @@ _Static_assert(sizeof(mcubox_t) == 256, "mcubox layout");
 _Static_assert(__builtin_offsetof(mcubox_t, rtc_utc) == 32, "mcubox line 1");
 _Static_assert(__builtin_offsetof(mcubox_t, batt_percent) == 64, "mcubox line 2");
 _Static_assert(__builtin_offsetof(mcubox_t, acc) == 96, "mcubox line 3");
+_Static_assert(__builtin_offsetof(mcubox_t, gyro) == 108, "mcubox gyro");
 _Static_assert(__builtin_offsetof(mcubox_t, req_seq) == 128, "mcubox line 4");
 _Static_assert(__builtin_offsetof(mcubox_t, ack_seq) == 160, "mcubox line 5");
 
@@ -129,3 +147,51 @@ static inline uint32_t mcu_rtc_to_unix(const uint8_t raw[7])
     if (s > 59 || mi > 59 || h > 23 || d < 1 || d > 31 || mo < 1 || mo > 12) return 0;
     return (uint32_t)mcu_days_from_civil(y, mo, d) * 86400u + (uint32_t)(h * 3600 + mi * 60 + s);
 }
+
+/* ---- gyroscope: raw chip counts -> iOS -------------------------------------
+   The IOHIDEvent gyro fields are degrees per second (16.16 fixed in the kernel
+   event): CoreMotion's CLMotionTypeRotationRateToCMRotationRate (0x33231db8)
+   multiplies them by pi/180 for CMGyroData.rotationRate (rad/s); docs/re-log.md
+   section 64. Scale = 65536 / (LSB per deg/s), in Q10:
+     ITG-3200 family, FS_SEL 3: 14.375 LSB/(deg/s) -> 4559.03 -> 4668443 / 1024
+     ST L3G family at 2000 deg/s: 70 mdeg/s per LSB -> 4587.52 -> 4697620 / 1024 */
+#define GYRO_Q10_ITG    4668443u
+#define GYRO_Q10_ST     4697620u
+
+static inline int32_t mcu_gyro_fixed(int32_t raw, uint32_t q10)
+{
+    int64_t v = (int64_t)raw * (int64_t)q10;
+    return (int32_t)(v >= 0 ? v >> 10 : -((-v) >> 10));     /* round toward zero, symmetric */
+}
+
+/* Axis map "-y,x,z" (boot.cfg gyro_axes): iOS x, y, z from the chip's x, y, z.
+   Packed per iOS axis i as 2 bits source index | bit 2 negate, at bits 3i.
+   Returns 0 for a malformed string (the caller keeps its default). */
+static inline uint32_t mcu_axes_parse(const char *s)
+{
+    uint32_t m = 0, used = 0;
+    for (int i = 0; i < 3; i++) {
+        uint32_t neg = 0, src;
+        while (*s == ' ') s++;
+        if (*s == '-' || *s == '+') neg = *s++ == '-';
+        if (*s < 'x' || *s > 'z') return 0;
+        src = (uint32_t)(*s++ - 'x');
+        if (used & (1u << src)) return 0;
+        used |= 1u << src;
+        m |= (src | neg << 2) << (3 * i);
+        while (*s == ' ') s++;
+        if (i < 2 && *s++ != ',') return 0;
+    }
+    return *s ? 0 : m | 1u << 31;                           /* bit 31: valid */
+}
+
+static inline void mcu_axes_apply(uint32_t map, const int32_t in[3], int32_t out[3])
+{
+    for (int i = 0; i < 3; i++) {
+        uint32_t f = map >> (3 * i);
+        int32_t v = in[f & 3];
+        out[i] = (f & 4) ? -v : v;
+    }
+}
+
+#define GYRO_AXES_DEFAULT   "-y,x,z"    /* chip axes = console axes (x right, y to the hinge, z out of the lower screen), unverified */

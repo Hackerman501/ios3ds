@@ -13,6 +13,7 @@ assumptions it checks.
 | Volume slider | reg 0x09 (0..63) | ios3ds-mcud → `AVSystemController setActiveCategoryVolumeTo:` | see §6 |
 | Brightness | LCD backlight PWM 0x10202240 / 0x10202A40 (ARM11) | SpringBoard's `DisplayBrightness` × `DisplayBrightnessFactor` → ios3ds-mcud → sysctl → shim | see §6 |
 | Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | Apple's AppleLIS302DL driver on an emulated LIS302DL (shim I2C register file) → SpringBoard orientation, UIAccelerometer | see §6.2 |
+| Gyroscope | ITG-3270 class chip on I2C bus 3 (not the MCU) | Apple's AppleLIS331DLH driver on a new `gyro` DT node, two vtable words patched → IOHID gyro events → CoreMotion (`CMMotionManager` gyro / deviceMotion) | see §11 |
 | iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9 | see §6 |
 
 ## 1. Data path
@@ -47,8 +48,8 @@ mailbox (+0x6200..+0x63FF) and the free space below the GPU mirror mailbox
 | 0 | ARM9 | magic `MCU0`, version, state (`OFF/OK/FAILED/DISABLED`), MCU version, `seq`, polls, I2C errors, `valid` bits |
 | 1 | ARM9 | `rtc_utc` (Unix time = RTC + `rtc_offset`), `rtc_offset`, raw BCD, read count |
 | 2 | ARM9 | battery %, temperature, voltage, flags (reg 0x0F), volume and 3D sliders, event counters |
-| 3 | ARM9 | accelerometer x/y/z (raw s16), sample count |
-| 4 | ARM11 | `req_seq`, `req_power` (power off), `req_acc` (accelerometer wanted), `backlight` (1 + level last set; 1 = screen off) |
+| 3 | ARM9 | accelerometer x/y/z (raw s16), sample count; gyro x/y/z (deg/s, 16.16, iOS axes), gyro sample count, `gyro_state`/`gyro_dev`/`gyro_id` (§11) |
+| 4 | ARM11 | `req_seq`, `req_power` (power off), `req_acc` (accelerometer wanted), `backlight` (1 + level last set; 1 = screen off), `req_gyro` (gyro wanted) |
 | 5 | ARM9 | `ack_seq` |
 
 ## 3. ARM9 driver (boot/arm9/i2c.c, mcu.c)
@@ -292,6 +293,8 @@ settles it on the first hardware run:
 | 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x10..0x8F a safe range | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
 | MCU reg 0x22 bits 2-5 switch the backlights | libn3ds `MCU_LCD_PWR_*` | closing the shell darkens both screens: `[mcu] shell closed: …; LCD backlights off` |
 | Accelerometer: reg 0x40 bit 0 enables it, 0x45-0x4A are x/y/z s16; axes as in the QEMU model (x right, y hinge, z out of the lower screen) | 3dbrew, libn3ds | `[mcu] accelerometer on`; `ios3ds-mcu: accelerometer sample #1: x y z counts (|a| = …)` (about 55 on the gravity axis, `|a|` = the MCU's 1 g); `[mcud] SpringBoard device orientation …` while turning the console in Safari. Wrong axes: the map in `acc_sample()` (tools/ios3ds-mcu/shim/mcu.c); off: `mcu_acc=0` |
+| Gyro: an ITG-3200-family chip at bus 3 / 0xD0 (Old 3DS, libn3ds "ITG-3270"), or an ST L3G at 0xD6, or something at 0xD2; the ARM9 can drive bus 3 (0x10148000) | libn3ds device table, Horizon's 14.375 LSB/(deg/s) | `[gyro] ITG-3200 family at I2C 3:d0 (WHO_AM_I 68), asleep, …` (good), `[gyro] no gyroscope on I2C bus 3` (then CoreMotion gets no rates); `gyro=0` in boot.cfg if bus 3 misbehaves |
+| Gyro axes = console axes (x right, y to the hinge, z out of the lower screen) | guess | turn the console in a gyro app (or diag=1: `[gyrotest]` lines): a turn about the screen's vertical axis should show in iOS y. Fix with `gyro_axes=` (e.g. `x,-y,z`) |
 | Reg 0x20 bit 0 powers the console off | Luma `mcuPowerOff` | `[mcu] iOS shut down: log synced, powering off through the MCU` as the last log line, then the console is off |
 
 Kill switch: `mcu=0` in `sd:/ios3ds/boot.cfg` (the MCU is never touched; clock at 1970, no battery, no HOME/POWER).
@@ -429,3 +432,101 @@ zeros (off), and it switches the LED off before a power-off.
   again. If the timing is wrong, adjust `p[0]`/`p[1]` in `led_update()`
   (boot/arm9/mcu.c).
 
+
+## 11. Gyroscope → CoreMotion
+
+iPhone 4 apps read the gyro through `CMMotionManager` (`gyroAvailable`,
+`startGyroUpdates`, `gyroData.rotationRate`, `deviceMotion`). On 4.2.1 that
+works in the app's own process: CoreMotion finds an IOHID service with usage
+page 0xff00 / usage 9 in SpringBoard's HID event system, sets its
+`ReportInterval`, and takes `IOHIDEvent` type 20 from it (x/y/z in deg/s; CoreMotion converts to rad/s).
+RE details: [re-log.md](re-log.md) §64.
+
+```
+ gyro chip (I2C bus 3: ITG-3270 at 0xD0 on the Old 3DS, per libn3ds; 0xD6 / 0xD2 also probed)
+   │  ARM9 (boot/arm9/gyro.c): asleep until iOS wants it, then 100 Hz;
+   │  counts -> deg/s (16.16) -> iOS axes (boot.cfg gyro_axes)
+   ▼
+ mcubox line 3: gyro[3], gyro_samples, gyro_state        line 4: req_gyro (ARM11 -> ARM9)
+   ▲                                                        ▲
+   │ shim_gyro_dispatch (shim +0x2C)                        │ CTRL_REG1 power bits (shim_mcu_iic)
+ Apple's AppleLIS331DLH on /arm-io/i2c0/gyro (AppleEmbeddedAccelerometer kext)
+   │  vtable +0x3b4 getPrimaryUsage -> 9, +0x3c0 dispatch -> shim (kernel/patches-mcu.json)
+   ▼
+ IOHIDEventService (0xff00/9) -> SpringBoard's IOHIDEventSystem -> CoreMotion in the app
+```
+
+- **Kernel.** The n72 kernelcache has no gyro driver, but the accelerometer
+  kext also contains `AppleLIS331DLH`, a class nothing on the n72 uses. A
+  second I2C node, `/arm-io/i2c0/gyro` (`accelerometer,lis331dlh`, address
+  0x6b, `tools/ios3ds-mcu/dt_mcu.py`), starts it. Two words of its vtable are
+  patched: `getPrimaryUsage` returns 9 (gyro) instead of 3, and
+  `dispatchAccelerometerEvent` goes to `shim_gyro_dispatch`, which calls
+  IOHIDFamily's own `dispatchGyroEvent` (the next vtable slot) with the
+  ARM9's newest sample. The driver itself is unchanged: it registers the HID
+  service, runs its timer at the `ReportInterval` CoreMotion sets, and
+  switches the "sensor" on and off through CTRL_REG1. The shim answers its
+  I2C transfers (WHO_AM_I 0x32, BOOT cleared) and turns the power bits into
+  `req_gyro`.
+- **CoreMotion's gate.** `gyroAvailable` comes from a per-model table in
+  CoreMotion (`CLPlatformInfo::getProviders`), not from IOKit: N72 says "no
+  gyro". The rootfs recipe sets the gyro bit in N72's word (0x2012 → 0x2052,
+  N81's value), so `gyroAvailable` and `deviceMotionAvailable` are YES.
+- **Power.** The chip sleeps (ITG PWR_MGM SLEEP / ST power-down) from boot
+  until a CoreMotion client starts updates, and again when the last one stops
+  (the driver powers its "sensor" down when its ReportInterval is cancelled).
+  While awake the ARM9 reads 7 bytes every 10 ms.
+- **Units and axes.** ITG-3200 family at FS_SEL 3: 14.375 LSB per deg/s (the
+  coefficient Horizon's HID reports for the Old 3DS); ST L3G at 2000 deg/s: 70
+  mdeg/s per LSB. Converted to deg/s × 65536 (`mcu_gyro_fixed`,
+  boot/common/mcu_proto.h). `gyro_axes=-y,x,z` (default) gives iOS x, y, z
+  from the chip's x, y, z, assuming the chip's axes are the console's (x
+  right, y towards the hinge, z out of the lower screen); with iOS shown in
+  portrait on the lower screen, iOS y = console x and iOS x = -console y, as
+  for the accelerometer (§5).
+- **Kill switch:** `gyro=0` in boot.cfg. The ARM9 never touches bus 3 and the
+  shim answers the driver's probe with kIOReturnNoDevice, so there is no gyro
+  service. `gyroAvailable` still says YES (the CoreMotion word is in the
+  rootfs), but no rotation rates arrive. `mcu=0` (or a dead MCU) has the same
+  effect, since the gyro shares the MCU mailbox.
+- **Test tool:** `/usr/libexec/ios3ds-gyrotest` (tools/ios3ds-mcu/gyrotest),
+  a diag job (`diag=1`): uses `CMMotionManager` like an app for 150 s and
+  logs `[gyrotest]` lines.
+- **QEMU:** an ITG-3200 at bus 3 / 0xD0. QOM properties `gyro-x`, `gyro-y`,
+  `gyro-z` (millidegrees per second about the console's axes, read/write),
+  `gyro-awake` and `gyro-reads` (read only).
+
+### 11.1 QEMU results (2026-11-20, `--icount 2`, diag=1)
+
+`emu/run.py --icount 2 --time 560 --hmp "3=qom-set /machine gyro-x 10000;…"`
+(`build/emu-g2`, not committed). Model rates in deg/s about the console's
+axes: (10, 30, −45), then y −90 at 280 s, all 0 at 330 s, z 180 at 380 s.
+Expected in iOS axes (default map −y,x,z): (−30, 10, −45) °/s =
+(−0.524, 0.175, −0.785) rad/s, then x +1.571, then 0, then z 3.142.
+```
+[gyro] ITG-3200 family at I2C 3:d0 (WHO_AM_I 68), asleep, axes -y,x,z
+[gyrotest] gyroAvailable 1 deviceMotionAvailable 1 accelerometerAvailable 1
+ios3ds-mcu: gyro on
+[gyro] on by iOS (0 samples so far)
+ios3ds-mcu: gyro event #1: -1964940 656499 -2949690 deg/s/65536 (ARM9 sample 13)
+[gyrotest] started (interval 20 ms): gyroActive 1 deviceMotionActive 1
+[gyrotest] t=1 gyro -0.523 0.175 -0.786 rad/s | deviceMotion rate -0.518 0.175 -0.778 | attitude roll 1.02 pitch 1.25 yaw -0.93
+[gyrotest] t=90 gyro 1.571 0.175 -0.786 rad/s | deviceMotion rate 1.916 0.030 0.031 | attitude roll -2.55 pitch -0.66 yaw 2.15
+[gyrotest] t=100 gyro 0.000 0.000 0.000 rad/s | deviceMotion rate 0.339 -0.165 0.769 | …
+[gyrotest] t=130 gyro 0.000 0.000 3.142 rad/s | deviceMotion rate 0.299 -0.157 3.753 | attitude roll 2.28 pitch -0.20 yaw 1.82
+ios3ds-mcu: gyro off
+[gyrotest] done: gyro value changed 6 times, 1305 non-zero reads, last 0.000 0.000 3.142; updates stopped
+[gyro] off by iOS (14782 samples so far)
+```
+- `gyroData.rotationRate` equals the model's rates in iOS axes to 3
+  decimals. `deviceMotion` runs CoreMotion's sensor fusion on top: its
+  rotation rate follows with its own bias estimation (it converges to the
+  gyro while the accelerometer is still; steps show the filter catching up),
+  and the attitude turns.
+- Power: the chip is asleep from boot until the first client and again after
+  `stopGyroUpdates` (`qom-get /machine gyro-awake`: false at the end; the
+  ARM9 sampled 14782 times, ~100 Hz while on).
+- The first run sent rad/s and CoreMotion reported 1/57.3 of the rates: its
+  HID unit is deg/s (re-log §64). Without `gyro-interrupt-calibration` it
+  also logged `CLDeviceMotion::startSensorFusion … Could not get gyro dt`;
+  with the property that line is gone.
