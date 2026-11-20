@@ -112,9 +112,11 @@ typedef struct {
     uint32_t pad2[8];
 } cammbox_t;
 _Static_assert(sizeof(cammbox_t) == 128, "cammbox layout");
-#define CAM_NVARIANTS       5u      /* kernel/shim/cam.c cam_var_*, boot/arm9/camera.c self-test */
-#define CAM_VAR_CNT_LIST    { 0x8010u, 0x8610u, 0x8E10u, 0x8610u, 0xC610u }
-#define CAM_VAR_CLR_LIST    { 0x00u, 0x00u, 0x00u, 0x22u, 0x22u }
+#define CAM_NVARIANTS       6u      /* kernel/shim/cam.c cam_var_*, boot/arm9/camera.c self-test */
+/* 0: the CAMERA sysmodule's own set-up (re-log 71): CAM_CNT bits 8-9 = 2,
+   10 = 1, 14 = 1 (bit 4 kept on CAM0), transfer unit 4 lines = 2560 bytes */
+#define CAM_VAR_CNT_LIST    { 0xC610u, 0x8010u, 0x8610u, 0x8E10u, 0x8610u, 0xC610u }
+#define CAM_VAR_CLR_LIST    { CAM_XFER_UNITS(CAM_W * 2u * 4u), 0x00u, 0x00u, 0x00u, 0x22u, 0x22u }
 
 /* ---- hardware (GBATEK "3DS Video CAM Registers", "3DS I2C" ; 3dbrew "IO Registers") ----
    CAM0 0x10120000: inner camera + outer right camera (the DSi pair, shared bus)
@@ -129,10 +131,18 @@ _Static_assert(sizeof(cammbox_t) == 128, "cammbox layout");
 #define CAM_CLR             0x06u   /* u16: bit 15 = clear overrun (while CAM_CNT bit 15 = 0) */
 #define CAM_SOFS            0x10u
 #define CAM_EOFS            0x14u
-#define CAM_CNT_B4          (1u << 4)   /* must be 1, else the transfer hangs */
+#define CAM_CNT_B4          (1u << 4)   /* CAM0 only: reset of both blocks (0 = held), see re-log 71 */
 #define CAM_CNT_IRQ         (1u << 9)
-#define CAM_CNT_DRQ         (1u << 14)
+#define CAM_CNT_MODE_MASK   0x0300u     /* bits 8-9: the cam module writes 2 */
+#define CAM_CNT_MODE_2      0x0200u
+#define CAM_CNT_B10         (1u << 10)  /* the cam module sets it at init, clears it at shutdown */
+#define CAM_CNT_B11         (1u << 11)  /* the cam module clears it at init */
+#define CAM_CNT_TRIM        (1u << 13)  /* trimming (SOFS/EOFS) on */
+#define CAM_CNT_DRQ         (1u << 14)  /* the cam module sets it on both blocks at init */
 #define CAM_CNT_EN          (1u << 15)
+/* +6 bits 0-5: transfer unit in 256-byte steps minus 1 (at most 10240 bytes;
+   the cam module uses lines x width x 2); bit 15 (write) clears the overrun */
+#define CAM_XFER_UNITS(bytes) ((bytes) / 256u - 1u)
 #define CAM_STAT_FILL(v)    ((v) & 0x7FFu)
 #define CAM_STAT_OVR        (1u << 15)
 #define CAM_FIFO_UNITS      0x500u  /* GBATEK: fill counts up to 0x500 (8-byte units) */

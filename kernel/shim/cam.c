@@ -112,12 +112,12 @@ static inline void dinval(const volatile void *p, u32 len) { (void)p; (void)len;
 
 /* CAM block set-up variants, tried in turn every 2 s until data arrives.
    Run 25 (re-log 70): with 0x8010, +6 = 0x22 and DRQ/IRQ nothing ever arrived
-   on either block. New: the DSi's CAM_CNT init bits (GBATEK DSi "Camera Init":
-   bits 8-9 = 2 and bit 10 = 1 before the transfer is enabled, bit 11 IRQ);
-   the 3DS register is "alike DSi". The ARM9's boot self-test (diag=1,
-   boot/arm9/camera.c) runs the same list per sensor and logs which one works.
-     0  0x8010             2  0x8E10 (+ bit 11)       4  0xC610 + DRQ, +6 = 0x22
-     1  0x8610 (DSi 8-10)  3  0x8610, +6 = 0x22 */
+   on either block. Variant 0 is what the 3DS CAMERA sysmodule writes
+   (re-log 71): 0xC610 with a 2560-byte (4-line) transfer unit, after the
+   ARM9's block reset. The others are the earlier guesses. The ARM9's boot
+   self-test (diag=1, boot/arm9/camera.c) runs the same list per sensor.
+     0  0xC610, +6 = 9 (cam module)   2  0x8610 (DSi 8-10)   4  0x8610, +6 = 0x22
+     1  0x8010                        3  0x8E10 (+ bit 11)   5  0xC610, +6 = 0x22 */
 static const u16 cam_var_clr[CAM_NVARIANTS] = CAM_VAR_CLR_LIST;
 static const u32 cam_var_cnt[CAM_NVARIANTS] = CAM_VAR_CNT_LIST;
 #define CAM_WORDS       (CAM_FRAME_BYTES / 4u)
@@ -140,6 +140,13 @@ static struct {
 } C = { .reading = CAM_NBUF, .newest = CAM_NBUF };
 
 /* ---- IRQ side ------------------------------------------------------------- */
+/* Stop = transfer bit off only, as the cam module's StopCapture does: CAM0's
+   bit 4 is the reset of both blocks and the ARM9's set-up bits stay. */
+static void port_stop(u32 p)
+{
+    cnt_w(p, cnt_r(p) & ~CAM_CNT_EN);
+}
+
 static void port_start(u32 p)
 {
     cnt_w(p, cam_var_cnt[C.variant] & ~CAM_CNT_EN);     /* transfer off, set-up bits on */
@@ -187,10 +194,10 @@ static void probe(u32 now, u32 st)
     u32 o = C.port ^ 1, so = stat_r(o);
     C.stat_last = (st & 0xFFFF) | so << 16;
     if (CAM_STAT_FILL(st) || (st & CAM_STAT_OVR)) {
-        cnt_w(o, 0);
+        port_stop(o);
         cnt_restart();                                  /* start over at a frame start */
     } else if (CAM_STAT_FILL(so) || (so & CAM_STAT_OVR)) {
-        cnt_w(C.port, 0);
+        port_stop(C.port);
         C.port = o;                                     /* data comes in on the other block */
         cnt_restart();
     } else {
@@ -214,8 +221,8 @@ u32 shim_cam_service(u32 now)
     u32 st, units;
     if (!C.running) {
         if (C.streaming) {
-            cnt_w(0, 0);
-            cnt_w(1, 0);
+            port_stop(0);
+            port_stop(1);
             C.streaming = 0;
         }
         return 0;
@@ -352,8 +359,8 @@ static u32 op_stop(void)
     u32 s = irq_off();
     C.running = 0;
     if (C.streaming) {
-        cnt_w(0, 0);
-        cnt_w(1, 0);
+        port_stop(0);
+        port_stop(1);
         C.streaming = 0;
     }
     send_want(0);

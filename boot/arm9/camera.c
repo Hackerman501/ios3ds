@@ -5,6 +5,9 @@
  * camera mailbox (cammbox_t at shim + SHIM_CAM_OFF, boot/common/cam_proto.h);
  * this file, polled from the monitor loop, does what needs the I2C buses:
  *   - CFG11_CAMERA_CNT bit 0 (the cameras' 16 MHz clock, needed for their I2C),
+ *   - the CAM blocks' reset and set-up in the order the 3DS CAMERA sysmodule
+ *     uses (re-log 71: CAM0 bit 4 low, clock on, bit 4 high, both blocks'
+ *     CAM_CNT bits 8-10/14, transfer unit, trimming off),
  *   - the Aptina MT9V113 bring-up: reset, wakeup, PLL, YUV422 output at 320x240
  *     (GBATEK "DSi Aptina Camera Initialization", with output size A set to
  *     320x240), parallel output on,
@@ -109,6 +112,12 @@ static u32 apt_init(const camdev_t *c, bool inner)
     static const u16 seq1[][2] = {          /* MCU variable writes */
         { 0x02F0, 0x0000 }, { 0x02F2, 0x0210 }, { 0x02F4, 0x001A }, { 0x2145, 0x02F4 }, { 0xA134, 0x0001 },
     };
+    static const u16 flicker[][2] = {       /* the 3DS cam module's flicker-detection set-up (re-log 71) */
+        { 0x222D, 0x0058 }, { 0xA408, 0x0015 }, { 0xA409, 0x0018 }, { 0xA40A, 0x0019 }, { 0xA40B, 0x001C },
+        { 0x2411, 0x0058 }, { 0x2413, 0x006A }, { 0x2415, 0x0058 }, { 0x2417, 0x006A },
+        { 0xA402, 0x001D }, { 0xA403, 0x0004 }, { 0xA404, 0x0010 }, { 0xA40D, 0x0002 }, { 0xA40E, 0x0003 },
+        { 0xA410, 0x000A }, { 0xA40C, 0x0000 },
+    };
     static const u16 modes[][2] = {
         { 0x2755, 0x0002 }, { 0x2757, 0x0002 },                         /* output format A/B: YUV */
     };
@@ -123,7 +132,9 @@ static u32 apt_init(const camdev_t *c, bool inner)
     };
     u16 v;
     apt_wr(c, 0x001A, 0x0003);              /* reset */
+    wait_ms(1);                             /* the cam module waits 1 ms after each (re-log 71) */
     apt_wr(c, 0x001A, 0x0000);
+    wait_ms(1);
     apt_wr(c, 0x0018, 0x4028);              /* wakeup */
     apt_wr(c, 0x001E, 0x0201);
     apt_wr(c, 0x0016, 0x42DF);
@@ -131,14 +142,18 @@ static u32 apt_init(const camdev_t *c, bool inner)
         return CAMERR_WAKE;
     for (u32 i = 0; i < sizeof seq1 / sizeof seq1[0]; i++) mcu_wr(c, seq1[i][0], seq1[i][1]);
     if (mcu_rd(c, 0xA115, &v)) mcu_wr(c, 0xA115, v | 2);               /* SEQ_CAP_MODE: video */
+    wait_ms(10);
     for (u32 i = 0; i < sizeof modes / sizeof modes[0]; i++) mcu_wr(c, modes[i][0], modes[i][1]);
-    apt_wr(c, 0x0014, 0x2145);              /* PLL as on the DSi */
+    mcu_wr(c, 0xA111, 0x000A);              /* written by the 3DS cam module's base script */
+    apt_wr(c, 0x0014, 0x2145);              /* PLL as on the DSi (and the 3DS cam module) */
     apt_wr(c, 0x0010, 0x0111);
     apt_wr(c, 0x0012, 0x0000);
     apt_wr(c, 0x0014, 0x244B);
+    wait_ms(1);
     apt_wr(c, 0x0014, 0x304B);
     if (!apt_wait(c, 0x0014, 0x8000, 0x8000, false)) return CAMERR_PLL;
     apt_mask(c, 0x0014, 0x0001, 0);         /* PLL bypass off */
+    for (u32 i = 0; i < sizeof flicker / sizeof flicker[0]; i++) mcu_wr(c, flicker[i][0], flicker[i][1]);
     for (u32 i = 0; i < sizeof sizes / sizeof sizes[0]; i++) mcu_wr(c, sizes[i][0], sizes[i][1]);
     apt_mask(c, 0x3210, 0, 0x0008);
     mcu_wr(c, 0xA208, 0x0000);
@@ -309,7 +324,7 @@ static void selftest(void)
         apt_standby(c);
     }
     for (u32 p = 0; p < 2; p++) {
-        CAMREG32(p, CAM_CNT) = 0;
+        CAMREG32(p, CAM_CNT) = p ? 0 : CAM_CNT_B4;      /* CAM0 bit 4 = reset released */
         CAMREG16(p, CAM_CLR) = 0x8000;
     }
     log_ok("[cam-test] done: %u set-ups saw data%s\n", (unsigned)hits,
@@ -323,17 +338,55 @@ static void publish(u32 state, u32 err)
     box->ack_seq = box->req_seq;
 }
 
+/* The CAMERA sysmodule's block reset (re-log 71): CAM0's CAM_CNT bit 4 is
+   held low while the camera clock (pdn:c, here CFG11_CAMERA_CNT bit 0) is
+   switched on, released with the clock running, then the clock goes off
+   again and both CAM_CNTs are written back. Its delays are busy loops of
+   well under a millisecond; these are longer. */
+static void cam_reset(void)
+{
+    CAMREG16(0, CAM_CNT) &= (u16)~CAM_CNT_B4;
+    wait_ms(1);
+    REG8(CFG11_CAMERA_CNT_PA) |= 1u;
+    wait_ms(1);
+    CAMREG16(0, CAM_CNT) |= CAM_CNT_B4;
+    wait_ms(2);
+    REG8(CFG11_CAMERA_CNT_PA) &= (u8)~1u;
+    for (u32 p = 0; p < 2; p++) CAMREG16(p, CAM_CNT) = CAMREG16(p, CAM_CNT);
+}
+
+/* The rest of the cam module's driver initialisation, for both blocks:
+   transfer off, overrun cleared, 256-byte transfer unit, trimming off,
+   bits 8-9 = 2, bit 10 on, bit 11 off; then bit 14 on both. The shim
+   writes its set-up variant on top (variant 0 = this one, re-log 71). */
+static void cam_block_init(void)
+{
+    cam_reset();
+    for (u32 p = 0; p < 2; p++) {
+        CAMREG16(p, CAM_CNT) &= (u16)~CAM_CNT_EN;
+        CAMREG16(p, CAM_CLR) = (u16)((CAMREG16(p, CAM_CLR) & ~0x3Fu) | 0x8000u | CAM_XFER_UNITS(256u));
+        CAMREG16(p, CAM_CNT) &= (u16)~CAM_CNT_TRIM;
+        CAMREG32(p, CAM_SOFS) = 0x00010000u;
+        CAMREG32(p, CAM_EOFS) = 0x00010000u;
+        CAMREG16(p, CAM_CNT) = (u16)((CAMREG16(p, CAM_CNT) & ~(CAM_CNT_MODE_MASK | CAM_CNT_B11)) |
+                                     CAM_CNT_MODE_2 | CAM_CNT_B10);
+    }
+    for (u32 p = 0; p < 2; p++) CAMREG16(p, CAM_CNT) |= CAM_CNT_DRQ;
+}
+
 static void power(bool on)
 {
     if (on == powered) return;
     powered = on;
     if (on) {
+        cam_block_init();
         u32 before = REG8(CFG11_CAMERA_CNT_PA);
-        /* bit 0: the cameras' 16 MHz clock (their I2C needs it); bit 1 is
-           "reportedly turn on/off cameras" (GBATEK), set too in case */
+        /* bit 0: the cameras' 16 MHz clock (their I2C needs it; the cam
+           module's pdn:c call); bit 1 does not stick (run 25), set anyway */
         REG8(CFG11_CAMERA_CNT_PA) = (u8)(before | 3);
         wait_ms(5);
         log_ok("[cam-diag] CFG11_CAMERA_CNT %02x -> %02x\n", (unsigned)before, (unsigned)REG8(CFG11_CAMERA_CNT_PA));
+        diag_cam_block("after the cam module's block reset/init");
         i2c_init(BUS_DSI);
         i2c_init(BUS_3DS);
         u32 present = 0;
@@ -348,7 +401,12 @@ static void power(bool on)
         }
         box->present = present;
     } else {
+        /* the cam module's shutdown: block reset, clock off, bits 8-10 cleared */
+        for (u32 p = 0; p < 2; p++) CAMREG16(p, CAM_CNT) &= (u16)~CAM_CNT_EN;
+        cam_reset();
         REG8(CFG11_CAMERA_CNT_PA) &= (u8)~3u;
+        for (u32 p = 0; p < 2; p++)
+            CAMREG16(p, CAM_CNT) &= (u16)~(CAM_CNT_MODE_MASK | CAM_CNT_B10 | CAM_CNT_DRQ);
     }
 }
 
