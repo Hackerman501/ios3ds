@@ -38,7 +38,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
-| ❌ | 3D screen, IR, NFC, video recording | |
+| ❌ | 3D screen, IR, NFC, video recording | Currently unplanned |
 
 ✅ works on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
