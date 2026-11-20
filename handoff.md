@@ -1,119 +1,144 @@
-# Handoff: 3DS cameras in iOS (state 2026-11-20, after run 29 / build 44)
+# Handoff: 3DS cameras in iOS (state 2026-11-20 late, build 44 committed & deployed)
 
-**Status in one line:** the cameras work end to end on hardware as far as the
-counters go (build 43, run 29: ~12 fps of real sensor data into Camera.app,
-0 FIFO overruns), but Camera.app's preview shows one "first frame" whose
-content wiggles around. Build 44 adds frame dumps + two independent
-starvation watchers to decide where the wobble is born.
+**Task for the next session:** run 30 (the user boots build 44 on the console
+and uses Camera.app, see §4) will produce `build/hwlogs/run30.txt` plus one
+`CAM<seq>.RAW` frame dump per camera session. **Review them and decide the
+"wiggle" diagnosis** (§5). Everything below says what was done, where things
+are, and how to read the results. Status of everything at handover:
+`673bb5b` on `main` = build 44, pushed to GitHub; the same build's payload is
+**already copied onto the SD card** in the reader PC (`devilapi@192.168.178.83:/run/media/devilapi/3ds/ios3ds/`, all files 2026-11-20 23:04), so the
+user can boot it without any further copying.
 
-## 1. Run 29 (`build/hwlogs/run29.txt`) — what it proved
+## 1. What happened this session (the short version)
 
-- **Boot self-test (diag=1): all 36 set-ups `<-- DATA`.** Each sensor streams
-  on its mapped block (outer left → CAM1, inner → CAM0).
-- **Runtime: every session streams.** ~12 frames/s (≈450 FIFO words/ms;
-  words = frames × 38400 exactly, all boot long), 0 FIFO overruns, 0 CAM
-  restarts. The plug-in delivers into Celestial (per-session "first frame
-  delivered", e.g. 566 frames in the long session) and Celestial dequeues
-  everything (0 queue-full drops).
-- **The ARTIFACT:** the user sees one picture, looking like the first
-  captured frame, wiggling around. Sessions: 7 camera sessions across two
-  mediaserverd processes (device re-created 2× in the first, fast front/back
-  switches in between); the last was short (~2 s, 14 frames) before the user
-  pressed Home.
-- **Smoking gun:** the 5-s diag after one stop saw the CAM1 FIFO **parked at
-  the fill cap (1280 units) with CAM_STAT bit 15 still clear** — a full FIFO
-  does not raise the overrun bit on this hardware. So drain starvation
-  (XNU's masked interrupts; the GPU mirror alone showed 29 ms IRQ latency
-  in this boot) silently discards words, which displaces the 38400-word
-  frame window per incident — a picture that wanders exactly like "wiggling".
-  Alternatively the wobble is display-side; nothing in the counters can tell
-  the two apart.
-- 15 fps pixel rate would be ~576 words/ms; the observed ~450 words/ms is
-  either the sensor's real rate or a starved one — unknown until build 44's
-  data.
+The user reported (run 29, build 43): a picture appears in Camera.app, but it
+looks like **only the first captured frame, wiggling around**. I analyzed
+`build/hwlogs/run29.txt` (committed as `docs/hwlogs/run29.txt`), found the
+whole pipeline healthy on hardware, and built the diagnostics that decide the
+wiggle with pixels instead of guessing (build 44, this commit):
 
-Numbers cheat-sheet: the shim's `frames/words/services` are global-since-boot;
-`<-- DATA` lines at log offsets 74-107 (self-test), sessions around clean-file
-lines 721-765 (`device created` … `stopped after`), 767-803, 884-1046,
-1048-1232, 1392-1427; key 40 = Home.
+1. **Run 29 findings** (all in `docs/camera.md` §7 and §1 below):
+   - Boot self-test: **36/36 set-ups `<-- DATA`** (both CAM blocks, all three
+     sensors, on the mapped ports).
+   - Runtime: **~12 fps of real sensor data, every session** (7 sessions in
+     the boot; kernel words = frames × 38400 exactly, 0 FIFO overruns),
+     vcd delivered to Celestial, Celestial dequeued everything (0 drops).
+   - Smoking gun for one suspect: the 5-s diag caught the CAM1 FIFO **parked
+     at the fill cap 1280 units with the CAM_STAT overrun bit still clear** →
+     a full FIFO does not raise the overrun bit on this hardware → drain
+     starvation (XNU IRQ-mask windows; the GPU mirror alone measured 29 ms IRQ
+     latency in run 29) would silently discard words, displacing the
+     38400-word frame window per incident = a wiggling picture.
+   - 15 fps would be ~576 words/ms; the observed ~450 words/ms is either the
+     sensor's true rate or starved - until the dumps decide.
+   - "0 stills" in run 29: the shutter tap never reached vcd as
+     `StillImageCaptureNow`; ask the user to take one photo in run 30.
+2. **Build 44 diagnostics** (committed, details in `docs/camera.md` §3.2/§4.1/§7):
+   - Mailbox (`boot/common/cam_proto.h`, still exactly 128 bytes): `buf_pa[3]`,
+     `newest`/`newest_seq`, `snew`/`snew_seq` (two newest complete frames),
+     `gap_max` (worst drain-service interval in shim ticks) in the former pad.
+   - Kernel shim (`kernel/shim/cam.c`): publishes those; tracks the drain gap;
+     `op_stop` cleans all 3 frame buffers and **publishes before `send_want`**
+     so the ARM9 sees final values; fixed a real bug where a camera *restart*
+     wrote an uninitialised `pa` into `C.buf_pa[]` (IOMallocContiguous only
+     fills it when it allocates), so from session 2 on the ARM9 saw pa = 0.
+   - ARM9 (`boot/arm9/camera.c`): at every stop dumps the shim's two newest
+     complete frames **straight out of its buffers** to `sd:/ios3ds/CAM<seq>.RAW`
+     (`[cam] dump check: ...` line states the guard values, skipped-dump lines
+     say why); an independent `[cam] monitor` CAM_STAT watcher the XNU cannot
+     starve (per monitor-loop sample: max fill, near-full count); `drain gap
+     max x.y ms` added to the 10 s `[cam]` line.
+   - `tools/ios3ds-camera/analyze_dump.py` (new, stdlib-only, self-tested):
+     decodes a dump to BMPs in **both YUYV and UYVY byte orders** (look at
+     both to settle the colour order by eye), prints mean luma diff, the best
+     (dx, dy) inter-frame alignment, and rows whose best dx disagrees
+     (mid-frame word loss / shear).
+   - vcd (`tools/ios3ds-camera/vcd/vcd.c`): stop line is now
+     `stopped after N frames this run (M total, ...)` (old counts were
+     cumulative per stream across fast switches and misled the log reader).
+   - Docs updated: `docs/camera.md` (§3.2, new §4.1 "Frame dumps", §6 FIFO
+     timing corrected to 5.5 ms, §7 run-29 section + new diag line list),
+     `README.md` cameras row now ⚠️ "data flows, preview wiggles", this file.
+3. **QEMU validation** (each full boot ≈ 10-15 min wall with `--icount 2`):
+   - Live preview confirmed in QEMU (screenshots `build/emu-camtest/camrun*/tap_*.png`,
+     the model's pattern moves).
+   - Dump path exercised end to end over several runs; found and fixed two
+     real bugs this way (publish ordering; the uninitialised pa above).
+     Verified states so far: dump fires at stop 1 with correct content
+     (307232 bytes, header + 2 frames, `analyze_dump.py` reads it); stop-2
+     skips are explained by the pa bug and fixed in the last iteration.
+   - **camrun5 was still running when this handoff was written**
+     (`build/emu-camtest/camrun5.log`, `--out build/emu-camtest/camrun5`).
+     If it exists: check the log inside `build/sd.img`
+     (`MTOOLS_SKIP_CHECK=1 mcopy -o -i build/sd.img@@1M ::/ios3ds/log.txt /tmp/log.txt`)
+     for a `dump check` + `dumped frames` line at **every** stop; that is the
+     final confirmation of the pa fix. If camrun5 died early, just re-run:
+     `python3 emu/tap.py --icount 2 --time 520 --tap 392:127,314 --key 505:h --out build/emu-camtest/camrun6`
+     (Camera.app's icon is at iOS points (127,314) - row 3, second column).
+     Note: `make sdimg` (re)builds `build/sd.img` and wipes the old emu run's
+     files from it - pull the log first.
+4. **Deployed build 44** to the SD card over scp (see top). Commit `673bb5b`
+   pushed to GitHub main. Also on request: the unused `good first issue`
+   label was deleted from the GitHub repo (issues untouched).
 
-## 2. Build 44 (this tree): how it decides
+## 2. Formats (what the next run produces)
 
-Three new observers, no behaviour changes to the capture path:
-1. **`drain gap max X ms`** in the 10 s `[cam]` line: the shim's worst
-   interval between drain services (> ~5.5 ms = the FIFO's worth of stream →
-   words lost, overruns or not).
-2. **`[cam] monitor 10 s` / `at stop`**: the ARM9 samples `CAM_STAT`
-   itself (it cannot be starved): max FIFO fill + near-full counts.
-3. **Frame dumps:** at every camera stop the ARM9 copies the shim's **two
-   newest complete YUV422 frames** out of its buffers (mailbox lines:
-   `buf_pa[3]`, `newest(+seq)`, `snew(+seq)`, `gap_max`; the shim cleans the
-   buffers in op_stop) to `sd:/ios3ds/CAM<seq>.RAW` (~300 KiB, one per
-   session; log line `[cam] dumped frames seq …`). Layout:
-   u32 × 8 header `0x44554D43 ('CAMD'), 1, 320, 240, cam, port, seq1, seq2`,
-   then frame 1 (newest), frame 2. Analyse on the PC:
-   `python3 tools/ios3ds-camera/analyze_dump.py CAM00001234.RAW`
-   → BMPs of both frames in both YUYV/UYVY byte orders (settles the colour
-   question by eye) + mean luma diff + best (dx,dy) frame alignment + rows
-   whose best dx disagrees (mid-frame word loss). See `docs/camera.md` §4.1.
-   The plug-in now logs `stopped after N frames this run (M total, …)`.
+- `sd:/ios3ds/log.txt` → the user calls this **run 30** in
+  `build/hwlogs/run30.txt`. The boot rotates the previous boot's log to
+  `sd:/ios3ds/log_prev.txt`.
+- `sd:/ios3ds/CAM<seq>.RAW`, ~300 KiB each, one per camera session with ≥2
+  frames: u32×8 header `0x44554D43 ('CAMD'), 1, 320, 240, cam, port,
+  seq1, seq2` then frame 1 (newest) and frame 2, each 320×240×2 YUY422, no
+  padding. Copy to `build/hwlogs/` next to the log (`scp devilapi@192.168.178.83:/run/media/devilapi/3ds/ios3ds/'CAM*.RAW' build/hwlogs/`).
+- New log lines to expect (documented in `docs/camera.md` §7):
+  `[cam] dump check: newest seq ..., idx .../..., pa .../...`,
+  `[cam] dumped frames seq A (newest) and B to 0:/ios3ds/CAM....RAW`,
+  `[cam] monitor 10 s / at stop: N CAM_STAT samples, max FIFO fill F units,
+  near-full C`, and `drain gap max X.Y ms` inside the 10 s stats line.
 
-How to read the next run's log:
-- `drain gap max` > 5 ms and/or `near-full` > 0 in monitor lines **and** the
-  dump's frames drift (dx/dy ≠ 0 between neighbouring frames, shear rows) →
-  words are lost behind masked interrupts → the fix is a **CDMA drain**
-  (Nintendo's own driver uses CDMA, docs/camera.md §2/§6).
-- Gap max small, monitor quiet, but the dumped frames **drift anyway** → the
-  true sensor frame is not exactly 38400 words (blanking data reaching the
-  FIFO): fix on the CAM block set-up (+6/trimming/SOFS-EOFS).
-- Dumped frames stable and correct, diff ~ 0 across seconds → the sensors
-  deliver one frozen scene: look sensor-side (SEQ/AE), and at the display
-  path (pica CPU read-back fallback was active during run 29's last
-  session).
+## 3. Question the next session answers (the decision tree)
 
-## 3. Already validated here
-- `make firm`/`shim`/`test`/`userland` green (host camera drain test included,
-  340 checks OK); `python3 tools/ios3ds-camera/analyze_dump.py` self-tested
-  (synthetic dump: detects dx=+4/dy=+1 and a sheared row exactly).
-- QEMU end-to-end run of the dump path: see §5 (in progress at the time of
-  this handoff — check `build/emu-camtest/`).
+Run `python3 tools/ios3ds-camera/analyze_dump.py` on each RAW (script prints
+its own verdict help; also renders `frame1/2.yuyv.bmp` + `.uyvy.bmp`) and read
+the log's gap/monitor lines together:
 
-## 4. Deploy for the next hardware run (build 44)
-The card was in the reader at handover time; deploy with:
+| Evidence | Verdict | Next step |
+|---|---|---|
+| `drain gap max` > ~5 ms and/or `near-full` > 0, **and** dumps drift (dx/dy ≠ 0 between the two frames, shear rows) | words lost behind masked interrupts (FIFO overflow silently, see run 29's full-cap-without-overrun-bit) | CDMA drain (Nintendo's own driver uses CDMA; `docs/camera.md` §2/§6) - or reduce IRQ-mask windows |
+| gaps small, monitor quiet, but dumps **still drift** (same dx every frame) | the true sensor frame is not exactly 38400 words (blanking reaching the FIFO) | CAM block set-up: transfer unit (+6), trimming bit 13, SOFS/EOFS; compare against the private `cam.code` module copy (rules below) |
+| dump frames correct/stable, diff ~ 0 across seconds of live use | sensors delivered a frozen scene: sensor-side (AE/sequencer) or display-side problem | look at vcd's BGRA path and Celestial/pica (run 29 had a pica CPU read-back fallback + `arena full` around the camera); try `ios3dsPattern` preference to separate display from data |
+| YUYV vs UYVY BMPs | one looks right | fix `cam_yuyv_to_bgra` byte order if needed (`boot/common/cam_pattern.h`), note in `docs/camera.md` §7 |
 
-    make sd CYDIA=0 TLSFIX=0      # or with Cydia if wanted
-    scp -r build/sd/ios3ds/* devilapi@192.168.178.83:/run/media/devilapi/3ds/ios3ds/
+Also: 12 fps vs 15 - if the dumps are clean and the gap lines quiet, ~12 fps
+is simply the sensor's rate with our PLL config; not a bug per se.
 
-(If the card is mounted elsewhere, adapt. `boot.cfg` camera=1 as before;
-`diag=1` not needed — the dump needs XNU up.)
+## 4. Run 30 procedure (tell the user; card already has build 44)
 
-Run 30 procedure: boot, open Camera.app, hold ~20-30 s on the back camera,
-switch to the front for ~20 s, close. Pull `sd:/ios3ds/log.txt` →
-`build/hwlogs/run30.txt` **and** every `ios3ds/CAM*.RAW` → `build/hwlogs/`.
-Then: read §6 (run numbers), run analyze_dump.py on each RAW.
+Boot the console, open Camera.app, hold ~20-30 s on the back camera, switch
+to the front for ~20 s, take **one photo** (tests the still/review-image path
+on hardware for the first time), close with Home. Then hand the card back and:
 
-## 5. QEMU validation of the dump path (do this if §3's item is not done)
-`python3 emu/tap.py --icount 2 --time <T> --tap <t>:<camera icon x,y>
---key <t2>:h --shots ... --out build/emu-camtest/...` — Camera.app closes with
-Home (graceful stream stop → dump). The log must show
-`[cam] dumped frames seq …` and the SD image a `CAM00000???.RAW`; then
-`python3 tools/ios3ds-camera/analyze_dump.py` on it (extract the file from
-`build/sd.img`'s FAT, e.g. mtools/`emu/hfsmap.py`-style reader). A finding of
-dx/dy = 0 and moving test pattern content = the dump path works and the
-hardware numbers gain meaning.
+    scp devilapi@192.168.178.83:/run/media/devilapi/3ds/ios3ds/log.txt build/hwlogs/run30.txt
+    scp 'devilapi@192.168.178.83:/run/media/devilapi/3ds/ios3ds/CAM*.RAW' build/hwlogs/
 
-## 6. Track of the old open points (unchanged)
-- Colour byte order (Y0 U Y1 V vs UYVY), orientation/mirroring: decided by
-  eye from the dump BMPs this coming run.
-- Still image path: run 29 saw "0 stills" — no shutter tap reached vcd's
-  `StillImageCaptureNow`; take one photo in run 30 to exercise the review
-  image path on hardware (QEMU: photos save fine).
-- VGA stills, front preview mirroring, video recording, outer-right camera:
-  unchanged (docs/camera.md §8).
-- `docs/camera.md` §7 documents runs 23/25/29 and the new diagnostics; README
-  now says ⚠️ Cameras with the run-29 wording.
+## 5. Odds and ends to know
 
-## 7. Nintendo code rules (unchanged, see previous handoff)
-`~/.local/share/ios3ds-private/cam.code` stays private; only derived facts in
-our own words go into the repo; disassembly base 0x00100000, Thumb,
-CAM0 0x1EC20000 / CAM1 0x1EC21000 virtual.
+- The shim's counters (`frames/words/services`) are **global since boot**;
+  the 10 s line prints deltas since the last stat line, the 0.2/1/5-s lines
+  print absolute values - that mismatch misled me in run 29's numbers at
+  first (details in the scratchpad-era analysis; keep it in mind).
+- Two mediaserverd processes appeared per Camera.app launch (device re-created
+  inside each), plus Celestial restarts the stream after the first ~5 s;
+  the same happens in QEMU, so it is iOS-side behaviour, not hardware.
+- FatFs on the ARM9 has LFN enabled, so `CAM00000169.RAW` is a legal name.
+- The kernel shim lives in two images: `shim.bin` and `gpu.bin` (the cam.o
+  part!) - **`make firm` does NOT rebuild them, run `make shim` before
+  `make sdimg`**, or you test a stale shim like I did twice.
+- QEMU tap coordinates: Camera.app icon at iOS points (127,314); Settings
+  (47,314), Notes (47,226), Safari dock (199,440). The `good first issue`
+  label is gone from the repo (user request); issues #1, #6, #7 open.
+- Nintendo code rules (unchanged): `~/.local/share/ios3ds-private/cam.code`
+  (also `sd:/ios3ds/cam.code`) stays private - never commit or quote it;
+  only derived facts in our own words; disassembly base 0x00100000, Thumb,
+  CAM0 virtual 0x1EC20000 / CAM1 0x1EC21000.
+- `handoff` numbering: this file supersedes the previous one entirely.
