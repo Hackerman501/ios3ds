@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pica.h"
+#include "pica_drv.h"
 
 static int failures, checks;
 
@@ -801,6 +802,103 @@ static void test_sim(void)
     CHECK_EQ(dev->free(vbuf), PICA_OK);
 }
 
+/* The arena allocator under CA's pattern (hardware runs 19-21, issues 1/5):
+   a 1 MiB render target and its 600 KiB copy come and go while small layer
+   textures are uploaded and evicted, with the arena about 3/4 full. Big
+   blocks are placed from the top and small ones from the bottom, so when a
+   target does not fit, evicting the highest small blocks (what the GL engine
+   does for big requests) frees about as much as the target needs instead of
+   most of the textures. */
+static int t_alive(uint32_t o) { (void)o; return 1; }
+static void t_log(const char *f, ...) { (void)f; }
+static uint32_t alloc_churn(uint32_t big_min, uint32_t *evicted_kb)
+{
+    static pica_plat_t plat;
+    static pica_drv_t d;
+    static uint32_t live[400], livesz[400];
+    uint32_t n = 0, held = 0, i, k, pa, rt, swz, fails = 0, rnd = 12345, ev = 0;
+    plat.alive = t_alive;
+    plat.log = t_log;
+    memset(&d, 0, sizeof d);
+    d.p = &plat;
+    d.pa = 0x24000000;
+    d.size = 12u << 20;
+    d.state = PICA_OK;
+    d.block[0].size = PICA_DRV_CMD_SIZE;
+    d.nblocks = 1;
+    (void)big_min;
+    CHECK_EQ(pica_drv_alloc(&d, 0, 1u << 20, 0x1000, &pa), PICA_OK);       /* the mirror's texture */
+    for (i = 0; i < 3000; i++) {
+        uint32_t sz;
+        rnd = rnd * 1103515245u + 12345u;
+        sz = (((rnd >> 8) % 96) + 1) * 1024;                                /* 1-96 KiB textures */
+        while (n && (held + sz > (8u << 20) || n >= 210)) {                 /* LRU-ish eviction */
+            k = (rnd >> 4) % n;
+            CHECK_EQ(pica_drv_free(&d, 1, live[k]), PICA_OK);
+            held -= livesz[k];
+            live[k] = live[n - 1];
+            livesz[k] = livesz[--n];
+        }
+        if (pica_drv_alloc(&d, 1, sz, 0, &pa) == PICA_OK) {
+            live[n] = pa;
+            livesz[n++] = (sz + PICA_DRV_ALIGN - 1) & ~(PICA_DRV_ALIGN - 1);
+            held += livesz[n - 1];
+        }
+        if (i % 20)
+            continue;
+        for (;;) {                          /* a target comes and goes */
+            uint32_t top = 0;
+            if (pica_drv_alloc(&d, 1, 1u << 20, 0, &rt) == PICA_OK) {
+                if (pica_drv_alloc(&d, 1, 600u << 10, 0, &swz) == PICA_OK)
+                    break;
+                CHECK_EQ(pica_drv_free(&d, 1, rt), PICA_OK);
+            }
+            if (!n) {
+                fails++;
+                rt = swz = 0;
+                break;
+            }
+            for (k = 1; k < n; k++)         /* no room: evict the highest small block */
+                if (live[k] > live[top])
+                    top = k;
+            CHECK_EQ(pica_drv_free(&d, 1, live[top]), PICA_OK);
+            held -= livesz[top];
+            ev += livesz[top];
+            live[top] = live[n - 1];
+            livesz[top] = livesz[--n];
+        }
+        if (rt) {
+            CHECK_EQ(pica_drv_free(&d, 1, swz), PICA_OK);
+            CHECK_EQ(pica_drv_free(&d, 1, rt), PICA_OK);
+        }
+    }
+    *evicted_kb = ev >> 10;
+    return fails;
+}
+
+static void test_alloc(void)
+{
+    uint32_t kb, pa, fails;
+    static pica_plat_t plat;
+    static pica_drv_t d;
+    plat.alive = t_alive;
+    plat.log = t_log;
+    d.p = &plat;
+    d.pa = 0x24000000;
+    d.size = 12u << 20;
+    d.state = PICA_OK;
+    d.block[0].size = PICA_DRV_CMD_SIZE;
+    d.nblocks = 1;
+    CHECK_EQ(pica_drv_alloc(&d, 0, 1u << 20, 0x1000, &pa), PICA_OK);
+    CHECK_EQ(pa, d.pa + d.size - (1u << 20));                               /* big: from the top */
+    CHECK_EQ(pica_drv_alloc(&d, 0, 4096, 0, &pa), PICA_OK);
+    CHECK_EQ(pa, d.pa + PICA_DRV_CMD_SIZE);                                 /* small: from the bottom */
+    fails = alloc_churn(PICA_DRV_BIG, &kb);
+    CHECK_EQ(fails, 0);
+    CHECK(kb < 20 * 1024);          /* evicting at random instead: ~42 MiB */
+    printf("alloc: 150 targets placed in a 3/4 full arena, %u KiB of textures evicted for them\n", kb);
+}
+
 int main(int argc, char **argv)
 {
     test_cmd();
@@ -809,6 +907,7 @@ int main(int argc, char **argv)
     test_tex();
     test_ff();
     test_sim();
+    test_alloc();
     (void)argc; (void)argv;
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;

@@ -25,9 +25,10 @@ typedef struct pica_plat {
     void (*log)(const char *fmt, ...);
 } pica_plat_t;
 
-#define PICA_DRV_BLOCKS   160
+#define PICA_DRV_BLOCKS   224                       /* issue 1 (New 2DS XL): 160 filled up with CA textures */
 #define PICA_DRV_CMD_SIZE 0x20000u                  /* command list staging inside the arena */
 #define PICA_DRV_ALIGN    0x80u                     /* allocation granule (>= 2 cache lines, 16-byte GPU units) */
+#define PICA_DRV_BIG      0x40000u                  /* blocks this big are placed from the top of the arena */
 
 typedef struct pica_drv {
     const pica_plat_t *p;

@@ -134,20 +134,47 @@ uint32_t pica_drv_free_all(pica_drv_t *d, uint32_t owner)
     return n;
 }
 
-/* first fit; the table stays sorted by offset */
+static void insert_block(pica_drv_t *d, uint32_t i, uint32_t owner, uint32_t start, uint32_t size)
+{
+    uint32_t j;
+    for (j = d->nblocks; j > i; j--)
+        d->block[j] = d->block[j - 1];
+    d->block[i].off = start;
+    d->block[i].size = size;
+    d->block[i].owner = owner;
+    d->nblocks++;
+}
+
+/* Small blocks (textures) first fit from the bottom, big ones (render
+   targets, depth buffers, read-back staging, the mirror's texture: >=
+   PICA_DRV_BIG) first fit from the top. Mixed in one first-fit order, the
+   long-lived small textures ended up between the big blocks and a 1 MiB
+   target no longer fitted with 1-3 MiB free in 60-140 pieces (hardware
+   runs 19-21, issues 1 and 5). The table stays sorted by offset. */
 static int try_alloc(pica_drv_t *d, uint32_t owner, uint32_t size, uint32_t align, uint32_t *pa)
 {
-    uint32_t i, j, prev_end = 0;
+    uint32_t i, prev_end = 0;
+    if (size >= PICA_DRV_BIG) {
+        for (i = d->nblocks; i > 0; i--) {
+            uint32_t next = i < d->nblocks ? d->block[i].off : d->size;
+            uint32_t lo = d->block[i - 1].off + d->block[i - 1].size;   /* block 0 = command staging */
+            uint32_t start;
+            if (next < lo + size)
+                continue;
+            start = (next - size) & ~(align - 1);
+            if (start >= lo) {
+                insert_block(d, i, owner, start, size);
+                *pa = d->pa + start;
+                return 1;
+            }
+        }
+        return 0;
+    }
     for (i = 0; i <= d->nblocks; i++) {
         uint32_t next = i < d->nblocks ? d->block[i].off : d->size;
         uint32_t start = (prev_end + align - 1) & ~(align - 1);
         if (start <= next && next - start >= size) {
-            for (j = d->nblocks; j > i; j--)
-                d->block[j] = d->block[j - 1];
-            d->block[i].off = start;
-            d->block[i].size = size;
-            d->block[i].owner = owner;
-            d->nblocks++;
+            insert_block(d, i, owner, start, size);
             *pa = d->pa + start;
             return 1;
         }
