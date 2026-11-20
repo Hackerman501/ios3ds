@@ -234,6 +234,36 @@ class Deb(unittest.TestCase):
         self.assertEqual(env["X"], "1")
         self.assertEqual(plistlib.loads(fake.fs[other][2]), {"Label": "o"})
 
+    def test_substrate_guard(self):
+        """cynject is diverted behind the pid-1 guard, dpkg knows the diversion, a
+        cynject line in launchd.conf is dropped; the manifest holds Substrate."""
+        fake = FakeHfs()
+        cy = "/Library/Frameworks/CydiaSubstrate.framework/Commands/cynject"
+        for d in ("/Library", "/Library/Frameworks", "/Library/Frameworks/CydiaSubstrate.framework",
+                  "/Library/Frameworks/CydiaSubstrate.framework/Commands", "/usr", "/usr/libexec",
+                  "/private/var/lib", "/private/var/lib/dpkg"):
+            fake.fs[d] = ("d", 0o755, None)
+        fake.fs[cy] = ("f", 0o2755, b"\xce\xfa real cynject")
+        fake.fs["/private/etc/launchd.conf"] = ("f", 0o644, b"setenv X 1\nbsexec .. /usr/bin/cynject 1 /x.dylib\n")
+        m = {"substrate": {"insert": "/Library/MobileSubstrate/MobileSubstrate.dylib",
+                           "write": {"/usr/libexec/ios3ds-cynject": "#!/bin/bash\n# ios3ds cynject guard\n"},
+                           "mode": {"/usr/libexec/ios3ds-cynject": "755"},
+                           "divert": {cy: "/usr/libexec/ios3ds-cynject"}}}
+        cat = lambda img, path: fake.fs[fake.resolve(path)][2]    # noqa: E731
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            cydia.substrate_setup("img", fake, cat, {}, m)
+        self.assertEqual(fake.fs[cy + ".real"][2], b"\xce\xfa real cynject")
+        self.assertIn(b"ios3ds cynject guard", fake.fs[cy][2])
+        self.assertEqual(fake.fs[cy][1], 0o755)
+        self.assertEqual(fake.fs["/private/var/lib/dpkg/diversions"][2].decode(), "%s\n%s.real\n:\n" % (cy, cy))
+        self.assertEqual(fake.fs["/private/etc/launchd.conf"][2], b"setenv X 1\n")
+        real = cydia.load_manifest()
+        self.assertEqual(set(real["hold"]), {"mobilesubstrate", "com.saurik.substrate.safemode"})
+        self.assertIn(cy, real["substrate"]["divert"])
+        self.assertIn("Pin: version 0.9.6301", real["substrate"]["write"]["/etc/apt/preferences"])
+        self.assertEqual(cydia.status_entry("Package: a\nVersion: 1\n", hold=True).split("\n")[1],
+                         "Status: hold ok installed")
+
     def test_fetch_offline(self):
         m = cydia.load_manifest()
         with tempfile.TemporaryDirectory() as td, mock.patch("sys.stdout", new=io.StringIO()), \

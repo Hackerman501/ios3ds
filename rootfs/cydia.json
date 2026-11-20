@@ -301,10 +301,25 @@
   "/var/lib/cydia/firmware.ver": "6\n"
  },
  "substrate": {
-  "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 71). So Substrate is inserted where it is needed: only SpringBoard among the recipe's plist_set jobs (its 'daemons' list; configd/securityd don't need it and loading it there wastes memory on the 128 MB device); apps load it from ios3ds-applog.dylib, which SpringBoard inserts into every app as libgmalloc.dylib (tools/ios3ds-diag/applog.c); ios3ds-nettest loads it after CFNetwork. docs/cydia.md",
+  "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf and runs it) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 71). So Substrate is loaded by ios3ds-applog.dylib in every .app executable, SpringBoard included (SpringBoard inserts applog through its plist, apps through SBGuardMallocAlways' libgmalloc.dylib; tools/ios3ds-diag/applog.c), and by ios3ds-nettest after CFNetwork. No launchd plist names MobileSubstrate.dylib ('daemons' is empty): a (re)installed mobilesubstrate's extrainst_ strips that entry from the plists (re-log 73). cynject is diverted behind a guard that refuses pid 1, Substrate is held + pinned, and com.ios3ds.substrate-guard cleans launchd.conf at boot. docs/cydia.md",
   "insert": "/Library/MobileSubstrate/MobileSubstrate.dylib",
-  "daemons": [
-   "com.apple.SpringBoard.plist"
-  ]
- }
+  "daemons": [],
+  "write": {
+   "/usr/libexec/ios3ds-cynject": "#!/bin/bash\n# ios3ds cynject guard (docs/cydia.md, re-log 73). Cydia Substrate's launchd\n# injection (cynject into pid 1, which mobilesubstrate's extrainst_ runs and\n# writes into /etc/launchd.conf) hangs every process launchd starts on iOS 4.2.1.\n# The real cynject is the dpkg diversion target /Library/Frameworks/CydiaSubstrate.framework/Commands/cynject.real; this refuses pid 1.\nif [ \"$1\" = 1 ]; then\n    echo \"cynject: launchd injection is disabled on ios3ds (docs/cydia.md)\" >&2\n    exit 0\nfi\nexec /Library/Frameworks/CydiaSubstrate.framework/Commands/cynject.real \"$@\"\n",
+   "/usr/libexec/ios3ds-substrate-guard": "#!/bin/bash\n# ios3ds substrate guard (docs/cydia.md, re-log 73), run once at boot by launchd.\n# Undoes what a (re)installed mobilesubstrate's extrainst_ sets up for its\n# launchd injection, which hangs iOS 4.2.1: cynject lines in /etc/launchd.conf,\n# /etc/rc.d/substrate, and an un-diverted cynject binary.\nc=/private/etc/launchd.conf\nif [ -f $c ] && grep -q cynject $c; then\n    sed -i '/cynject/d' $c\n    [ -s $c ] || rm -f $c\n    echo \"[substrate-guard] removed the cynject line from /etc/launchd.conf\" > /dev/console\nfi\nrm -f /private/etc/rc.d/substrate\ns=/Library/Frameworks/CydiaSubstrate.framework/Commands/cynject\nif [ -f $s ] && ! grep -q 'ios3ds cynject guard' $s; then\n    mv -f $s $s.real\n    cp /usr/libexec/ios3ds-cynject $s\n    chmod 755 $s\n    echo \"[substrate-guard] put the cynject guard back in front of $s.real\" > /dev/console\nfi\nexit 0\n",
+   "/System/Library/LaunchDaemons/com.ios3ds.substrate-guard.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>com.ios3ds.substrate-guard</string>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>/bin/bash</string>\n\t\t<string>/usr/libexec/ios3ds-substrate-guard</string>\n\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>LaunchOnlyOnce</key>\n\t<true/>\n\t<key>UserName</key>\n\t<string>root</string>\n</dict>\n</plist>\n",
+   "/etc/apt/preferences": "Package: mobilesubstrate\nPin: version 0.9.6301\nPin-Priority: 1001\n\nPackage: com.saurik.substrate.safemode\nPin: version 0.9.6001\nPin-Priority: 1001\n"
+  },
+  "mode": {
+   "/usr/libexec/ios3ds-cynject": "755",
+   "/usr/libexec/ios3ds-substrate-guard": "755"
+  },
+  "divert": {
+   "/Library/Frameworks/CydiaSubstrate.framework/Commands/cynject": "/usr/libexec/ios3ds-cynject"
+  }
+ },
+ "hold": [
+  "mobilesubstrate",
+  "com.saurik.substrate.safemode"
+ ]
 }

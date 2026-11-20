@@ -74,18 +74,18 @@ the boot. Not debugged further (Substrate is closed source).
 
 | Process | How Substrate gets in | Our own library |
 |---|---|---|
-| SpringBoard | its launchd plist: `DYLD_INSERT_LIBRARIES=/usr/lib/ios3ds-applog.dylib:/Library/MobileSubstrate/MobileSubstrate.dylib` | ios3ds-applog, first |
-| configd | `.../ios3ds-a80211.dylib:.../MobileSubstrate.dylib` | Wi-Fi bridge interposer, first |
-| securityd | `.../ios3ds-hwaes.dylib:.../MobileSubstrate.dylib` | AES interposer, first |
+| SpringBoard | its launchd plist inserts `/usr/lib/ios3ds-applog.dylib`; applog's constructor `dlopen`s MobileSubstrate.dylib (as for apps, below) | ios3ds-applog |
 | every app | SpringBoard inserts `/usr/lib/libgmalloc.dylib` (= ios3ds-applog, `SBGuardMallocAlways`) into each app, replacing anything else; ios3ds-applog's constructor `dlopen`s MobileSubstrate.dylib in executables inside a `.app` (after adding it to `DYLD_INSERT_LIBRARIES`, where Substrate's loader looks for and removes itself) | ios3ds-applog |
 | ios3ds-nettest | `dlopen` after it loads CFNetwork (TLSFix filters on CFNetwork) | |
-| other daemons | none | |
+| configd, securityd, other daemons | none (nothing targets them; it would only cost memory) | configd: Wi-Fi bridge interposer; securityd: AES interposer (unchanged) |
 | **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **none**: the sandbox refuses every file under `/Library` (`open` gives `EPERM` for `/Library/MobileSubstrate/...`, `/Library/Frameworks/CydiaSubstrate.framework/...`, and for `/var/mobile/Library/ConfigurationProfiles`), so the `dlopen` fails and the app runs without tweaks | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
 
-Every launchd job that the recipe gives its own `DYLD_INSERT_LIBRARIES` gets
-Substrate appended automatically; our interposers stay first, so their
-`__interpose` entries and constructors run before any tweak. Without Cydia
-(`CYDIA=0`) none of this happens and the plists are as before.
+No launchd plist names `MobileSubstrate.dylib` (`substrate.daemons` is empty;
+`cydia.substrate_setup` can still append it to listed recipe jobs): a
+(re)installed `mobilesubstrate`'s `extrainst_` removes that entry from the
+LaunchDaemons plists, which in QEMU left SpringBoard without Substrate after a
+reboot. Loading it from applog survives that. Without Cydia (`CYDIA=0`) nothing
+changes.
 
 Inside a process, `MobileSubstrate.dylib` (= `SubstrateInjection.dylib`) loads
 `SubstrateLoader.dylib` only if CoreFoundation is loaded, and the loader then loads
@@ -122,6 +122,32 @@ content process's memory budget. So the patch turns Safari's "could not establis
 a secure connection" into an out-of-memory failure; it is left out by default and
 kept as an opt-in for a device with more RAM or a slimmer TLS library. Cydia and
 other unsandboxed apps get TLSFix without it.
+
+## Installing tweaks: Substrate stays as it is (re-log 73)
+
+Installing a tweak from Cydia must never set up Substrate's launchd injection,
+which hangs 4.2.1 (on builds without the pre-installed Substrate, installing
+anything that depends on `mobilesubstrate` hard-locked the device: Cydia installs
+it and runs its `extrainst_`, which calls `cynject 1` at once and writes it into
+`/etc/launchd.conf`). The build therefore:
+
+- **holds** `mobilesubstrate` and `com.saurik.substrate.safemode` (`Status: hold ok
+  installed`, manifest `hold`) and pins their versions in `/etc/apt/preferences`
+  (priority 1001): Cydia's Upgrade and installs of dependent tweaks keep the
+  pre-installed 0.9.6301, which satisfies `Depends: mobilesubstrate` including
+  versioned ones such as `(>= 0.9.3997)`;
+- **diverts** `CydiaSubstrate.framework/Commands/cynject` (a local dpkg diversion
+  in `/var/lib/dpkg/diversions`): the real binary is `cynject.real`, and in its
+  place a guard (`/usr/libexec/ios3ds-cynject`) refuses pid 1 and passes every
+  other use (e.g. cycript) to the real one. A reinstalled or newer
+  `mobilesubstrate` unpacks its cynject to `cynject.real` as well, so its
+  `extrainst_` (which injects only through `system("/usr/bin/cynject 1 ...")`)
+  and any `bsexec .. cynject 1` line in `/etc/launchd.conf` do nothing;
+- runs **`com.ios3ds.substrate-guard`** once at every boot
+  (`/usr/libexec/ios3ds-substrate-guard`): removes cynject lines from
+  `/etc/launchd.conf` and `/etc/rc.d/substrate`, and puts the guard back if
+  something replaced cynject without the diversion. The build itself drops any
+  cynject line from `launchd.conf` too (a fresh image has none).
 
 **Safe mode:** MobileSafety (filter `com.apple.springboard`) and the loader's
 crash handlers load in SpringBoard as on a jailbroken device, so a tweak that
@@ -216,5 +242,5 @@ still carry an armv6 (or generic ARM) slice.
 - Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh.
 - The startup daemon re-runs `firmware.sh` on every boot (stock behaviour); it
   is a few seconds of background shell work.
-- Substrate is not in daemons other than configd and securityd (see above):
-  tweaks for other daemons don't load.
+- Substrate is not in launchd daemons (only in SpringBoard and apps): tweaks
+  for daemons don't load.

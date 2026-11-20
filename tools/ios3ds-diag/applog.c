@@ -13,11 +13,12 @@
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
  * popup). Otherwise it does nothing.
  *
- * Cydia Substrate in apps (docs/cydia.md): the libgmalloc.dylib that SpringBoard
- * inserts replaces any DYLD_INSERT_LIBRARIES an app would otherwise get, so an
- * app (an executable inside a .app bundle) loads
+ * Cydia Substrate (docs/cydia.md): every executable inside a .app bundle
+ * (SpringBoard, which inserts us through its launchd plist, and every app, which
+ * gets us as SpringBoard's libgmalloc.dylib) loads
  * /Library/MobileSubstrate/MobileSubstrate.dylib from here, before main(), as if
  * it had been inserted with it; without Substrate on the image nothing happens.
+ * No launchd plist names Substrate: mobilesubstrate's extrainst_ strips it there.
  * Sandboxed apps cannot read /Library and stay without it (docs/cydia.md).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -198,7 +199,7 @@ static void load_substrate(void)
     const char *e = getenv("DYLD_INSERT_LIBRARIES");
     char exe[1024], old[1024], v[1200];
     unsigned int n = sizeof(exe);
-    if (!e || strstr(e, ms) || strlen(e) >= sizeof(old)) return;   /* SpringBoard: has it from its plist */
+    if (!e || strstr(e, ms) || strlen(e) >= sizeof(old)) return;   /* already inserted */
     if (_NSGetExecutablePath(exe, &n) != 0 || !strstr(exe, ".app/")) return;
     memcpy(old, e, strlen(e) + 1);
     snprintf(v, sizeof(v), "%s:%s", old, ms);

@@ -304,13 +304,13 @@ class Image:
 
 # --- install ------------------------------------------------------------------
 
-def status_entry(control, extra=()):
+def status_entry(control, extra=(), hold=False):
     lines = control.strip("\n").splitlines()
     out = []
     for line in lines:
         out.append(line)
         if line.startswith("Package:"):
-            out.append("Status: install ok installed")
+            out.append("Status: %s ok installed" % ("hold" if hold else "install"))
     out.extend(extra)
     return "\n".join(out) + "\n"
 
@@ -373,7 +373,8 @@ def install(img, hfs, debs, manifest=None, verbose=True):
             if conff:
                 extra.append("Conffiles:")
                 extra += [" %s %s" % (c, md5.get(c, "newconffile")) for c in conff]
-            status.append(status_entry(control, extra))
+            # held packages (manifest "hold"): APT/Cydia never upgrade or reinstall them
+            status.append(status_entry(control, extra, pkg in m.get("hold", ())))
             info = "/var/lib/dpkg/info/" + pkg
             im.makedirs("/var/lib/dpkg/info")
             im.put(info + ".list", ("\n".join(listed) + "\n").encode())
@@ -436,10 +437,35 @@ def substrate_setup(img, hfs, hfs_cat, recipe, manifest, verbose=True):
     ins = sub["insert"]
     with tempfile.TemporaryDirectory() as td:
         im = Image(img, hfs, td)
+        modes = sub.get("mode", {})
         for path, text in sub.get("write", {}).items():
-            im.put(path, text.encode())
+            im.makedirs(path.rsplit("/", 1)[0])
+            im.put(path, text.encode(), int(modes.get(path, "644"), 8))
         for path, target in sub.get("symlink", {}).items():
             im.symlink(path, target)
+        # dpkg diversions (local, package ":"): the package's file moves to
+        # <path>.real (a later mobilesubstrate upgrade unpacks there too) and our
+        # guard takes its place: cynject refuses pid 1 (launchd injection hangs 4.2.1)
+        div = []
+        for path, src in sub.get("divert", {}).items():
+            real = im.real(path)
+            if im.mode(path) is not None:
+                im.put(path + ".real", hfs_cat(img, real), 0o2755)
+            im.put(path, hfs_cat(img, im.real(src)), 0o755)
+            div.append("%s\n%s.real\n:\n" % (path, path))
+            if verbose:
+                say("substrate: %s diverted to %s.real, guard from %s" % (path, path, src))
+        if div:
+            old = b""
+            if im.mode("/var/lib/dpkg/diversions") is not None:
+                old = hfs_cat(img, im.real("/var/lib/dpkg/diversions"))
+            im.put("/var/lib/dpkg/diversions", old + "".join(div).encode())
+        # a launchd.conf with Substrate's cynject line would hang the boot
+        if im.mode("/etc/launchd.conf") is not None:
+            conf = hfs_cat(img, im.real("/etc/launchd.conf")).decode("latin-1")
+            keep = "".join(l for l in conf.splitlines(True) if "cynject" not in l)
+            if keep != conf:
+                im.put("/etc/launchd.conf", keep.encode("latin-1"))
         edits = {}
         # launchd jobs that set their own DYLD_INSERT_LIBRARIES don't see launchd's
         # global one: append Substrate to theirs (ours first, so our interposers stay)
