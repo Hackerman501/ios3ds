@@ -23,7 +23,7 @@ def _expand(hexstr, symbols):
     return TOKEN.sub(rep, hexstr.replace(" ", ""))
 
 
-def apply_all(img, base_va, path, symbols=None):
+def apply_all(img, base_va, path, symbols=None, disabled=()):
     """path: kernel/patches.json; every kernel/patches-*.json next to it is
     applied too (one file per subsystem keeps parallel work conflict-free)."""
     import glob
@@ -35,11 +35,20 @@ def apply_all(img, base_va, path, symbols=None):
             recipes += json.load(f)
     applied = []
     for p in recipes:
-        if not p.get("enabled", True):
+        if not p.get("enabled", True) or p["name"] in disabled:
             continue
         va = int(p["va"], 16) if isinstance(p["va"], str) else p["va"]
         orig = bytes.fromhex(p["orig"].replace(" ", ""))
         new = bytes.fromhex(_expand(p["new"], symbols or {}))
+        if p.get("branch"):
+            # new = ARM 'b' from this patch's va to a shim symbol mkboot resolved
+            # (the 4-byte 'new' placeholder is overwritten); used where no fixed
+            # shim jump-table slot is free (kernel/patches-sandbox.json)
+            tgt = (symbols or {})[p["branch"]]
+            delta = tgt - (va + 8)
+            if delta % 4:
+                raise ValueError("patch %s: unaligned branch to %s" % (p["name"], p["branch"]))
+            new = struct.pack("<I", 0xEA000000 | ((delta // 4) & 0xFFFFFF))
         if len(orig) != len(new):
             raise ValueError("patch %s: orig/new length differ" % p["name"])
         off = va - base_va

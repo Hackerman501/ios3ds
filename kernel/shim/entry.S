@@ -148,6 +148,34 @@ shim_putc:
     bx lr
 
 @ ---------------------------------------------------------------------------
+@ shim_sb_evaluate: hook on the Seatbelt sandbox's sb_evaluate (0x803ced98).
+@ The sandbox patch (kernel/patches-sandbox.json, opt-in) replaces sb_evaluate's
+@ first instruction with a branch here, resolved from this symbol at build time
+@ (mkboot reads it from the shim ELF; the patch only ever applies to a freshly
+@ built shim, so no fixed jump-table slot is needed). r2 = operation index. For
+@ the file-read operations (file*, file-read* and children, file-search) it
+@ returns 0 (allow), so a sandboxed app (MobileSafari, App Store apps) can read
+@ the Cydia Substrate / TLSFix dylibs under /Library; every other operation
+@ (write, exec, network, iokit, mach, ...) runs the real evaluator and stays
+@ enforced. The "enforce" path replays the overwritten push and jumps to the
+@ second instruction. docs/cydia.md.
+    .global shim_sb_evaluate
+shim_sb_evaluate:
+    cmp r2, #1                      @ file*
+    beq 1f
+    cmp r2, #11                     @ file-search
+    beq 1f
+    cmp r2, #6                      @ file-read* .. file-read-xattr (6..9)
+    blo 2f
+    cmp r2, #9
+    bls 1f
+2:  push {r4, r5, r6, r7, lr}       @ sb_evaluate's overwritten first insn
+    ldr pc, =0x803ced9c             @ continue in sb_evaluate's body
+1:  mov r0, #0                      @ allow
+    bx lr
+    .ltorg                          @ =0x803ced9c literal
+
+@ ---------------------------------------------------------------------------
 @ shim_init: map the MPCore private region at PRIV_VA, start the free-running
 @ watchdog counter, enable the GIC for the private timer. Idempotent.
 @ Clobbers r0-r2, r12. Must be called with interrupts in any state.

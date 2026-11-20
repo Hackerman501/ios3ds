@@ -301,7 +301,10 @@
   "/var/lib/cydia/firmware.ver": "6\n"
  },
  "substrate": {
-  "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 67). So Substrate is inserted where it is needed: launchd jobs whose recipe plist_set has DYLD_INSERT_LIBRARIES (SpringBoard, configd, securityd: after our interposer); apps load it from ios3ds-applog.dylib, which SpringBoard inserts into every app as libgmalloc.dylib (tools/ios3ds-diag/applog.c); ios3ds-nettest loads it after CFNetwork. docs/cydia.md",
-  "insert": "/Library/MobileSubstrate/MobileSubstrate.dylib"
+  "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 71). So Substrate is inserted where it is needed: only SpringBoard among the recipe's plist_set jobs (its 'daemons' list; configd/securityd don't need it and loading it there wastes memory on the 128 MB device); apps load it from ios3ds-applog.dylib, which SpringBoard inserts into every app as libgmalloc.dylib (tools/ios3ds-diag/applog.c); ios3ds-nettest loads it after CFNetwork. docs/cydia.md",
+  "insert": "/Library/MobileSubstrate/MobileSubstrate.dylib",
+  "daemons": [
+   "com.apple.SpringBoard.plist"
+  ]
  }
 }

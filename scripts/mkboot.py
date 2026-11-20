@@ -115,11 +115,17 @@ def build_shim(outdir):
         gpart = os.path.join(td, "gpu_part.bin")
         subprocess.run([objcopy, "-O", "binary", "-j", ".gpu", elf, gpart], check=True)
         gpu = open(gpart, "rb").read()
+        nm = objcopy[:-len("objcopy")] + "nm"
+        syms = {}
+        for line in subprocess.run([nm, elf], capture_output=True, text=True).stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[1] in "Tt":
+                syms[parts[2]] = int(parts[0], 16)
     blob = open(out, "rb").read()
     if len(blob) > 0x6000 or blob[4:8] != b"SHIM":
         raise SystemExit("bad shim build (%d bytes)" % len(blob))
     build_gpu_bin(outdir, gpu)
-    return blob
+    return blob, syms
 
 
 GPU_PART_SIZE = 0x8000        # boot/common/gpu_mirror.h: GPU part at 0x208B0000, blob at 0x208B8000
@@ -157,14 +163,15 @@ def use_prebuilt_shim(outdir, prebuilt):
     blob = open(os.path.join(outdir, "shim.bin"), "rb").read()
     if len(blob) > 0x6000 or blob[4:8] != b"SHIM":
         raise SystemExit("bad prebuilt shim.bin (%d bytes)" % len(blob))
-    return blob
+    return blob, {}
 
 
 def build(staging, outdir, cmdline=None, patches=True, verbose=True,
           prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None,
-          tlsfix=True):
+          tlsfix=True, sandbox_open=False):
     """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
-    hfsplus / rootfs_add / cydia / cydia_cache / tlsfix: passed on to mkrootfs.build."""
+    hfsplus / rootfs_add / cydia / cydia_cache / tlsfix: passed on to mkrootfs.build;
+    sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md)."""
     import dtgen
     import patcher
 
@@ -181,7 +188,7 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
                        hfsplus=hfsplus, rootfs_add=rootfs_add, cydia=cydia,
                        cydia_cache=cydia_cache, tlsfix=tlsfix)
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
-    shim = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
+    shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
     # the DT size doesn't depend on the layout values, so two passes converge
     lay0 = layout(kva, len(kimg), len(template))
     lay0["ramdisk_len"] = ramdisk_len
@@ -196,7 +203,14 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
     applied = []
     if patches:
         syms = {"shim": lay["shim_pa"] - PHYS_BASE + VIRT_BASE}
-        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms)
+        syms.update(shim_syms)      # shim_sb_evaluate & co for branch-to-symbol patches
+        if os.environ.get("IOS3DS_SANDBOX_OPEN", "").lower() in ("1", "yes", "on", "true"):
+            sandbox_open = True
+        disabled = () if sandbox_open else ("sandbox-sb-evaluate",)
+        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled)
+        if verbose and sandbox_open:
+            print("[mkboot] sandbox-sb-evaluate applied (SANDBOX=1): TLSFix reaches sandboxed apps; "
+                  "Safari OOMs on 128 MB (docs/cydia.md)")
 
     entry_pa = mo.entry - VIRT_BASE + PHYS_BASE
     os.makedirs(outdir, exist_ok=True)

@@ -146,6 +146,7 @@ def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, t
     args.no_cydia = not cydia
     args.cydia_cache = cydia_cache
     args.no_tlsfix = not tlsfix
+    args.sandbox_open = False
     mksd.build_tree(args)
 
 

@@ -52,7 +52,7 @@ recipe `"tlsfix": false`; if only its download fails, the image is built without
 it). How Substrate gets into processes on
 ios3ds is not how Substrate does it itself, see the next section.
 
-## Cydia Substrate on 4.2.1 (re-log 67)
+## Cydia Substrate on 4.2.1 (re-log 71)
 
 **What Substrate 0.9.6301 would do.** Its `extrainst_` (a Mach-O, not run here)
 appends `bsexec .. /usr/bin/cynject 1 .../SubstrateLauncher.dylib` to
@@ -95,11 +95,33 @@ extensions: `MobileSafety` (safe mode, SpringBoard) and `tlsfix` (any process wi
 `com.apple.CFNetwork`; TLSFix itself skips SpringBoard, launchd, lockdownd and
 securityd).
 
-**Sandboxed apps** need what every iOS 4 jailbreak did in the kernel: a patch to
-the Sandbox kext (`com.apple.security.sandbox`, 0x803cd000 in 8C148) that lets
-the MAC checks pass for those paths (comex's datautils0 hooked its evaluate
-function). ios3ds does not patch the sandbox (yet), so MobileSafari keeps iOS's
-own TLS 1.0; Cydia, Settings and other unsandboxed apps get Substrate and TLSFix.
+## Reaching sandboxed apps (Safari): the sb_evaluate patch (opt-in, re-log 72)
+
+A sandboxed process (MobileSafari, App Store apps, Mail's helpers) runs under a
+Seatbelt profile that denies `open()` of everything under `/Library`, so Substrate
+and TLSFix can't load and Safari keeps iOS's TLS 1.0. The kernel patch
+`kernel/patches-sandbox.json` (`SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`)
+does what iOS 4 jailbreaks did: it hooks the Sandbox kext's `sb_evaluate`
+(`com.apple.security.sandbox` 0x803cd000, Sandbox-58.12; the central bytecode
+evaluator at 0x803ced98, found as the function 75 MAC-hooks funnel into, `r2` =
+operation index) via a shim trampoline (`shim_sb_evaluate`, `kernel/shim/entry.S`;
+the branch word is computed at build time from the shim ELF symbol, since the
+New-3DS work took the once-free `shim+0x0C` slot). It
+returns *allow* only for the file-read operations (op 1 `file*`, 6-9 `file-read*`
+and children, 11 `file-search`) and runs the real evaluator for everything else,
+so a sandboxed app can read the dylibs under `/Library` while write/exec/network/
+iokit/mach stay enforced. Operation indices are from the kext's `operation_names`
+table; the patch is verified against the original `push {r4,r5,r6,r7,lr}` bytes.
+
+**Why it is off by default:** with the patch Safari does load TLSFix, but on the
+128 MB device (`MEM_SIZE` 0x08000000, as the real iPod2,1) MobileSafari then dies
+with "The operation couldn't be completed. Cannot allocate memory" on the first
+HTTPS load — even for a 1 KB page (example.com) — because TLSFix's static OpenSSL
+1.1.1w (~1.9 MB text + its heap on the first handshake) does not fit in the WebKit
+content process's memory budget. So the patch turns Safari's "could not establish
+a secure connection" into an out-of-memory failure; it is left out by default and
+kept as an opt-in for a device with more RAM or a slimmer TLS library. Cydia and
+other unsandboxed apps get TLSFix without it.
 
 **Safe mode:** MobileSafety (filter `com.apple.springboard`) and the loader's
 crash handlers load in SpringBoard as on a jailbroken device, so a tweak that

@@ -1,0 +1,10 @@
+[
+ {
+  "name": "sandbox-sb-evaluate",
+  "va": "0x803ced98",
+  "orig": "f0402de9",
+  "new": "00000000",
+  "why": "Seatbelt sandbox (com.apple.security.sandbox @0x803cd000, Sandbox-58.12) sb_evaluate(sandbox, label, op, ctx): r2 = operation index. Its first instruction (push {r4,r5,r6,r7,lr}) -> b shim_sb_evaluate (kernel/shim/entry.S), the branch word computed at build time from the shim ELF symbol. The shim returns 0 (allow) for the file-read operations (file* 1, file-read* and children 6-9, file-search 11) and replays push + continues into sb_evaluate at 0x803ced9c for everything else. This lets a sandboxed app (MobileSafari, App Store apps) read the Cydia Substrate / TLSFix dylibs under /Library so the tweaks load; write/exec/network/iokit/mach checks stay enforced. iOS 4 jailbreaks relaxed the sandbox the same way. Disabled by SANDBOX=0 / IOS3DS_SANDBOX_OPEN=0 / recipe \"sandbox_open\": false (docs/cydia.md).",
+  "branch": "shim_sb_evaluate"
+ }
+]

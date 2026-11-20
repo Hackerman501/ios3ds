@@ -119,7 +119,7 @@ noted; the UI rows were driven with `emu/session.py --wifi`.
 | https://letsencrypt.org/ | (EC chain) | -9836 | -9836: server requires TLS 1.2 (section 4) |
 | https://untrusted-root.badssl.com/, https://expired.badssl.com/ | negative controls | -9807 | -9807: checking is still on |
 
-**SHA-384 chains (corrected, re-log 67):** the BigBoss failure was not the
+**SHA-384 chains (corrected, re-log 71):** the BigBoss failure was not the
 hash. Its certificate (Sectigo DV R36 -> R46 -> USERTrust RSA, all
 `sha384WithRSAEncryption`) **expired on 2026-06-15**, and apt.thebigboss.org serves
 the same certificate, issued for moreinfo.thebigboss.org. github.com's RSA
@@ -151,7 +151,9 @@ socket. It loads into every process that has CFNetwork and Cydia Substrate
 (Cydia and other unsandboxed apps, `ios3ds-nettest`) except SpringBoard, launchd,
 lockdownd and securityd. **Not in MobileSafari or App Store apps:** their sandbox
 refuses the files under `/Library` that Substrate and TLSFix live in
-(docs/cydia.md, re-log 67), so Safari still speaks TLS 1.0 only.
+(docs/cydia.md, re-log 71), so by default Safari still speaks TLS 1.0 only. The
+opt-in `SANDBOX=1` kernel patch lets TLSFix into Safari, but Safari then runs out
+of memory on the 128 MB device (docs/cydia.md), so it is off by default.
 
 **Certificate checks** stay iOS's: the server's chain is handed to
 `SecTrustEvaluate` with an SSL policy for the host name, i.e. the trust store of
@@ -168,7 +170,7 @@ DigiCert Global Root G3, USERTrust ECC, Sectigo E46, Amazon Root CA 3/4, ...;
 itself (`*.stub`), so the file does not show up in Settings.
 
 Results (QEMU, ctr-wifi + slirp, `emu/wifi_test.py --https`, `ios3ds-nettest`
-with Substrate + TLSFix 1.3; re-log 67):
+with Substrate + TLSFix 1.3; re-log 71):
 
 | Site | Without TLSFix | With TLSFix 1.3 |
 |---|---|---|

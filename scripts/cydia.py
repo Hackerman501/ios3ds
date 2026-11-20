@@ -26,6 +26,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import lzma
 import os
 import re
@@ -442,7 +443,10 @@ def substrate_setup(img, hfs, hfs_cat, recipe, manifest, verbose=True):
         edits = {}
         # launchd jobs that set their own DYLD_INSERT_LIBRARIES don't see launchd's
         # global one: append Substrate to theirs (ours first, so our interposers stay)
+        daemons = sub.get("daemons")   # which plist_set jobs get Substrate (None = all)
         for path, keys in recipe.get("plist_set", {}).items():
+            if daemons is not None and os.path.basename(path) not in daemons:
+                continue
             env = keys.get("EnvironmentVariables", {})
             if "DYLD_INSERT_LIBRARIES" in env:
                 edits.setdefault(path, []).append(("insert", env["DYLD_INSERT_LIBRARIES"]))

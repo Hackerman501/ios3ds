@@ -178,7 +178,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 ### Limitations
 
 - **iOS 4.2.1 is the newest possible:** later versions need an ARMv7 CPU, and the 3DS's ARM11 is ARMv6.
-- **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out: they still speak TLS 1.0 only, so GitHub, Wikipedia, apple.com, … don't open there. Sites with expired or untrusted certificates are refused everywhere.
+- **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out, so by default they still speak TLS 1.0 only (GitHub, Wikipedia, apple.com, … don't open there). A kernel patch can relax the sandbox (`make sd SANDBOX=1`), but then Safari runs out of memory loading TLSFix on the 128 MB device, so it is off by default ([docs/cydia.md](docs/cydia.md)). Sites with expired or untrusted certificates are refused everywhere.
 - **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 

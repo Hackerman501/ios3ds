@@ -61,7 +61,7 @@ def build_tree(args):
                      patches=not args.no_patches, prebuilt=args.prebuilt,
                      hfsplus=args.hfsplus, rootfs_add=args.rootfs_add,
                      cydia=not args.no_cydia, cydia_cache=args.cydia_cache,
-                     tlsfix=not args.no_tlsfix)
+                     tlsfix=not args.no_tlsfix, sandbox_open=args.sandbox_open)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
     return tree
@@ -106,6 +106,9 @@ def parser():
                     help="no Cydia in the rootfs (else downloaded per rootfs/cydia.json, docs/cydia.md)")
     ap.add_argument("--no-tlsfix", action="store_true",
                     help="no TLSFix (TLS 1.2/1.3 for iOS) in the rootfs (docs/certificates.md)")
+    ap.add_argument("--sandbox-open", action="store_true",
+                    help="relax the sandbox so TLSFix reaches Safari/App Store apps (opt-in; "
+                         "Safari OOMs on 128 MB, docs/cydia.md)")
     ap.add_argument("--cydia-cache", help="where to keep the Cydia .debs (default build/cydia)")
     return ap
 

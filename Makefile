@@ -28,6 +28,11 @@ endif
 ifneq ($(filter 0 no off,$(TLSFIX)),)
 MKSD_FLAGS += --no-tlsfix
 endif
+# SANDBOX=1: relax the sandbox so TLSFix reaches Safari/App Store apps (opt-in;
+# Safari OOMs on the 128 MB device, docs/cydia.md)
+ifneq ($(filter 1 yes on,$(SANDBOX)),)
+MKSD_FLAGS += --sandbox-open
+endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
