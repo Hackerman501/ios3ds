@@ -1,0 +1,1113 @@
+ios3ds m1-0.3.0-33-g6c5ecc3-20261120.1922  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0248 -> 0248
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+launcher swap: restoring Luma as sd:/boot.firm
+launcher swap: restored, next boot is Luma
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-0.3.0-33-g6c5ecc3-20261120.1922 ARM11 stub at 0x1ff9040c
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+[boot] 1.485 s: SD mounted, ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+[boot] 1.631 s: boot.cfg read
+running ARM11 instruction probes (boot.cfg probes=0 diag=0 skips them)
+[a11] probes done
+Instruction probes (XNU uses these):
+ ee1f0f92 ok      -> 00000000
+ ee160f50 TRAPPED (slot 3 mode 1b)
+ ee1f0f1c ok      -> 0ffff009
+ ee100e10 ok      -> 15110005
+ eef00a10 ok      -> 410120b4
+ eef70a10 ok      -> 11111111
+ eef60a10 ok      -> 00000000
+ eef80a10 ok      -> 40000000
+[boot] 4.391 s: ARM11 probes done
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 16044 bytes at 2081b000
+[boot] 9.069 s: kernel + devtree loaded
+shim: 23596 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+[boot] 10.567 s: rootfs opened (fast-seek map)
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+loaded 0:/ios3ds/gpu.bin: 42896 bytes at 208b0000
+[boot] 11.603 s: load= files loaded
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 16044
+[wifi] no 0:/ios3ds/wifi.cfg: no preset network
+[wifi] firmware from 0:/ios3ds/nwm.code: 348160 bytes, main type4, 455 ms
+[wifi-diag]    958 ms fw: newer pool at .code+2b9d0, text base 100000, .code 348160 bytes; main type1 1b1b type4 a5eb type5 7a2e bytes (type4 is one of GBATEK's A053h/A482h/A5EBh); database end = stub code start
+[wifi-diag]   2211 ms fw: 0:/ios3ds/nwm.code part 1 stub data: 56 bytes (0x38) -> 00524c00, crc32 d73565a0
+[wifi-diag]   2961 ms fw: 0:/ios3ds/nwm.code part 2 stub code: 790 bytes (0x316) -> 00527000, crc32 46f41c07
+[wifi-diag]   3714 ms fw: 0:/ios3ds/nwm.code part 3 database: 488 bytes (0x1e8) -> 0053fe18, crc32 53bedfce
+[wifi-diag]   4465 ms fw: 0:/ios3ds/nwm.code part 4 main: 42475 bytes (0xa5eb) -> 00524c00, crc32 4f96facf
+[wifi] backend ar6014, mailbox at 208a0000
+[audio] CODEC id 11 rev 16: DAC up, speaker, I2S1_CNT e820
+[mcu] version 12/25: RTC 2001-02-06 14:20:26 Tue (offset 0 s) = Unix 981469226
+[mcu] battery 90% 4000 mV 32 C, volume slider 12/63, 3D slider 8, shell open, IRQ mask set
+[gyro] ITG-3200 family at I2C 3:d0 (WHO_AM_I 00), asleep, axes -y,x,z
+[power] power saving off (boot.cfg powersave=0)
+[cam-diag] boot: CFG11_CAMERA_CNT 00; CAM0 cnt 00000010 stat 0000 +6 0000; CAM1 cnt 00000000 stat 0000 +6 0000
+[cam-diag] CFG11_CAMERA_CNT 00 -> 01
+[cam] outer left camera (I2C 0x10144000 0x78): chip id 2280
+[cam] inner camera (I2C 0x10161000 0x7A): chip id 2280
+[cam] outer right camera (I2C 0x10161000 0x78): chip id 2280
+[cam-test] boot self-test (diag=1): each sensor x CAM set-up, both blocks, 200 ms each
+[cam-test] outer left, cnt 8010 +6 00: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] outer left, cnt 8610 +6 00: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer left, cnt 8e10 +6 00: CAM0 cnt 8e10 stat 0000 max 0000 | CAM1 cnt 8e00 stat 0000 max 0000
+[cam-test] outer left, cnt 8610 +6 22: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer left, cnt c610 +6 22: CAM0 cnt c610 stat 0000 max 0000 | CAM1 cnt c600 stat 0000 max 0000
+[cam-test] outer left, RESET_MISC 0200, cnt 8010: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] outer left, RESET_MISC 0200, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer left, + PAD_SLEW 0777, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-diag] outer left sensor: PLL_DIV 0111 PLL b04a CLOCKS 42ff STANDBY 0028 RESET_MISC 0200 PAD_SLEW 0777 CORE_301A 121c
+[cam-diag] outer left sensor: SEQ_CMD 0000 SEQ_STATE 0003 SEQ_CAP_MODE 0072 OUT_W_A 0140 OUT_H_A 00f0 OUT_FMT_A 0002 READ_MODE_A 0025
+[cam-test] inner, cnt 8010 +6 00: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] inner, cnt 8610 +6 00: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] inner, cnt 8e10 +6 00: CAM0 cnt 8e10 stat 0000 max 0000 | CAM1 cnt 8e00 stat 0000 max 0000
+[cam-test] inner, cnt 8610 +6 22: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] inner, cnt c610 +6 22: CAM0 cnt c610 stat 0000 max 0000 | CAM1 cnt c600 stat 0000 max 0000
+[cam-test] inner, RESET_MISC 0200, cnt 8010: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] inner, RESET_MISC 0200, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] inner, + PAD_SLEW 0777, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-diag] inner sensor: PLL_DIV 0111 PLL b04a CLOCKS 42ff STANDBY 0028 RESET_MISC 0200 PAD_SLEW 0777 CORE_301A 121c
+[cam-diag] inner sensor: SEQ_CMD 0000 SEQ_STATE 0003 SEQ_CAP_MODE 0072 OUT_W_A 0140 OUT_H_A 00f0 OUT_FMT_A 0002 READ_MODE_A 0024
+[cam-test] outer right, cnt 8010 +6 00: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] outer right, cnt 8610 +6 00: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer right, cnt 8e10 +6 00: CAM0 cnt 8e10 stat 0000 max 0000 | CAM1 cnt 8e00 stat 0000 max 0000
+[cam-test] outer right, cnt 8610 +6 22: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer right, cnt c610 +6 22: CAM0 cnt c610 stat 0000 max 0000 | CAM1 cnt c600 stat 0000 max 0000
+[cam-test] outer right, RESET_MISC 0200, cnt 8010: CAM0 cnt 8010 stat 0000 max 0000 | CAM1 cnt 8000 stat 0000 max 0000
+[cam-test] outer right, RESET_MISC 0200, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-test] outer right, + PAD_SLEW 0777, cnt 8610: CAM0 cnt 8610 stat 0000 max 0000 | CAM1 cnt 8600 stat 0000 max 0000
+[cam-diag] outer right sensor: PLL_DIV 0111 PLL b04a CLOCKS 42ff STANDBY 0028 RESET_MISC 0200 PAD_SLEW 0777 CORE_301A 121c
+[cam-diag] outer right sensor: SEQ_CMD 0000 SEQ_STATE 0003 SEQ_CAP_MODE 0072 OUT_W_A 0140 OUT_H_A 00f0 OUT_FMT_A 0002 READ_MODE_A 0025
+[cam-test] done: 0 set-ups saw data (none: the CAM blocks never received anything)
+[gpu] PICA200: gpu=1 gpu_mirror=1 (every 2. VBlank, spin 0 us) gpu_clk=1 gpu_diag=1 ca_gpu=1; mailbox at 20847f00
+[boot] 53.290 s: Wi-Fi, audio, MCU, GPU set up
+[a11] Old 3DS: SOCINFO 1, SOCMODE 0, LGR_CNT 0, PERIPHCLK 134061636 Hz, timer /128 >>0
+[n3ds] model: Old 3DS (CFG11_SOCINFO 1), PERIPHCLK 134061636 Hz
+[boot] 54.561 s: New 3DS check
+[boot] 62.873 s: countdown over
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[boot] 63.875 s: XNU started
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+ios3ds-mcu: 3DS RTC present: not waiting for IORTC
+ios3ds-mcu: calendar from the 3DS RTC: 981469226 (2001-02-06 14:20:26 RTC, offset 0 s)
+IOResources: not registry member at registerService()
+BSD root: md0, major 2, minor 0
+IOSurfaceRoot::installMemoryRegions()
+com.apple.AppleFSCompressionTypeZlib kmod start
+AppleS5L8720XIO::start: chip-revision: A0
+virtual bool AppleMobileFileIntegrity::start(IOService*): built Nov 16 2010 22:21:11
+AppleARMPL192VIC::start: _vicBaseAddress = 0xc38ab000
+AppleS5L8900XEdgeIC::start: _edgeicBaseAddress: 0xc38ad000
+AppleS5L8720XPowerController::start: _pcBaseAddress: 0xc38ae000
+AppleARMPerformanceController::traceBufferCreate: _pcTraceBuffer: 0xca8ea000  bufferSize: 0x00004000
+AppleS5L8720XClockController::start: _ccBaseAddress: 0xc38b5000 _ccBusBaseAddress: 0xc38b6000
+AppleS5L8720XClockController::start: pcVoltageStateCount: 2
+	Voltage State 0 : .vsPerformanceLimit: 2 .vsDeviceConstraint: e00f7fff fd7fef07
+	Voltage State 1 : .vsPerformanceLimit: 1 .vsDeviceConstraint: e01fffff ffffff07
+AppleS5L8720XClockController::start: pcPerformanceStateCount: 4
+	Performance State 0 : .psPerformanceDivider: 1 .psVoltageRequired: 1 .psDeviceConstraint: e01fffff ffffff07
+	Performance State 1 : .psPerformanceDivider: 2 .psVoltageRequired: 0 .psDeviceConstraint: e01fffff fafcff07
+	Performance State 2 : .psPerformanceDivider: 5 .psVoltageRequired: 0 .psDeviceConstraint: a01f7fff fafcff07
+	Performance State 3 : .psPerformanceDivider: 11 .psVoltageRequired: 0 .psDeviceConstraint: 80177fff fa7cef07
+AppleS5L8720XClockController: Dynamic Performance State Management Enabled with 2 voltage and 4 perfomance states
+AppleARMPL080DMAC::start: dmac0: _dmacBaseAddress: 0xc38bd000
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+[wifi-diag]     24 ms power: CFG11_WIFICNT 00 -> 01 (want bit 0 = 1), GPIO 2_2 0000 -> 0000 (want bit 0 = 0: SDIO chip), GPIO 3_12 0000 -> 0001 (want bit 0 = 1: nRESET released)
+[wifi-diag]    136 ms sdio: CFG9_SDMMCCTL 0248 -> 0248 (want bit 2 = 0: port powered), SD_OPTION c0ee (controller 2 answers)
+[wifi-diag]    141 ms sdio: CMD5 x3: first R4 10ffff00, last 90ffff00 (ready 1, 1 I/O functions, memory 0, OCR ffff00)
+[wifi-diag]    145 ms sdio: RCA 0001, CCCR rev 11, SD rev 00, card caps 17, bus interface 82 (want low bits 2 = 4-bit)
+[wifi-diag]    148 ms sdio: function 1 ready after 2 polls; enumeration took 119 ms
+[wifi-diag]    150 ms sdio: CIS manufacturer 0271 card 0201 (Atheros)
+[wifi] SDIO up, chip id 0d000001 (AR6014)
+[wifi] TMIO2 32-bit FIFO check failed (0, read 00000000, status 07252080): mailbox falls back to CMD52 byte transfers
+[wifi-diag]    159 ms monitor: one driver step took 159 ms (state power)
+[mcu] battery 89%
+[gpu] display mirror: off
+[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer
+[monitor] screen mode: both (X = next)
+[monitor] LCDs show framebuffer set 0 on top, 0 on the bottom: the CPU copy writes only those
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 1 copies in 65 s, 336.9 ms each (ARM9)
+[hb] t=65s quiet 0s | abs 24491 dec 6030 timer 2774 irq 2853 vbl 79 | md0 59 req 978 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +0 ms (ratio 0/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+AppleS5L8900XI2CController::start: i2c0 _i2cBaseAddress: 0xc38be000
+AppleM2CLCD, fMapper: 0
+AppleM2CLCD (0x80c71000)
+AppleS5L8900XWatchDogTimer::start: _wdtBaseAddress: 0xc38cd000
+AppleARMWatchDogTimer installing handlePEHaltRestart handler
+AppleS5L8900XTimer::start: _timerBaseAddress: 0xc38ce000
+AppleS5L8900XI2SController::start: i2s0 i2sBaseAddress: 0xc38d5000 i2sVersion: 0
+L2TP domain init
+L2TP domain init complete
+PPTP domain init
+com.apple.AppleFSCompressionTypeZlib load succeeded
+AppleS5L8900XGPIOIC::start: gpioBaseAddress: 0xc38d6000  gpioicBaseAddress: 0xc98dd000
+ios3ds-mcu: accelerometer read reg 0x0f len 1
+virtual bool AppleM2CLCD::start_hardware(IOService*): Couldn't allocate AppleARMFunction for function-lcd_enable
+AppleARMPL080DMAC::_initDMAChannel: index: 5, bufPA: 0x20ca6000, bufLA: 0xc98e6000
+AppleARMPL080DMAC::_initDMAChannel: index: 4, bufPA: 0x20ca7000, bufLA: 0xca8ee000
+AppleARMPL080DMAC::_initDMAChannel: index: 3, bufPA: 0x20ca9000, bufLA: 0xca905000
+AppleS5L8900XSerial: Identified Serial Port on ARM Device=uart0 at 0x1ffb9000(0xca906000)
+IOSurface: buffer allocation size is zero
+AppleCS42L58Audio::start: 0x80cab900, audio0 _wmIICNub: 0x80c3e500, _wmIISNub: 0x80c3e300
+ios3ds-audio: iic r dev=e500 reg=1 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=0 len=1 val=99
+ios3ds-audio: iic w dev=e500 reg=33 len=1 val=fd
+ios3ds-audio: iic w dev=e500 reg=32 len=1 val=27
+ios3ds-audio: iic w dev=e500 reg=0 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=e500 reg=4 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=4 len=1 val=20
+ios3ds-audio: iic r dev=e500 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=e500 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=e500 reg=5 len=1 val=cb
+ios3ds-audio: iic r dev=e500 reg=7 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=7 len=1 val=c
+ios3ds-audio: iic r dev=e500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=f len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=f len=1 val=90
+ios3ds-audio: iic r dev=e500 reg=b len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=b len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=c len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=c len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=1a len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=1b len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=1b len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=1d len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=1d len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=aa
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=b len=1 val=3d
+ios3ds-audio: iic w dev=e500 reg=c len=1 val=3d
+ios3ds-audio: iic w dev=e500 reg=d len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=e len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=a len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=a len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=e500 reg=5 len=1 val=cb
+ios3ds-audio: iic w dev=e500 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=e500 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=e500 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=e500 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=e500 reg=2 len=1 val=c6
+ios3ds-audio: iic r dev=e500 reg=5 len=1 val=b
+ios3ds-audio: iic w dev=e500 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=e500 reg=f len=1 val=90
+ios3ds-audio: iic w dev=e500 reg=f len=1 val=90
+ios3ds-audio: iic w dev=e500 reg=18 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=19 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+[wifi] BMI ROM version 2300006f (AR6014 ROM is 2300006F)
+[wifi-diag]    714 ms bmi: target version 2300006f (AR6014 ROM), scratch0 was 00000000, WLAN_SYSTEM_SLEEP was 0000001d; clock setup done
+[wifi] fw part 1: 56 bytes -> 00524c00
+[wifi-diag]    719 ms fw: part 1 stub data: 56 bytes -> 00524c00 in 1 ms
+[wifi] fw part 2: 790 bytes -> 00527000
+[wifi-diag]    802 ms fw: part 2 stub code: 790 bytes -> 00527000 in 66 ms
+[wifi] stub executed: r=0 ret=00000000
+[wifi-diag]    853 ms fw: BMI_EXECUTE 00927000 (stub, reads the calibration EEPROM) returned 00000000 in 34 ms: 0
+[wifi] fw part 4: 42475 bytes -> 00524c00
+[wifi-diag]   4210 ms fw: part 4 main (BMI_LZ_DATA): 42475 bytes -> 00524c00 in 3350 ms
+[wifi] fw part 3: 488 bytes -> 0053fe18
+[wifi-diag]   4756 ms fw: part 3 database: 488 bytes -> 0053fe18 in 539 ms
+[wifi] firmware started, waiting for it to come up
+[wifi-diag]   4764 ms fw: upload done, BMI_DONE sent (hi_mbox_io_block_sz 128, hi_mbox_isr_yield 0x63)
+[wifi] firmware running (board data initialised)
+[wifi-diag]   4772 ms boot: hi_board_data_initialized = 1 after 7 ms (1 polls)
+[wifi] HTC ready: 10 credits of 1544 bytes
+[wifi-diag]   4793 ms htc: HTC_READY 21 ms after the firmware started, 8 bytes: 01000a0008061600
+[wifi-diag]   4799 ms htc: service 0100 -> status 0, endpoint 1, max message 1538 (1 polls)
+[wifi-diag]   4807 ms htc: service 0101 -> status 0, endpoint 2, max message 1536 (1 polls)
+[wifi-diag]   4813 ms htc: service 0102 -> status 0, endpoint 3, max message 1536 (1 polls)
+[wifi-diag]   4819 ms htc: service 0103 -> status 0, endpoint 4, max message 1536 (1 polls)
+[wifi-diag]   4825 ms htc: service 0104 -> status 0, endpoint 5, max message 1536 (1 polls)
+[wifi] HTC services connected: 0 (WMI endpoint 1, data 2/3/4/5)
+[wifi] WMI ready, MAC e0:0c:7f:de:fa:63
+[wifi-diag]   4838 ms wmi: WMI_READY 9 ms after HTC setup, 16 bytes: e00c7fdefa630200eb00002302000300 (MAC, phy capability, more)
+[wifi-diag]   4841 ms wmi: GET_CHANNEL_LIST sent: 0
+[wifi-diag]   4846 ms summary: bring-up OK in 4846 ms (power, SDIO, BMI, firmware, HTC, WMI)
+[wifi] idle: no network configured, waiting for iOS (Settings > Wi-Fi)
+[wifi-diag]   4855 ms wmi: REG_DOMAIN 88010080
+[wifi-diag]   4864 ms wmi: channel list: 13 channels, 2.4 GHz mask 3ffe (bit n = channel n), 0 others
+com.apple.launchd 1	com.apple.launchd 1	*** launchd[1] has started up. ***
+Bug: launchctl.c:3599 (24307):17: ioctl(s6, SIOCAIFADDR_IN6, &ifra6) != -1
+Bug: launchctl.c:3805 (24307):2: sysctl(nbmib, 2, &nb, &nbsz, NULL, 0) == 0
+Running fsck on the boot volume...
+GetMasterBlock: Error 16 opening /dev/md0
+/dev/md0 on / (hfs, local, noatime)
+launchctl: Couldn't stat("/etc/mach_init.d"): No such file or directory
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+ios3ds-mcu: battery 89%, 4000 mV: IOPMPowerSource registered
+[mcud] MCU version 12/25: battery 89%, volume slider 12/63, shell open, RTC 981469285
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[smp 1] begin nproc=22 src=sysctl
+[smp 1] pid=25 notifyd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.049 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 1] pid=25 notifyd t=1/2 WAIT/swap susp=0 cpu=30 ut=0.009 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+AMFI: Invalid signature but permitting execution
+[smp 1] pid=24 amfid t=0/3 RUN/swap susp=0 cpu=126 ut=0.119 st=0.229 pc=0x32c9dc1c lr=0x35e67985 sp=0x2fdfe484 A bt=0x35e6771b,0x35e716db,0x35e74639,0x35e742bb,0x35e73a55
+[smp 1] pid=24 amfid t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=24 amfid t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=23 bash t=0/1 WAIT susp=0 cpu=18 ut=0.009 st=0.019 pc=0x2fe1c3d8 lr=0x2fe1c2f1 sp=0x2fdfce2c A sys=bsd92(0x3,0x3d,0x2fdfce48,0x2fdfce44) bt=0x2fe0d7c9,0x2fe10e33,0x2fe0d607,0x2fe0439d,0x2fe044cd,0x2fe045cb,0x2fe048eb,0x2fe054c5,0x2fe05571,0x2fe05777,0x2fe05873,0x2fe05a41,0x2fe0b543,0x2fe0b5df,0x2fe05efd,0x2fe06491
+[smp 1] pid=22 CrashHousekeepin t=0/1 RUN/swap susp=0 cpu=2 ut=0.029 st=0.129 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffb84 A sys=mach_msg(opt=0x3,rcv=0xe03,to=0) bt=0x3380f084,0x337cd7cc,0x337cd9dc,0x00002f2c,0x00002668
+AMFI: Invalid signature but permitting execution
+[smp 1] pid=20 SpringBoard t=0/1 RUN/swap susp=0 cpu=209 ut=0.029 st=0.079 pc=0x2fe211f8 lr=0x2fe04465 sp=0x2fdfe1d8 A sys=bsd338(0x2,0x2fdfe2a8,0x2fdfe32b,0xffffffff) bt=0x2fe045cb,0x2fe048eb,0x2fe054c5,0x2fe05571,0x2fe05777,0x2fe05873,0x2fe05a41,0x2fe0b543,0x2fe0b5df,0x2fe05efd,0x2fe06491,0x2fe0128d,0x2fe01060
+[smp 1] pid=19 configd t=0/1 RUN/swap susp=0 cpu=70 ut=0.009 st=0.109 pc=0x2fe147f8 lr=0x2fe0bb15 sp=0x2fdff43c T bt=0x2fe16a91,0x2fe09d81,0x2fe09d5d,0x2fe09d5d,0x2fe09d5d,0x2fe09dfd,0x2fe01e35,0x2fe0652f,0x2fe0128d,0x2fe01060
+[smp 1] pid=18 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=1 ut=0.039 st=0.199 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 1] pid=17 mDNSResponder t=0/3 UNINT susp=0 cpu=36 ut=0.059 st=0.249 pc=0x352a8cf0 lr=0x35271430 sp=0x2fe0fac0 A bt=0x35271580,0x352717a4,0x35278a14,0x00015211,0x00014589,0x0001439d,0x00013183,0x000359a8
+[smp 1] pid=17 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fef5e40 A sys=kevent(0x7,0x0,0x0,0x2fef5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=17 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff77fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[iobusy] 0s: 0 of 87 services busy
+[smp 1] pid=16 mediaserverd t=0/1 UNINT susp=0 cpu=101 ut=0.079 st=0.239 pc=0x000028f4 lr=0x2fe0c2c5 sp=0x2fdff33c A bt=0x2fe0c455,0x2fe0a035,0x2fe0a48f,0x2fe01f35,0x2fe0652f,0x2fe0128d,0x2fe01060
+[smp 1] pid=15 MobileStorageMou t=0/3 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.079 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfe720 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000050b0,0x0000187c
+[smp 1] pid=15 MobileStorageMou t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=15 MobileStorageMou t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+AMFI: Invalid signature but permitting execution
+[smp 1] pid=14 mtmergeprops t=0/1 RUN/swap susp=0 cpu=138 ut=0.039 st=0.289 pc=0x35e8e2e6 lr=0x32cc695d sp=0x2fdff99c T bt=0x35e8f2cd,0x35e8ecd3,0x35e8f2cd,0x35e8ecd3,0x35e8f2cd,0x35e8f1ed,0x35e8e3b1,0x35e8de4d,0x35e7c259,0x35e7c13f,0x35e7c0dd,0x33fc890b,0x33fc8895,0x35eac703,0x33fd1467,0x00001b0c
+[smp 1] pid=13 syslogd t=0/4 WAIT/swap susp=0 cpu=9 ut=0.029 st=0.139 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 1] pid=13 syslogd t=1/4 WAIT/swap susp=0 cpu=12 ut=0.039 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000102,rcv=0x1103,to=276) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 1] pid=13 syslogd t=2/4 WAIT/swap susp=0 cpu=40 ut=0.039 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 1] pid=13 syslogd t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 1] pid=12 ios3ds-gltest t=0/1 UNINT susp=0 cpu=66 ut=0.019 st=0.069 pc=0x32ca42d8 lr=0x35e7b615 sp=0x2fdfd728 A sys=read(0x3,0x10e700,0x197,0x0) bt=0x35e7a5ef,0x35e77f2b,0x35e77bfb,0x35e73b09,0x35e891a7,0x35e88f07,0x34ff879c,0x34ff8128,0x34ff71b4,0x34ff70d4,0x34ff7128,0x00007798,0x0000b130
+[smp 1] pid=11 ios3ds-gyrotest t=0/1 WAIT/swap susp=0 cpu=14 ut=0.019 st=0.039 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffdd0 A sys=semwait_signal(0x20b,0x0,0x1,0x1) bt=0x32ce31ef,0x000074ec,0x00007b5c
+[smp 1] pid=10 ios3ds-input t=0/3 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffa00 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00005e98,0x000079d4
+[smp 1] pid=10 ios3ds-input t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=10 ios3ds-input t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=9 ios3ds-diag ERR task_for_pid=5
+[smp 1] pid=8 ios3ds-mcud t=0/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.039 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffc18 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00006b38,0x000077ac
+[smp 1] pid=8 ios3ds-mcud t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=8 ios3ds-mcud t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=6 ios3ds-wifid t=0/4 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.039 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffdf8 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00006ffc,0x00007afc
+[smp 1] pid=6 ios3ds-wifid t=1/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=6 ios3ds-wifid t=2/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=6 ios3ds-wifid t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2ff70bf0 A sys=select(0x19,0x10d1c0,0x10d1b0,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 1] pid=2 launchctl t=0/1 WAIT/swap susp=0 cpu=0 ut=0.209 st=0.779 pc=0x32cd1974 lr=0x0000ab44 sp=0x2fdfeb24 A sys=kevent(0x3,0x0,0x0,0x2fdffca8) bt=0x000025c0,0x00001cfc
+[smp 1] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=0 ut=0.059 st=2.699 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x6217,id=504,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 1] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.019 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 1] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 1] end
+AMFI: Invalid signature but permitting execution
+[gl] context 0x8cf200 uses the ios3ds software rasterizer
+[gl] context created (pid 12) from 0x34ff7438 0x34ff70d4 0x34ff7128 0x7798 0xb130
+gltest: EAGLContext 0x10aef0
+gltest: offscreen 320x480 framebuffer status 0x8cd5
+[a80211] loaded into configd (pid 19)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+gltest: offscreen frame took 651 ms
+gltest: timing: gettimeofday rc 0/0 errno 0/0 tv 981469243.256739 -> 981469243.908073; mach_absolute_time 679680 ticks = 649 ms
+gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds software rasterizer"
+gltest: clear colour                 (160,470) =  26  31  64 ok
+gltest: triangle centroid (grey)     ( 85,347) =  83  85  86 ok
+gltest: triangle red corner          ( 24,302) = 243   6   4 ok
+gltest: texture: white cell          (174,304) = 255 255 255 ok
+gltest: texture: orange cell         (182,304) = 255 128  32 ok
+gltest: drawtex: white cell          ( 11,203) = 255 255 255 ok
+gltest: blend over background        (305,260) = 139  15  32 ok
+gltest: scissored clear              (150,265) = 255 217   0 ok
+gltest: outside scissor              (150,285) =  26  31  64 ok
+gltest: cube centre is drawn         (160,105) = 255  95  95 ok
+gltest: glGetError = 0x0 ok
+gltest: PASS (0 failed)
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT 0x00000000, GX clock 0x00000000, GX stat 0x0c000000
+[gpu-diag] as found: rev 00010002 clk 00000000 psc_vram 00000000 stat 0c000000 prio 1111ef00 00000112 unk58 00000000 unkD0 00000000
+[gpu-diag] as found: psc0 03080000 03088ca0 00000000 00000202 psc1 03088ca0 0308fd20 00000000 00000202
+[gpu-diag] as found: ppf in 03000000 out 04000000 od 019000f0 id 000000f0 fl 00000000 u14 00000000 cnt 00000000 irq 3fff0000
+[gpu-diag] as found: p3d irq ack 00000000 cmp ffffffff mask ffffffff autostop 00000000 draw_func0 00000000
+[gpu-diag] as found: counters ext r/w 0/0 vramA r/w 4884117/0 vramB r/w 277543356/113112348 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 0/0 fill0/1 36000/28800 cpu-vram r/w 4885666/113047548
+[gpu-diag] as found: PSC fill VRAM  PA 185c0000: done after 1 ticks (ctrl 00000202, stat 28000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +256; word0 c0de0a11
+[gpu-diag] as found: PSC fill FCRAM PA 259d9000: done after 1 ticks (ctrl 00000202, stat 08000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +0; word0 55aa55aa
+[pica] GX setup as libn3ds hardwareReset: clock 0x00000000 -> 0x00070100, psc_vram 0x00000000 -> 0x00000000, dma prio 0x1111ef00/0x00000112 -> 0x22221200/0x00000ff2
+[pica] arena 12288 KiB at VA 0xcb10d000 = PA 0x24de9000; driver ready (state 0)
+[gpu-diag] after setup: rev 00010002 clk 00070100 psc_vram 00000000 stat 00000000 prio 22221200 00000ff2 unk58 00000000 unkD0 00000000
+[gpu-diag] after setup: psc0 04b3b200 04b3b400 c0de0f0c 00000000 psc1 03088ca0 0308fd20 00000000 00000000
+[gpu-diag] after setup: ppf in 049bd200 out 049bd204 od 019000f0 id 000000f0 fl 00000008 u14 00000000 cnt 00000000 irq 3fff0000
+[gpu-diag] after setup: p3d irq ack 00000000 cmp 12345678 mask fffffff0 autostop 00000001 draw_func0 00000001
+[gpu-diag] after setup: counters ext r/w 2/2 vramA r/w 4892508/0 vramB r/w 277561841/113118488 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 1/1 fill0/1 36512/28800 cpu-vram r/w 4895081/113053432
+[gpu-diag] after setup: PSC fill VRAM  PA 185c0000: done after 2 ticks (ctrl 00000202, stat 00000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +292; word0 c0de0a11
+[gpu-diag] after setup: PSC fill FCRAM PA 259d9000: done after 2 ticks (ctrl 00000202, stat 00000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +0; word0 55aa55aa
+[gpu-diag] PPF FCRAM->VRAM(tiled)->FCRAM: 4096/4096 words back; ppf r/w +2048/+2048; vram tile word1 8d60e26e (want 8d60e26e)
+[gpu-diag] solid quad -> VRAM: P3D done after 23 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] solid quad -> FCRAM: P3D done after 68 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +2176; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] texture 64x64 1:1: P3D done after 23 ticks (stat 80000000); 4096/4096 words right; vtx +116 tex +1024 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 00000000
+[gpu-diag] texture 48x40 (NPOT) 1:1: P3D done after 14 ticks (stat 80000000); 0/1920 words right; vtx +116 tex +256 col-wr +528 ext-wr +0; first wrong word 00000000 (index, or y<<16|x): 7ae7ce98, expected cbf42c98
+[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL
+[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom 0x18346500/0x18446500 (2 sets); upload 0x18480000, texture 0x24e09000 (FCRAM, 512x512), targets 0x18516000/0x18573c00..0x185bec00
+[gpu] display mirror ACTIVE: self-test variant 0, 154 ms
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[gpu] mirror self-test variant 0 (as modelled): 0 of 518400 bytes differ, guard intact; GPU 1306/1831/633 ticks (upload/draw/read-out)
+[gpu] display mirror: self-test passed (variant 0) in 154176 us: the PICA200 copies the screen now (every 2. VBlank)
+[gl] pica: GPU up (self-check passed): arena 12288 KiB at PA 0x24de9000 (12160 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+[gl] context 0x8d4e00 uses the ios3ds PICA200
+gltest: offscreen 320x480 framebuffer status 0x8cd5
+gltest: PICA200 offscreen frame took 353 ms
+gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds PICA200"
+gltest: clear colour                 (160,470) =  25  30  64 ok
+gltest: triangle centroid (grey)     ( 85,347) =  83  85  86 ok
+gltest: triangle red corner          ( 24,302) = 243   6   4 ok
+gltest: texture: white cell          (174,304) = 255 255 255 ok
+gltest: texture: orange cell         (182,304) = 255 128  32 ok
+gltest: drawtex: white cell          ( 11,203) = 255 255 255 ok
+gltest: blend over background        (305,260) = 140  15  32 ok
+gltest: scissored clear              (150,265) = 255 217   0 ok
+gltest: outside scissor              (150,285) =  25  30  64 ok
+gltest: cube centre is drawn         (160,105) = 255  96  96 ok
+gltest: glGetError = 0x0 ok
+gltest: scene 1, pica vs software: 125460 of 153600 pixels differ at all, 0 by more than 24 (max 7) ok
+gltest: scene 2, pica vs software: 51861 of 153600 pixels differ at all, 200 by more than 24 (max 127) ok
+gltest: PICA200 PASS (0 failed)
+IOUserEthernetController: Ethernet address e0:0c:7f:de:fa:63
+[wifid] interface en0 up, MAC e0:0c:7f:de:fa:63 (socket fd 4)
+virtual bool IOUserEthernetController::setLinkState(bool): status=0 mCurrentMedium=0x83687400
+[wifid] link down (ARM9 state 11)
+[a80211] our 802.11 interface is en0
+systemShutdown false
+[a80211] IOServiceFirstMatch for IO80211Interface (refcon 0x128960): deferred until the interface has a BSD name
+[a80211] handing en0 to an IO80211Interface client (refcon 0x128960)
+[a80211] first GET type 12 (len 100): ok
+[a80211] first GET type 19 (len 24): ok
+[a80211] first GET type 204 (len 16): ok
+[a80211] first GET type 201 (len 140): error
+[a80211] scan requested
+[a80211] first SET type 10 (len 1620): ok
+[wifi] iOS: scan
+[wifi-diag]  28745 ms scan: request from iOS: SET_BSS_FILTER 1 (all), START_SCAN all channels, no probed SSID: 0
+[wifi-diag]  28862 ms scan: "Adlerhorst" e0:08:55:e2:d4:ff 2432 MHz (ch 5) rssi -77 snr 18 probe resp, RSN, 424 IE bytes
+[wifi-diag]  28909 ms wmi: event 1010, 1500 bytes: 08300000000000005a1205305a120168320000005b120d24..
+[wifi-diag]  28996 ms scan: "Adlerhorst 2" e0:08:55:17:65:54 2462 MHz (ch 11) rssi -84 snr 11 probe resp, RSN, 460 IE bytes
+[wifi-diag]  29028 ms wmi: event 1010, 1500 bytes: 0830000000000000f5712c4408300000f5710d6800011100..
+[wifi-diag]  29033 ms scan: SCAN_COMPLETE after 293 ms, status 00000000, 2 BSSINFO events, 2 networks
+[wifi] scan done: 2 networks
+[a80211] scan done: 2 networks
+[a80211] first GET type 11 (len 140): ok
+AMFI: Invalid signature but permitting execution
+[applog] SpringBoard pid 20
+[hwaes] securityd: software IOAESAccelerator
+[hwaes] securityd: software AppleKeyStore (key wrap)
+[gpu] mirror: 277 frames in 30 s (9.2 fps); GPU per frame: upload 9387 us, draw 3011 us, read-out 7144 us; frame avg 13866 us (max 29712, incl. IRQ latency); ARM11 IRQ time 65 us/frame in 2191 steps; 1 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 22 copies in 30 s, 363.8 ms each (ARM9)
+[hb] t=95s quiet 0s | abs 588194 dec 135256 timer 59390 irq 61265 vbl 1874 | md0 2832 req 64970 KiB 0 err
+[hb]  clock: arm11 watchdog +30002 ms vs arm9 timer +30002 ms (ratio 1000/1000)
+[hb]  pc u01107ef4 u3037ed34 u32ca03c4 u3037ed50 u32dabf18 k8015982at k80068010 u0103fd80
+[a80211] first GET type 1 (len 32): error
+[a80211] first GET type 9 (len 6): error
+[gl] pica: GPU up (self-check passed): arena 12288 KiB at PA 0x24de9000 (9567 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+[gl] CA scene check: GPU vs CPU rasterizer: 0 of 9216 pixels differ by more than 24 (max 4)
+[gl] CA compositor: OpenGL ES on the PICA200 (GPU self-check and scene check passed)
+[gl] context 0xb10c00 uses the ios3ds PICA200
+[gl] context created (pid 20) from 0x34ff7438 0x346e08a0 0x346e07cc 0x346de624 0x346de4f4 0x346de3ac 0x346dd1e8 0x32da1680
+Iterator had no matching services
+Failed to open connection to MBX
+Failed to initialized MBX2D driver (1).
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+Couldn't open shared capabilities memory GSCapabilities (No such file or directory)
+[a80211] associate "Adlerhorst" (WPA2-PSK, PMK from WiFiManager, auth 1/8)
+[a80211] first SET type 20 (len 384): ok
+[wifi-diag]  34487 ms target "Adlerhorst": 2432 MHz, rssi -77, RSN IE 30140100000fac040100000fac040100000fac020c00
+[wifi] iOS: join "Adlerhorst" (WPA2), in the scan list
+[wifi] connect "Adlerhorst" (WPA2-PSK/CCMP), seen in scan: 0
+[wifi] associated, channel 2432 MHz, BSSID e0:08:55:e2:d4:ff
+[wifi-diag]  34608 ms connect: beacon IEs 195, assoc req 0, assoc resp 0 bytes
+[wifi-diag]  34608 ms connect: no RSN IE found in the association request: message 2 uses our own
+[wifi-diag]  34620 ms eapol m1: key info 008a, descriptor 2, replay 0000000000000001, key data 0
+[wifi] EAPOL event 1, reply 121 bytes: 0
+[wifi] EAPOL event 2, reply 99 bytes: 0
+[wifi] link up: Adlerhorst, AP e0:08:55:e2:d4:ff
+[wifi] state auth -> up
+virtual bool IOUserEthernetController::setLinkState(bool): status=1 mCurrentMedium=0x83687400
+[wifi-diag]  34771 ms wmi: event 1025, 1 bytes: 00
+[wifi] EAPOL event 2, reply 99 bytes: 0
+[wifid] link up (ARM9 state 9)
+[wifid] interface is en0
+[a80211] association done (result 1)
+[a80211] link up
+[a80211] first GET type 21 (len 0): ok
+[wifi-diag]  35049 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35054 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35277 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35369 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35398 ms wmi: event 1010, 1500 bytes: 08300000000000007a722c44083000007a720d6801100100..
+[wifi-diag]  35505 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35567 ms wmi: event 1025, 1 bytes: 00
+[a80211] first GET type 18 (len 0): unsupported
+[a80211] first GET type 5 (len 0): ok
+[a80211] first GET type 7 (len 0): unsupported
+[a80211] first GET type 13 (len 0): ok
+[a80211] first GET type 14 (len 12): ok
+[a80211] first GET type 15 (len 0): ok
+[a80211] first GET type 8 (len 0): ok
+[a80211] first GET type 57 (len 0): unsupported
+[a80211] first GET type 16 (len 52): ok
+[a80211] first GET type 17 (len 52): ok
+[a80211] first GET type 4 (len 16): ok
+[a80211] first GET type 2 (len 12): ok
+[a80211] first GET type 6 (len 12): unsupported
+[wifi-diag]  35679 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35746 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  35909 ms wmi: event 1025, 1 bytes: 00
+2001-02-06 14:21:02.346 SpringBoard[20:307] No AppleBaseband service detected. Cellular data disabled.
+[wifi-diag]  35987 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36085 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36216 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36287 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36340 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36463 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36537 ms wmi: event 1025, 1 bytes: 00
+[wifid] en0 configured by configd
+[wifi-diag]  36664 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36718 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36854 ms wmi: event 1025, 1 bytes: 00
+[wifi-diag]  36952 ms wmi: event 1025, 1 bytes: 00
+[mcud] connected to SpringBoard's HID event system
+[input] connected to SpringBoard's HID event system
+[input] mailbox up: touch ok, flipx=1 flipy=0 stretch=0
+[mcud] NoIdleSleepAssertion held (0x0, id 300)
+[gyrotest] gyroAvailable 1 deviceMotionAvailable 1 accelerometerAvailable 1
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[mcu] accelerometer on
+[gyro] on by iOS (0 samples so far)
+ios3ds-mcu: gyro on
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+ios3ds-mcu: accelerometer sample #1: 0 0 0 counts (|a| = 0 MCU units)
+ios3ds-mcu: gyro event #1: -784152 -2028766 113975 deg/s/65536 (ARM9 sample 5)
+2001-02-06 14:21:08.613 SpringBoard[20:307] -[SBTetherController _demoCardConnection] No AppleTetheredDevice instance found
+[gyrotest] started (interval 20 ms): gyroActive 1 deviceMotionActive 1
+ios3ds-mcu: accelerometer sample #100: 0 0 54 counts (|a| = 15353 MCU units)
+[gyrotest] t=1 gyro -0.244 -0.535 0.046 rad/s | deviceMotion rate -0.270 -0.598 0.046 | attitude roll -0.87 pitch -0.31 yaw -0.13
+[mcud] volume slider 12/63 -> iOS volume 0.19
+[mcud] accelerometer off
+[mcud] seq 24: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=2 gyro -0.220 -0.532 0.012 rad/s | deviceMotion rate -0.310 -0.745 0.013 | attitude roll -1.87 pitch -0.40 yaw -0.51
+ios3ds-mcu: accelerometer sample #1000: 0 0 54 counts (|a| = 15283 MCU units)
+[gyrotest] t=3 gyro -0.240 -0.517 0.015 rad/s | deviceMotion rate -0.367 -0.814 0.015 | attitude roll -2.60 pitch -0.23 yaw -0.75
+[gyrotest] t=4 gyro -0.238 -0.531 0.008 rad/s | deviceMotion rate -0.380 -0.859 0.009 | attitude roll -3.13 pitch -0.01 yaw -0.83
+2001-02-06 14:21:13.189 SpringBoard[20:307] lockdown says the device is: [Activated], state is 3
+2001-02-06 14:21:13.250 SpringBoard[20:307] Unable to create CFServerConnection. Telephony state may be incorrect.
+2001-02-06 14:21:13.281 SpringBoard[20:307] Unable to create CFServerConnection. Telephony state may be incorrect.
+2001-02-06 14:21:13.321 SpringBoard[20:307] Unable to create CFServerConnection. Telephony state may be incorrect.
+2001-02-06 14:21:13.842 SpringBoard[20:307] WiFi: Joined network Adlerhorst. WiFi bars visible: NO
+[gyrotest] t=5 gyro -0.249 -0.569 0.001 rad/s | deviceMotion rate -0.380 -0.873 0.002 | attitude roll 2.80 pitch 0.15 yaw -0.81
+2001-02-06 14:21:13.974 SpringBoard[20:307] _MISAttach failed: 45
+2001-02-06 14:21:14.079 SpringBoard[20:307] BTM: attaching to BTServer
+2001-02-06 14:21:14.098 SpringBoard[20:307] BTM: BTSessionAttachWithRunLoopAsync failed with error 9
+[gyrotest] t=6 gyro -0.280 -0.523 0.035 rad/s | deviceMotion rate -0.390 -0.775 0.035 | attitude roll 2.56 pitch 0.24 yaw -0.78
+[mcud] SpringBoard reports no DisplayBrightness: LCD backlight left as Luma set it
+[mcud] seq 183: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=7 gyro -0.221 -0.528 0.015 rad/s | deviceMotion rate -0.285 -0.672 0.014 | attitude roll 2.57 pitch 0.24 yaw -0.80
+[gyrotest] t=8 gyro -0.242 -0.529 0.053 rad/s | deviceMotion rate -0.257 -0.564 0.052 | attitude roll 2.73 pitch 0.18 yaw -0.84
+[gyrotest] t=9 gyro -0.222 -0.544 0.025 rad/s | deviceMotion rate -0.206 -0.511 0.024 | attitude roll 2.79 pitch 0.16 yaw -0.86
+ios3ds-mcu: gyro event #1000: -884451 -2174655 -104857 deg/s/65536 (ARM9 sample 402)
+[gyrotest] t=10 gyro -0.245 -0.488 0.007 rad/s | deviceMotion rate -0.204 -0.404 0.005 | attitude roll 2.84 pitch 0.14 yaw -0.88
+[gyrotest] t=11 gyro -0.217 -0.514 0.002 rad/s | deviceMotion rate -0.155 -0.387 -0.000 | attitude roll 2.87 pitch 0.13 yaw -0.89
+[mcud] seq 275: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=12 gyro -0.256 -0.539 0.013 rad/s | deviceMotion rate -0.176 -0.376 0.010 | attitude roll 2.89 pitch 0.11 yaw -0.91
+2001-02-06 14:21:22.252 SpringBoard[20:307] Unable to create CFServerConnection. Telephony state may be incorrect.
+[gyrotest] t=13 gyro -0.216 -0.537 0.025 rad/s | deviceMotion rate -0.122 -0.345 0.022 | attitude roll 2.91 pitch 0.10 yaw -0.92
+[gyrotest] t=14 gyro -0.243 -0.540 0.013 rad/s | deviceMotion rate -0.137 -0.324 0.010 | attitude roll 2.92 pitch 0.10 yaw -0.93
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+ios3ds-mcu: LCD backlight as Luma left it: top 0x39, bottom 0x39
+2001-02-06 14:21:24.050 SpringBoard[20:307] Could not find mapped image Black_CARRIER_.png
+[gyrotest] t=15 gyro -0.267 -0.508 0.033 rad/s | deviceMotion rate -0.152 -0.270 0.029 | attitude roll 2.94 pitch 0.09 yaw -0.94
+[gyrotest] t=16 gyro -0.259 -0.542 0.005 rad/s | deviceMotion rate -0.135 -0.282 0.001 | attitude roll 2.95 pitch 0.08 yaw -0.96
+[gl] first BindCoreSurface (pid 20) from 0x3470d548 0x3470d36c 0x3470c984 0x3478fefc 0x346ec6dc 0x346f32c4 0x3327586c 0x337cc88c
+[mcud] seq 370: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gl] first SwapNotification (pid 20) from 0x34ff7ef8 0x34719f34 0x3478fe48 0x346eddd8 0x346ec724 0x346f32c4 0x3327586c 0x337cc88c
+[pica] present: GPU writes the caller's surface directly: user VA 0x00331000 = PA 0x18000000 (VRAM, 600 KiB)
+[gl] pica: GPU present check passed (320x480, identical to the CPU read-back within 2)
+[gyrotest] t=17 gyro -0.240 -0.554 0.005 rad/s | deviceMotion rate -0.108 -0.275 0.002 | attitude roll 2.97 pitch 0.08 yaw -0.97
+2001-02-06 14:21:27.128 SpringBoard[20:307] Unable to create CFServerConnection. Telephony state may be incorrect.
+[gpu] mirror: 856 frames in 30 s (28.5 fps); GPU per frame: upload 2039 us, draw 2217 us, read-out 2045 us; frame avg 10583 us (max 29839, incl. IRQ latency); ARM11 IRQ time 71 us/frame in 7568 steps; 4 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[hb] t=125s quiet 0s | abs 938883 dec 200656 timer 91028 irq 94717 vbl 3689 | md0 3968 req 83508 KiB 0 err
+[hb]  clock: arm11 watchdog +60330 ms vs arm9 timer +60330 ms (ratio 1000/1000)
+[hb]  pc k8003de1ct u3359a978 k801a59dct k8018ad60t u32c9f650 k800435e0t u307945d4 k801a5096t
+[gyrotest] t=18 gyro -0.238 -0.492 0.025 rad/s | deviceMotion rate -0.098 -0.198 0.022 | attitude roll 2.98 pitch 0.08 yaw -0.98
+[input] down 32,413
+2001-02-06 14:21:28.507 SpringBoard[20:307] BTM: attaching to BTServer
+2001-02-06 14:21:28.535 SpringBoard[20:307] BTM: BTSessionAttachWithRunLoopAsync failed with error 9
+[input] up 285,440
+2001-02-06 14:21:28.786 SpringBoard[20:307] spd error: 1
+[input] down 39,401
+[gyrotest] t=19 gyro -0.231 -0.362 0.022 rad/s | deviceMotion rate -0.085 -0.057 0.019 | attitude roll 3.00 pitch 0.07 yaw -0.99
+[input] up 218,403
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+[gyrotest] t=20 gyro 2.479 1.710 4.915 rad/s | deviceMotion rate 2.626 2.018 4.911 | attitude roll 0.62 pitch -0.43 yaw 1.84
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=20
+ios3ds-audio: amp step 13 -> CSND volume 8000
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=9b
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+[audio] iOS output stream #1 started (CSND starts 1)
+[audio] iOS volume: amp step 19 -> CSND volume 32768/32768
+ios3ds-audio: tx start ch5 src=20c77000 lli=20ca6010 ctl=87249800 cfg=8a81
+[gyrotest] t=21 gyro 0.109 2.171 -0.710 rad/s | deviceMotion rate 0.256 2.480 -0.715 | attitude roll 0.73 pitch -1.18 yaw -1.57
+[mcud] seq 469: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=22 gyro 5.240 -9.810 -5.437 rad/s | deviceMotion rate 5.381 -9.490 -5.446 | attitude roll -0.58 pitch -1.30 yaw -2.17
+[input] down 11,290
+[input] up 13,272
+[gyrotest] t=23 gyro -1.172 -0.435 -0.032 rad/s | deviceMotion rate -1.031 -0.115 -0.040 | attitude roll 0.27 pitch -0.06 yaw -1.32
+[gyrotest] t=24 gyro 5.676 -3.032 0.307 rad/s | deviceMotion rate 5.825 -2.717 0.295 | attitude roll -1.12 pitch 0.21 yaw -0.59
+[gyrotest] t=25 gyro 6.559 7.507 3.327 rad/s | deviceMotion rate 6.724 7.810 3.307 | attitude roll 2.54 pitch -0.68 yaw 0.15
+[audio] stream stopped: 494500 words, peak 5061, TC IRQs 16 (16 injected), bad addr 0
+[audio] iOS volume: muted (amp off) -> CSND volume 0
+ios3ds-audio: tx stop words=78ba4 peak=13c5 tc=10
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: amp off -> CSND volume 0
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=4
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+[gyrotest] t=26 gyro -9.088 -9.306 0.511 rad/s | deviceMotion rate -8.923 -9.004 0.491 | attitude roll -3.05 pitch 1.05 yaw -1.06
+[mcud] seq 555: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=27 gyro -0.539 -1.913 -0.285 rad/s | deviceMotion rate -0.378 -1.607 -0.305 | attitude roll -1.70 pitch 0.87 yaw 0.91
+[gyrotest] t=28 gyro -23.302 -0.410 -3.389 rad/s | deviceMotion rate -23.130 -0.108 -3.416 | attitude roll -1.46 pitch 1.06 yaw -0.19
+[gyrotest] t=29 gyro -17.691 -5.791 -5.740 rad/s | deviceMotion rate -17.519 -5.490 -5.768 | attitude roll 3.00 pitch 1.04 yaw 1.49
+[gyrotest] t=30 gyro -0.410 1.064 -0.018 rad/s | deviceMotion rate -0.175 1.336 -0.075 | attitude roll -2.59 pitch 1.29 yaw 1.21
+[gyrotest] t=31 gyro 0.019 -1.345 0.272 rad/s | deviceMotion rate 0.294 -1.092 0.206 | attitude roll -2.98 pitch 0.98 yaw 1.52
+[input] down 198,428
+[input] up 196,427
+[input] down 212,427
+[mcud] seq 640: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+ios3ds-mcu: accelerometer sample #10000: -7 -37 37 counts (|a| = 15149 MCU units)
+[gyrotest] t=32 gyro 0.483 2.759 -0.545 rad/s | deviceMotion rate 0.766 3.009 -0.614 | attitude roll -3.11 pitch 0.84 yaw 1.89
+launchd[41] Builtin profile: MobileSafari (sandbox)
+[smp 2] begin nproc=19 src=sysctl
+[smp 2] pid=41 MobileSafari t=0/1 RUN susp=0 cpu=48 ut=0.019 st=0.019 pc=0x2fe220cc lr=0x2fe20513 sp=0x2fdffbd8 A sys=bsd398(0x3,0x0,0x0,0x2fe2abe0) bt=0x2fe20577,0x2fe205b3,0x2fe09231,0x2fe01223,0x2fe01060
+[smp 2] pid=40 SCHelper t=0/2 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.069 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff014 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00001ddc,0x00001ba4
+[smp 2] pid=40 SCHelper t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=39 lsd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.219 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff068 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x359299b4,0x00001d00,0x00001ce8
+[smp 2] pid=39 lsd t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=38 installd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.569 st=0.419 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff014 A sys=mach_msg(opt=0x7000006,rcv=0x1803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00011fe0,0x00002e80,0x00002774
+[smp 2] pid=38 installd t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=36 profiled t=0/2 WAIT/swap susp=0 cpu=0 ut=0.319 st=0.279 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfeee0 A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x000027d3,0x00002618
+[smp 2] pid=36 profiled t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=25 notifyd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.049 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 2] pid=25 notifyd t=1/2 WAIT/swap susp=0 cpu=0 ut=0.139 st=0.399 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=0/16 RUN/swap susp=0 cpu=321 ut=4.899 st=5.609 pc=0x346dd97c lr=0x346dd51c sp=0x2fdfe978 A bt=0x346dd51c,0x346f2b40,0x346e55f8,0x346e95e8,0x3471a1c4,0x35e6ad7b,0x35e6f3f9,0x3471aac0,0x3471a8a8,0x35ebd305,0x35ebccd9,0x35e8ca91,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c
+[smp 2] pid=20 SpringBoard t=1/16 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.009 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=20 SpringBoard t=2/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=3/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0070df50 A sys=mach_msg(opt=0x7000006,rcv=0x3f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x33b731b4,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=4/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x011c8168 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=5/16 WAIT/swap susp=0 cpu=177 ut=0.339 st=0.579 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007b81a0 A sys=mach_msg(opt=0x7000006,rcv=0x6103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x346ecc74,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=6/16 WAIT/swap susp=0 cpu=139 ut=3.329 st=0.749 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0341018c A sys=mach_msg(opt=0x7000006,rcv=0x8503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x337ff11c,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=7/16 WAIT/swap susp=0 cpu=29 ut=0.009 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x034921b4 A sys=mach_msg(opt=0x7000006,rcv=0x9d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x000570ef,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=8/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x03514dc4 A sys=semwait_signal(0x2503,0x2603,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=9/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03595f74 A sys=mach_msg(opt=0x7000006,rcv=0xca03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000856d9,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[input] touch target com.apple.mobilesafari
+[smp 2] pid=20 SpringBoard t=10/16 WAIT/swap susp=0 cpu=0 ut=0.089 st=0.049 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03c7400c A sys=mach_msg(opt=0x7000006,rcv=0x11a03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x307df054,0x33fc2551,0x33fc22af,0x33fd6b93,0x32d9f270,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=20 SpringBoard t=11/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03d28128 A sys=mach_msg(opt=0x7000006,rcv=0x12103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309fa829,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=12/16 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03daa0f8 A sys=mach_msg(opt=0x7000006,rcv=0x12703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309f9aab,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=13/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03e5df6c A sys=mach_msg(opt=0x7000006,rcv=0x12f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x309fb595,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 2] pid=20 SpringBoard t=14/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=20 SpringBoard t=15/16 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x03fb5fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=19 configd t=0/12 WAIT/swap susp=0 cpu=0 ut=1.559 st=1.039 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfefcc A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 2] pid=19 configd t=1/12 WAIT/swap susp=0 cpu=2 ut=0.039 st=0.079 pc=0x32d2654c lr=0x32c9f19f sp=0x2fee5f2c A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x000344d4,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=2/12 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff67e40 A sys=kevent(0x3,0x0,0x0,0x2ff67f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=19 configd t=3/12 WAIT/swap susp=0 cpu=0 ut=1.119 st=1.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x000fdd9c A sys=mach_msg(opt=0x7000006,rcv=0x2603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=4/12 WAIT/swap susp=0 cpu=0 ut=0.389 st=0.339 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005c01a0 A sys=mach_msg(opt=0x7000006,rcv=0x3403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0046f4c8,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=5/12 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006421a4 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00484643,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=6/12 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.029 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x119530,0x119520,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=7/12 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006c7d50 A sys=mach_msg(opt=0x7000006,rcv=0x8403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00501910,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=8/12 WAIT/swap susp=0 cpu=0 ut=0.649 st=0.289 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0074a1bc A sys=mach_msg(opt=0x7000006,rcv=0x8903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00427430,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=9/12 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007cc1c8 A sys=mach_msg(opt=0x7000006,rcv=0xa603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0045856c,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=10/12 WAIT/swap susp=0 cpu=0 ut=0.099 st=0.049 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01fa6178 A sys=mach_msg(opt=0x7000006,rcv=0xcb03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 2] pid=19 configd t=11/12 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x020281d8 A sys=mach_msg(opt=0x7000006,rcv=0xdf03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0048f148,0x32d27b4c,0x32d197ac
+[smp 2] pid=18 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.199 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 2] pid=17 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 ut=0.929 st=0.699 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe0ef78 A sys=mach_msg(opt=0x7000006,rcv=0x1d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0001336d,0x000359a8
+[smp 2] pid=17 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fef5e40 A sys=kevent(0x7,0x0,0x0,0x2fef5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=17 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=36 ut=1.119 st=1.839 pc=0x32cd1974 lr=0x0001dc7f sp=0x2fff94c0 A sys=kevent(0x4,0x0,0x0,0x2fff9f84) bt=0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=0/19 WAIT/swap susp=0 cpu=18 ut=1.799 st=1.929 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef30 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003100,0x00002a3c
+[smp 2] pid=16 mediaserverd t=1/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=16 mediaserverd t=2/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=3/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800b4 A sys=mach_msg(opt=0x7000006,rcv=0x3a03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=4/19 WAIT/swap susp=0 cpu=0 ut=0.059 st=0.089 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x3f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=5/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005840a8 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=6/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x00606d6c A sys=semwait_signal(0x4a07,0x490b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=7/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x7003,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=8/19 WAIT/swap susp=0 cpu=0 ut=0.069 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01334064 A sys=mach_msg(opt=0x7000006,rcv=0x7703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=9/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x013b607c A sys=mach_msg(opt=0x7000006,rcv=0x7e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=10/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670ac A sys=mach_msg(opt=0x7000006,rcv=0x9203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x342ea460,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=11/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x022dc0b4 A sys=mach_msg(opt=0x7000006,rcv=0x9803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34337c0c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=12/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0235e0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34362038,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=13/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x023e00b4 A sys=mach_msg(opt=0x7000006,rcv=0xa803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34342900,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=14/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x024620b4 A sys=mach_msg(opt=0x7000006,rcv=0xae03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34357b38,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=15/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x024e40b4 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x3436d79c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=16/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x025660b4 A sys=mach_msg(opt=0x7000006,rcv=0xba03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34368ba4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=17/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.229 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x025e8094 A sys=mach_msg(opt=0x7000006,rcv=0xc403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x32e1b650,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=16 mediaserverd t=18/19 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.189 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0266a0f4 A sys=mach_msg(opt=0x7000006,rcv=0xca03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x0000a440,0x0000a7c8,0x0000a7e8,0x0000fc4c,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 syslogd t=0/4 WAIT/swap susp=0 cpu=1 ut=0.089 st=0.319 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 2] pid=13 syslogd t=1/4 WAIT/swap susp=0 cpu=0 ut=0.219 st=0.139 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000102,rcv=0x1103,to=1000) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 syslogd t=2/4 WAIT/swap susp=0 cpu=0 ut=0.079 st=0.009 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 2] pid=13 syslogd t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 2] pid=11 ios3ds-gyrotest t=0/3 WAIT/swap susp=0 cpu=0 ut=0.149 st=0.159 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffdd4 A sys=semwait_signal(0x20b,0x0,0x1,0x1) bt=0x32c9f117,0x0000774c,0x00007b5c
+[smp 2] pid=11 ios3ds-gyrotest t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=11 ios3ds-gyrotest t=2/3 WAIT/swap susp=0 cpu=44 ut=2.149 st=0.509 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ac A sys=mach_msg(opt=0x7000006,rcv=0x2207,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x33246cc8,0x32d27b4c,0x32d197ac
+[smp 2] pid=10 ios3ds-input t=0/3 UNINT susp=0 cpu=0 ut=0.169 st=0.369 pc=0x35ed5658 lr=0x35e66831 sp=0x2fdff87c A bt=0x35261a2c,0x35261a80,0x352634e4,0x000074d8,0x0000634c,0x000079d4
+[smp 2] pid=10 ios3ds-input t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[gyrotest] t=33 gyro -0.538 -1.019 0.170 rad/s | deviceMotion rate -0.246 -0.768 0.102 | attitude roll 2.96 pitch 0.73 yaw 2.34
+[smp 2] pid=10 ios3ds-input t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d40c lr=0x32cd3450 sp=0x2ff67f74 A sys=semaphore_wait_signal(sem=0x2103,0x2203,0x3e1b5f98) bt=0x32c9f4f4,0x352638ec,0x32d27b4c,0x32d197ac
+[smp 2] pid=8 ios3ds-mcud t=0/4 WAIT/swap susp=0 cpu=0 ut=0.229 st=0.259 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffcc4 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00007318,0x000077ac
+[smp 2] pid=8 ios3ds-mcud t=1/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=8 ios3ds-mcud t=2/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ffe9dc4 A sys=semwait_signal(0x3403,0x3503,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 2] pid=8 ios3ds-mcud t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=6 ios3ds-wifid t=0/4 WAIT susp=0 cpu=100 ut=0.759 st=3.879 pc=0x32cfe920 lr=0x000076b0 sp=0x2fdffe4c A sys=poll(0x2fdffeb0,0x1,0x4,0x3e1b8b38) bt=0x00007afc-
+[smp 2] pid=6 ios3ds-wifid t=1/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 2] pid=6 ios3ds-wifid t=2/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2ff70bf0 A sys=select(0x19,0x10d1c0,0x10d1b0,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 2] pid=6 ios3ds-wifid t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 2] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=2 ut=0.199 st=2.849 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x6257,id=504,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 2] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.029 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 2] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.059 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 2] end
+[gyrotest] t=34 gyro -0.044 0.149 -0.081 rad/s | deviceMotion rate 0.255 0.408 -0.138 | attitude roll 3.04 pitch 0.66 yaw 2.32
+[gyrotest] t=35 gyro -2.048 -5.609 0.880 rad/s | deviceMotion rate -1.752 -5.343 0.835 | attitude roll 2.88 pitch 0.66 yaw 2.74
+[gyrotest] t=36 gyro 9.683 10.228 -2.762 rad/s | deviceMotion rate 9.978 10.497 -2.802 | attitude roll 2.58 pitch 0.63 yaw 2.56
+[mcud] seq 734: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=37 gyro -2.335 0.407 -1.168 rad/s | deviceMotion rate -2.048 0.682 -1.200 | attitude roll 2.99 pitch 0.51 yaw 1.92
+[gyrotest] t=38 gyro -0.159 -0.579 -0.109 rad/s | deviceMotion rate 0.124 -0.298 -0.130 | attitude roll 2.96 pitch 0.71 yaw 1.96
+[input] connected to SpringBoard's HID event system
+[input] mailbox up: touch ok, flipx=1 flipy=0 stretch=0
+[mcud] SpringBoard device orientation 0 -> 3
+[gyrotest] t=39 gyro -0.766 -10.960 1.808 rad/s | deviceMotion rate -0.489 -10.674 1.794 | attitude roll -1.79 pitch 0.32 yaw -2.05
+[gyrotest] t=40 gyro 1.059 -2.114 0.194 rad/s | deviceMotion rate 1.343 -1.832 0.173 | attitude roll -2.79 pitch -0.26 yaw -1.76
+[gyrotest] t=41 gyro -0.373 1.867 -0.622 rad/s | deviceMotion rate -0.059 2.141 -0.676 | attitude roll -2.22 pitch -0.28 yaw -1.45
+[mcud] seq 823: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=42 gyro -3.197 -4.917 -0.599 rad/s | deviceMotion rate -2.889 -4.645 -0.642 | attitude roll -1.07 pitch -0.80 yaw -2.14
+[gyrotest] t=43 gyro -0.510 3.141 -2.655 rad/s | deviceMotion rate -0.204 3.412 -2.698 | attitude roll -1.76 pitch -0.76 yaw -2.28
+[gyrotest] t=44 gyro -2.857 1.051 2.958 rad/s | deviceMotion rate -2.558 1.317 2.918 | attitude roll -0.95 pitch -1.07 yaw -2.15
+[gyrotest] t=45 gyro -1.859 -0.198 0.367 rad/s | deviceMotion rate -1.570 0.061 0.326 | attitude roll -1.04 pitch -0.77 yaw -1.76
+[hb] t=155s quiet 0s | abs 1273344 dec 248468 timer 114177 irq 119858 vbl 5446 | md0 4387 req 90210 KiB 0 err
+[hb]  clock: arm11 watchdog +89707 ms vs arm9 timer +89709 ms (ratio 999/1000)
+[hb]  pc k801a5736t u35e7e1ect k80061e8at k8050a4b0t k801e7206t u0002adc4t k801df230t u000363cat
+[gyrotest] t=46 gyro 1.219 -2.590 -0.323 rad/s | deviceMotion rate 1.501 -2.332 -0.366 | attitude roll -2.06 pitch -0.89 yaw -1.80
+[gpu] mirror: 890 frames in 30 s (29.6 fps); GPU per frame: upload 2966 us, draw 3293 us, read-out 7194 us; frame avg 11097 us (max 29839, incl. IRQ latency); ARM11 IRQ time 67 us/frame in 7653 steps; 20 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 919: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=47 gyro -0.270 1.343 1.161 rad/s | deviceMotion rate 0.009 1.606 1.121 | attitude roll 2.11 pitch -1.37 yaw 2.75
+[gyrotest] t=48 gyro 3.589 5.802 0.552 rad/s | deviceMotion rate 3.864 6.071 0.513 | attitude roll -1.71 pitch 0.12 yaw -2.65
+[gyrotest] t=49 gyro -0.165 -1.156 0.475 rad/s | deviceMotion rate 0.110 -0.888 0.438 | attitude roll -2.08 pitch 0.17 yaw -2.59
+[input] down 210,352
+[input] touch target com.apple.mobilesafari
+[input] up 217,372
+[gyrotest] t=50 gyro 0.306 1.270 0.234 rad/s | deviceMotion rate 0.583 1.536 0.202 | attitude roll -2.29 pitch -0.06 yaw -2.71
+[gyrotest] t=51 gyro -1.677 -0.776 -0.327 rad/s | deviceMotion rate -1.400 -0.513 -0.357 | attitude roll -2.40 pitch 0.22 yaw -2.67
+[mcud] SpringBoard device orientation 3 -> 0
+[gyrotest] t=52 gyro 2.898 1.180 0.970 rad/s | deviceMotion rate 3.176 1.446 0.940 | attitude roll -2.64 pitch -0.14 yaw -2.64
+[mcud] SpringBoard device orientation 0 -> 3
+[mcud] seq 1015: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=53 gyro -0.871 4.792 -1.495 rad/s | deviceMotion rate -0.592 5.057 -1.524 | attitude roll -1.79 pitch 0.14 yaw -2.62
+[mcud] SpringBoard device orientation 3 -> 6
+[input] down 215,367
+[input] up 213,377
+[gyrotest] t=54 gyro 0.255 1.099 -0.728 rad/s | deviceMotion rate 0.536 1.361 -0.757 | attitude roll -2.69 pitch 0.01 yaw -2.81
+[mcud] SpringBoard device orientation 6 -> 3
+[input] down 220,366
+[input] up 222,376
+[gyrotest] t=55 gyro -0.018 -0.029 -0.308 rad/s | deviceMotion rate 0.264 0.234 -0.336 | attitude roll -2.47 pitch -0.11 yaw -2.81
+[mcud] SpringBoard device orientation 3 -> 0
+[gyrotest] t=56 gyro 2.969 3.074 -3.468 rad/s | deviceMotion rate 3.253 3.333 -3.495 | attitude roll -2.63 pitch 1.14 yaw -2.09
+[mcud] SpringBoard device orientation 0 -> 6
+[gyrotest] t=57 gyro -7.120 0.154 3.608 rad/s | deviceMotion rate -6.825 0.407 3.582 | attitude roll -2.07 pitch 0.62 yaw 3.04
+[mcud] seq 1115: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=58 gyro 7.735 -10.732 -6.870 rad/s | deviceMotion rate 8.032 -10.480 -6.895 | attitude roll -2.07 pitch 0.35 yaw 2.65
+[gyrotest] t=59 gyro -0.242 -0.410 0.002 rad/s | deviceMotion rate 0.072 -0.199 -0.011 | attitude roll 3.09 pitch 0.92 yaw -1.41
+[gyrotest] t=60 gyro -0.265 -0.515 0.013 rad/s | deviceMotion rate 0.074 -0.326 -0.005 | attitude roll 3.05 pitch 0.33 yaw -1.47
+[gyrotest] t=61 gyro -0.217 -0.640 -0.004 rad/s | deviceMotion rate 0.129 -0.453 -0.025 | attitude roll 3.13 pitch 0.11 yaw -1.51
+[gyrotest] t=62 gyro -0.294 0.520 -0.012 rad/s | deviceMotion rate 0.059 0.708 -0.035 | attitude roll 3.04 pitch 0.07 yaw -1.51
+[mcud] clocks after ~60 s: RTC +94 s, gettimeofday +94662 ms, mach_absolute_time +94662 ms (99140776 ticks, timebase 1000000000/1047311)
+[mcud] seq 1213: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[gyrotest] t=63 gyro -0.231 -0.556 -0.011 rad/s | deviceMotion rate 0.123 -0.364 -0.035 | attitude roll 2.84 pitch 0.11 yaw -1.49
+ios3ds-mcu: accelerometer sample #20000: 0 0 55 counts (|a| = 15413 MCU units)
+[gyrotest] t=64 gyro -0.229 -0.703 -0.017 rad/s | deviceMotion rate 0.126 -0.498 -0.042 | attitude roll 2.90 pitch 0.01 yaw -1.52
+[input] down 86,215
+[input] up 94,202
+[gyrotest] t=65 gyro -0.271 -0.506 -0.019 rad/s | deviceMotion rate 0.083 -0.291 -0.044 | attitude roll 2.94 pitch -0.03 yaw -1.52
+[gyrotest] t=66 gyro -0.273 -0.521 -0.005 rad/s | deviceMotion rate 0.077 -0.295 -0.028 | attitude roll 2.95 pitch -0.04 yaw -1.51
+[gyrotest] t=67 gyro -0.171 -0.562 11.664 rad/s | deviceMotion rate 0.175 -0.327 11.642 | attitude roll 2.95 pitch 0.02 yaw -1.81
+[gyrotest] t=68 gyro -0.316 -0.571 0.004 rad/s | deviceMotion rate 0.028 -0.329 -0.018 | attitude roll 2.94 pitch 0.01 yaw -2.00
+[mcud] seq 1305: battery 89% flags e2 volume 12 3D 8 irq 00000000 home 0 power 0/0 shell 0/0
+[input] down 252,63
+[input] up 251,61
+[gyrotest] t=69 gyro -0.256 -0.492 0.018 rad/s | deviceMotion rate 0.084 -0.239 -0.002 | attitude roll 2.97 pitch -0.02 yaw -1.99
+[input] down 258,108
+[audio] iOS output stream #2 started (CSND starts 2)
+[audio] iOS volume: amp step 19 -> CSND volume 32768/32768
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=20
+ios3ds-audio: amp step 13 -> CSND volume 8000
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=9b
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: tx start ch5 src=20c77000 lli=0 ctl=87249800 cfg=8a81
+[input] up 270,114
+[gyrotest] t=70 gyro -0.246 -0.495 0.002 rad/s | deviceMotion rate 0.090 -0.234 -0.017 | attitude roll 2.97 pitch -0.04 yaw -1.99
+[input] down 23,452
+[gyrotest] t=71 gyro -0.249 -0.401 -0.005 rad/s | deviceMotion rate 0.077 0.180 -0.060 | attitude roll 2.98 pitch -0.04 yaw -1.99
+[input] up 22,451
+[input] key 40 down @1679
+[input] key 40 up @1679
+[gy[pica] present: destination 0x03f05000 (+614400) not usable: not physically contiguous (PA 0x26777000 at +0x1000; L1 23560001 L2 2677783f, TTBR0 23afc018 TTBCR 2 DACR 00000001 SCTLR 00c5787d)
+rotest] t=72 gyro -0.250 -0.523 0.008 rad/s | deviceMotion rate 0.079 -0.246 -0.009 | attitude roll 3.00 pitch -0.04 yaw -1.98
+[gl] pica: writing a surface back on the GPU failed (destination is not one physically contiguous, GPU-reachable, user-writable range): reading it back through the CPU from now on
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: amp off -> CSND volume 0
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=4
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: tx stop words=c86d9 peak=0 tc=1a
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+[audio] stream stopped: 820953 words, peak 0, TC IRQs 26 (26 injected), bad addr 0
+[audio] iOS volume: muted (amp off) -> CSND volume 0
+[pica] arena full: reclaimed 8 blocks of exited clients
+[gyrotest] t=73 gyro -0.270 -0.516 -0.005 rad/s | deviceMotion rate 0.056 -0.230 -0.020 | attitude roll 3.00 pitch -0.04 yaw -1.97
+[mcud] seq 1416: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[audio] iOS output stream #3 started (CSND starts 2)
+[audio] iOS volume: amp step 19 -> CSND volume 32768/32768
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=20
+ios3ds-audio: amp step 13 -> CSND volume 8000
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=9b
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: tx start ch5 src=20c77000 lli=20ca6010 ctl=87249800 cfg=8a81
+[hb] t=186s quiet 0s | abs 1853517 dec 294053 timer 136184 irq 143902 vbl 7306 | md0 4662 req 95678 KiB 0 err
+[hb]  clock: arm11 watchdog +120797 ms vs arm9 timer +120798 ms (ratio 999/1000)
+[hb]  pc u33239d38 u32dabf18 u33446ea0 u30585184 u30584e4c u012170d0 u0100802c u3037eb80
+[gyrotest] t=74 gyro -0.335 -0.498 14.133 rad/s | deviceMotion rate -0.012 -0.207 14.118 | attitude roll 3.06 pitch 0.15 yaw 2.89
+[gpu] mirror: 898 frames in 31 s (28.9 fps); GPU per frame: upload 2650 us, draw 3088 us, read-out 4479 us; frame avg 11312 us (max 29839, incl. IRQ latency); ARM11 IRQ time 68 us/frame in 7625 steps; 68 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[gyrotest] t=75 gyro -0.249 -0.144 -2.379 rad/s | deviceMotion rate 0.074 0.147 -2.393 | attitude roll 3.04 pitch -0.09 yaw -1.48
+[input] down 212,362
+[input] touch target SpringBoard
+[input] up 207,355
+[gyrotest] t=76 gyro -0.279 -1.118 0.039 rad/s | deviceMotion rate 0.040 -0.822 0.026 | attitude roll 3.02 pitch -0.05 yaw -1.48
+AMFI: Invalid signature but permitting execution
+[gyrotest] t=77 gyro -0.313 -0.497 0.002 rad/s | deviceMotion rate 0.005 -0.198 -0.010 | attitude roll 3.08 pitch 0.04 yaw -2.68
+AMFI: Invalid signature but permitting execution
+[audio] stream stopped: 1276983 words, peak 2085, TC IRQs 40 (40 injected), bad addr 0
+[audio] iOS volume: muted (amp off) -> CSND volume 0
+ios3ds-audio: tx stop words=137c37 peak=825 tc=28
+ios3ds-audio: iic w dev=e500 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: amp off -> CSND volume 0
+ios3ds-audio: iic w dev=e400 reg=0 len=1 val=4
+ios3ds-audio: iic w dev=e500 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=e500 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=e500 reg=3 len=1 val=ff
+[gyrotest] t=78 gyro -0.877 -12.769 39.784 rad/s | deviceMotion rate -0.559 -12.469 39.772 | attitude roll 3.13 pitch -0.12 yaw 0.24
+[mcud] seq 1522: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=79 gyro -0.219 3.967 -0.294 rad/s | deviceMotion rate 0.101 4.268 -0.305 | attitude roll -3.02 pitch 0.05 yaw -1.42
+[gyrotest] t=80 gyro -0.253 -0.543 0.005 rad/s | deviceMotion rate 0.068 -0.238 -0.006 | attitude roll 2.97 pitch -0.00 yaw -1.48
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[gyrotest] t=81 gyro -0.301 -0.574 6.390 rad/s | deviceMotion rate 0.020 -0.265 6.379 | attitude roll 2.95 pitch -0.01 yaw -1.57
+[gyrotest] t=82 gyro -0.242 -0.370 -0.027 rad/s | deviceMotion rate 0.079 -0.055 -0.038 | attitude roll 3.00 pitch -0.01 yaw -1.67
+[gyrotest] t=83 gyro -0.257 -0.847 0.040 rad/s | deviceMotion rate 0.063 -0.528 0.028 | attitude roll 3.01 pitch 0.10 yaw -2.65
+[mcud] seq 1621: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=84 gyro -0.138 1.564 0.061 rad/s | deviceMotion rate 0.182 1.887 0.048 | attitude roll -2.84 pitch 0.01 yaw -2.69
+AMFI: Invalid signature but permitting execution
+[gyrotest] t=85 gyro -0.273 -0.486 0.001 rad/s | deviceMotion rate 0.047 -0.164 -0.011 | attitude roll -3.02 pitch -0.06 yaw -2.75
+[gyrotest] t=86 gyro -2.671 -1.512 0.018 rad/s | deviceMotion rate -2.352 -1.190 0.006 | attitude roll -2.99 pitch 0.03 yaw -3.04
+[gyrotest] t=87 gyro 0.072 -0.108 -0.016 rad/s | deviceMotion rate 0.389 0.214 -0.028 | attitude roll 3.12 pitch -0.03 yaw 3.13
+[gyrotest] t=88 gyro -0.317 -0.525 -0.011 rad/s | deviceMotion rate -0.002 -0.201 -0.022 | attitude roll 3.09 pitch -0.02 yaw 3.13
+[mcud] seq 1721: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=89 gyro -0.284 -0.526 0.033 rad/s | deviceMotion rate 0.029 -0.200 0.022 | attitude roll 3.06 pitch -0.01 yaw -3.14
+[smp 3] begin nproc=19 src=sysctl
+[smp 3] pid=53 securityd t=0/1 RUN susp=0 cpu=162 ut=0.029 st=0.049 pc=0x2fe1c38c lr=0x2fe0422b sp=0x2fdfbb3c A sys=bsd153(0x1000,0x0,0x1000,0x0) bt=0x2fe044cd,0x2fe045cb,0x2fe048eb,0x2fe054c5,0x2fe05571,0x2fe05777,0x2fe05873,0x2fe083db,0x32ca02b4,0x32ca6378,0x32ca51f8,0x32d70bd8,0x32ca53a4,0x32ca5120,0x32d6ba00,0x32d6ba70
+[smp 3] pid=45 amfid t=0/2 WAIT/swap susp=0 cpu=0 ut=0.079 st=0.099 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe58 A sys=mach_msg(opt=0x3000002,rcv=0x1603,to=0) bt=0x32d32630,0x00001e9c,0x00001bc0
+[smp 3] pid=45 amfid t=1/2 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=44 Cydia t=0/10 WAIT/swap susp=0 cpu=0 ut=1.649 st=0.899 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfd80c A sys=mach_msg(opt=0x7000006,rcv=0x1803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x0000d5c8,0x0004d930,0x00053778,0x33fd44db,0x35ebd305,0x35ebccd9,0x35e8ca91,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c
+[smp 3] pid=44 Cydia t=1/10 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=44 Cydia t=2/10 WAIT/swap susp=0 cpu=0 ut=0.059 st=0.029 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 3] pid=44 Cydia t=3/10 WAIT/swap susp=0 cpu=0 ut=0.119 st=0.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x00628168 A sys=mach_msg(opt=0x7000006,rcv=0x3d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 3] pid=44 Cydia t=4/10 WAIT susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32ca42d8 lr=0x000626d0 sp=0x2ffe9724 A sys=read(0x6,0x2ffe9890,0x400,0x62674) bt=0x357ef41c,0x00028634,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=44 Cydia t=5/10 WAIT susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32ca42d8 lr=0x000626d0 sp=0x031c4684 A sys=read(0x8,0x31c4880,0x400,0x62674) bt=0x357ef41c,0x000293fc,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=44 Cydia t=6/10 WAIT susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32ca42d8 lr=0x000626d0 sp=0x03380734 A sys=read(0xa,0x3380890,0x400,0x62674) bt=0x357ef41c,0x0002995c,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=44 Cydia t=7/10 RUN susp=0 cpu=133 ut=0.309 st=0.249 pc=0x32d25814 lr=0x000916cb sp=0x0359563c A sys=bsd201(0xe,0x2679d,0x0,0x2679d) bt=0x000db68d,0x000d1a57,0x000d1b87,0x0002b498,0x35ea3f79,0x0000d38c,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=44 Cydia t=8/10 WAIT/swap susp=0 cpu=7 ut=0.059 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03615fa8 A sys=mach_msg(opt=0x7000006,rcv=0x8207,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35665eb0,0x35661fbc,0x35655eac,0x3564db70,0x35650558,0x35653740,0x356538dc,0x3565397c,0x302d2808,0x30309018,0x30263174,0x302630dc
+[smp 3] pid=44 Cydia t=9/10 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x25be10,0x279230,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=43 ios3ds-input t=0/2 WAIT/swap susp=0 cpu=18 ut=0.159 st=0.569 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffaac A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x0000669c,0x000079d4
+[smp 3] pid=43 ios3ds-input t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=41 MobileSafari t=0/6 WAIT/swap susp=0 cpu=8 ut=4.869 st=2.799 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfedf4 A sys=mach_msg(opt=0x7000006,rcv=0x1703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c,0x33862558,0x00003794,0x00003030
+[smp 3] pid=41 MobileSafari t=1/6 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=41 MobileSafari t=2/6 WAIT/swap susp=0 cpu=0 ut=0.199 st=0.429 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004f8168 A sys=mach_msg(opt=0x7000006,rcv=0x2a03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 3] pid=41 MobileSafari t=3/6 WAIT/swap susp=0 cpu=0 ut=0.119 st=0.219 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f88 A sys=mach_msg(opt=0x7000006,rcv=0x6303,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fe0c55,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=41 MobileSafari t=4/6 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x1603f0,0x178680,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=41 MobileSafari t=5/6 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.059 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670e0 A sys=mach_msg(opt=0x7000006,rcv=0x790b,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00018c34,0x0001872c,0x000185d0,0x360faf48,0x32d27b4c,0x32d197ac
+[smp 3] pid=39 lsd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.219 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdff068 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x359299b4,0x00001d00,0x00001ce8
+[smp 3] pid=39 lsd t=1/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=25 notifyd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.049 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 3] pid=25 notifyd t=1/2 WAIT/swap susp=0 cpu=4 ut=0.249 st=0.549 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=0/15 WAIT/swap susp=0 cpu=0 ut=6.289 st=5.879 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfec34 A sys=mach_msg(opt=0x7000006,rcv=0x1403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x35261d24,0x3386557c,0x33862558,0x00004029,0x00003764
+[smp 3] pid=20 SpringBoard t=1/15 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.019 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=20 SpringBoard t=2/15 WAIT/swap susp=0 cpu=0 ut=0.179 st=0.219 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe8f40 A sys=mach_msg(opt=0x6,rcv=0x2103,to=0) bt=0x346ddee4,0x346dde38,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=3/15 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0070df50 A sys=mach_msg(opt=0x7000006,rcv=0x3f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x33b731b4,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=4/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x011c8168 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x369e7d1c,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=5/15 RUN/swap susp=0 cpu=297 ut=3.379 st=3.749 pc=0x00614ae8 lr=0x00331000 sp=0x007b6aa4 A bt=0x006145a8,0x00612578,0x0061ac5c,0x34ff7ef8,0x34719f34,0x3478fe48,0x346eddd8,0x346ec724,0x346f32c4,0x3327586c,0x337cc88c,0x35ea2e37,0x35e9a5cb,0x35e9a589,0x35e8c835,0x35e8c50b
+[smp 3] pid=20 SpringBoard t=6/15 WAIT/swap susp=0 cpu=20 ut=9.449 st=2.069 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0341018c A sys=mach_msg(opt=0x7000006,rcv=0x8503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x337ff11c,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=7/15 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x034921b4 A sys=mach_msg(opt=0x7000006,rcv=0x9d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x000570ef,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=8/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x03514dc4 A sys=semwait_signal(0x2503,0x2603,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=9/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03595f74 A sys=mach_msg(opt=0x7000006,rcv=0xca03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x000856d9,0x33fbeb91,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=10/15 WAIT/swap susp=0 cpu=0 ut=0.089 st=0.049 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03c7400c A sys=mach_msg(opt=0x7000006,rcv=0x11a03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x307df054,0x33fc2551,0x33fc22af,0x33fd6b93,0x32d9f270,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=20 SpringBoard t=11/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03d28128 A sys=mach_msg(opt=0x7000006,rcv=0x12103,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309fa829,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=12/15 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03daa0f8 A sys=mach_msg(opt=0x7000006,rcv=0x12703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x309f9aab,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=13/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x03e5df6c A sys=mach_msg(opt=0x7000006,rcv=0x12f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x33fb823f,0x33fb8151,0x309fb595,0x33fb7b97,0x32d27b4c,0x32d197ac
+[smp 3] pid=20 SpringBoard t=14/15 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.039 pc=0x32d292fc lr=0x32d28b58 sp=0x04a37fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 3] pid=19 configd t=0/13 WAIT/swap susp=0 cpu=0 ut=1.599 st=1.039 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfefcc A sys=mach_msg(opt=0x7000006,rcv=0x1c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003434,0x000029a0,0x00001fdc
+[smp 3] pid=19 configd t=1/13 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.199 pc=0x32d2654c lr=0x32c9f19f sp=0x2fee5f2c A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x000344d4,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=2/13 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff67e40 A sys=kevent(0x3,0x0,0x0,0x2ff67f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=19 configd t=3/13 WAIT/swap susp=0 cpu=0 ut=1.119 st=1.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x000fdd9c A sys=mach_msg(opt=0x7000006,rcv=0x2603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00004cfc,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=4/13 WAIT/swap susp=0 cpu=0 ut=0.419 st=0.339 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005c01a0 A sys=mach_msg(opt=0x7000006,rcv=0x3403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0046f4c8,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=5/13 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006421a4 A sys=mach_msg(opt=0x7000006,rcv=0x4503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00484643,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=6/13 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.029 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2fff2bf0 A sys=select(0x20,0x119530,0x119520,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=7/13 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.029 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x006c7d50 A sys=mach_msg(opt=0x7000006,rcv=0x8403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00501910,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=8/13 WAIT/swap susp=0 cpu=0 ut=0.709 st=0.309 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0074a1bc A sys=mach_msg(opt=0x7000006,rcv=0x8903,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x00427430,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=9/13 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007cc1c8 A sys=mach_msg(opt=0x7000006,rcv=0xa603,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0045856c,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=10/13 WAIT/swap susp=0 cpu=0 ut=0.109 st=0.049 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01fa6178 A sys=mach_msg(opt=0x7000006,rcv=0xcb03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x309de534,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=11/13 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x020281d8 A sys=mach_msg(opt=0x7000006,rcv=0xdf03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0048f148,0x32d27b4c,0x32d197ac
+[smp 3] pid=19 configd t=12/13 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ffe9fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 3] pid=18 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=0 ut=0.039 st=0.199 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 3] pid=17 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 ut=0.929 st=0.699 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe0ef78 A sys=mach_msg(opt=0x7000006,rcv=0x1d03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0001336d,0x000359a8
+[smp 3] pid=17 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fef5e40 A sys=kevent(0x7,0x0,0x0,0x2fef5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=17 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=10 ut=2.739 st=3.779 pc=0x32cd1974 lr=0x0001dc7f sp=0x2fff94c0 A sys=kevent(0x4,0x0,0x0,0x2fff9f84) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=0/19 WAIT/swap susp=0 cpu=0 ut=1.799 st=1.939 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfef30 A sys=mach_msg(opt=0x7000006,rcv=0x1503,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x00003100,0x00002a3c
+[smp 3] pid=16 mediaserverd t=1/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=16 mediaserverd t=2/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2c03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=3/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x004800b4 A sys=mach_msg(opt=0x7000006,rcv=0x3a03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be41c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=4/19 WAIT/swap susp=0 cpu=0 ut=0.059 st=0.089 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005020a8 A sys=mach_msg(opt=0x7000006,rcv=0x3f03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be5e4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=5/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x005840a8 A sys=mach_msg(opt=0x7000006,rcv=0x4703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x341be834,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=6/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x00606d6c A sys=semwait_signal(0x4a07,0x490b,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x37424ae4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=7/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x007a41b4 A sys=mach_msg(opt=0x7000006,rcv=0x7003,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0070bffc,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=8/19 WAIT/swap susp=0 cpu=0 ut=0.069 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x01334064 A sys=mach_msg(opt=0x7000006,rcv=0x7703,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x3342a734,0x3342a544,0x32d27b4c,0x32d197ac
+[hwaes] securityd: software IOAESAccelerator
+[hwaes] securityd: software AppleKeyStore (key wrap)
+[gyrotest] t=90 gyro -0.481 -0.662 0.008 rad/s | deviceMotion rate -0.169 -0.333 -0.001 | attitude roll 3.04 pitch -0.01 yaw -3.14
+[smp 3] pid=16 mediaserverd t=9/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x013b607c A sys=mach_msg(opt=0x7000006,rcv=0x7e03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x0108e6a0,0x01023444,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=10/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ff670ac A sys=mach_msg(opt=0x7000006,rcv=0x9203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x342ea460,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=11/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x022dc0b4 A sys=mach_msg(opt=0x7000006,rcv=0x9803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34337c0c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=12/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0235e0b4 A sys=mach_msg(opt=0x7000006,rcv=0xa203,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34362038,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=13/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x023e00b4 A sys=mach_msg(opt=0x7000006,rcv=0xa803,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34342900,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=14/19 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x024620b4 A sys=mach_msg(opt=0x7000006,rcv=0xae03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34357b38,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=15/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x024e40b4 A sys=mach_msg(opt=0x7000006,rcv=0xb403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x3436d79c,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=16/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x025660b4 A sys=mach_msg(opt=0x7000006,rcv=0xba03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x34368ba4,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=17/19 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.229 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x025e8094 A sys=mach_msg(opt=0x7000006,rcv=0xc403,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x32e1b650,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=16 mediaserverd t=18/19 WAIT/swap susp=0 cpu=0 ut=0.079 st=0.189 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x0266a0f4 A sys=mach_msg(opt=0x7000006,rcv=0xca03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x0000a440,0x0000a7c8,0x0000a7e8,0x0000fc4c,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 syslogd t=0/4 WAIT/swap susp=0 cpu=0 ut=0.089 st=0.319 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x8,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 3] pid=13 syslogd t=1/4 WAIT/swap susp=0 cpu=0 ut=0.259 st=0.149 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000002,rcv=0x1103,to=0) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 syslogd t=2/4 WAIT/swap susp=0 cpu=0 ut=0.089 st=0.009 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1803,0x1903,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 3] pid=13 syslogd t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[smp 3] pid=11 ios3ds-gyrotest t=0/3 WAIT/swap susp=0 cpu=0 ut=0.289 st=0.229 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffdd4 A sys=semwait_signal(0x20b,0x0,0x1,0x1) bt=0x32c9f117,0x0000774c,0x00007b5c
+[smp 3] pid=11 ios3ds-gyrotest t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=11 ios3ds-gyrotest t=2/3 WAIT/swap susp=0 cpu=99 ut=5.999 st=1.059 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ac A sys=mach_msg(opt=0x7000006,rcv=0x2207,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x33246cc8,0x32d27b4c,0x32d197ac
+[smp 3] pid=8 ios3ds-mcud t=0/3 WAIT/swap susp=0 cpu=1 ut=0.479 st=0.459 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffcc4 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00007318,0x000077ac
+[smp 3] pid=8 ios3ds-mcud t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=8 ios3ds-mcud t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.009 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ffe9dc4 A sys=semwait_signal(0x3403,0x3503,0x0,0x0) bt=0x32cd2918,0x373e1e58,0x373e1d34,0x341c0934,0x3740c208,0x32d27b4c,0x32d197ac
+[smp 3] pid=6 ios3ds-wifid t=0/3 UNINT susp=0 cpu=84 ut=1.569 st=8.229 pc=0x32c9dfa0 lr=0x32ca3f51 sp=0x2fdffe18 A sys=sysctl(0x88f4,0x2,0x8914,0x2fdffe3c) bt=0x000079a0,0x000074b8,0x00007afc
+[smp 3] pid=6 ios3ds-wifid t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 3] pid=6 ios3ds-wifid t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2ff70bf0 A sys=select(0x19,0x10d1c0,0x10d1b0,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 3] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=30 ut=0.279 st=2.939 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x6a4b,id=504,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 3] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.049 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 3] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.099 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 3] end
+[gyrotest] t=91 gyro -0.279 -0.327 0.063 rad/s | deviceMotion rate 0.032 0.005 0.054 | attitude roll 3.03 pitch -0.03 yaw -3.12
+[gyrotest] t=92 gyro -0.255 -0.465 0.035 rad/s | deviceMotion rate 0.054 -0.129 0.027 | attitude roll 3.04 pitch -0.03 yaw -3.11
+[gyrotest] t=93 gyro -0.758 -0.779 0.051 rad/s | deviceMotion rate -0.450 -0.440 0.043 | attitude roll 3.02 pitch -0.03 yaw -3.04
+[gyrotest] t=94 gyro -0.257 -0.492 0.006 rad/s | deviceMotion rate 0.048 -0.149 -0.002 | attitude roll 3.06 pitch -0.10 yaw -2.94
+[mcud] seq 1829: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+ios3ds-mcu: accelerometer sample #30000: 0 0 54 counts (|a| = 15253 MCU units)
+[gyrotest] t=95 gyro -0.272 -0.521 0.005 rad/s | deviceMotion rate 0.030 -0.175 -0.002 | attitude roll 3.05 pitch -0.05 yaw -2.94
+[gyrotest] t=96 gyro -0.265 -0.514 0.024 rad/s | deviceMotion rate 0.035 -0.165 0.018 | attitude roll 3.05 pitch -0.04 yaw -2.85
+[wifi] group key renewed by the AP (index 2): 0
+[gyrotest] t=97 gyro -0.278 -0.511 -0.008 rad/s | deviceMotion rate 0.020 -0.160 -0.013 | attitude roll 3.05 pitch -0.03 yaw -2.86
+[gyrotest] t=98 gyro -0.227 -0.549 0.021 rad/s | deviceMotion rate 0.069 -0.194 0.017 | attitude roll 3.05 pitch -0.03 yaw -2.80
+[gyrotest] t=99 gyro -0.272 -0.481 0.004 rad/s | deviceMotion rate 0.022 -0.123 0.001 | attitude roll 2.98 pitch -0.01 yaw -2.81
+[mcud] seq 1929: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=100 gyro -0.257 -0.500 0.024 rad/s | deviceMotion rate 0.035 -0.138 0.022 | attitude roll 3.02 pitch -0.02 yaw -2.82
+[gyrotest] t=101 gyro -0.242 -0.521 0.042 rad/s | deviceMotion rate 0.050 -0.156 0.041 | attitude roll 3.03 pitch -0.01 yaw -2.87
+[hb] t=216s quiet 0s | abs 2228422 dec 331233 timer 157473 irq 167203 vbl 9124 | md0 5190 req 102450 KiB 0 err
+[hb]  clock: arm11 watchdog +151180 ms vs arm9 timer +151180 ms (ratio 1000/1000)
+[hb]  pc k80068010 u35e6b50ct u34705f70 u347027a0 k80068010 k80068010 u35e7ea64t u34702610
+[gyrotest] t=102 gyro -0.293 -0.534 0.047 rad/s | deviceMotion rate -0.002 -0.166 0.046 | attitude roll 3.04 pitch -0.01 yaw -2.87
+[gpu] mirror: 853 frames in 30 s (28.4 fps); GPU per frame: upload 3245 us, draw 4226 us, read-out 6730 us; frame avg 11376 us (max 29839, incl. IRQ latency); ARM11 IRQ time 67 us/frame in 7098 steps; 164 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 1 of 512 sampled LCD pixels differ from the iOS framebuffer (first: top fb row 354 px 85: ed868b expected, f1a1a5 seen; only meaningful on a still screen)
+[gyrotest] t=103 gyro -0.280 -0.518 -0.006 rad/s | deviceMotion rate 0.010 -0.148 -0.008 | attitude roll 3.04 pitch -0.01 yaw -2.88
+[gyrotest] t=104 gyro -0.266 -0.508 0.004 rad/s | deviceMotion rate 0.024 -0.134 0.002 | attitude roll 3.05 pitch -0.01 yaw -2.89
+[gyrotest] t=105 gyro -0.304 -0.503 0.002 rad/s | deviceMotion rate -0.014 -0.127 0.001 | attitude roll 3.05 pitch -0.01 yaw -2.89
+[mcud] seq 2029: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=106 gyro -0.273 -0.487 0.046 rad/s | deviceMotion rate 0.015 -0.108 0.045 | attitude roll 3.05 pitch -0.01 yaw -2.90
+[gl] CA: 300 frames; per frame over the last 300: render thread CPU 37666 us, 2.3 command lists, 0.5 GPU presents, 0.5 CPU read-backs (501 KiB), 1.3 texture uploads (85 KiB); GPU memory: 6102 KiB held (114 textures, 4166 KiB), arena 5033 KiB free, 0 evic
+[gyrotest] t=107 gyro -0.256 -0.545 0.032 rad/s | deviceMotion rate 0.032 -0.164 0.031 | attitude roll 3.05 pitch -0.01 yaw -2.91
+[gyrotest] t=108 gyro -0.290 -0.539 0.034 rad/s | deviceMotion rate -0.003 -0.155 0.033 | attitude roll 3.05 pitch -0.01 yaw -2.91
+[gyrotest] t=109 gyro -0.259 -0.499 0.030 rad/s | deviceMotion rate 0.028 -0.112 0.030 | attitude roll 3.05 pitch -0.02 yaw -2.92
+[gyrotest] t=110 gyro -0.202 -0.711 0.022 rad/s | deviceMotion rate 0.084 -0.323 0.022 | attitude roll 3.06 pitch -0.04 yaw -2.63
+[mcud] seq 2151: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=111 gyro -0.265 -0.537 0.051 rad/s | deviceMotion rate 0.020 -0.145 0.051 | attitude roll 3.06 pitch -0.02 yaw -2.75
+[gyrotest] t=112 gyro -0.222 -0.475 0.007 rad/s | deviceMotion rate 0.061 -0.081 0.008 | attitude roll 3.06 pitch -0.02 yaw -2.67
+[gyrotest] t=113 gyro -0.291 -0.545 0.022 rad/s | deviceMotion rate -0.009 -0.149 0.023 | attitude roll 3.06 pitch -0.02 yaw -2.67
+[wifi] associated, channel 2432 MHz, BSSID e0:08:55:e2:d4:ff
+[wifi-diag] 166686 ms connect: beacon IEs 195, assoc req 0, assoc resp 0 bytes
+[wifi-diag] 166686 ms connect: no RSN IE found in the association request: message 2 uses our own
+[wifi-diag] 166694 ms eapol m1: key info 008a, descriptor 2, replay 0000000000000005, key data 0
+[wifi] EAPOL event 1, reply 121 bytes: 0
+virtual bool IOUserEthernetController::setLinkState(bool): status=0 mCurrentMedium=0x83687400
+[wifi] EAPOL event 2, reply 99 bytes: 0
+[wifi] link up: Adlerhorst, AP e0:08:55:e2:d4:ff
+[wifi] state auth -> up
+[wifid] link down (ARM9 state 8)
+[a80211] link down
+[a80211] first GET type 29 (len 16): ok
+[wifi] EAPOL event 2, reply 99 bytes: 0
+[gyrotest] t=114 gyro -0.265 -0.531 -0.008 rad/s | deviceMotion rate 0.017 -0.133 -0.007 | attitude roll 3.06 pitch -0.01 yaw -2.68
+2001-02-06 14:23:12.438 SpringBoard[20:c703] WiFi: Joined network Adlerhorst. WiFi bars visible: YES
+virtual bool IOUserEthernetController::setLinkState(bool): status=1 mCurrentMedium=0x83687400
+[wifid] link up (ARM9 state 9)
+[a80211] link up
+2001-02-06 14:23:12.949 SpringBoard[20:c703] WiFi: Joined network Adlerhorst. WiFi bars visible: YES
+[gyrotest] t=115 gyro -0.271 -0.539 0.022 rad/s | deviceMotion rate 0.010 -0.140 0.023 | attitude roll 3.06 pitch -0.01 yaw -2.68
+[mcud] seq 2263: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=116 gyro -0.231 -0.555 0.030 rad/s | deviceMotion rate 0.050 -0.153 0.032 | attitude roll 3.06 pitch -0.01 yaw -2.69
+[gyrotest] t=117 gyro -0.285 -0.556 0.022 rad/s | deviceMotion rate -0.005 -0.153 0.024 | attitude roll 3.06 pitch -0.01 yaw -2.70
+[gyrotest] t=118 gyro -0.257 -0.643 0.024 rad/s | deviceMotion rate 0.023 -0.238 0.026 | attitude roll 3.07 pitch -0.01 yaw -2.71
+[gyrotest] t=119 gyro -0.291 -0.540 -0.005 rad/s | deviceMotion rate -0.011 -0.133 -0.003 | attitude roll 3.08 pitch -0.01 yaw -2.72
+[gyrotest] t=120 gyro -0.282 -0.546 -0.001 rad/s | deviceMotion rate -0.002 -0.137 0.001 | attitude roll 3.07 pitch -0.01 yaw -2.73
+[mcud] seq 2385: battery 89% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=121 gyro -0.257 -0.516 -0.008 rad/s | deviceMotion rate 0.022 -0.105 -0.007 | attitude roll 3.07 pitch -0.01 yaw -2.73
+[mcu] battery 88%
+[gyrotest] t=122 gyro -0.256 -0.506 -0.005 rad/s | deviceMotion rate 0.023 -0.093 -0.003 | attitude roll 3.07 pitch -0.01 yaw -2.74
+[gyrotest] t=123 gyro -0.259 -0.528 0.019 rad/s | deviceMotion rate 0.020 -0.113 0.021 | attitude roll 3.07 pitch -0.01 yaw -2.75
+[gyrotest] t=124 gyro -0.257 -0.563 0.001 rad/s | deviceMotion rate 0.021 -0.147 0.003 | attitude roll 3.07 pitch -0.01 yaw -2.76
+ios3ds-mcu: accelerometer sample #40000: 0 0 54 counts (|a| = 15404 MCU units)
+[gyrotest] t=125 gyro -0.270 -0.535 -0.011 rad/s | deviceMotion rate 0.009 -0.117 -0.009 | attitude roll 3.06 pitch -0.01 yaw -2.78
+[mcud] seq 2508: battery 88% flags e2 volume 12 3D 8 irq 0000000c home 1 power 0/0 shell 0/0
+[gyrotest] t=126 gyro -5.137 5.664 15.332 rad/s | deviceMotion rate -4.859 6.083 15.334 | attitude roll -2.13 pitch -0.20 yaw -2.58
+[gyrotest] t=127 gyro -4.167 -6.158 -1.160 rad/s | deviceMotion rate -3.889 -5.739 -1.157 | attitude roll 1.80 pitch 0.16 yaw 0.36
+[mcud] SpringBoard device orientation 6 -> 4
+[hb] t=246s quiet 0s | abs 2896741 dec 359095 timer 175107 irq 186634 vbl 10921 | md0 5302 req 104063 KiB 0 err
+[hb]  clock: arm11 watchdog +181211 ms vs arm9 timer +181212 ms (ratio 999/1000)
+[hb]  pc u00614ae0 u35e700a0t k80067d44 u00614af0 u00614af0 u00614af0 u00614ae0 u00614ae8
+[gyrotest] t=128 gyro 6.950 -4.585 -2.221 rad/s | deviceMotion rate 7.228 -4.166 -2.219 | attitude roll -0.26 pitch -0.58 yaw 1.15
+[mcud] SpringBoard device orientation 4 -> 6
+[gpu] mirror: 843 frames in 30 s (28.1 fps); GPU per frame: upload 7190 us, draw 5066 us, read-out 3042 us; frame avg 10730 us (max 29839, incl. IRQ latency); ARM11 IRQ time 64 us/frame in 6986 steps; 434 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[gyrotest] t=129 gyro -0.594 -0.662 0.220 rad/s | deviceMotion rate -0.316 -0.243 0.222 | attitude roll 0.49 pitch -0.30 yaw 2.30
+
