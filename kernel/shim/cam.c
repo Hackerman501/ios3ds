@@ -110,17 +110,16 @@ static inline void dinval(const volatile void *p, u32 len) { (void)p; (void)len;
 #define CAM_STEP_TICKS  1047u       /* 1 ms of the 1.047 MHz time base: the FIFO (10 KiB) lasts ~4 ms at 15 fps */
 #define CAM_PROBE_TICKS (1047u * 2000u) /* 2 s without data: next set-up variant */
 
-/* CAM block set-up variants, tried in turn every 2 s until data arrives (the
-   first hardware run, re-log 67, saw no data at all with variant 0):
-     0  CAM_CNT 0x8010 (bit 4 "must be 1", bit 15 transfer), +6 = 0
-     1  as 0, +6 bits 0-5 = 0x22: GBATEK suspects +6 resembles the DSi's
-        CAM_MCNT, where 0x22 is the "module on" value DSi software writes
-     2  as 1, plus bit 14 (data request) and bit 9 (IRQ): the 3DS's own
-        driver uses DMA, maybe the block only fills its FIFO with DRQ on */
-static const u16 cam_var_clr[CAM_NVARIANTS] = { 0x00, 0x22, 0x22 };
-static const u32 cam_var_cnt[CAM_NVARIANTS] = {
-    CAM_CNT_B4 | CAM_CNT_EN, CAM_CNT_B4 | CAM_CNT_EN, CAM_CNT_B4 | CAM_CNT_EN | CAM_CNT_DRQ | CAM_CNT_IRQ,
-};
+/* CAM block set-up variants, tried in turn every 2 s until data arrives.
+   Run 25 (re-log 70): with 0x8010, +6 = 0x22 and DRQ/IRQ nothing ever arrived
+   on either block. New: the DSi's CAM_CNT init bits (GBATEK DSi "Camera Init":
+   bits 8-9 = 2 and bit 10 = 1 before the transfer is enabled, bit 11 IRQ);
+   the 3DS register is "alike DSi". The ARM9's boot self-test (diag=1,
+   boot/arm9/camera.c) runs the same list per sensor and logs which one works.
+     0  0x8010             2  0x8E10 (+ bit 11)       4  0xC610 + DRQ, +6 = 0x22
+     1  0x8610 (DSi 8-10)  3  0x8610, +6 = 0x22 */
+static const u16 cam_var_clr[CAM_NVARIANTS] = CAM_VAR_CLR_LIST;
+static const u32 cam_var_cnt[CAM_NVARIANTS] = CAM_VAR_CNT_LIST;
 #define CAM_WORDS       (CAM_FRAME_BYTES / 4u)
 
 static struct {
@@ -143,7 +142,7 @@ static struct {
 /* ---- IRQ side ------------------------------------------------------------- */
 static void port_start(u32 p)
 {
-    cnt_w(p, CAM_CNT_B4);                               /* transfer off */
+    cnt_w(p, cam_var_cnt[C.variant] & ~CAM_CNT_EN);     /* transfer off, set-up bits on */
     clr_w(p, 0x8000u | cam_var_clr[C.variant]);         /* clear overrun (+ variant bits 0-5) */
     cnt_w(p, cam_var_cnt[C.variant]);                   /* on: the next frame starts at word 0 */
 }

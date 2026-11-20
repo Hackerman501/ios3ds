@@ -112,7 +112,9 @@ typedef struct {
     uint32_t pad2[8];
 } cammbox_t;
 _Static_assert(sizeof(cammbox_t) == 128, "cammbox layout");
-#define CAM_NVARIANTS       3u
+#define CAM_NVARIANTS       5u      /* kernel/shim/cam.c cam_var_*, boot/arm9/camera.c self-test */
+#define CAM_VAR_CNT_LIST    { 0x8010u, 0x8610u, 0x8E10u, 0x8610u, 0xC610u }
+#define CAM_VAR_CLR_LIST    { 0x00u, 0x00u, 0x00u, 0x22u, 0x22u }
 
 /* ---- hardware (GBATEK "3DS Video CAM Registers", "3DS I2C" ; 3dbrew "IO Registers") ----
    CAM0 0x10120000: inner camera + outer right camera (the DSi pair, shared bus)

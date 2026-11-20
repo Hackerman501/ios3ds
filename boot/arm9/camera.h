@@ -2,5 +2,5 @@
 #pragma once
 #include "ios3ds.h"
 
-void camera_init(u32 shim_pa, bool enable);   /* before XNU: mailbox, boot.cfg camera= */
+void camera_init(u32 shim_pa, bool enable, bool self_test);   /* before XNU: mailbox, boot.cfg camera=, diag= */
 void camera_poll(void);                       /* monitor loop: serve the shim's requests */

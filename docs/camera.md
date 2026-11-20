@@ -175,16 +175,24 @@ every 10 s: no word ever reached the CAM1 FIFO. A third start timed out in
 the sequencer refresh (`init failed (step 5)`). The shim's FIFO drain itself
 is not in question yet: without overruns the FIFO never filled at all.
 
+**Run 25 (re-log 70):** with these diagnostics: the sensor reports streaming
+(SEQ_STATE 3, parallel output on, awake), yet neither block ever sees sync or
+data in any variant; CFG11 bit 1 does not stick; CAM_CNT bit 4 sticks on CAM0
+but not on CAM1. Now: variants with the DSi's CAM_CNT init bits (8-10) and a
+**boot self-test** (`diag=1`, before XNU): every sensor x every block set-up
+(and two sensor-side variants), one `[cam-test]` line each, `<-- DATA` where
+anything arrives.
+
 What the code does about it (all logged):
 - **Both CAM blocks are watched** until data appears: if the left camera's
   data arrives on CAM0 instead of CAM1, the shim moves there
   (`CAM0`/`CAM1` in the stats line).
 - **Set-up variants**, 2 s each, cycled until data appears
-  (`kernel/shim/cam.c` `cam_var_*`): 0 = `CAM_CNT 0x8010`; 1 = plus `+6 =
-  0x22` (GBATEK suspects +6 is the DSi's CAM_MCNT, whose "on" value is 0x22);
-  2 = plus `CAM_CNT` bit 14 (data request) and bit 9 (IRQ).
-- `CFG11_CAMERA_CNT` = 3 (bit 1 "reportedly turns the cameras on", GBATEK),
-  read back and logged.
+  (`CAM_VAR_CNT_LIST`/`CAM_VAR_CLR_LIST` in `boot/common/cam_proto.h`): CAM_CNT
+  0x8010; 0x8610 (the DSi's init bits 8-9 = 2, 10 = 1); 0x8E10 (+ bit 11);
+  0x8610 with +6 = 0x22 (GBATEK suspects +6 is the DSi's CAM_MCNT, "on" =
+  0x22); 0xC610 + DRQ with +6 = 0x22.
+- `CFG11_CAMERA_CNT` = 3, read back (run 25: only bit 0 sticks).
 - Sensor waits 500 ms instead of 100 ms; the cameras are probed at boot (iOS
   saw "present 0x0" until the first start).
 

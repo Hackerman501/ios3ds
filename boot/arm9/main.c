@@ -1011,7 +1011,7 @@ void a9_main(int argc, char **argv)
     mcu_set_led(cfg.notify_led != 0);
     audio_set_mic(cfg.mic != 0);
     audio_set_hp_route(cfg.hp_route != 0);
-    camera_init(cfg.shim_pa, cfg.camera != 0);   /* docs/camera.md */
+    camera_init(cfg.shim_pa, cfg.camera != 0, cfg.diag != 0);   /* docs/camera.md */
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);

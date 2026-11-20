@@ -23,6 +23,7 @@
 #include "camera.h"
 #include "i2c.h"
 #include "log.h"
+#include "util.h"
 #include "cam_proto.h"
 
 #define BUS_DSI         0           /* i2c.c bus numbers: 0 = 0x10161000, 1 = 0x10144000 */
@@ -175,7 +176,7 @@ static void apt_standby(const camdev_t *c)
     apt_mask(c, 0x0018, 0, 0x0001);                                     /* standby */
 }
 
-/* ---- hardware diagnostics (docs/camera.md section 7, re-log 67) ---- */
+/* ---- hardware diagnostics (docs/camera.md section 7, re-log 68) ---- */
 #define CAMREG32(p, o)  (*(vu32 *)(CAM_REG_PA(p) + (o)))
 #define CAMREG16(p, o)  (*(vu16 *)(CAM_REG_PA(p) + (o)))
 
@@ -231,6 +232,88 @@ static void diag_shim(const char *name, u32 nframes, u32 novr)
            (unsigned)nframes, (unsigned)novr, (unsigned)box->services, (unsigned)box->data_seen,
            (unsigned)box->stat_last, (unsigned)box->stat_max, (unsigned)box->cnt_rb, (unsigned)box->variant,
            (unsigned)box->port_used, box->probing ? ", still probing: no data yet" : "", (unsigned)box->words);
+}
+
+/* Boot self-test (boot.cfg diag=1; before XNU, the shim is not running yet):
+   for each sensor, bring it up and try every CAM block set-up variant on
+   both blocks, 200 ms each, reading CAM_STAT's fill/overrun (the ARM9 can
+   read the registers, only the FIFO window is ARM11-only). Then two sensor
+   variants with the most likely block set-ups: RESET_MISC 0x0200 (bit 4
+   clear: outputs not gated by the OE pin) and PAD_SLEW 0x0777 (the Linux
+   MT9V113 driver's value; the DSi list writes 0x0201). One log line each:
+   [cam-test] <sensor> <set-up>: CAM0 stat .. cnt .., CAM1 stat .. cnt .. DATA */
+static u32 selftest_one(const char *sname, const char *what, u32 cnt, u32 clr)
+{
+    u32 got = 0, st[2], rb[2], t0, maxf[2] = { 0, 0 };
+    for (u32 p = 0; p < 2; p++) {
+        CAMREG32(p, CAM_CNT) = cnt & ~CAM_CNT_EN;
+        CAMREG16(p, CAM_CLR) = (u16)(0x8000u | clr);
+        CAMREG32(p, CAM_CNT) = cnt;
+    }
+    t0 = t9();
+    while (t9() - t0 < 13091u) {            /* 200 ms: 3 frames at 15 fps */
+        for (u32 p = 0; p < 2; p++) {
+            u32 v = CAMREG16(p, CAM_STAT);
+            if ((v & 0x7FF) > maxf[p]) maxf[p] = v & 0x7FF;
+            if (v & 0x8000) maxf[p] |= 0x8000;
+        }
+    }
+    for (u32 p = 0; p < 2; p++) {
+        st[p] = CAMREG16(p, CAM_STAT);
+        rb[p] = CAMREG32(p, CAM_CNT);
+        if (maxf[p]) got |= 1u << p;
+        CAMREG32(p, CAM_CNT) = cnt & ~CAM_CNT_EN;      /* off again */
+    }
+    log_ok("[cam-test] %s, %s: CAM0 cnt %04x stat %04x max %04x | CAM1 cnt %04x stat %04x max %04x%s\n",
+           sname, what, (unsigned)rb[0], (unsigned)st[0], (unsigned)maxf[0], (unsigned)rb[1], (unsigned)st[1],
+           (unsigned)maxf[1], got ? "  <-- DATA" : "");
+    return got;
+}
+
+static void selftest(void)
+{
+    static const u32 vcnt[CAM_NVARIANTS] = CAM_VAR_CNT_LIST;
+    static const u32 vclr[CAM_NVARIANTS] = CAM_VAR_CLR_LIST;
+    static const u8 order[3] = { CAM_OUTER, CAM_INNER, 2 };
+    char what[40];
+    u32 hits = 0;
+    log_ok("[cam-test] boot self-test (diag=1): each sensor x CAM set-up, both blocks, 200 ms each\n");
+    for (u32 k = 0; k < 3; k++) {
+        const camdev_t *c = &cams[order[k]];
+        u32 err;
+        u16 id = 0;
+        if (!apt_rd(c, 0x0000, &id) || id != APTINA_CHIP_ID) {
+            log_warn("[cam-test] %s: no sensor\n", c->name);
+            continue;
+        }
+        for (u32 j = 0; j < 3; j++)                     /* only this one may drive its bus */
+            if (j != order[k]) apt_standby(&cams[j]);
+        err = apt_init(c, order[k] == CAM_INNER);
+        if (!err && !apt_activate(c)) err = CAMERR_INIT;
+        if (err) {
+            log_warn("[cam-test] %s: init failed (step %u)\n", c->name, (unsigned)err);
+            diag_sensor(c);
+            continue;
+        }
+        wait_ms(100);
+        for (u32 v = 0; v < CAM_NVARIANTS; v++) {
+            snprintf(what, sizeof what, "cnt %04x +6 %02x", (unsigned)vcnt[v], (unsigned)vclr[v]);
+            hits += selftest_one(c->name, what, vcnt[v], vclr[v]);
+        }
+        apt_wr(c, 0x001A, 0x0200);                       /* RESET_MISC: parallel on, OE pin gating off */
+        hits += selftest_one(c->name, "RESET_MISC 0200, cnt 8010", 0x8010, 0);
+        hits += selftest_one(c->name, "RESET_MISC 0200, cnt 8610", 0x8610, 0);
+        apt_wr(c, 0x001E, 0x0777);                       /* PAD_SLEW as the Linux MT9V113 driver */
+        hits += selftest_one(c->name, "+ PAD_SLEW 0777, cnt 8610", 0x8610, 0);
+        diag_sensor(c);
+        apt_standby(c);
+    }
+    for (u32 p = 0; p < 2; p++) {
+        CAMREG32(p, CAM_CNT) = 0;
+        CAMREG16(p, CAM_CLR) = 0x8000;
+    }
+    log_ok("[cam-test] done: %u set-ups saw data%s\n", (unsigned)hits,
+           hits ? "" : " (none: the CAM blocks never received anything)");
 }
 
 static void publish(u32 state, u32 err)
@@ -315,7 +398,7 @@ static void stop(void)
            (unsigned)box->frames, (unsigned)box->overruns, (unsigned)box->restarts);
 }
 
-void camera_init(u32 shim_pa, bool enable)
+void camera_init(u32 shim_pa, bool enable, bool self_test)
 {
     if (!shim_pa) return;
     box = (volatile cammbox_t *)(shim_pa + SHIM_CAM_OFF);
@@ -332,6 +415,7 @@ void camera_init(u32 shim_pa, bool enable)
        (run 23 reported "cameras present 0x0" until then), then standby + clock off */
     diag_cam_block("boot");
     power(true);
+    if (self_test) selftest();
     for (u32 i = 0; i < CAM_COUNT; i++)
         if (box->present & (1u << i)) apt_standby(&cams[i]);
     power(false);
