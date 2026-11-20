@@ -485,16 +485,175 @@ static void sample_proc(const struct pent *p)
     mach_port_deallocate(mach_task_self_, task);
 }
 
+/* ---- memory report ("-mem"): [mem] lines --------------------------
+ * host_statistics(HOST_VM_INFO) = vm_stat, task_info(TASK_BASIC_INFO_32)
+ * per process (resident / virtual), host_zone_info (kernel zones, needs the
+ * host-priv port: root), kern.ipc.mbstat (mbufs) and jetsam's
+ * kern.memorystatus_level. The Mach calls are looked up with dlsym: the stub
+ * SDK lists only the symbols the tools already import. */
+#include <dlfcn.h>
+int sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
+typedef kern_return_t (*host_stat_fn)(mach_port_t, int, int *, mach_msg_type_number_t *);
+typedef kern_return_t (*task_info_fn)(mach_port_t, int, int *, mach_msg_type_number_t *);
+typedef kern_return_t (*zone_info_fn)(mach_port_t, void **, mach_msg_type_number_t *,
+                                      void **, mach_msg_type_number_t *);
+typedef kern_return_t (*host_priv_fn)(mach_port_t, mach_port_t *);
+struct zname { char n[80]; };
+struct zinfo { int count; unsigned cur, max, elem, alloc; int pageable, sleepable, exhaustible, collectable; };
+struct rss { unsigned res, virt; int pid; char name[20]; };
+
+static unsigned kib(int pages) { return (unsigned)pages * 4; }
+
+static void mem_report(struct pent *procs, int n, int top)
+{
+    static host_stat_fn hs;
+    static task_info_fn ti;
+    static zone_info_fn zi;
+    static host_priv_fn hp;
+    static mach_port_t priv;
+    static struct rss r[MAXPROC];
+    int vm[15], i, j, nr = 0;
+    unsigned tot = 0, zsum = 0;
+    mach_msg_type_number_t cnt = 15;
+
+    if (!hs) {
+        hs = (host_stat_fn)dlsym(RTLD_DEFAULT, "host_statistics");
+        ti = (task_info_fn)dlsym(RTLD_DEFAULT, "task_info");
+        zi = (zone_info_fn)dlsym(RTLD_DEFAULT, "host_zone_info");
+        hp = (host_priv_fn)dlsym(RTLD_DEFAULT, "host_get_host_priv_port");
+        if (hp && hp(mach_host_self(), &priv) != 0)
+            priv = 0;
+        if (!zi || !priv) {
+            lreset();
+            lput("[mem %u] zones: no %s", seq, !zi ? "host_zone_info" : "host-priv port");
+            lflush();
+        }
+    }
+    lreset();
+    lput("[mem %u]", seq);
+    memset(vm, 0, sizeof vm);
+    if (hs && hs(mach_host_self(), 2 /* HOST_VM_INFO */, vm, &cnt) == 0)
+        lput(" KiB free %u active %u inactive %u spec %u wired %u purgeable %u | faults %u cow %u pageins %u"
+             " pageouts %u purges %u", kib(vm[0]), kib(vm[1]), kib(vm[2]), kib(vm[14]), kib(vm[3]), kib(vm[12]),
+             vm[8], vm[9], vm[6], vm[7], vm[13]);
+    {
+        int lvl = -1;
+        size_t l = sizeof lvl;
+        if (sysctlbyname("kern.memorystatus_level", &lvl, &l, 0, 0) == 0)
+            lput(" | memorystatus_level %d", lvl);
+    }
+    {
+        unsigned char mb[600];
+        size_t l = sizeof mb;
+        unsigned v[7], f;
+        if (sysctlbyname("kern.ipc.mbstat", mb, &l, 0, 0) == 0 && l >= 544) {
+            memcpy(v, mb, sizeof v);
+            memcpy(&f, mb + 540, sizeof f);
+            int nmb = 0;
+            size_t ln = sizeof nmb;
+            sysctlbyname("kern.ipc.nmbclusters", &nmb, &ln, 0, 0);
+            lput(" | mbuf %u cl %u/%d clfree %u drops %u wait %u drain %u mcfail %u", v[0], v[1], nmb, v[3], v[4],
+                 v[5], v[6], f);
+        }
+    }
+    lflush();
+
+    /* kernel zones: total and the biggest few */
+    if (zi && priv) {
+        struct zname *zn = 0;
+        struct zinfo *zf = 0;
+        mach_msg_type_number_t nn = 0, nf = 0, k;
+        kern_return_t zr = zi(priv, (void **)&zn, &nn, (void **)&zf, &nf);
+        if (zr != 0 && seq == 1) {
+            lreset();
+            lput("[mem %u] zones: host_zone_info failed (%d)", seq, zr);
+            lflush();
+        }
+        if (zr == 0 && zn && zf) {
+            unsigned used[6] = { 0 }, idx[6] = { 0 };
+            for (k = 0; k < nf && k < nn; k++) {
+                unsigned u = zf[k].cur;
+                zsum += u;
+                for (i = 0; i < 6; i++)
+                    if (u > used[i]) {
+                        for (j = 5; j > i; j--) {
+                            used[j] = used[j - 1];
+                            idx[j] = idx[j - 1];
+                        }
+                        used[i] = u;
+                        idx[i] = k;
+                        break;
+                    }
+            }
+            lreset();
+            lput("[mem %u] zones %u KiB in %u:", seq, zsum >> 10, nf);
+            for (i = 0; i < 6 && used[i]; i++) {
+                zn[idx[i]].n[79] = 0;
+                lput(" %s %u/%u", zn[idx[i]].n, used[i] >> 10, zf[idx[i]].max >> 10);
+            }
+            lflush();
+            vm_deallocate(mach_task_self_, (vm_address_t)zn, nn * sizeof *zn);
+            vm_deallocate(mach_task_self_, (vm_address_t)zf, nf * sizeof *zf);
+        }
+    }
+
+    /* processes by resident size (KiB) and virtual size (MiB) */
+    for (i = 0; i < n && nr < MAXPROC; i++) {
+        kern_return_t kr;
+        const char *via;
+        mach_port_t t;
+        int b[8];
+        mach_msg_type_number_t c = 8;
+        if (procs[i].pid <= 0 || !ti)
+            continue;
+        if (!(t = get_task(procs[i].pid, &kr, &via)))
+            continue;
+        if (ti(t, 4 /* TASK_BASIC_INFO_32 */, b, &c) == 0) {
+            r[nr].res = (unsigned)b[2];
+            r[nr].virt = (unsigned)b[1];
+            r[nr].pid = procs[i].pid;
+            strncpy(r[nr].name, procs[i].name, sizeof r[nr].name - 1);
+            r[nr].name[sizeof r[nr].name - 1] = 0;
+            tot += r[nr].res;
+            nr++;
+        }
+        mach_port_deallocate(mach_task_self_, t);
+    }
+    pset_free();
+    for (i = 1; i < nr; i++)            /* insertion sort, biggest first */
+        for (j = i; j > 0 && r[j].res > r[j - 1].res; j--) {
+            struct rss x = r[j];
+            r[j] = r[j - 1];
+            r[j - 1] = x;
+        }
+    lreset();
+    lput("[mem %u] %d procs, resident %u KiB:", seq, nr, tot >> 10);
+    for (i = 0; i < nr && i < top; i++)
+        lput(" %s(%d) %u/%u", r[i].name, r[i].pid, r[i].res >> 10, r[i].virt >> 20);
+    lflush();
+}
+
 int main(int argc, char **argv)
 {
     static struct pent procs[MAXPROC];
-    int interval = argc > 1 ? atoi(argv[1]) : 15;
+    int memmode = argc > 1 && !strcmp(argv[1], "-mem");
+    int interval = argc > 1 + memmode ? atoi(argv[1 + memmode]) : 15;
     int self = getpid();
     int n, i;
     const char *src;
 
     if (interval <= 0)
         interval = 15;
+
+    if (memmode)        /* "ios3ds-sample -mem [secs]": only the [mem] lines */
+        for (;;) {
+            seq++;
+            n = list_sysctl(procs);
+            if (n <= 0)
+                n = list_libproc(procs);
+            mem_report(procs, n, 16);
+            sleep((unsigned)interval);
+        }
 
     for (;;) {
         seq++;
@@ -513,6 +672,7 @@ int main(int argc, char **argv)
             sample_proc(&procs[i]);
         }
         pset_free();
+        mem_report(procs, n, 16);
         lreset();
         lput("[smp %u] end", seq);
         lflush();
