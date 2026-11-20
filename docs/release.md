@@ -1,6 +1,6 @@
 # Releases and CI
 
-How the release zip is built, what is in it, and why nothing in it is Apple's. For users: [INSTALL.md](INSTALL.md).
+How the release zip is built, what is in it, and why nothing in it is Apple's. For users: [README → Install](../README.md#install).
 
 ## Workflows
 

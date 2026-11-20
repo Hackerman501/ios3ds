@@ -7,7 +7,7 @@
   SD     where to put the files: the root of your mounted SD card, or any folder
          (default: ./ios3ds-sd, copy its contents to the card yourself)
 
-What it does (docs/INSTALL.md):
+What it does (README.md, section Install):
   1. decrypts the kernel, device tree and root filesystem from the IPSW
      (scripts/fwprep.py; the publicly documented keys for this one firmware
      come from api.ipsw.me, or --keys FILE)
@@ -281,7 +281,7 @@ def main():
     say("  ios3ds/                      iOS itself (~1 GB) and its settings (boot.cfg)")
     if os.path.basename(sd) == "ios3ds-sd":
         say("\nCopy the CONTENTS of %s to the root of your SD card." % sd)
-    say("Then see INSTALL.md: 'First boot'.")
+    say("Then see README.md, section 'Install' -> 'Start it'.")
 
 
 if __name__ == "__main__":

@@ -1,134 +1,250 @@
+<div align="center">
+
 # ios3ds
 
-**Apple's stock iOS 4.2.1, running natively on the Old Nintendo 3DS's ARM11.**
+**Apple's real iOS 4.2.1 running natively on a Nintendo 3DS.**
 
-ios3ds boots the unmodified iPod touch 2G firmware (iPod2,1, build 8C148: XNU kernel, launchd, SpringBoard) on the 3DS's ARM11 MPCore. It is a native port, not an emulator.
-- Apple's own kernelcache runs directly on the CPU.
-- A small set of binary patches and a "shim" bridges the hardware differences.
-- The 3DS's ARM9 acts as a monitor and I/O processor.
+Not an emulator: the iPod touch 2G's own kernel, SpringBoard and apps run directly on the 3DS's ARM11 CPU.
 
-> **Status (2026-11-18):** iOS 4.2.1 boots to the **SpringBoard home screen on a real Old 3DS** (about a minute), with touch, Home/lock/volume buttons and apps. Since the last hardware run, the QEMU-verified work adds GPU (PICA200) screen copying and GL, audio output, the 3DS RTC/battery/HOME/POWER/volume slider/brightness through the MCU, and much less stalling during disk reads. Install guide: [docs/INSTALL.md](docs/INSTALL.md); hardware logs: [docs/hwlogs/](docs/hwlogs/README.md).
+[![Build](https://github.com/devilAPI/ios3ds/actions/workflows/build.yml/badge.svg)](https://github.com/devilAPI/ios3ds/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/devilAPI/ios3ds?include_prereleases&label=release)](https://github.com/devilAPI/ios3ds/releases)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
-> **Try it on your 3DS:** follow [docs/INSTALL.md](docs/INSTALL.md). Download a release, run one command on your PC with your own iPod touch firmware file, and copy the result to the SD card. No compilers needed.
+[**Install**](#install) · [Controls](#controls) · [What works](#what-works) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build from source](#build-from-source)
 
-| Milestone | Goal | State |
-|---|---|---|
-| M0 | Research, kernel strategy, IPSW prep tool | done |
-| M1 | `.firm` payload: on-screen console, SD log, loads kernel + device tree, boot_args, jumps to XNU | done (emulator) |
-| M2 | XNU prints through our console path | done (emulator) |
-| M3 | Root filesystem from SD, `launchd`, daemons | done (emulator) |
-| M4 | Framebuffer (done), buttons (done in emulator: START = Home, SELECT = lock, L/R = volume), touch (driver written, untested: the emulator has no touchscreen model yet) | mostly done |
-| M5 | Graphics: SpringBoard needs no GPU (QuartzCore's software compositor). OpenGL ES 1.1 works through our engine `tools/ios3ds-gl` ([docs/gpu.md](docs/gpu.md)): CPU rasterizer by default, plus a PICA200 back end ([docs/pica200.md](docs/pica200.md)) that is opt-in until verified on hardware | home screen reached without a GPU; `ios3ds-gltest` passes on both back ends in the emulator (the GPU there is a software model of the PICA200) |
+</div>
+
+---
+
+## What works
+
+iOS boots to the home screen in about a minute. Apps open, Safari loads web pages over Wi-Fi, and Cydia comes pre-installed.
+
+| | Feature | Notes |
+|:-:|---|---|
+| ✅ | Boot to the home screen, built-in apps | about a minute from power-on |
+| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls) |
+| ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
+| ✅ | Sound, volume slider | speaker |
+| ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
+| ✅ | Wi-Fi: scan, WPA2, Safari | needs the console's own Wi-Fi firmware, copied automatically |
+| ✅ | Cydia | pre-installed on home page 2 |
+| 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
+| 🧪 | Cameras (Camera.app, photos) | outer = back, inner = front; 320×240 preview, no video |
+| 🧪 | Accelerometer, gyroscope (CoreMotion) | |
+| 🧪 | Circle pad scrolling, D-pad page swipes | |
+| 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
+| ❌ | 3D screen, IR, NFC, video recording | |
+
+✅ confirmed on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not supported
+
+**Consoles:**
+- **Old 3DS:** the main test console.
+- **New 2DS XL:** boots to the home screen, with sound, power button and battery ([#1](https://github.com/devilAPI/ios3ds/issues/1)).
+- **Other models:** untested; reports are welcome.
+
+---
+
+## Install
+
+You need about 15 minutes, a PC and your own copy of the iPod touch firmware. Nothing is installed to the 3DS itself; everything lives on the SD card.
+
+### What you need
+
+- A 3DS with **Luma3DS** (boot9strap) and the **Homebrew Launcher**, set up the usual way ([3ds.hacks.guide](https://3ds.hacks.guide)).
+- An SD card with about **1.2 GB** free.
+- A PC with **Python 3.8+** and internet access, needed once to fetch the firmware keys and Cydia:
+
+  | System | Setup |
+  |---|---|
+  | Linux | `sudo apt install python3 python3-cryptography` |
+  | macOS | Python 3, `pip3 install cryptography`, `xcode-select --install` |
+  | Windows | use WSL (Ubuntu) and follow the Linux steps; the SD card is `/mnt/<letter>` |
+
+### 1. Download
+
+1. **ios3ds:** `ios3ds-<version>.zip` from the [Releases page](https://github.com/devilAPI/ios3ds/releases). Unzip it anywhere.
+2. **The iOS firmware** (ios3ds can't ship it): `iPod2,1_4.2.1_8C148_Restore.ipsw`, the iPod touch 2nd generation on iOS 4.2.1, from Apple's servers via [ipsw.me](https://ipsw.me/download/iPod2,1/8C148).
+
+### 2. Run the installer
+
+Put the SD card in your PC, open a terminal in the unzipped folder and run:
+
+```sh
+python3 install.py ~/Downloads/iPod2,1_4.2.1_8C148_Restore.ipsw /media/$USER/YOUR_SD_CARD
+```
+
+Use your own paths. The card is `/Volumes/NAME` on macOS and `/mnt/e` (or another letter) in WSL.
+
+It takes a few minutes and needs about 4 GB of free space on the PC while it works. It:
+1. decrypts the kernel and the iOS disk from your IPSW, and checks that it is the right file;
+2. patches the kernel and builds the iOS disk, including Cydia (6.5 MB from apt.saurik.com; add `--no-cydia` to skip it);
+3. writes three things to the card and touches nothing else:
+
+| On the SD card | What it is |
+|---|---|
+| `3ds/ios3ds.3dsx` | the app you start from the Homebrew Launcher |
+| `luma/payloads/ios3ds.firm` | the same, for Luma's chainloader menu |
+| `ios3ds/` | iOS itself (`rootfs.hfs`, 1 GB), the patched kernel, and `boot.cfg` (settings) |
+
+Without an SD card path, the files go to `ios3ds-sd/`. Copy what is **inside** that folder to the root of the card.
+
+### 3. Start it
+
+Open the **Homebrew Launcher**, start **ios3ds** and press **A**. The 3DS reboots into iOS.
+
+Alternatively, hold **START** while powering on and pick `ios3ds` in Luma's chainloader menu.
+
+**First start:**
+- The launcher copies your console's Wi-Fi firmware to the card, reading it only. It shows `Wi-Fi firmware: reading NWM .code ...`, writes one file, `ios3ds/nwm.code`, and skips this step afterwards.
+- The bottom screen shows the version, `SD ok`, `ARM11 ok` and a short countdown. Hold **B** to stop there.
+- The top screen scrolls a boot log. After about a minute the iOS home screen appears.
+- iOS is upright, so turn the 3DS 90° clockwise. The bottom screen shows a copy of iOS that you tap with the stylus.
+
+> **Wi-Fi:** in iOS, open Settings → Wi-Fi and pick your network.
+>
+> If the launcher showed a red `Wi-Fi fw: ...` line, copy the firmware once with GodMode9 instead:
+> 1. Hold START while powering on and choose GodMode9.
+> 2. Press HOME → `Scripts...` → `ios3ds-wifi-fw`, then confirm with A.
+>
+> Details: [docs/wifi.md](docs/wifi.md) §3.
+
+---
+
+## Controls
+
+| 3DS | iOS |
+|---|---|
+| Touchscreen | tap, swipe, type |
+| **HOME** or **START** | Home button |
+| **POWER** (press) or **SELECT** | lock / sleep |
+| **L / R** | volume down / up |
+| **Circle pad** | scroll |
+| **D-pad ← →** | previous / next page |
+| **X** | screen layout: iOS on top + touch copy below → iOS on the bottom only → iOS on top only |
+| **POWER** (hold ~10 s) | leave iOS: the 3DS switches off; the next power-on is your normal Luma + HOME Menu |
+| SELECT + START (hold) | debugging only: crash iOS on purpose and write a report to the log |
+
+---
+
+## Is it safe?
+
+**ios3ds never writes to the 3DS's internal memory (NAND) or firmware.** It has no code that could. It only reads and writes files on the SD card.
+
+A homebrew app can't start another system directly, so the launcher swaps files on the SD card and reboots:
+1. It creates `ios3ds/swap.flg`, a "swap in progress" note.
+2. It renames your `boot.firm` (Luma) to `ios3ds/luma.firm`.
+3. It renames `ios3ds/ios3ds.firm` to `boot.firm`.
+4. It reboots.
+
+The first thing ios3ds does is undo this, so Luma is back as `boot.firm` before iOS even starts. These are renames, never copies, so a power cut can't leave a half-written `boot.firm`. If it ever stops halfway:
+- the 3DS falls back to the backup `boot.firm` in its internal storage (set up by the 3ds.hacks.guide);
+- the launcher offers **Y: restore Luma** when it finds a leftover `ios3ds/luma.firm`;
+- or rename `ios3ds/luma.firm` back to `boot.firm` on a PC.
+
+As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.md](docs/real-hardware.md).
+
+---
+
+## Troubleshooting
+
+- **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please attach `log.txt` to bug reports.
+- **Settings:** they live in **`sd:/ios3ds/boot.cfg`**, a text file. Useful switches:
+
+  | Switch | Effect |
+  |---|---|
+  | `gpu=0` | don't use the 3DS GPU at all: try this first if the screen stays black or garbled |
+  | `ca_gpu=0` | draw the iOS interface in software (slower) |
+  | `screen=0/1/2` | start in screen layout top / both / bottom |
+  | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
+  | `diag=1` | extra diagnostics in the log |
+
+- **Re-running the installer** replaces `boot.cfg`; the old one is kept as `boot.cfg.old`. The installer refuses a card with a leftover `ios3ds/luma.firm`: start ios3ds once, or restore Luma first.
+- **Uninstall:** delete `ios3ds/`, `3ds/ios3ds.3dsx` and `luma/payloads/ios3ds.firm` from the card.
+
+### Limitations
+
+- **iOS 4.2.1 is the newest possible:** later versions need an ARMv7 CPU, and the 3DS's ARM11 is ARMv6.
+- **HTTPS:** iOS 4.2.1 speaks TLS 1.0 at most. Sites that require TLS 1.2 or newer (GitHub, Wikipedia, apple.com, …) can't be opened. Current root certificates are added, so sites that still allow TLS 1.0 work ([docs/certificates.md](docs/certificates.md)).
+- **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
+- **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
+
+---
 
 ## How it works
 
 ```
-3DS (Luma3DS chainloader)
- ├─ ARM9  "monitor" ── consoles on both LCDs, sd:/ios3ds/log.txt, loads everything from SD,
- │                     serves XNU's root disk (md0) from sd:/ios3ds/rootfs.hfs,
- │                     mirrors iOS's framebuffer onto the LCDs (CPU copy, until the GPU mirror runs)
- └─ ARM11 core 0 ───── stub: CPU probes, VFP on → jumps into Apple's XNU (core 1 stays parked)
-      XNU 1504.58.28 (stock kernelcache + kernel/patches.json + kernel/shim)
-        ├─ timer:      MPCore watchdog (time base) + private timer (deadlines), GIC IRQ 29 → kernel's FIQ handler
-        ├─ console:    pexpert's S5L UART ops → shim → log ring → ARM9 → screen + SD
-        ├─ root disk:  memdev (md0) strategy → shim → ARM9 block server → FAT file on SD
-        ├─ display:    Apple's AppleM2CLCD on a fake register page; 3DS VBlank (GIC 42) → CLCD frame IRQ;
-        │              the PICA200 copies the framebuffer to the LCDs, stepped from VBlank (docs/pica200.md §9)
-        └─ IOKit platform kexts start against "fake" S5L8720 register pages in AXI WRAM
-      launchd → configd, notifyd, syslogd, mediaserverd, … → SpringBoard (home screen)
+3DS boot (Luma3DS chainloader)
+ ├─ ARM9   our "monitor": both screens' consoles, SD card, the iOS root disk (served from rootfs.hfs),
+ │          Wi-Fi (AR6014 driver + WPA2), system controller, cameras, gyro, screen copy
+ └─ ARM11  Apple's XNU kernel, stock, + binary patches (kernel/patches.json) + our "shim"
+            ├─ timers, interrupts, console → mapped onto the 3DS's MPCore
+            ├─ display → Apple's own LCD driver on a fake register page; the PICA200 GPU copies to the LCDs
+            ├─ audio, touch, buttons, battery, Wi-Fi … → mailboxes to the ARM9
+            └─ launchd → configd, mediaserverd, … → SpringBoard → your apps
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the full picture.
+Apple's kernel believes it is running on an iPod touch. Where the 3DS hardware differs, small patches and the shim translate. The ARM9 handles everything slow or Nintendo-specific. Full picture: [docs/architecture.md](docs/architecture.md).
 
-## Documentation
-- [docs/INSTALL.md](docs/INSTALL.md): install a release on your 3DS (for users)
-- [docs/architecture.md](docs/architecture.md): the boot chain end to end, memory map, every hardware bridge
-- [docs/research.md](docs/research.md): hardware and firmware facts, with sources
-- [docs/kernel-strategy.md](docs/kernel-strategy.md): why we patch Apple's kernel instead of using an open-source XNU port
-- [docs/m1-design.md](docs/m1-design.md): the 3DS payload, mailbox protocol, `boot.cfg`
-- [docs/m2-first-panic.md](docs/m2-first-panic.md): first kernel output and panic
-- [docs/emulator.md](docs/emulator.md): the `nintendo3ds` QEMU development machine
-- [docs/wifi.md](docs/wifi.md): Wi-Fi: the ARM9 AR6014 driver, WPA2, the network mailbox, iOS bridge, firmware extraction and the QEMU model
-- [docs/cydia.md](docs/cydia.md): Cydia pre-installed (APT/dpkg base system downloaded from Saurik's repository at build time)
-- [docs/mcu.md](docs/mcu.md): the 3DS system controller (RTC, battery, HOME/POWER, sliders, accelerometer) in iOS
-- [docs/camera.md](docs/camera.md): the 3DS cameras in Camera.app / AVFoundation (Celestial's virtual-camera plug-in slot, ARM9 sensor set-up, ARM11 FIFO drain, QEMU model)
-- [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
-- [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
-- [docs/release.md](docs/release.md): CI, the release zip, and why nothing in it is Apple's
+The project has its own QEMU machine (`-M nintendo3ds`, [docs/emulator.md](docs/emulator.md)) that models the 3DS hardware, from the GPU to Wi-Fi, cameras and gyro. Every change is tested there before it reaches a console. Citra/Azahar only emulate 3DS *apps*; they can run the launcher but not ios3ds itself.
 
-## No Apple files in this repository
+---
 
-Nothing in this repository is Apple's. You supply your own IPSW, and `make` generates everything Apple-derived into `build/` (gitignored).
+## Build from source
 
-The patch recipes (`kernel/patches.json`, `rootfs/recipe.json`) contain only addresses and the few original bytes needed to check that the right firmware is being patched.
-
-## Build
-
-Requirements: Linux, Python 3 with `cryptography` (or the openssl CLI), an `arm-none-eabi` toolchain (devkitARM or the Arm GNU Toolchain), `mtools`, `dosfstools`, `sfdisk`, and git.
+Linux. Requirements: Python 3 with `cryptography`, an `arm-none-eabi` toolchain (Arm GNU Toolchain or devkitARM), `mtools`, `dosfstools`, `sfdisk`, git.
 
 ```sh
-make toolchain                                          # check tools
-make fwprep IPSW=~/iPod2,1_4.2.1_8C148_Restore.ipsw      # decrypt kernel, device tree, rootfs -> build/staging
-scripts/build-hfsplus.sh                                # HFS+ image editor (xpwn) for the rootfs recipe
-scripts/build-ios-toolchain.sh                          # armv6 iOS Mach-O toolchain (ld64/cctools-port, ldid), once
-make userland                                           # our iOS programs -> build/rootfs-add/
-make sd                                                 # SD card tree -> build/sd/
-make test                                               # offline unit tests
+make toolchain                                       # check the tools
+make fwprep IPSW=~/iPod2,1_4.2.1_8C148_Restore.ipsw   # decrypt kernel, device tree, rootfs -> build/staging
+scripts/build-hfsplus.sh                             # HFS+ image editor (xpwn)
+scripts/build-ios-toolchain.sh                       # armv6 iOS toolchain for our iOS programs (once)
+make userland                                        # our iOS programs -> build/rootfs-add/
+make sd                                              # SD card tree -> build/sd/  (copy its contents to the card)
+make test                                            # offline unit tests
 ```
-
-`fwprep` fetches the publicly documented firmware keys for that single build from api.ipsw.me, or takes `--keys file.json`.
-
-`make sd` also downloads Cydia and its APT/dpkg base system (32 debs, 6.5 MB, pinned by sha256 in `rootfs/cydia.json`) from apt.saurik.com into `build/cydia/` and pre-installs them, like a 4.2.1 jailbreak did; they are never committed or shipped. Offline it warns and builds without Cydia; `make sd CYDIA=0` leaves it out ([docs/cydia.md](docs/cydia.md)).
 
 Optional:
+- `make qemu` builds the emulator, about 10 minutes.
+- `make emu` boots `build/sd.img` in it.
+- `make launcher` builds `ios3ds.3dsx` and needs devkitARM + libctru.
+- `make release` builds the release zip ([docs/release.md](docs/release.md)).
 
-```sh
-make qemu      # build QEMU with the nintendo3ds machine (~10 min)
-make emu       # boot build/sd.img in it; prints sd:/ios3ds/log.txt, saves a screenshot
-make launcher  # sd:/3ds/ios3ds.3dsx (needs devkitARM + libctru); make sd picks it up
-make release VERSION=v0.1   # the release zip (docs/release.md); CI does this for tags v*
-```
+**No Apple files in this repository.** You supply the IPSW, and everything Apple-derived is generated into `build/` (gitignored). The patch recipes hold only addresses and the few original bytes needed to check that the right firmware is being patched.
 
-## Try it on a console (SD only, nothing touches NAND or FIRM)
-1. Run `make sd`, then copy the **contents** of `build/sd/` to the root of the SD card. That includes `luma/payloads/ios3ds.firm` and the `ios3ds/` folder (about 1 GB).
-2. Hold **START** at power-on and choose `ios3ds` in Luma3DS's chainloader menu, **or** start `ios3ds` from the Homebrew Launcher. That reboots into ios3ds, and ios3ds puts Luma back as `boot.firm` first thing; see [docs/real-hardware.md](docs/real-hardware.md).
-3. What you should see:
-   - **Bottom screen:** the version, "SD ok", "ARM11 ok", then a countdown. Hold **B** to stay in the monitor.
-   - **Top screen:** the boot log, including XNU's own messages. Once SpringBoard draws, the top screen shows iOS; turn the console 90° clockwise to read it.
-4. Press **X** to switch screen modes: *both* (default: iOS on top, plus a touch copy on the bottom screen, so you tap what you see), *bottom* (iOS on the touchscreen, log on top), *top* (log on the bottom). The start mode is `screen=` in `ios3ds/boot.cfg`.
-5. Hold **SELECT+START** to make XNU panic and dump every thread's backtrace into the log.
-6. Send back `sd:/ios3ds/log.txt` (the previous run is kept as `log_prev.txt`).
+### Documentation
 
-The first real-hardware runs are expected to fail early. Every stage writes a readable message to the screen and to `log.txt`.
+| | |
+|---|---|
+| [architecture.md](docs/architecture.md) | boot chain, memory map, every hardware bridge |
+| [real-hardware.md](docs/real-hardware.md) | testing safely on a console |
+| [emulator.md](docs/emulator.md) | the QEMU `nintendo3ds` machine, Azahar |
+| [gpu.md](docs/gpu.md) · [pica200.md](docs/pica200.md) | OpenGL ES engine, CoreAnimation and the screen copy on the PICA200 |
+| [audio.md](docs/audio.md) | speaker, headphones, microphone |
+| [mcu.md](docs/mcu.md) | battery, clock, buttons, sliders, accelerometer, gyroscope |
+| [wifi.md](docs/wifi.md) · [certificates.md](docs/certificates.md) | Wi-Fi driver, WPA2, iOS integration; HTTPS roots |
+| [camera.md](docs/camera.md) | cameras in Camera.app |
+| [input-design.md](docs/input-design.md) | touch, buttons, circle pad |
+| [cydia.md](docs/cydia.md) | the pre-installed Cydia |
+| [re-log.md](docs/re-log.md) | the reverse-engineering log, step by step |
+| [hwlogs/](docs/hwlogs/README.md) | logs from real hardware runs |
 
-## Limitations and notes
-- **Why iOS 4.2.1 and not later:** later iOS versions need ARMv7; the 3DS ARM11 is ARMv6.
-- **Not a 3DS homebrew app:** a `.3dsx` app runs in user mode under the 3DS's own OS, so it can't host another kernel. The `ios3ds.3dsx` launcher swaps `boot.firm` on the SD card and reboots instead. Likewise, Citra/Azahar emulate 3DS *applications* at a high level and can't run a bare-metal FIRM, which is why this project has its own QEMU board.
-- **Missing hardware support:**
-  - touch is untested (buttons work in the emulator);
-  - Wi-Fi (WPA2, DHCP, DNS) works end to end in QEMU against a model of the AR6014 and an access point, but has never run on a console; it needs the Wi-Fi firmware from your own console's NWM module (one GodMode9 script, NAND read-only, docs/wifi.md §3). iOS's Settings > Wi-Fi scans and joins (password on the on-screen keyboard) and the status bar shows the bars ([docs/wifi.md](docs/wifi.md) §10);
-  - the system controller (date and time, battery, HOME/POWER, sliders, brightness, accelerometer) is implemented but has only run in QEMU ([docs/mcu.md](docs/mcu.md));
-  - the cameras (outer left = back, inner = front) work in Camera.app in QEMU, 320x240 preview and photos, no video recording; never run on a console; `camera=0` in boot.cfg turns them off ([docs/camera.md](docs/camera.md));
-  - no data-protection keybag (keybagd is disabled; lock state is stubbed);
-  - no activation (liblockdown is stubbed to report "Activated" for research);
-  - OpenGL ES 1.1 is CPU-rendered (`tools/ios3ds-gl`): no PVRTC textures, no mipmaps or stencil yet, and no ES 2.0 (the MBX engine slot is ES1 only).
-  - The PICA200 back end has only run against our software GPU model, not on a real console; enable it per process with `IOS3DS_GL=pica`.
-  - The GPU display mirror (the screen copy on the PICA200) self-tests at boot and falls back to the ARM9 copy; boot.cfg `gpu_mirror=0` / `gpu=0` switch it / all GPU use off.
+---
 
-- **HTTPS:** the image adds current root certificates (Mozilla's RSA roots) to iOS's trust store, so Safari and Cydia accept today's certificates ([docs/certificates.md](docs/certificates.md)). iOS 4.2.1 still speaks only TLS 1.0, so sites that require TLS 1.2 or newer can't be opened; no certificate can fix that.
+## Credits
 
-## Credits and prior art
-- [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research notes on booting 8C148, which were invaluable.
-- [devos50/qemu-ios](https://github.com/devos50/qemu-ios): iPod touch emulation and S5L8720 hardware notes.
+- [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research on booting 8C148, invaluable.
+- [devos50/qemu-ios](https://github.com/devos50/qemu-ios): iPod touch emulation and S5L8720 notes.
 - [darwin-on-arm](https://github.com/darwin-on-arm/xnu) (winocm): boot_args and pexpert reference.
-- [libn3ds / open_agb_firm](https://github.com/profi200/libn3ds), [Luma3DS](https://github.com/LumaTeam/Luma3DS), [linux-3ds](https://github.com/linux-3ds): 3DS hardware references.
-- Normmatt's SD driver; FatFs by ChaN; [xpwn](https://github.com/planetbeing/xpwn) (img3/HFS+ tooling, used as an external build tool).
-- The Apple Wiki and 3dbrew.
+- [libn3ds](https://github.com/profi200/libn3ds), [Luma3DS](https://github.com/LumaTeam/Luma3DS), [linux-3ds](https://github.com/linux-3ds), [dsiwifi](https://github.com/shinyquagsire23/dsiwifi), GBATEK and 3dbrew: 3DS hardware references.
+- Normmatt's SD driver, FatFs by ChaN, [xpwn](https://github.com/planetbeing/xpwn), and The Apple Wiki.
+- Everyone testing on real consoles in the [issues](https://github.com/devilAPI/ios3ds/issues).
 
 ## License
-GPL-3.0-or-later (`LICENSE`), with these exceptions:
+
+GPL-3.0-or-later ([LICENSE](LICENSE)), with these exceptions:
 - `boot/arm9/sdmmc.c` and `emu/qemu/` are GPL-2.0-or-later.
-- `boot/arm9/fatfs/` is FatFs's 1-clause BSD licence.
+- `boot/arm9/fatfs/` is under FatFs's 1-clause BSD licence.
 - `boot/common/font8x8_basic.h` is public domain.
 
-iOS, iPod and XNU are Apple's; Nintendo 3DS is Nintendo's. This is an independent research project.
+iOS, iPod and XNU are trademarks of Apple; Nintendo 3DS is a trademark of Nintendo. This is an independent research project, not affiliated with either.

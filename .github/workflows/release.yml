@@ -52,7 +52,7 @@ jobs:
           test -f "$zip"
           sha256sum "$zip" | tee "$zip.sha256"
           cat > notes.md <<EOF
-          Stock iOS 4.2.1 on the Old Nintendo 3DS. **How to install: [docs/INSTALL.md](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/docs/INSTALL.md)**
+          Stock iOS 4.2.1 on the Nintendo 3DS. **How to install: [README → Install](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/README.md#install)**
 
           \`ios3ds-$VERSION.zip\` contains only this project's own builds (3DS payload, Homebrew Launcher app, kernel shim, our iOS programs) and the installer. You supply the iPod touch 2G firmware \`iPod2,1_4.2.1_8C148_Restore.ipsw\`; the installer turns it into the SD card files on your own PC:
 

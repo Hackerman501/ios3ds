@@ -63,7 +63,7 @@ XPWN_FILES = ["hfs/*.c", "common/abstractfile.c", "common/base64.c", "includes/*
 XPWN_REV = "20c32e5c12d1b22a9d55a59a0ff6267f539b77f4"
 
 INSTALL_WRAPPER = """#!/usr/bin/env python3
-# ios3ds installer: see INSTALL.md.  python3 install.py IPSW [SD]
+# ios3ds installer: see README.md (Install).  python3 install.py IPSW [SD]
 import os, runpy, sys
 sys.argv[0] = os.path.abspath(__file__)
 runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "install.py"),
@@ -195,7 +195,7 @@ def main():
         if zp.startswith("prebuilt/"):
             manifest["files"][zp].update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
 
-    readme = ("ios3ds %s\n\nInstall: see INSTALL.md, or run\n\n"
+    readme = ("ios3ds %s\n\nInstall: see README.md (section Install), or run\n\n"
               "  python3 install.py /path/to/iPod2,1_4.2.1_8C148_Restore.ipsw /path/to/sdcard\n\n"
               "src/xpwn-hfsplus: source of prebuilt/hfsplus-linux-x86_64 (GPL-3.0), "
               "https://github.com/planetbeing/xpwn at %s, built with:\n"
