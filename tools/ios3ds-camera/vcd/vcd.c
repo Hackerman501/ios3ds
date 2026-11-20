@@ -408,7 +408,7 @@ static void *frame_thread(void *arg)
     Stream *s = st(so);
     uint32_t *yuyv = malloc(CAM_FRAME_BYTES);
     cam_req_t r;
-    uint32_t seq = 0, n = 0;
+    uint32_t seq = 0, n = 0, run = 0;        /* run: delivered this session (vcd counters stay per stream forever) */
     int warned = 0;
 
     if (!yuyv) return NULL;
@@ -481,6 +481,7 @@ static void *frame_thread(void *arg)
                 s->still_pending = 0;
                 still(s, pb, &t);
             }
+            run++;
             if (!s->frames++) lg("stream %u: first frame delivered", s->cam);
         }
         if (sb) CFRelease(sb);
@@ -492,7 +493,8 @@ static void *frame_thread(void *arg)
         r.op = CAM_OP_STOP;
         cam_call(&r);
     }
-    lg("stream %u: stopped after %u frames (%u dropped, %u stills)", s->cam, s->frames, s->drops, s->stills);
+    lg("stream %u: stopped after %u frames this run (%u total, %u dropped, %u stills)",
+       s->cam, run, s->frames, s->drops, s->stills);
     free(yuyv);
     return NULL;
 }

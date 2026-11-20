@@ -71,8 +71,8 @@ typedef struct {               /* CAM_OP_INFO result, copied into cam_req_t.a[] 
 } cam_info_t;
 
 /* ---- shim <-> ARM9 mailbox ------------------------------------------------
-   Shim (ARM11, cached, cleans after writing) owns the first 32 bytes, the
-   ARM9 (uncached) the second 32. */
+   Shim (ARM11, cached, cleans after writing) owns lines 0, 2 and 3 (offsets 0,
+   64 and 96), the ARM9 (uncached) line 1 (offset 32). */
 #define SHIM_CAM_OFF        0x7E00u         /* cammbox_t in the shim page (128 bytes) */
 #define CAM_MBOX_MAGIC      0x304D4143u     /* 'CAM0' */
 #define CAM_ST_OFF          0u      /* sensors in standby / unpowered */
@@ -109,7 +109,18 @@ typedef struct {
     uint32_t variant;          /* CAM block set-up variant in use (cam.c cam_variants) */
     uint32_t port_used;        /* port the shim drains (may move to where data appears) */
     uint32_t probing;          /* 1 while no data has arrived since the start */
-    uint32_t pad2[8];
+    /* shim -> ARM9, line 4 for the frame dump (docs/camera.md section 4.1):
+       at STOP the shim has stopped writing and cleaned the buffers, the ARM9
+       copies the two newest complete frames to sd:/ios3ds/CAM<seq>.RAW */
+    uint32_t buf_pa[CAM_NBUF];/* frame buffers' physical addresses (0 = none) */
+    uint32_t newest;          /* buffer index of the newest complete frame (CAM_NBUF = none) */
+    uint32_t newest_seq;      /* its sequence number (0 = none yet this session) */
+    uint32_t snew;            /* buffer index of the second-newest complete frame */
+    uint32_t snew_seq;        /* its sequence number */
+    uint32_t gap_max;         /* worst interval between two drain services since
+                                 the camera started, in shim ticks (1047 / ms; the
+                                 FIFO holds ~5.5 ms of the stream: more than that
+                                 and words are lost even without the overrun bit) */
 } cammbox_t;
 _Static_assert(sizeof(cammbox_t) == 128, "cammbox layout");
 #define CAM_NVARIANTS       6u      /* kernel/shim/cam.c cam_var_*, boot/arm9/camera.c self-test */

@@ -28,6 +28,7 @@
 #include "log.h"
 #include "util.h"
 #include "cam_proto.h"
+#include "fatfs/ff.h"
 
 #define BUS_DSI         0           /* i2c.c bus numbers: 0 = 0x10161000, 1 = 0x10144000 */
 #define BUS_3DS         1
@@ -43,6 +44,8 @@ static int active = -1;             /* camera whose parallel output is on */
 static bool powered;
 static u32 t_started, diag_step;    /* camera_poll's diagnostic dumps after a start */
 static u32 t_stat;                  /* last 10 s statistics line */
+static u32 t_watch;                 /* last independent CAM_STAT sample */
+static u32 watch_n, watch_max, watch_full;   /* ARM9's own FIFO observer, one sample per monitor loop */
 
 #define T9_VAL(n)   (*(vu16 *)(0x10003000u + (n) * 4))
 static u32 t9(void)                 /* main.c's free-running 65457 Hz clock */
@@ -240,14 +243,98 @@ static void diag_sensor(const camdev_t *c)
            c->name, m[0], m[1], m[2], m[3], m[4], m[5], m[6]);
 }
 
-static void diag_shim(const char *name, u32 nframes, u32 novr)
+static void diag_shim(const char *name, u32 nframes, u32 novr, u32 gap)
 {
     log_ok("[cam] %s camera: %u frames, %u FIFO overruns in the last 10 s; shim: %u services, %u with data, "
-           "stat %08x (max fill %u), CAM_CNT %08x, variant %u, CAM%u%s, %u words\n", name,
+           "stat %08x (max fill %u), drain gap max %u.%u ms, CAM_CNT %08x, variant %u, CAM%u%s, %u words\n", name,
            (unsigned)nframes, (unsigned)novr, (unsigned)box->services, (unsigned)box->data_seen,
-           (unsigned)box->stat_last, (unsigned)box->stat_max, (unsigned)box->cnt_rb, (unsigned)box->variant,
+           (unsigned)box->stat_last, (unsigned)box->stat_max, (unsigned)(gap / 1047u), (unsigned)((gap % 1047u) * 10u / 1047u),
+           (unsigned)box->cnt_rb, (unsigned)box->variant,
            (unsigned)box->port_used, box->probing ? ", still probing: no data yet" : "", (unsigned)box->words);
 }
+
+/* The word the shim never says: run 29 showed a full FIFO (fill stuck at
+   0x500) with the overrun bit still clear - when the drain is starved for
+   longer than the FIFO holds (~5.5 ms of the stream, e.g. masked interrupts),
+   words are lost without any counter moving. The ARM9 is never starved, so
+   it polls CAM_STAT independently while a camera runs. */
+static void watch_sample(void)
+{
+    if (t9() - t_watch < 66u) return;            /* 1 ms */
+    t_watch = t9();
+    for (u32 p = 0; p < 2; p++) {
+        u32 f = CAMREG16(p, CAM_STAT) & 0x7FFu;
+        if (f > watch_max) watch_max = f;
+        if (f >= CAM_FIFO_UNITS - 40u) watch_full++;
+    }
+    watch_n++;
+}
+
+static void watch_report(const char *when)
+{
+    log_ok("[cam] monitor %s: %u CAM_STAT samples, max FIFO fill %u units, near-full %u\n",
+           when, (unsigned)watch_n, (unsigned)watch_max, (unsigned)watch_full);
+    watch_n = watch_max = watch_full = 0;
+}
+
+/* The shim's two newest complete frames to sd:/ios3ds/CAM<seq>.RAW, straight
+   out of its buffers (docs/camera.md section 4.1). Called at stop: the shim
+   has turned the capture off and cleaned its buffers before `want` went to 0,
+   so nothing changes under the copy (a fast switch that already started again
+   is caught by the seq check, the scene is dumped on the next stop). */
+static u32 dumped_seq;
+static void dump_frames(void)
+{
+    FIL f;
+    UINT bw;
+    u32 seq0 = box->newest_seq, seq1 = box->snew_seq;
+    char path[32];
+    u32 hdr[8];
+    log_ok("[cam] dump check: newest seq %u, second %u (last saved %u), idx %u/%u, pa %08x/%08x\n",
+           (unsigned)seq0, (unsigned)seq1, (unsigned)dumped_seq,
+           (unsigned)box->newest, (unsigned)box->snew,
+           (unsigned)box->buf_pa[box->newest % CAM_NBUF], (unsigned)box->buf_pa[box->snew % CAM_NBUF]);
+    if (!seq1) return;                           /* fewer than two frames */
+    if (seq0 == dumped_seq) return;               /* already saved */
+    wait_ms(2);
+    if (box->newest_seq != seq0) {               /* a new start is running */
+        log_warn("[cam] dump skipped: newest seq moved %u -> %u\n", (unsigned)seq0, (unsigned)box->newest_seq);
+        return;
+    }
+    if (box->newest >= CAM_NBUF || box->snew >= CAM_NBUF ||
+        !box->buf_pa[box->newest] || !box->buf_pa[box->snew]) {
+        log_warn("[cam] dump skipped: idx %u/%u, pa %08x/%08x\n",
+                 (unsigned)box->newest, (unsigned)box->snew,
+                 (unsigned)box->buf_pa[box->newest % CAM_NBUF], (unsigned)box->buf_pa[box->snew % CAM_NBUF]);
+        return;
+    }
+    snprintf(path, sizeof(path), "0:/ios3ds/CAM%08u.RAW", (unsigned)seq0);
+    if (f_open(&f, path, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+        log_warn("[cam] frame dump: cannot create %s\n", path);
+        return;
+    }
+    hdr[0] = 0x44554D43u;                        /* 'CAMD' */
+    hdr[1] = 1;
+    hdr[2] = CAM_W;
+    hdr[3] = CAM_H;
+    hdr[4] = box->cam;
+    hdr[5] = box->port;
+    hdr[6] = seq0;
+    hdr[7] = seq1;
+    FRESULT r = f_write(&f, hdr, sizeof(hdr), &bw);
+    if (r == FR_OK) r = f_write(&f, (const void *)box->buf_pa[box->newest], CAM_FRAME_BYTES, &bw);
+    if (r == FR_OK) r = f_write(&f, (const void *)box->buf_pa[box->snew], CAM_FRAME_BYTES, &bw);
+    f_close(&f);
+    if (r == FR_OK) {
+        dumped_seq = seq0;
+        log_ok("[cam] dumped frames seq %u (newest) and %u to %s\n",
+               (unsigned)seq0, (unsigned)seq1, path);
+    } else {
+        log_warn("[cam] frame dump write failed (FRESULT %d)\n", (int)r);
+    }
+}
+
+
 
 /* Boot self-test (boot.cfg diag=1; before XNU, the shim is not running yet):
    for each sensor, bring it up and try every CAM block set-up variant on
@@ -450,6 +537,8 @@ static void stop(void)
 {
     if (active >= 0) apt_standby(&cams[active]);
     active = -1;
+    dump_frames();                       /* the buffers are clean and quiescent now */
+    watch_report("at stop");
     power(false);
     publish(CAM_ST_OFF, 0);
     log_ok("[cam] cameras off (frames %u, FIFO overruns %u, CAM restarts %u)\n",
@@ -484,12 +573,14 @@ void camera_poll(void)
     static u32 frames0, ovr0;
     u32 seq, want;
     if (!box || !enabled || box->magic != CAM_MBOX_MAGIC) return;
+    if (active >= 0) watch_sample();
     if (active >= 0 && t9() - t_stat > 10u * 65457u) {      /* every 10 s while a camera runs */
         u32 f = box->frames, o = box->overruns;
         t_stat = t9();
-        diag_shim(cams[active].name, f - frames0, o - ovr0);
+        diag_shim(cams[active].name, f - frames0, o - ovr0, box->gap_max);
         frames0 = f;
         ovr0 = o;
+        watch_report("10 s");
     }
     /* dumps 0.2 s, 1 s and 5 s after a start: the CAM blocks (with the shim's
        CAM_CNT applied), the status-bit toggles, the sensor */
@@ -500,7 +591,7 @@ void camera_poll(void)
             diag_cam_block(tag[diag_step]);
             diag_toggles();
             if (diag_step == 2) diag_sensor(&cams[active]);
-            diag_shim(cams[active].name, box->frames, box->overruns);
+            diag_shim(cams[active].name, box->frames, box->overruns, box->gap_max);
             diag_step++;
         }
     }

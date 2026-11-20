@@ -128,6 +128,13 @@ previous sensor into standby first.
   transfer on (next frame start), the partial frame dropped.
 - FRAME copies the newest complete frame out (`copyout`), never one the
   interrupt is writing.
+- The worst interval between two drain services (in shim ticks) is tracked and
+  published per session (`gap_max`, the stats line prints `drain gap max`).
+  The FIFO holds about 5.5 ms of the stream: anything beyond that loses
+  words **even when the overrun bit stays clear** - run 29 saw a FIFO parked
+  at the fill cap 0x500 with CAM_STAT bit 15 still 0 (section 7).
+- STOP cleans all three frame buffers; the ARM9 then copies the two newest
+  complete frames out of them (section 4.1).
 
 ## 4. Preview, photos, orientation
 - Preview: the plug-in delivers BGRA frames (YUYV converted in mediaserverd),
@@ -154,6 +161,38 @@ previous sensor into standby first.
   scaler (-12914), and the switch ended in `PreviewFailed` (re-log 65).
   Without a companion Camera.app's switch button does nothing.
 
+### 4.1 Frame dumps (build 44+)
+Run 29's open question is word-level: the preview in Camera.app shows one
+"first frame" that wiggles, while every counter says the data flows
+(section 7). The pixel truth decides between the suspects, so at every camera
+stop the ARM9 copies the shim's two newest complete 320x240 YUV422 frames
+straight out of its buffers to `sd:/ios3ds/CAM<seq>.RAW` (one file per camera
+session, ~300 KiB; `[cam] dumped frames seq ...` in the log):
+
+```
+header (u32 LE): 0x44554D43 ('CAMD'), 1, 320, 240, cam, port, seq1, seq2
+frame 1 (newest), frame 2 - each 320*240*2 bytes, YUV422, no padding
+```
+
+On the PC: `python3 tools/ios3ds-camera/analyze_dump.py CAM00001234.RAW`
+decodes both frames to BMPs (in both YUYV and UYVY byte orders, which settles
+the colour question by eye) and prints
+
+- the mean luma difference at zero shift: ~0 = the picture never changes (the
+  kernel delivered the same scene),
+- the best (dx, dy) alignment between the two frames: a constant nonzero
+  drift between neighbouring frames = the 38400-word frame window slips
+  through the stream (words lost), the signature of a picture that wanders,
+- rows whose best dx disagrees with the global one: words lost mid-frame
+  (horizontal shear).
+
+The shim's `drain gap max` (worst service interval, ms) and the ARM9's
+independent `[cam] monitor` line (its own `CAM_STAT` sampling (each monitor-loop turn, so never starved by XNU): max
+fill, near-full count) say whether the drain was ever starved long enough to
+lose words. Together they tell lost-words (FIFO full behind masked
+interrupts; the fix is a CDMA drain, section 6) apart from a display-side
+problem, without guessing.
+
 ## 5. QEMU
 `emu/qemu/hw/arm/ctr_cam.c`: three MT9V113 register models on I2C (answer only
 while CFG11_CAMERA_CNT bit 0 is set), the two CAM blocks, their FIFO windows
@@ -172,7 +211,8 @@ com.apple.coremedia's preferences) bypasses the kernel path entirely.
 - 320x240 YUV422 is 150 KiB per frame: at 15 fps 288,000 FIFO words a second
   through the ARM11, a 150 KiB `copyout` and a YUYV → BGRA conversion per
   frame in mediaserverd.
-- The FIFO holds about 4 ms of 320x240 video. While XNU masks interrupts longer
+- The FIFO holds about 5.5 ms of 320x240 video (run 29: 10 KiB against
+  ~1.8 MB/s of sensor data). While XNU masks interrupts longer
   than that (md0 transfers do, docs/architecture.md) frames are lost (counted
   as overruns, logged when the camera stops).
 - Photos are 320x240. VGA would need 4x the FIFO bandwidth; with the CPU drain
@@ -202,6 +242,19 @@ but not on CAM1. Now: variants with the DSi's CAM_CNT init bits (8-10) and a
 (and two sensor-side variants), one `[cam-test]` line each, `<-- DATA` where
 anything arrives.
 
+**Run 29 (build 43, first hardware data):** the build-43 fixes work. The
+self-test: **all 36 set-ups `<-- DATA`** (each sensor on its mapped block -
+outer left on CAM1, inner and outer right on CAM0). At runtime every session
+streams: ~**12 frames/s** (450 FIFO words/ms, words = frames x 38400 exactly),
+**0 FIFO overruns**, the plug-in delivers to Celestial and Celestial dequeues
+everything (0 queue drops). But Camera.app's preview shows one "first frame"
+whose content wiggles around - and one 5-s diag caught the CAM1 FIFO **parked
+at the fill cap (1280 units) with the overrun bit still clear**, so a full
+FIFO does not necessarily flag anything: drain starvation silently loses
+words, which would displace the frame window per incident exactly that way.
+So the capture stays officially "artifacts" (README) until the build-44 frame
+dumps (section 4.1) say whether the delivered frames drift.
+
 What the code does about it (all logged):
 - **Both CAM blocks are watched** until data appears: if the left camera's
   data arrives on CAM0 instead of CAM1, the shim moves there
@@ -228,10 +281,15 @@ What the code does about it (all logged):
    per block over 50 ms: how often CAM_CNT bits 0/1 changed (GBATEK: they
    toggle during a transfer = the block sees sync from the sensor) and how
    often the FIFO fill changed.
-5. Every 10 s: `shim: N services, M with data, stat ..., CAM_CNT ..., variant
-   V, CAMp[, still probing: no data yet], W words`. `services` = 0 means the
-   interrupt-time drain never ran for the camera (a shim problem, not the
-   hardware's).
+5. Every 10 s: `shim: N services, M with data, stat ..., drain gap max X ms,
+   CAM_CNT ..., variant V, CAMp[, still probing: no data yet], W words`.
+   `services` = 0 means the interrupt-time drain never ran for the camera
+   (a shim problem, not the hardware's). `drain gap max` > ~5 ms (the FIFO's
+   worth of stream) means words were lost even if `overruns` stayed 0.
+6. `[cam] monitor 10 s / at stop`: the ARM9's own `CAM_STAT` sampling (each monitor-loop turn, so it cannot be starved by XNU) -
+   max FIFO fill and near-full count. This observer cannot be starved by
+   XNU's interrupt masking, unlike the shim's.
+7. At stop: `[cam] dumped frames seq ... to ios3ds/CAM....RAW` (section 4.1).
 
 How to read it:
 - Bits 0/1 toggle and the fill changes on one block → data arrives; the

@@ -124,10 +124,13 @@ static const u32 cam_var_cnt[CAM_NVARIANTS] = CAM_VAR_CNT_LIST;
 
 static struct {
     u8 *buf[CAM_NBUF];
+    u32 buf_pa[CAM_NBUF];           /* for the ARM9's frame dump (cam_proto.h) */
     u32 fill, newest, reading;      /* buffer indices; reading = CAM_NBUF: none */
     u32 off;                        /* words of the frame being filled */
     u32 win;                        /* next word of the FIFO window to read (never reset) */
     u32 seq, newest_seq, newest_time;
+    u32 snew, snew_seq;             /* second-newest complete frame (the dump's partner) */
+    u32 t_last_svc, gap_max;        /* worst interval between drain services (ticks) */
     u32 running;                    /* START seen, no STOP */
     u32 streaming;                  /* CAM_CNT is on (the ARM9 said RUNNING) */
     u32 port;
@@ -137,7 +140,7 @@ static struct {
     u32 logged;
     u32 variant, probing, t_probe;  /* no data seen yet: both ports on, variants cycled */
     u32 services, data_seen, stat_max, stat_last;
-} C = { .reading = CAM_NBUF, .newest = CAM_NBUF };
+} C = { .reading = CAM_NBUF, .newest = CAM_NBUF, .snew = CAM_NBUF };
 
 /* ---- IRQ side ------------------------------------------------------------- */
 /* Stop = transfer bit off only, as the cam module's StopCapture does: CAM0's
@@ -184,6 +187,13 @@ static void publish_stats(void)
     b->port_used = C.port;
     b->probing = C.probing;
     dclean(&b->services, 32);
+    for (u32 i = 0; i < CAM_NBUF; i++) b->buf_pa[i] = C.buf_pa[i];
+    b->newest = C.newest;
+    b->newest_seq = C.newest_seq;
+    b->snew = C.snew;
+    b->snew_seq = C.snew_seq;
+    b->gap_max = C.gap_max;
+    dclean(&b->buf_pa[0], 32);
 }
 
 /* No word has arrived since the start: watch both ports (the camera may sit
@@ -243,6 +253,11 @@ u32 shim_cam_service(u32 now)
     }
     st = stat_r(C.port);
     C.services++;
+    if (C.t_last_svc) {                                  /* worst drain gap since the start */
+        u32 gap = now - C.t_last_svc;
+        if (gap > C.gap_max) C.gap_max = gap;
+    }
+    C.t_last_svc = now;
     if (CAM_STAT_FILL(st)) C.data_seen++;
     if (CAM_STAT_FILL(st) > C.stat_max) C.stat_max = CAM_STAT_FILL(st);
     if (!(C.services & 1023)) {
@@ -278,6 +293,8 @@ u32 shim_cam_service(u32 now)
         C.words += n;
         w -= n;
         if (C.off == CAM_WORDS) {
+            C.snew = C.newest;                           /* the ARM9 dumps the newest two */
+            C.snew_seq = C.newest_seq;
             C.newest = C.fill;
             C.newest_seq = ++C.seq;
             C.newest_time = now;
@@ -339,13 +356,20 @@ static u32 op_start(u32 cam)
     }
     for (u32 i = 0; i < CAM_NBUF; i++) {
         uint32_t pa;
-        if (!C.buf[i] && !(C.buf[i] = IOMallocContiguous(CAM_FRAME_BYTES, 32, &pa))) return CAM_ERR_NO_MEM;
+        if (!C.buf[i]) {                 /* pa only exists at the first allocation */
+            if (!(C.buf[i] = IOMallocContiguous(CAM_FRAME_BYTES, 32, &pa))) return CAM_ERR_NO_MEM;
+            C.buf_pa[i] = pa;
+        }
     }
     s = irq_off();
     C.running = 0;                  /* the IRQ turns CAM_CNT off and waits for the new state */
     C.streaming = 0;
     C.newest = CAM_NBUF;
+    C.snew = CAM_NBUF;
+    C.newest_seq = C.snew_seq = 0;
     C.off = 0;
+    C.t_last_svc = 0;
+    C.gap_max = 0;
     send_want(1 + cam);
     C.running = 1;
     irq_restore(s);
@@ -363,8 +387,14 @@ static u32 op_stop(void)
         port_stop(1);
         C.streaming = 0;
     }
+    /* nothing writes the buffers now and the IRQ is off: clean them so the
+       ARM9 can copy the two newest frames straight out of RAM (cam_proto.h) */
+    for (u32 i = 0; i < CAM_NBUF; i++)
+        if (C.buf[i]) dclean(C.buf[i], CAM_FRAME_BYTES);
+    publish_stats();                 /* before send_want: when the ARM9 sees the
+                                        request, the mailbox already holds the
+                                        final buffers/seqs (frame dump) */
     send_want(0);
-    publish_stats();
     irq_restore(s);
     return CAM_OK;
 }
