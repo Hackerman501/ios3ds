@@ -37,6 +37,8 @@ static bool enabled;
 static u32 handled_seq;
 static int active = -1;             /* camera whose parallel output is on */
 static bool powered;
+static u32 t_started, diag_step;    /* camera_poll's diagnostic dumps after a start */
+static u32 t_stat;                  /* last 10 s statistics line */
 
 #define T9_VAL(n)   (*(vu16 *)(0x10003000u + (n) * 4))
 static u32 t9(void)                 /* main.c's free-running 65457 Hz clock */
@@ -89,14 +91,14 @@ static bool mcu_rd(const camdev_t *c, u16 var, u16 *v)
 {
     return apt_wr(c, 0x098C, var) && apt_rd(c, 0x0990, v);
 }
-/* wait until (reg & mask) == want, at most 100 ms */
+/* wait until (reg & mask) == want, at most 500 ms */
 static bool apt_wait(const camdev_t *c, u16 idx, u16 mask, u16 want, bool mcu)
 {
     u32 t0 = t9();
     do {
         u16 v;
         if ((mcu ? mcu_rd(c, idx, &v) : apt_rd(c, idx, &v)) && (v & mask) == want) return true;
-    } while (t9() - t0 < 6546u);
+    } while (t9() - t0 < 32730u);       /* 500 ms (run 23: a third init timed out at 100 ms) */
     return false;
 }
 
@@ -173,6 +175,64 @@ static void apt_standby(const camdev_t *c)
     apt_mask(c, 0x0018, 0, 0x0001);                                     /* standby */
 }
 
+/* ---- hardware diagnostics (docs/camera.md section 7, re-log 67) ---- */
+#define CAMREG32(p, o)  (*(vu32 *)(CAM_REG_PA(p) + (o)))
+#define CAMREG16(p, o)  (*(vu16 *)(CAM_REG_PA(p) + (o)))
+
+static void diag_cam_block(const char *when)
+{
+    log_ok("[cam-diag] %s: CFG11_CAMERA_CNT %02x; CAM0 cnt %08x stat %04x +6 %04x; CAM1 cnt %08x stat %04x +6 %04x\n",
+           when, (unsigned)REG8(CFG11_CAMERA_CNT_PA),
+           (unsigned)CAMREG32(0, CAM_CNT), (unsigned)CAMREG16(0, CAM_STAT), (unsigned)CAMREG16(0, CAM_CLR),
+           (unsigned)CAMREG32(1, CAM_CNT), (unsigned)CAMREG16(1, CAM_STAT), (unsigned)CAMREG16(1, CAM_CLR));
+}
+
+/* CAM_CNT bits 0/1 are status bits that toggle during a transfer (GBATEK):
+   count their changes and FIFO fill changes over ~50 ms per port */
+static void diag_toggles(void)
+{
+    for (u32 p = 0; p < 2; p++) {
+        u32 prev = CAMREG32(p, CAM_CNT) & 3, ch0 = 0, ch1 = 0, fillch = 0, maxfill = 0;
+        u32 pf = CAMREG16(p, CAM_STAT) & 0x7FF, t0 = t9(), n = 0;
+        while (t9() - t0 < 3273u) {      /* 50 ms */
+            u32 v = CAMREG32(p, CAM_CNT) & 3, f = CAMREG16(p, CAM_STAT) & 0x7FF;
+            ch0 += ((v ^ prev) & 1) != 0;
+            ch1 += ((v ^ prev) & 2) != 0;
+            fillch += f != pf;
+            if (f > maxfill) maxfill = f;
+            prev = v;
+            pf = f;
+            n++;
+        }
+        log_ok("[cam-diag] CAM%u over 50 ms (%u reads): CNT bit0 changed %u times, bit1 %u times; FIFO fill changed %u times, max %u\n",
+               (unsigned)p, (unsigned)n, (unsigned)ch0, (unsigned)ch1, (unsigned)fillch, (unsigned)maxfill);
+    }
+}
+
+static void diag_sensor(const camdev_t *c)
+{
+    static const u16 regs[] = { 0x0010, 0x0014, 0x0016, 0x0018, 0x001A, 0x001E, 0x301A };
+    static const u16 vars[] = { 0xA103, 0xA104, 0xA115, 0x2703, 0x2705, 0x2755, 0x2717 };
+    u16 v[7], m[7];
+    for (u32 i = 0; i < 7; i++) {
+        if (!apt_rd(c, regs[i], &v[i])) v[i] = 0xDEAD;
+        if (!mcu_rd(c, vars[i], &m[i])) m[i] = 0xDEAD;
+    }
+    log_ok("[cam-diag] %s sensor: PLL_DIV %04x PLL %04x CLOCKS %04x STANDBY %04x RESET_MISC %04x PAD_SLEW %04x CORE_301A %04x\n",
+           c->name, v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+    log_ok("[cam-diag] %s sensor: SEQ_CMD %04x SEQ_STATE %04x SEQ_CAP_MODE %04x OUT_W_A %04x OUT_H_A %04x OUT_FMT_A %04x READ_MODE_A %04x\n",
+           c->name, m[0], m[1], m[2], m[3], m[4], m[5], m[6]);
+}
+
+static void diag_shim(const char *name, u32 nframes, u32 novr)
+{
+    log_ok("[cam] %s camera: %u frames, %u FIFO overruns in the last 10 s; shim: %u services, %u with data, "
+           "stat %08x (max fill %u), CAM_CNT %08x, variant %u, CAM%u%s, %u words\n", name,
+           (unsigned)nframes, (unsigned)novr, (unsigned)box->services, (unsigned)box->data_seen,
+           (unsigned)box->stat_last, (unsigned)box->stat_max, (unsigned)box->cnt_rb, (unsigned)box->variant,
+           (unsigned)box->port_used, box->probing ? ", still probing: no data yet" : "", (unsigned)box->words);
+}
+
 static void publish(u32 state, u32 err)
 {
     box->err = err;
@@ -185,8 +245,12 @@ static void power(bool on)
     if (on == powered) return;
     powered = on;
     if (on) {
-        REG8(CFG11_CAMERA_CNT_PA) |= 1;     /* the cameras' clock (their I2C needs it) */
+        u32 before = REG8(CFG11_CAMERA_CNT_PA);
+        /* bit 0: the cameras' 16 MHz clock (their I2C needs it); bit 1 is
+           "reportedly turn on/off cameras" (GBATEK), set too in case */
+        REG8(CFG11_CAMERA_CNT_PA) = (u8)(before | 3);
         wait_ms(5);
+        log_ok("[cam-diag] CFG11_CAMERA_CNT %02x -> %02x\n", (unsigned)before, (unsigned)REG8(CFG11_CAMERA_CNT_PA));
         i2c_init(BUS_DSI);
         i2c_init(BUS_3DS);
         u32 present = 0;
@@ -201,7 +265,7 @@ static void power(bool on)
         }
         box->present = present;
     } else {
-        REG8(CFG11_CAMERA_CNT_PA) &= (u8)~1u;
+        REG8(CFG11_CAMERA_CNT_PA) &= (u8)~3u;
     }
 }
 
@@ -220,10 +284,12 @@ static void start(u32 cam)
         publish(CAM_ST_FAILED, CAMERR_NO_ID);
         return;
     }
+    diag_cam_block("before the sensor set-up");
     err = apt_init(c, cam == CAM_INNER);
     if (!err && !apt_activate(c)) err = CAMERR_INIT;
     if (err) {
         log_warn("[cam] %s camera: init failed (step %u)\n", c->name, (unsigned)err);
+        diag_sensor(c);
         apt_standby(c);
         publish(CAM_ST_FAILED, err);
         return;
@@ -234,6 +300,9 @@ static void start(u32 cam)
     publish(CAM_ST_RUNNING, 0);
     log_ok("[cam] %s camera streaming %ux%u YUV422 into CAM%u (init %u ms)\n", c->name, CAM_W, CAM_H,
            (unsigned)c->port, (unsigned)((t9() - t0) / 65u));
+    diag_sensor(c);
+    t_started = t_stat = t9();
+    diag_step = 0;
 }
 
 static void stop(void)
@@ -255,21 +324,43 @@ void camera_init(u32 shim_pa, bool enable)
     box->enabled = enable;
     box->state = enable ? CAM_ST_OFF : CAM_ST_DISABLED;
     handled_seq = 0;
-    if (!enable) log_warn("[cam] disabled in boot.cfg (camera=0): iOS sees no camera\n");
+    if (!enable) {
+        log_warn("[cam] disabled in boot.cfg (camera=0): iOS sees no camera\n");
+        return;
+    }
+    /* probe once at boot, so iOS knows the cameras before the first start
+       (run 23 reported "cameras present 0x0" until then), then standby + clock off */
+    diag_cam_block("boot");
+    power(true);
+    for (u32 i = 0; i < CAM_COUNT; i++)
+        if (box->present & (1u << i)) apt_standby(&cams[i]);
+    power(false);
 }
 
 void camera_poll(void)
 {
-    static u32 t_stat, frames0, ovr0;
+    static u32 frames0, ovr0;
     u32 seq, want;
     if (!box || !enabled || box->magic != CAM_MBOX_MAGIC) return;
     if (active >= 0 && t9() - t_stat > 10u * 65457u) {      /* every 10 s while a camera runs */
         u32 f = box->frames, o = box->overruns;
         t_stat = t9();
-        log_ok("[cam] %s camera: %u frames, %u FIFO overruns in the last 10 s\n", cams[active].name,
-               (unsigned)(f - frames0), (unsigned)(o - ovr0));
+        diag_shim(cams[active].name, f - frames0, o - ovr0);
         frames0 = f;
         ovr0 = o;
+    }
+    /* dumps 0.2 s, 1 s and 5 s after a start: the CAM blocks (with the shim's
+       CAM_CNT applied), the status-bit toggles, the sensor */
+    if (active >= 0 && diag_step < 3) {
+        static const u32 at[3] = { 13091u, 65457u, 327285u };
+        if (t9() - t_started > at[diag_step]) {
+            static const char *const tag[3] = { "0.2 s after start", "1 s after start", "5 s after start" };
+            diag_cam_block(tag[diag_step]);
+            diag_toggles();
+            if (diag_step == 2) diag_sensor(&cams[active]);
+            diag_shim(cams[active].name, box->frames, box->overruns);
+            diag_step++;
+        }
     }
     seq = box->req_seq;
     if (seq == handled_seq) return;
