@@ -23,13 +23,14 @@ u32 shim_cam_service(u32 now);
 void cam_test_start(u8 *b0, u8 *b1, u8 *b2);
 u32 cam_test_newest(u32 *seq, u32 *reading);
 void cam_test_stats(u32 *frames, u32 *overruns);
+u32 cam_test_resyncs(void);
 u32 cam_test_variant(u32 *probing);
 
 #define FIFO_WORDS (CAM_FIFO_UNITS * 2)
 volatile cammbox_t cam_host_mbox;
 static struct {
     u32 cnt, q[FIFO_WORDS], head, count, last_i, last_w, frame, line, armed, overrun, dead;
-    u32 popped;
+    u32 popped, lossy;
 } M = { .last_i = ~0u };
 
 void cam_host_cnt_w(u32 v)
@@ -60,6 +61,11 @@ static void model_line(void)
     if (M.line < CAM_H && (M.cnt & CAM_CNT_EN) && !M.armed && !M.overrun && !M.dead) {
         for (u32 x = 0; x < CAM_W; x += 2) {
             if (M.count == FIFO_WORDS) { M.overrun = 1; break; }
+            /* lossy: like run 30, words vanish (every 3rd frame, 8 words) or
+               come twice (every 5th frame) without the overrun bit */
+            if (M.lossy && M.frame % 3 == 0 && M.line == 37 && x < 16) continue;
+            if (M.lossy && M.frame % 5 == 1 && M.line == 50 && x < 8)
+                M.q[(M.head + M.count++) % FIFO_WORDS] = cam_pattern_word(0, M.frame, x, M.line, CAM_W, CAM_H);
             M.q[(M.head + M.count++) % FIFO_WORDS] = cam_pattern_word(0, M.frame, x, M.line, CAM_W, CAM_H);
         }
     }
@@ -123,6 +129,52 @@ static void test_drain(void)
             }
         }
     }
+    {   /* lossy FIFO: every completed frame must still be whole, the bad ones dropped */
+        u32 r0 = cam_test_resyncs(), lgood = 0, lbad = 0;
+        M.lossy = 1;
+        for (u32 step = 0; step < 30000; step++) {
+            for (u32 i = 0, lines = 1 + (u32)(rand() % 3); i < lines; i++) model_line();
+            shim_cam_service(now += 1047);
+            if (step % 3 == 0) {
+                u32 seq, r = 3, idx = cam_test_newest(&seq, NULL);
+                if (idx < 3 && seq != seq_seen) {
+                    r = idx;
+                    cam_test_newest(&seq, &r);
+                    if (which_frame((const u32 *)bufs[idx], M.frame) != ~0u) lgood++; else lbad++;
+                    seq_seen = seq;
+                    r = 3;
+                    cam_test_newest(&seq, &r);
+                }
+            }
+        }
+        M.lossy = 0;
+        CHECK(lbad == 0 && lgood > 50, "lossy FIFO: %u whole frames, %u misaligned ones delivered", lgood, lbad);
+        CHECK(cam_test_resyncs() - r0 > 50, "lossy FIFO: only %u resyncs", cam_test_resyncs() - r0);
+        printf("lossy FIFO: %u whole frames delivered, 0 misaligned, %u dropped at the vertical blank\n",
+               lgood, cam_test_resyncs() - r0);
+    }
+    {   /* the sensor pauses mid-frame now and then (QEMU under load): not a blank */
+        u32 pgood = 0, pbad = 0, r0 = cam_test_resyncs();
+        for (u32 step = 0; step < 30000; step++) {
+            if (step % 41 != 7 && step % 41 != 8 && step % 41 != 9)   /* 3 services without a line */
+                for (u32 i = 0, lines = 1 + (u32)(rand() % 3); i < lines; i++) model_line();
+            shim_cam_service(now += 1047);
+            if (step % 3 == 0) {
+                u32 seq, r = 3, idx = cam_test_newest(&seq, NULL);
+                if (idx < 3 && seq != seq_seen) {
+                    r = idx;
+                    cam_test_newest(&seq, &r);
+                    if (which_frame((const u32 *)bufs[idx], M.frame) != ~0u) pgood++; else pbad++;
+                    seq_seen = seq;
+                    r = 3;
+                    cam_test_newest(&seq, &r);
+                }
+            }
+        }
+        CHECK(pbad == 0 && pgood > 100, "mid-frame pauses: %u whole frames, %u misaligned", pgood, pbad);
+        CHECK((cam_test_resyncs() - r0) * 10 < pgood, "mid-frame pauses: %u frames dropped", cam_test_resyncs() - r0);
+        printf("mid-frame pauses: %u whole frames, %u dropped\n", pgood, cam_test_resyncs() - r0);
+    }
     cam_test_stats(&frames, &overruns);
     CHECK(good > 100, "only %u good frames", good);
     CHECK(overruns > 10, "the test should provoke overruns (got %u)", overruns);
@@ -150,6 +202,8 @@ static void test_convert(void)
     CHECK(cam_pattern_word(1, 0, 32, 10, 320, 240) == cam_yuyv(16, 16, 128, 128), "marker 2 (inner)");
     CHECK(cam_pattern_word(0, 0, 32, 10, 320, 240) != cam_yuyv(16, 16, 128, 128), "no marker 2 (outer)");
     CHECK(cam_pattern_word(0, 0, 38, 100, 320, 240) != cam_pattern_word(0, 1, 38, 100, 320, 240), "frames differ");
+    CHECK(cam_pattern_word(0, 7, 160, 120, 320, 240) == cam_yuyv(47, 47, 128, 128) &&
+          cam_pattern_word(1, 167, 130, 97, 320, 240) == cam_yuyv(47, 47, 128, 128), "frame counter patch");
 }
 
 int main(void)

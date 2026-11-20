@@ -133,6 +133,19 @@ previous sensor into standby first.
   The FIFO holds about 5.5 ms of the stream: anything beyond that loses
   words **even when the overrun bit stays clear** - run 29 saw a FIFO parked
   at the fill cap 0x500 with CAM_STAT bit 15 still 0 (section 7).
+- **Frame alignment** (run 30's dump: one frame shifted by 16 pixels, its
+  right edge wrapped to the left): the shim cannot see the sensor's VSYNC,
+  but the vertical blank shows as two or more services in a row with an
+  empty FIFO (a line arrives every ~0.25 ms, the blank lasts milliseconds).
+  A frame counts only if its 38400th word is the last before such a blank:
+  once a blank has been seen, a complete frame waits for it and is published
+  there if no word came in between; a partial frame at a blank, or words
+  after a complete one, mean words were lost or doubled, and that frame is
+  dropped (`resyncs`, printed as "frames dropped at the blank" in the 10 s
+  line). The next frame starts aligned. A pause counts as the blank only
+  within 256 words of a frame boundary (QEMU pauses mid-frame). Host test: a lossy FIFO model (8
+  words vanish every 3rd frame, 4 come twice every 5th) delivers only whole
+  frames.
 - STOP cleans all three frame buffers; the ARM9 then copies the two newest
   complete frames out of them (section 4.1).
 
@@ -140,12 +153,26 @@ previous sensor into standby first.
 - Preview: the plug-in delivers BGRA frames (YUYV converted in mediaserverd),
   which CoreAnimation composites like any layer. 4:2:0 frames go to a CLCD
   overlay window instead and stay black on ios3ds (section 1).
+- **The 1-2 s loop (run 30):** the frames come from a CVPixelBuffer pool, so
+  the same IOSurfaces are written again and again. CA binds each surface to
+  a texture once and keeps it (on Apple's GPU the texture *is* the surface
+  memory); ios3ds' PICA200 back end (`tools/ios3ds-gl/pica_be.c`) keeps a
+  tiled copy in GPU memory and re-uploaded it only when GL said the image
+  changed. Run 30's `[gl] CA` line: 0.0 texture uploads per frame while the
+  camera ran at 15 fps, so the preview cycled through the pool's first
+  frames. Now a surface-backed texture is re-uploaded when the IOSurface's
+  seed (`IOSurfaceGetSeed`, bumped by every write unlock) or a 64-texel sample
+  of it changed. Video and any other producer of recycled surfaces benefit
+  too.
 - Review image: Camera.app only saves a photo after Celestial has made its
   review image. Celestial uses the sample's `ScaledPreviewPixelBuffer`
   attachment as it is when there is one; otherwise it scales the frame to
   512x384 with VTPixelTransferSession, which on this device refuses to scale
   up (-12905) and the photo is silently dropped. The plug-in attaches each
   frame's own pixel buffer.
+- Photos: every still request is logged (`still requested (frame N)`, then
+  `still image #n` or why not). Run 30 had none: the request never reached
+  the plug-in (re-log 76); QEMU takes photos upright and face down.
 - Photos: on `StillImageCaptureNow` the next frame goes to the still queue at
   640x480, interpolated from the 320x240 frame (`cam_bgra_upscale2x`);
   Celestial JPEG-encodes it in software (no AppleJPEG service on N72) and
@@ -198,7 +225,12 @@ problem, without guessing.
 while CFG11_CAMERA_CNT bit 0 is set), the two CAM blocks, their FIFO windows
 (pop on address change, 0x500 units, overrun), and a moving test pattern at 15
 fps on the virtual clock (`cam_pattern.h`: scrolling colour bars, a bouncing
-square, one black block for the outer camera and two for the inner one).
+square, one black block for the outer camera and two for the inner one, and
+a grey 64x48 frame-counter patch in the middle, Y = 40 + frame mod 160).
+`tools/ios3ds-camera/tests/preview_counter.py` reads that patch off
+screenshots of a running session for 10 s: fresh frames make it climb, a
+preview looping over old frames steps back (FAIL), a frozen one stays put.
+`emu/session.py set mcu-orient 5` lays the console face down (4 = face up).
 `IOS3DS_CAM_LOG=1` logs register writes and transfers.
 
 QEMU's default timing (virtual clock = wall clock while the guest runs about

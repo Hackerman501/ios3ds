@@ -31,6 +31,13 @@ class CameraDrain(unittest.TestCase):
             self.assertTrue(r.stdout.strip().endswith("ok"), r.stdout)
 
 
+class PreviewCounter(unittest.TestCase):
+    def test_selftest(self):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "ios3ds-camera", "tests", "preview_counter.py"),
+                            "--selftest"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
 class CameraRootfs(unittest.TestCase):
     def test_recipe(self):
         with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:

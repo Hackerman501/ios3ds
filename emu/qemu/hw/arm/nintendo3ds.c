@@ -1213,11 +1213,13 @@ static const MemoryRegionOps nspi_ops = {
  * the sensor reports +1 g against gravity. 0 = iOS upright (console turned
  * 90 degrees clockwise: the left side is up), then 90 degree steps.
  */
-static const int16_t mcu_poses[4][3] = {
+static const int16_t mcu_poses[6][3] = {
     { MCU_ACC_1G, 0, 0 },           /* left side up: iOS portrait (+x: sign as on hardware) */
     { 0, -MCU_ACC_1G, 0 },          /* hinge down: iOS landscape (home button left) */
     { -MCU_ACC_1G, 0, 0 },          /* right side up: iOS upside down */
     { 0, MCU_ACC_1G, 0 },           /* hinge up (held normally, upright): iOS landscape */
+    { 0, 0, MCU_ACC_1G },           /* 4 (mcu-orient only): lying on its back, iOS face up */
+    { 0, 0, -MCU_ACC_1G },          /* 5 (mcu-orient only): face down (run 30's reading) */
 };
 
 static void mcu_set_pose(CtrMcu *m, int pose)
@@ -1273,7 +1275,7 @@ static uint8_t mcu_read_reg(CtrMachine *s, uint8_t reg)
         return 0;                                             /* accelerometer off */
     }
     if (reg >= MCU_REG_ACC_DATA && reg < MCU_REG_ACC_DATA + 6) {
-        uint16_t v = mcu_poses[m->orient & 3][(reg - MCU_REG_ACC_DATA) / 2];
+        uint16_t v = mcu_poses[m->orient < 6 ? m->orient : 0][(reg - MCU_REG_ACC_DATA) / 2];
         return (reg - MCU_REG_ACC_DATA) & 1 ? v >> 8 : v;
     }
     if (reg == 0x3D || reg == 0x3E) {                         /* 32768 Hz tick counter */
@@ -1583,7 +1585,7 @@ static void mcu_set_shell(CtrMachine *s, bool open)
 /*
  * Runtime MCU state for tests (HMP: qom-set /machine mcu-battery 15):
  *   mcu-battery 0..100, mcu-charging (charger plugged + charging),
- *   mcu-volume 0..63, mcu-shell-open, mcu-orient 0..3 (accelerometer pose),
+ *   mcu-volume 0..63, mcu-shell-open, mcu-orient 0..5 (accelerometer pose; 4/5 face up/down),
  *   lcd-backlight (read only: the top screen's backlight register).
  */
 static bool mcu_prop_get_charging(Object *obj, Error **errp)
@@ -1849,7 +1851,7 @@ static void ctr_key_event(CtrMachine *s, int q, bool down)
     case Q_KEY_CODE_BRACKET_LEFT:   /* turn the console 90 degrees (accelerometer) */
     case Q_KEY_CODE_BRACKET_RIGHT:
         if (down) {
-            mcu_set_pose(&s->mcu, s->mcu.orient + (q == Q_KEY_CODE_BRACKET_RIGHT ? 1 : 3));
+            mcu_set_pose(&s->mcu, (s->mcu.orient & 3) + (q == Q_KEY_CODE_BRACKET_RIGHT ? 1 : 3));
         }
         break;
     case Q_KEY_CODE_P:      /* POWER: press IRQ, "held" IRQ after 3 s */

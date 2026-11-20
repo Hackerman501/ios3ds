@@ -26,3 +26,4 @@ GLTEST_API(HOST_F, HOST_F0)
 int drawable_begin(GC *g, Rb *rb) { (void)g; (void)rb; return 0; }
 void drawable_detach(Rb *rb) { rb->dr = 0; }
 void tex_release_surface(Tex *t) { t->surface = 0; }
+int tex_surface_seed(const Tex *t, uint32_t *seed) { (void)t; (void)seed; return 0; }

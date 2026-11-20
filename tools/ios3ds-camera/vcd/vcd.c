@@ -378,6 +378,7 @@ static CFTypeRef make_pool(uint32_t width, uint32_t height)
 static void still(Stream *s, CFTypeRef src, const CMSampleTimingInfo *t)
 {
     CFTypeRef pb = NULL, fd = NULL, sb = NULL;
+    OSStatus e = 0;
     if (!s->still_pool) s->still_pool = make_pool(CAM_W * 2, CAM_H * 2);
     if (!s->still_pool || F.PoolCreatePB(kCFAllocatorDefault, s->still_pool, &pb) != 0 || !pb) {
         lg("stream %u: no still buffer", s->cam);
@@ -388,15 +389,19 @@ static void still(Stream *s, CFTypeRef src, const CMSampleTimingInfo *t)
     cam_bgra_upscale2x(F.BaseAddress(src), (uint32_t)F.BPR(src), CAM_W, CAM_H, F.BaseAddress(pb), (uint32_t)F.BPR(pb));
     F.Unlock(src, 0);
     F.Unlock(pb, 0);
-    if (F.VideoFmtForImage(kCFAllocatorDefault, pb, &fd) == 0 &&
-        F.SampleForImage(kCFAllocatorDefault, pb, 1, NULL, NULL, fd, t, &sb) == 0 && sb) {
+    if ((e = F.VideoFmtForImage(kCFAllocatorDefault, pb, &fd)) == 0 &&
+        (e = F.SampleForImage(kCFAllocatorDefault, pb, 1, NULL, NULL, fd, t, &sb)) == 0 && sb) {
         CFArrayRef att = F.SampleAttachments(sb, 1);
         if (att && CFArrayGetCount(att) > 0)
             CFDictionarySetValue((CFMutableDictionaryRef)CFArrayGetValueAtIndex(att, 0), F.kScaledPreview, src);
+        else
+            lg("stream %u: still without attachments: no review image, Camera.app may drop the photo", s->cam);
         F.BufQueueEnqueue(s->stillq, sb);
         s->stills++;
         lg("stream %u: still image #%u (frame %u, %ux%u)", s->cam, s->stills, s->frames, CAM_W * 2, CAM_H * 2);
     }
+    else
+        lg("stream %u: still sample buffer failed (%d)", s->cam, (int)e);
     if (sb) CFRelease(sb);
     if (fd) CFRelease(fd);
     CFRelease(pb);
@@ -584,7 +589,7 @@ static OSStatus stream_set(FigObj o, CFStringRef key, CFTypeRef v)
     if (s->invalidated) return kFigInvalidated;
     if (CFEqual(key, F.kStillNow)) {
         s->still_pending = 1;
-        if (!s->running) lg("stream %u: still requested while stopped", s->cam);
+        lg("stream %u: still requested (frame %u)%s", s->cam, s->frames, s->running ? "" : " while stopped");
     } else if (CFEqual(key, F.kFormatIndex)) {
         if (numval(v, 0) != 0) lg("stream %u: format index %d (only 0 exists)", s->cam, numval(v, 0));
     } else if (CFEqual(key, F.kMinFps)) {

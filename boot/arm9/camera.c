@@ -246,11 +246,12 @@ static void diag_sensor(const camdev_t *c)
 static void diag_shim(const char *name, u32 nframes, u32 novr, u32 gap)
 {
     log_ok("[cam] %s camera: %u frames, %u FIFO overruns in the last 10 s; shim: %u services, %u with data, "
-           "stat %08x (max fill %u), drain gap max %u.%u ms, CAM_CNT %08x, variant %u, CAM%u%s, %u words\n", name,
+           "stat %08x (max fill %u), drain gap max %u.%u ms, CAM_CNT %08x, variant %u, CAM%u%s, %u words, %u blank drops\n", name,
            (unsigned)nframes, (unsigned)novr, (unsigned)box->services, (unsigned)box->data_seen,
            (unsigned)box->stat_last, (unsigned)box->stat_max, (unsigned)(gap / 1047u), (unsigned)((gap % 1047u) * 10u / 1047u),
            (unsigned)box->cnt_rb, (unsigned)box->variant,
-           (unsigned)box->port_used, box->probing ? ", still probing: no data yet" : "", (unsigned)box->words);
+           (unsigned)box->port_used, box->probing ? ", still probing: no data yet" : "", (unsigned)box->words,
+           (unsigned)box->resyncs);
 }
 
 /* The word the shim never says: run 29 showed a full FIFO (fill stuck at

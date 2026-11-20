@@ -121,6 +121,8 @@ static inline void dinval(const volatile void *p, u32 len) { (void)p; (void)len;
 static const u16 cam_var_clr[CAM_NVARIANTS] = CAM_VAR_CLR_LIST;
 static const u32 cam_var_cnt[CAM_NVARIANTS] = CAM_VAR_CNT_LIST;
 #define CAM_WORDS       (CAM_FRAME_BYTES / 4u)
+#define CAM_VBL_SERVICES 2u         /* >= 2 ms without data: between frames (a line takes ~0.25 ms) */
+#define CAM_VBL_SLACK   256u        /* words (1.6 lines) off a frame boundary that a blank may correct */
 
 static struct {
     u8 *buf[CAM_NBUF];
@@ -140,6 +142,14 @@ static struct {
     u32 logged;
     u32 variant, probing, t_probe;  /* no data seen yet: both ports on, variants cycled */
     u32 services, data_seen, stat_max, stat_last;
+    /* frame alignment (run 30: a dumped frame shifted by 16 pixels): the
+       sensor's vertical blank shows as CAM_VBL_SERVICES services in a row
+       with an empty FIFO. A frame is good only if it ends exactly there. */
+    u32 idle;                       /* services in a row with an empty FIFO */
+    u32 full;                       /* frame complete, waiting for the blank (vbl_ok) */
+    u32 extra;                      /* words after a complete frame before the blank */
+    u32 vbl_ok;                     /* blanks are seen: publish frames only at a blank */
+    u32 resyncs;
 } C = { .reading = CAM_NBUF, .newest = CAM_NBUF, .snew = CAM_NBUF };
 
 /* ---- IRQ side ------------------------------------------------------------- */
@@ -161,6 +171,7 @@ static void cnt_restart(void)
 {
     port_start(C.port);
     C.off = 0;
+    C.full = C.extra = 0;
 }
 
 static u32 next_fill(void)
@@ -170,6 +181,23 @@ static u32 next_fill(void)
     return C.fill;                                      /* not reached with 3 buffers */
 }
 
+static void publish_stats(void);
+
+/* the frame in C.fill is complete and aligned: it becomes the newest */
+static void frame_done(u32 now)
+{
+    C.snew = C.newest;                                  /* the ARM9 dumps the newest two */
+    C.snew_seq = C.newest_seq;
+    C.newest = C.fill;
+    C.newest_seq = ++C.seq;
+    C.newest_time = now;
+    C.frames++;
+    C.fill = next_fill();
+    C.off = 0;
+    C.full = 0;
+    if (!(C.frames & 15)) publish_stats();
+}
+
 static void publish_stats(void)
 {
     volatile cammbox_t *b = MBOX;
@@ -177,6 +205,7 @@ static void publish_stats(void)
     b->overruns = C.overruns;
     b->restarts = C.restarts;
     b->words = C.words;
+    b->resyncs = C.resyncs;
     dclean(b, 32);
     b->services = C.services;
     b->data_seen = C.data_seen;
@@ -277,6 +306,39 @@ u32 shim_cam_service(u32 now)
     }
     units = CAM_STAT_FILL(st);
     if (units > CAM_FIFO_UNITS) units = CAM_FIFO_UNITS;
+    if (!units) {
+        /* a pause only counts as the blank near a frame boundary: QEMU (and
+           a slow sensor) can pause mid-frame, which says nothing */
+        if (++C.idle == CAM_VBL_SERVICES && C.services > CAM_VBL_SERVICES &&
+            (C.full || C.off < CAM_VBL_SLACK || C.off > CAM_WORDS - CAM_VBL_SLACK)) {
+            /* vertical blank: whatever was counted must be exactly one frame */
+            if (C.full && !C.extra) {
+                frame_done(now);
+            } else if (C.full || C.off) {
+                C.resyncs++;                            /* words lost or extra: drop it */
+                C.off = 0;
+                if (C.resyncs < 8 || !(C.resyncs & 63)) publish_stats();
+            }
+            C.full = C.extra = 0;
+            C.vbl_ok = 1;
+        }
+        return now + CAM_STEP_TICKS;
+    }
+    C.idle = 0;
+    if (C.full) {                                       /* the frame was complete: more words */
+        for (u32 i = 0; i < units * 2; i++) {           /* before the blank = it was misaligned */
+            (void)fifo_r(C.win);
+            C.win = (C.win + 1) & (CAM_FIFO_WINDOW / 4 - 1);
+        }
+        C.words += units * 2;
+        C.extra += units * 2;
+        if (C.extra > CAM_WORDS / 2) {                  /* no blank for half a frame: */
+            C.vbl_ok = 0;                               /* blank detection does not work here */
+            C.full = C.extra = 0;
+            C.resyncs++;
+        }
+        return now + CAM_STEP_TICKS;
+    }
     for (u32 w = units * 2; w;) {
         u32 n = w, room = CAM_WORDS - C.off;
         u32 *dst = (u32 *)C.buf[C.fill] + C.off;
@@ -293,15 +355,19 @@ u32 shim_cam_service(u32 now)
         C.words += n;
         w -= n;
         if (C.off == CAM_WORDS) {
-            C.snew = C.newest;                           /* the ARM9 dumps the newest two */
-            C.snew_seq = C.newest_seq;
-            C.newest = C.fill;
-            C.newest_seq = ++C.seq;
-            C.newest_time = now;
-            C.frames++;
-            C.fill = next_fill();
-            C.off = 0;
-            if (!(C.frames & 15)) publish_stats();
+            if (!C.vbl_ok) {
+                frame_done(now);                        /* no blanks seen (yet): at once */
+            } else {
+                C.full = 1;                             /* published at the blank, if */
+                C.extra = 0;                            /* nothing else comes before it */
+                for (u32 i = 0; i < w; i++) {           /* the rest of this service's words */
+                    (void)fifo_r(C.win);
+                    C.win = (C.win + 1) & (CAM_FIFO_WINDOW / 4 - 1);
+                }
+                C.words += w;
+                C.extra = w;
+                break;
+            }
         }
     }
     return now + CAM_STEP_TICKS;
@@ -368,6 +434,7 @@ static u32 op_start(u32 cam)
     C.snew = CAM_NBUF;
     C.newest_seq = C.snew_seq = 0;
     C.off = 0;
+    C.full = C.extra = C.idle = C.vbl_ok = 0;
     C.t_last_svc = 0;
     C.gap_max = 0;
     send_want(1 + cam);
@@ -485,5 +552,6 @@ u32 cam_test_newest(u32 *seq, u32 *reading)
     return C.newest;
 }
 void cam_test_stats(u32 *frames, u32 *overruns) { *frames = C.frames; *overruns = C.overruns; }
+u32 cam_test_resyncs(void) { return C.resyncs; }
 u32 cam_test_variant(u32 *probing) { *probing = C.probing; return C.variant; }
 #endif

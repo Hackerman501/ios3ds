@@ -90,7 +90,8 @@ typedef struct {
     uint32_t frames;
     uint32_t overruns;
     uint32_t words;            /* FIFO words drained (wraps) */
-    uint32_t pad0;
+    uint32_t resyncs;          /* frames dropped at a vertical blank because their
+                                  word count was off (lost or extra FIFO words) */
     /* ARM9 -> shim */
     uint32_t state;            /* CAM_ST_* */
     uint32_t ack_seq;          /* req_seq the state belongs to */

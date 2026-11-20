@@ -35,6 +35,7 @@ typedef struct PTex {
     int uw, uh;                         /* the part of pw x ph the image fills */
     int sx, sy;                         /* stretched to pw / ph (NPOT with REPEAT) */
     unsigned seq;
+    uint32_t sseed, shash;              /* surface-backed images: seed and texel sample at upload */
     unsigned used;                      /* P.draw_id of the last draw that sampled it */
     Tex *tex;
     struct PTex *next;                  /* P.texs: every texture with GPU memory */
@@ -951,6 +952,39 @@ static int wraps(GLenum w)
     return v < 0 || v == PICA_REPEAT || v == PICA_MIRRORED_REPEAT;
 }
 
+/* A sparse sample of an image's texels (64 words over the whole image):
+   a camera or video frame written into a recycled IOSurface changes it. */
+static uint32_t texel_sample(const Tex *t)
+{
+    uint32_t hsh = 2166136261u;
+    if (!t->px || t->w <= 0 || t->h <= 0)
+        return 0;
+    for (int i = 0; i < 64; i++) {
+        int y = (int)((uint32_t)(2 * (i >> 3) + 1) * (uint32_t)t->h / 16u);
+        int x = (int)((uint32_t)(2 * (i & 7) + 1) * (uint32_t)t->w / 16u + (uint32_t)i % 3u);
+        if (x >= t->w)
+            x = t->w - 1;
+        hsh = (hsh ^ t->px[(size_t)y * t->pitch + x]) * 16777619u;
+    }
+    return hsh;
+}
+
+/* Has a surface-backed image changed since its upload? CA binds a surface
+   once and keeps the texture while the producer (vcd's camera pool, video)
+   rewrites the surface: run 30 showed 0 texture uploads per frame while
+   the camera streamed, so the preview looped over the pool's first frames. */
+static int surface_changed(const Tex *t, const PTex *p, uint32_t *seed, uint32_t *hsh)
+{
+    int have_seed;
+    *seed = 0;
+    *hsh = 0;
+    if (!t->surface || t->own_px)
+        return 0;
+    have_seed = tex_surface_seed(t, seed);
+    *hsh = texel_sample(t);
+    return (have_seed && *seed != p->sseed) || *hsh != p->shash;
+}
+
 /* the tiled GPU copy of a texture, uploaded when the image changed */
 static PTex *use_texture(Tex *t)
 {
@@ -965,9 +999,15 @@ static PTex *use_texture(Tex *t)
         warn_once(WARN_TEXBIG, "texture larger than 1024: sampled as opaque black");
         return NULL;
     }
-    if (p && p->seq == t->be_seq && p->w == t->w && p->h == t->h && p->sx == sx && p->sy == sy) {
+    uint32_t sseed = 0, shash = 0;
+    if (p && p->seq == t->be_seq && p->w == t->w && p->h == t->h && p->sx == sx && p->sy == sy &&
+        !surface_changed(t, p, &sseed, &shash)) {
         p->used = P.draw_id;
         return p;
+    }
+    if (t->surface && !t->own_px && !shash) {
+        tex_surface_seed(t, &sseed);
+        shash = texel_sample(t);
     }
     flush_list();                       /* earlier draws must see the old texels */
     if (P.state != 1)
@@ -1036,6 +1076,8 @@ static PTex *use_texture(Tex *t)
     p->sx = sx;
     p->sy = sy;
     p->seq = t->be_seq;
+    p->sseed = sseed;
+    p->shash = shash;
     P.last_valid = 0;                   /* re-send the texture state: drops the GPU's texel cache */
     return p;
 }

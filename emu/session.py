@@ -10,6 +10,7 @@
                                     remembered between calls, --page abc|123 overrides)
   emu/session.py key QCODE [HOLD]   3DS button (h = HOME, ...)
   emu/session.py shot NAME          upright iOS screenshot -> <dir>/NAME.png
+  emu/session.py set PROP VALUE     QOM property of the machine (mcu-orient 0..5, mcu-volume ...)
   emu/session.py log [PATTERN]      grep the live sd:/ios3ds/log.txt and the QEMU output
   emu/session.py stop
 
@@ -148,6 +149,10 @@ def main():
         q.key(a.args[0], True)
         time.sleep(hold)
         q.key(a.args[0], False)
+    elif a.cmd == "set":                    # QOM property of the machine, e.g. mcu-orient 5
+        print("[session] qom-set %s=%s -> %s" % (a.args[0], a.args[1],
+              q.cmd("qom-set", path="/machine", property=a.args[0], value=int(a.args[1]))))
+        return
     elif a.cmd == "shot":
         tmpd = tempfile.mkdtemp(prefix="ios3ds-shot-")
         f = os.path.join(tmpd, "s.ppm")

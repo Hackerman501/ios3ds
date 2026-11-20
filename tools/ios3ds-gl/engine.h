@@ -230,6 +230,10 @@ void gl_tex_dirty(GC *gc, Tex *t);
 int  drawable_begin(GC *gc, Rb *rb);        /* make rb->color point at the buffer to draw into */
 void drawable_detach(Rb *rb);
 void tex_release_surface(Tex *t);
+/* IOSurface-backed images change behind GL's back (camera frames, video:
+   the producer writes a recycled surface and CA keeps its texture): the
+   back end compares this seed and a sparse sample of the texels */
+int tex_surface_seed(const Tex *t, uint32_t *seed);
 
 extern const Backend sw_backend;
 extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */

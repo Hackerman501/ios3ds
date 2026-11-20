@@ -6,8 +6,9 @@
  * Pattern, YUV422 (word = Y0 | U << 8 | Y1 << 16 | V << 24, like the CAM FIFO):
  *   eight vertical colour bars that scroll left by 2 pixels per frame, a white
  *   square that bounces, and the camera number as 1 or 2 black blocks in the
- *   top left corner (outer = 1, inner = 2). Every frame differs, so a still
- *   photo of it identifies the frame and the camera.
+ *   top left corner (outer = 1, inner = 2), and a grey frame-counter patch
+ *   in the middle. Every frame differs, so a still photo of it identifies the
+ *   frame and the camera.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #pragma once
@@ -24,6 +25,8 @@ static inline uint32_t cam_yuyv(uint32_t y0, uint32_t y1, uint32_t u, uint32_t v
     return y0 | u << 8 | y1 << 16 | v << 24;
 }
 
+#define CAM_COUNTER_Y(n)    (40u + (n) % 160u)
+
 /* one pixel pair (x even) of frame `n` from camera `cam` */
 static inline uint32_t cam_pattern_word(uint32_t cam, uint32_t n, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
@@ -34,6 +37,11 @@ static inline uint32_t cam_pattern_word(uint32_t cam, uint32_t n, uint32_t x, ui
         for (uint32_t i = 0; i <= cam; i++)
             if (x >= 8 + i * 24 && x < 24 + i * 24) return cam_yuyv(16, 16, 128, 128);
     }
+    /* frame counter: a grey 64x48 patch in the middle, Y = 40 + n mod 160
+       (tools/ios3ds-camera/tests/preview_counter.py reads it off the screen:
+       a preview that loops over old frames steps back) */
+    if (x + 32 >= w / 2 && x < w / 2 + 32 && y + 24 >= h / 2 && y < h / 2 + 24)
+        return cam_yuyv(CAM_COUNTER_Y(n), CAM_COUNTER_Y(n), 128, 128);
     /* bouncing white square */
     period = (w - s) * 2;
     t = (n * 6) % period;

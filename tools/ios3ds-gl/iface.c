@@ -52,6 +52,7 @@ static struct {
     void *(*base)(IOSurfaceRef);
     size_t (*width)(IOSurfaceRef), (*height)(IOSurfaceRef), (*bpr)(IOSurfaceRef);
     uint32_t (*fmt)(IOSurfaceRef);
+    uint32_t (*seed)(IOSurfaceRef);
     int (*fb_main)(void **);
     int (*fb_swap_signal)(void *, uint32_t, void *);
 } io;
@@ -72,6 +73,7 @@ static void io_init(void)
         io.height = (size_t (*)(IOSurfaceRef))dlsym(h, "IOSurfaceGetHeight");
         io.bpr = (size_t (*)(IOSurfaceRef))dlsym(h, "IOSurfaceGetBytesPerRow");
         io.fmt = (uint32_t (*)(IOSurfaceRef))dlsym(h, "IOSurfaceGetPixelFormat");
+        io.seed = (uint32_t (*)(IOSurfaceRef))dlsym(h, "IOSurfaceGetSeed");
     }
     if (f) {
         io.fb_main = (int (*)(void **))dlsym(f, "IOMobileFramebufferGetMainDisplay");
@@ -267,6 +269,17 @@ void drawable_detach(Rb *rb)
         if (d->bufs[i])
             CFRelease(d->bufs[i]);
     free(d);
+}
+
+/* The surface's modification seed (bumped by every write unlock), if this
+   IOSurface has one; 0 = unknown. */
+int tex_surface_seed(const Tex *t, uint32_t *seed)
+{
+    io_init();
+    if (!t->surface || !io.seed)
+        return 0;
+    *seed = io.seed((IOSurfaceRef)t->surface);
+    return 1;
 }
 
 void tex_release_surface(Tex *t)
