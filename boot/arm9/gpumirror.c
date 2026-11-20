@@ -80,7 +80,7 @@ void gm_set_mode(int mode, u32 (*now)(void))
 /* Is the GPU copying the screen right now? Logs every change. */
 bool gm_live(u32 now, bool display_on)
 {
-    static u32 last_state = 0xFFFFFFFFu, last_frames, last_change;
+    static u32 last_state = 0xFFFFFFFFu, last_frames, last_change, last_busy, busy_since;
     static int was_live = -1;
     static bool was_off;
     if (!gm)
@@ -94,6 +94,8 @@ bool gm_live(u32 now, bool display_on)
         was_off = false;
         last_frames = frames;           /* grace: frames resume within a few VBlanks */
         last_change = now;
+        last_busy = gm->busy_skips;
+        busy_since = 0;
     }
     if (st != last_state) {
         last_state = st;
@@ -119,7 +121,17 @@ bool gm_live(u32 now, bool display_on)
     if (frames != last_frames) {
         last_frames = frames;
         last_change = now;
+        busy_since = 0;
+    } else if (gm->busy_skips != last_busy) {
+        /* no mirror frame because GL (CoreAnimation) owns the GPU: busy, not
+           stalled. After a long lock CA redraws everything and holds the GPU
+           for seconds; falling back to the ARM9 copy then only showed a half-
+           copied frame (soak cycle 19, re-log 63). Busy counts as progress
+           for at most 3 s. */
+        if (!busy_since) busy_since = now ? now : 1;
+        if (now - busy_since < 3 * hz) last_change = now;
     }
+    last_busy = gm->busy_skips;
     bool live = st == GM_ST_ACTIVE && frames && now - last_change < hz && gm->ack_seq == gm->seq;
     if ((int)live != was_live) {
         if (live)

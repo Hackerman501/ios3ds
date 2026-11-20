@@ -862,3 +862,20 @@ Design and user docs: docs/certificates.md.
   - **QEMU (`ca_gpu=1`):** the grid shows all thumbnails; tapping one opens "Wallpaper Preview" (`PLWallpaperImageViewController`), Set returns to the grid, and after lock (charger off, so the big battery does not cover it) the lock screen shows the chosen wallpaper.
 - **Status bar "Searching…"** comes from `-[SBStatusBarDataManager _updateServiceItem]` whenever `+[SBTelephonyManager sharedTelephonyManagerCreatingIfNecessary:]` returns a manager; unrelated to the lockdown values and not changed here.
 - **"Invisible alert after boot" (dimmed home, taps ignored until (160,333)): not reproduced.** 9 QEMU boots (`ca_gpu` 1/0, `diag` 0/1, plain and `--icount 2`, before and after the lockdown fix): no `[applog] … alert` line and the first icon tap opened its app each time; the dimming in screenshots is the emulated LCD backlight (`lcd-backlight` 500/1000 scales the mirror), not an alert. A real alert does render on the PICA200: `qom-set mcu-battery 15` → `[applog] SpringBoard alert shown, title "Low Battery"`, drawn with its Dismiss button at y≈283. SpringBoard's single-button "Dismiss" alerts (sb strings `DISMISS_ALERT`, `LOW_DISK_SPACE_DISMISS`): SBLowPowerAlertItem, SBDiskSpaceAlertItem (kqueue VQ_LOWDISK; the 1 GiB rootfs has 378 MiB free, HFS warns below 10 %), SBDismissOnlyAlertItem from SBLockdownManager (only with telephony), the thermal check, and the unusable-FireWire-charger check (`AdapterInfo` = 0xe00002c7). Next time it shows: boot with `ios3ds_applog=1` (or `diag=1`) and read the `[applog] SpringBoard alert …` lines.
+
+## 63. 30-cycle soak at hardware timing: a half-copied home screen after a long lock (2026-11-20)
+
+- **Run:** `emu/soak.py --cycles 30 --icount 2`. No panics, stalls, crashes or md0 errors. The soak counted "SpringBoard restart" once, but that entry is the first `[input] connected` line, not a restart. Flagged:
+  - **cycles 9 / 19 / 29 (after a 130 s lock):**
+    - cycles 9 and 29: a full home screen. Its difference to the reference (15.5 / 16.8, threshold 12) is the dimmed fade-in after unlock plus the clock. The backlight is back at 500/1000, as before the lock.
+    - cycle 19 (35.0): a black screen with a sliver of the first icon row.
+  - **cycle 13:** HOME on page 1 opened Spotlight (known soak behaviour).
+- **Cause of cycle 19:**
+  - At wake, `[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 305 busy skips, 0 timeouts)`.
+  - `gm_live` allows 1 s after the display comes on for mirror frames to resume.
+  - After a long lock, CoreAnimation redraws everything with GL and holds the GPU, so the shim skips mirror frames as busy.
+  - The ARM9 took that for a stall and switched to its CPU copy. Under `--icount 2` that copy is slow, so the screenshot caught a half-copied frame.
+- **Fix:** `boot/arm9/gpumirror.c` counts a changing `busy_skips` as progress, for at most 3 s per busy stretch.
+- **Re-run (10 cycles, long lock at cycle 9):**
+  - The unlock screenshot is the full home screen (diff 12.8: fade-in and clock).
+  - The CPU fallback still fired once, briefly, and switched straight back to `PICA200`.
