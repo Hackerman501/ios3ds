@@ -30,9 +30,9 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically; stays connected (the router's group key renewal is answered since build m1-0.3.0-27) |
 | ✅ | Cydia | pre-installed |
 | ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
-| ✅ | D-pad page swipes | turned 90° to match the upright iOS screen in the next build |
+| ✅ | D-pad page swipes | turned 90° to match the upright iOS screen |
 | ❌ | Cameras | the sensors are found and start, but no picture arrives yet: being worked on |
-| 🧪 | Circle pad scrolling | |
+| ✅ | Circle pad scrolling | in the direction of the upright iOS screen |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
