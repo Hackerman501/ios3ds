@@ -107,6 +107,7 @@ io_object_t IOEthernetControllerGetIONetworkInterfaceObject(IOEthernetController
 #define CONTROLLER_SOCKET_OFF 0x28      /* IOKit 8C148: ReadPacket does ldr r0, [r0, #0x28] */
 
 static int opt_debug, opt_poll_ms = 4, opt_dhcp = 1;
+#define IDLE_POLL_MS 20
 static char ifname[32] = "?";
 
 static void say(const char *fmt, ...)
@@ -273,6 +274,7 @@ int main(int argc, char **argv)
        (sysctl_handle_opaque copies out, then in), so a combined call would
        return the acknowledged frames once more. */
     int link = -1;
+    unsigned idle = 0;
     uint32_t acked = io_in.rx_next, delivered = io_in.rx_next;
     for (;;) {
         uint32_t off = 0;
@@ -346,11 +348,20 @@ int main(int argc, char **argv)
             if (opt_debug) say("[wifid] rx %u", len);
         }
         delivered = io_in.rx_next;
-        if (io_in.rx_pending || n || delivered != acked) continue;  /* more to do: go again now */
+        if (io_in.rx_pending || n || delivered != acked) {          /* more to do: go again now */
+            idle = 0;
+            continue;
+        }
+        if (io_in.nframes) idle = 0;
 
         while (waitpid(-1, NULL, WNOHANG) > 0) { /* reap the self-test */ }
-        /* idle: wait for iOS to send something, or the poll period */
+        /* idle: wait for iOS to send something, or the poll period. After
+           ~0.25 s without a frame either way the mailbox is polled every
+           IDLE_POLL_MS instead: 250 rounds/s of three syscalls and a 4 KiB
+           copy cost an idle console ~4% of the CPU (hardware run 24: wifid
+           28.7 s of system time in 630 s). A frame iOS sends still wakes the
+           loop at once; one from the network waits at most IDLE_POLL_MS. */
         struct pollfd pfd = { fd, POLLIN, 0 };
-        poll(&pfd, 1, opt_poll_ms);
+        poll(&pfd, 1, ++idle > 64 && opt_poll_ms < IDLE_POLL_MS ? IDLE_POLL_MS : opt_poll_ms);
     }
 }
