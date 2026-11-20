@@ -23,20 +23,23 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | | Feature | Notes |
 |:-:|---|---|
 | ✅ | Boot to the home screen, built-in apps | about a minute from power-on |
-| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls) |
+| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls). Fixed for the next build: touch could stop reacting after a popup or after unlocking |
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2, Safari | needs the console's own Wi-Fi firmware, copied automatically |
-| ✅ | Cydia | pre-installed on home page 2 |
+| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically. Fixed for the next build: the connection dropped after a few minutes (the router's group key renewal went unanswered) |
+| ✅ | Safari | loads pages; the first load sometimes fails with "cannot allocate memory", a retry works |
+| ✅ | Cydia | pre-installed |
+| ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
+| ✅ | D-pad page swipes | turned 90° to match the upright iOS screen in the next build |
+| ❌ | Cameras | the sensors are found and start, but no picture arrives yet: being worked on |
+| 🧪 | Circle pad scrolling | |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
-| 🧪 | Cameras (Camera.app, photos) | outer = back, inner = front; 320×240 preview, no video |
-| 🧪 | Accelerometer, gyroscope (CoreMotion) | |
-| 🧪 | Circle pad scrolling, D-pad page swipes | |
+| 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
 | ❌ | 3D screen, IR, NFC, video recording | |
 
-✅ confirmed on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not supported
+✅ works on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
 ### Compatibility
 
