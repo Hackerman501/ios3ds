@@ -1,0 +1,2427 @@
+ios3ds m1-0.2-15-gcc88384-20261119.2202  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18300000 bottom 0x1835dc00/0x1835dc00
+CFG9_SDMMCCTL 0340 -> 0340
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-0.2-15-gcc88384-20261119.2202 ARM11 stub at 0x1ff90338
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+[boot] 1.186 s: SD mounted, ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00856078  ACTLR 00000000  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+[boot] 1.272 s: boot.cfg read
+running ARM11 instruction probes (boot.cfg probes=0 diag=0 skips them)
+[a11] probes done
+Instruction probes (XNU uses these):
+ ee1f0f92 ok      -> 00000000
+ ee160f50 TRAPPED (slot 3 mode 1b)
+ ee1f0f1c ok      -> 0ffff009
+ ee100e10 ok      -> 15110005
+ eef00a10 ok      -> 410120b4
+ eef70a10 ok      -> 11111111
+ eef60a10 ok      -> 00000000
+ eef80a10 ok      -> 40000000
+[boot] 2.499 s: ARM11 probes done
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 16044 bytes at 2081b000
+[boot] 5.602 s: kernel + devtree loaded
+shim: 22140 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+[boot] 6.373 s: rootfs opened (fast-seek map)
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+loaded 0:/ios3ds/gpu.bin: 42896 bytes at 208b0000
+[boot] 6.942 s: load= files loaded
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 16044
+[wifi] no 0:/ios3ds/wifi.cfg: no preset network
+[wifi] firmware from 0:/ios3ds/nwm.code: 348160 bytes, main type4, 473 ms
+[wifi-diag]    744 ms fw: newer pool at .code+2b9d0, text base 100000, .code 348160 bytes; main type1 1b1b type4 a5eb type5 7a2e bytes (type4 is one of GBATEK's A053h/A482h/A5EBh); database end = stub code start
+[wifi-diag]   1414 ms fw: 0:/ios3ds/nwm.code part 1 stub data: 56 bytes (0x38) -> 00524c00, crc32 d73565a0
+[wifi-diag]   1816 ms fw: 0:/ios3ds/nwm.code part 2 stub code: 790 bytes (0x316) -> 00527000, crc32 46f41c07
+[wifi-diag]   2222 ms fw: 0:/ios3ds/nwm.code part 3 database: 488 bytes (0x1e8) -> 0053fe18, crc32 53bedfce
+[wifi-diag]   2626 ms fw: 0:/ios3ds/nwm.code part 4 main: 42475 bytes (0xa5eb) -> 00524c00, crc32 4f96facf
+[wifi] backend ar6014, mailbox at 208a0000
+[audio] CODEC id 11 rev 36: DAC up, speaker, I2S1_CNT e820
+[mcu] version 12/25: RTC 2026-11-20 21:59:25 Wed (offset 0 s) = Unix 1795211965
+[mcu] battery 84% 3980 mV 23 C, volume slider 63/63, 3D slider 14, shell open, IRQ mask set
+[gpu] PICA200: gpu=1 gpu_mirror=1 (every 2. VBlank, spin 0 us) gpu_clk=1 gpu_diag=1 ca_gpu=1; mailbox at 20847f00
+[boot] 12.772 s: Wi-Fi, audio, MCU, GPU set up
+[boot] 12.907 s: countdown over
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[boot] 13.446 s: XNU started
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+ios3ds-mcu: 3DS RTC present: not waiting for IORTC
+ios3ds-mcu: calendar from the 3DS RTC: 1795211965 (2026-11-20 21:59:25 RTC, offset 0 s)
+IOResources: not registry member at registerService()
+BSD root: md0, major 2, minor 0
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+[wifi-diag]     24 ms power: CFG11_WIFICNT 00 -> 01 (want bit 0 = 1), GPIO 2_2 0000 -> 0000 (want bit 0 = 0: SDIO chip), GPIO 3_12 0000 -> 0001 (want bit 0 = 1: nRESET released)
+[wifi-diag]    136 ms sdio: CFG9_SDMMCCTL 0340 -> 0340 (want bit 2 = 0: port powered), SD_OPTION c0ee (controller 2 answers)
+[wifi-diag]    140 ms sdio: CMD5 x3: first R4 10ffff00, last 90ffff00 (ready 1, 1 I/O functions, memory 0, OCR ffff00)
+[wifi-diag]    144 ms sdio: RCA 0001, CCCR rev 11, SD rev 00, card caps 17, bus interface 82 (want low bits 2 = 4-bit)
+[wifi-diag]    147 ms sdio: function 1 ready after 2 polls; enumeration took 118 ms
+[wifi-diag]    150 ms sdio: CIS manufacturer 0271 card 0201 (Atheros)
+[wifi] SDIO up, chip id 0d000001 (AR6014)
+[wifi] TMIO2 32-bit FIFO check failed (0, read 00000000, status 07252080): mailbox falls back to CMD52 byte transfers
+[wifi-diag]    157 ms monitor: one driver step took 157 ms (state power)
+AppleS5L8720XIO::start: chip-revision: A0
+AppleS5L8900XWatchDogTimer::start: _wdtBaseAddress: 0xc38ab000
+AppleARMWatchDogTimer installing handlePEHaltRestart handler
+AppleARMPerformanceController::traceBufferCreate: _pcTraceBuffer: 0xca8ea000  bufferSize: 0x00004000
+AppleS5L8720XClockController::start: _ccBaseAddress: 0xc38ac000 _ccBusBaseAddress: 0xc38ad000
+AppleS5L8720XClockController::start: pcVoltageStateCount: 2
+	Voltage State 0 : .vsPerformanceLimit: 2 .vsDeviceConstraint: e00f7fff fd7fef07
+	Voltage State 1 : .vsPerformanceLimit: 1 .vsDeviceConstraint: e01fffff ffffff07
+AppleS5L8720XClockController::start: pcPerformanceStateCount: 4
+	Performance State 0 : .psPerformanceDivider: 1 .psVoltageRequired: 1 .psDeviceConstraint: e01fffff ffffff07
+	Performance State 1 : .psPerformanceDivider: 2 .psVoltageRequired: 0 .psDeviceConstraint: e01fffff fafcff07
+	Performance State 2 : .psPerformanceDivider: 5 .psVoltageRequired: 0 .psDeviceConstraint: a01f7fff fafcff07
+	Performance State 3 : .psPerformanceDivider: 11 .psVoltageRequired: 0 .psDeviceConstraint: 80177fff fa7cef07
+AppleS5L8720XClockController: Dynamic Performance State Management Enabled with 2 voltage and 4 perfomance states
+AppleS5L8900XI2SController::start: i2s0 i2sBaseAddress: 0xc38ae000 i2sVersion: 0
+[wifi] BMI ROM version 2300006f (AR6014 ROM is 2300006F)
+[wifi-diag]    281 ms bmi: target version 2300006f (AR6014 ROM), scratch0 was 00000000, WLAN_SYSTEM_SLEEP was 0000001d; clock setup done
+AppleARMPL192VIC::start: _vicBaseAddress = 0xc38b5000
+AppleS5L8900XTimer::start: _timerBaseAddress: 0xc38bd000
+[wifi] fw part 1: 56 bytes -> 00524c00
+[wifi-diag]    319 ms fw: part 1 stub data: 56 bytes -> 00524c00 in 1 ms
+AppleS5L8900XI2CController::start: i2c0 _i2cBaseAddress: 0xc38c6000
+IOSurfaceRoot::installMemoryRegions()
+[wifi] fw part 2: 790 bytes -> 00527000
+com.apple.AppleFSCompressionTypeZlib kmod start
+virtual bool AppleMobileFileIntegrity::start(IOService*): built Nov 16 2010 22:21:11
+[wifi-diag]    451 ms fw: part 2 stub code: 790 bytes -> 00527000 in 99 ms
+L2TP domain init
+L2TP domain init complete
+PPTP domain init
+com.apple.AppleFSCompressionTypeZlib load succeeded
+AppleS5L8900XEdgeIC::start: _edgeicBaseAddress: 0xc38cd000
+[wifi] stub executed: r=0 ret=00000000
+[wifi-diag]    522 ms fw: BMI_EXECUTE 00927000 (stub, reads the calibration EEPROM) returned 00000000 in 35 ms: 0
+AppleS5L8900XGPIOIC::start: gpioBaseAddress: 0xc38ce000  gpioicBaseAddress: 0xc38d5000
+AppleS5L8720XPowerController::start: _pcBaseAddress: 0xc38d6000
+AppleARMPL080DMAC::start: dmac0: _dmacBaseAddress: 0xc98dd000
+AppleM2CLCD, fMapper: 0
+AppleM2CLCD (0x80c8e000)
+virtual bool AppleM2CLCD::start_hardware(IOService*): Couldn't allocate AppleARMFunction for function-lcd_enable
+[wifi] fw part 4: 42475 bytes -> 00524c00
+ios3ds-mcu: accelerometer read reg 0x0f len 1
+AppleARMPL080DMAC::_initDMAChannel: index: 5, bufPA: 0x20cac000, bufLA: 0xc98de000
+AppleARMPL080DMAC::_initDMAChannel: index: 4, bufPA: 0x20cae000, bufLA: 0xca8ee000
+AppleARMPL080DMAC::_initDMAChannel: index: 3, bufPA: 0x20c90000, bufLA: 0xca905000
+AppleS5L8900XSerial: Identified Serial Port on ARM Device=uart0 at 0x1ffb9000(0xca906000)
+[gpu] display mirror: off
+[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer
+[monitor] screen mode: both (X = next)
+[monitor] LCDs show framebuffer set 0 on top, 0 on the bottom: the CPU copy writes only those
+IOSurface: buffer allocation size is zero
+AppleCS42L58Audio::start: 0x80c73900, audio0 _wmIICNub: 0x80c56600, _wmIISNub: 0x80b29f80
+ios3ds-audio: iic r dev=6500 reg=f len=1 val=0
+ios3ds-audio: iic w dev=6500 reg=22 len=1 val=c4
+ios3ds-audio: iic w dev=6500 reg=30 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=1 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=0 len=1 val=99
+ios3ds-audio: iic w dev=6600 reg=33 len=1 val=fd
+ios3ds-audio: iic w dev=6600 reg=32 len=1 val=27
+ios3ds-audio: iic w dev=6600 reg=0 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=6600 reg=4 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=4 len=1 val=20
+ios3ds-audio: iic r dev=6600 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=6600 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=6600 reg=5 len=1 val=cb
+ios3ds-audio: iic r dev=6600 reg=7 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=7 len=1 val=c
+ios3ds-audio: iic r dev=6600 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=f len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=f len=1 val=90
+ios3ds-audio: iic r dev=6600 reg=b len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=b len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=c len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=c len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=1a len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=1b len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=1b len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=1d len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=1d len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=aa
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=6600 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=b len=1 val=3d
+ios3ds-audio: iic w dev=6600 reg=c len=1 val=3d
+ios3ds-audio: iic w dev=6600 reg=d len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=e len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=a len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=a len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=6600 reg=5 len=1 val=cb
+ios3ds-audio: iic w dev=6600 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=6600 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=6600 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=6600 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=6600 reg=2 len=1 val=c6
+ios3ds-audio: iic r dev=6600 reg=5 len=1 val=b
+ios3ds-audio: iic w dev=6600 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=6600 reg=f len=1 val=90
+ios3ds-audio: iic w dev=6600 reg=f len=1 val=90
+ios3ds-audio: iic w dev=6600 reg=18 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=19 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=ff
+[wifi-diag]   4464 ms fw: part 4 main (BMI_LZ_DATA): 42475 bytes -> 00524c00 in 3897 ms
+[wifi] fw part 3: 488 bytes -> 0053fe18
+[wifi-diag]   4487 ms fw: part 3 database: 488 bytes -> 0053fe18 in 15 ms
+[wifi] firmware started, waiting for it to come up
+[wifi-diag]   4494 ms fw: upload done, BMI_DONE sent (hi_mbox_io_block_sz 128, hi_mbox_isr_yield 0x63)
+[wifi] firmware running (board data initialised)
+[wifi-diag]   4501 ms boot: hi_board_data_initialized = 1 after 6 ms (1 polls)
+[wifi] HTC ready: 10 credits of 1544 bytes
+[wifi-diag]   4522 ms htc: HTC_READY 21 ms after the firmware started, 8 bytes: 01000a0008061600
+[wifi-diag]   4529 ms htc: service 0100 -> status 0, endpoint 1, max message 1538 (1 polls)
+[wifi-diag]   4535 ms htc: service 0101 -> status 0, endpoint 2, max message 1536 (1 polls)
+[wifi-diag]   4541 ms htc: service 0102 -> status 0, endpoint 3, max message 1536 (1 polls)
+[wifi-diag]   4547 ms htc: service 0103 -> status 0, endpoint 4, max message 1536 (1 polls)
+[wifi-diag]   4553 ms htc: service 0104 -> status 0, endpoint 5, max message 1536 (1 polls)
+[wifi] HTC services connected: 0 (WMI endpoint 1, data 2/3/4/5)
+[wifi] WMI ready, MAC 34:af:2c:c6:cf:7b
+[wifi-diag]   4566 ms wmi: WMI_READY 10 ms after HTC setup, 16 bytes: 34af2cc6cf7b0200eb00002302000300 (MAC, phy capability, more)
+[wifi-diag]   4568 ms wmi: GET_CHANNEL_LIST sent: 0
+[wifi-diag]   4573 ms summary: bring-up OK in 4573 ms (power, SDIO, BMI, firmware, HTC, WMI)
+[wifi] idle: no network configured, waiting for iOS (Settings > Wi-Fi)
+[wifi-diag]   4583 ms wmi: REG_DOMAIN 88010080
+[wifi-diag]   4591 ms wmi: channel list: 13 channels, 2.4 GHz mask 3ffe (bit n = channel n), 0 others
+com.apple.launchd 1	com.apple.launchd 1	*** launchd[1] has started up. ***
+Bug: launchctl.c:3599 (24307):17: ioctl(s6, SIOCAIFADDR_IN6, &ifra6) != -1
+Bug: launchctl.c:3805 (24307):2: sysctl(nbmib, 2, &nb, &nbsz, NULL, 0) == 0
+Running fsck on the boot volume...
+GetMasterBlock: Error 16 opening /dev/md0
+/dev/md0 on / (hfs, local, noatime)
+         0 [Level 3] [ReadUID 0] [Facility com.apple.system.fs] [ErrType FS] [MountPt /] 
+Bug: launchctl.c:3871 (24307):5: remove(de->d_name) != -1
+launchctl: Couldn't stat("/etc/mach_init.d"): No such file or directory
+         0 [Level 3] [ReadUID 0] [Facility com.apple.system.fs] [ErrType FS] [MountPt /] 
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+ios3ds-mcu: battery 84%, 3960 mV: IOPMPowerSource registered
+[mcud] MCU version 12/25: battery 84%, volume slider 63/63, shell open, RTC 1795211983
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[smp 1] begin nproc=21 src=sysctl
+[smp 1] pid=25 notifyd t=0/2 WAIT/swap susp=0 cpu=0 ut=0.019 st=0.019 pc=0x32cd1974 lr=0x00002170 sp=0x2fdff600 A sys=kevent(0x3,0x0,0x0,0x2fdff610) bt=0x00002bc0,0x0000171c
+[smp 1] pid=25 notifyd t=1/2 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.019 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f58 A sys=mach_msg(opt=0x3000002,rcv=0x1003,to=0) bt=0x0000203c,0x32d27b4c,0x32d197ac
+[smp 1] pid=24 amfid t=0/3 WAIT/swap susp=0 cpu=72 ut=0.099 st=0.189 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe58 A sys=mach_msg(opt=0x3000002,rcv=0x1603,to=0) bt=0x32d32630,0x00001e9c,0x00001bc0
+[smp 1] pid=24 amfid t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x4,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=24 amfid t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=23 bash t=0/1 UNINT susp=0 cpu=44 ut=0.009 st=0.029 pc=0x2fe1c3d8 lr=0x2fe1c2f1 sp=0x2fdfcdd8 A sys=bsd92(0x3,0x2c,0x2fdfce00,0x2fdfcdf0) bt=0x2fe0d1a1,0x2fe10f25,0x2fe0d607,0x2fe0439d,0x2fe044cd,0x2fe045cb,0x2fe048eb,0x2fe054c5,0x2fe05571,0x2fe05777,0x2fe05873,0x2fe05a41,0x2fe0b543,0x2fe0b5df,0x2fe05efd,0x2fe06491
+[smp 1] pid=20 SpringBoard t=0/1 RUN/swap susp=0 cpu=173 ut=0.079 st=0.229 pc=0x2fe17b66 lr=0x2fe0e129 sp=0x2fdff13c T bt=0x2fe0e129,0x2fe11601,0x2fe117fb,0x2fe118cf,0x2fe15663,0x2fe16b3d,0x2fe09c5f,0x2fe0b62f,0x2fe05efd,0x2fe06491,0x2fe0128d,0x2fe01060
+[smp 1] pid=19 configd t=0/1 UNINT susp=0 cpu=154 ut=0.000 st=0.109 pc=0x2fe15394 lr=0x2fe0bb15 sp=0x2fdff508 T bt=0x2fe16a81,0x2fe09d81,0x2fe09d5d,0x2fe09dfd,0x2fe01e35,0x2fe0652f,0x2fe0128d,0x2fe01060
+AMFI: Invalid signature but permitting execution
+[smp 1] pid=18 fairplayd.N72 t=0/1 WAIT/swap susp=0 cpu=6 ut=0.039 st=0.109 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffd38 A sys=mach_msg(opt=0x3000002,rcv=0x1303,to=0) bt=0x32d32630,0x00263738,0x00001f18
+[smp 1] pid=17 mDNSResponder t=0/3 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.239 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fe75a24 A sys=mach_msg(opt=0x3,snd=0x1f03,id=20000,rcv=0xe03,to=0) bt=0x3528c0f0,0x3527165c,0x352717a4,0x35278a14,0x0007b211,0x0007a589,0x0007a39d,0x00079183,0x0009b9a8
+[smp 1] pid=17 mDNSResponder t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2ff5be40 A sys=kevent(0x7,0x0,0x0,0x2ff5bf50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=17 mDNSResponder t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ffddfc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=16 mediaserverd t=0/4 RUN susp=0 cpu=151 ut=0.099 st=0.229 pc=0x30573e24 lr=0x305757b8 sp=0x2fdffa14 A bt=0x305757b8,0x303e7268,0x0000363c,0x00002e80,0x00002a3c
+[smp 1] pid=16 mediaserverd t=1/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=16 mediaserverd t=2/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=16 mediaserverd t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe90ec A sys=mach_msg(opt=0x7000006,rcv=0x2b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e8c419,0x303e820c,0x303e7ef0,0x303e7da8,0x32d27b4c,0x32d197ac
+[smp 1] pid=15 MobileStorageMou t=0/3 WAIT/swap susp=0 cpu=0 ut=0.029 st=0.079 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdfe720 A sys=mach_msg(opt=0x7000006,rcv=0x1b03,to=4294967295) bt=0x35e8cf83,0x35e8c787,0x35e8c50b,0x35e9ce71,0x000050b0,0x0000187c
+[smp 1] pid=15 MobileStorageMou t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=15 MobileStorageMou t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=14 mtmergeprops t=0/1 UNINT susp=0 cpu=60 ut=0.109 st=0.159 pc=0x32ca42d8 lr=0x33fbffe3 sp=0x2fdff8a8 A sys=read(0x3,0x2c000,0x1ffae,0x0) bt=0x33fbfd7f,0x33fbfd1d,0x33fc8889,0x35eac703,0x33fd1467,0x00001b0c,0x00001ccc,0x000017d0
+[smp 1] pid=13 syslogd t=0/4 WAIT/swap susp=0 cpu=7 ut=0.019 st=0.079 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fdffc6c A sys=select(0x7,0x2fdffe14,0x2fdffd94,0x2fdffd14) bt=0x00012264,0x00001628
+[smp 1] pid=13 syslogd t=1/4 WAIT/swap susp=0 cpu=3 ut=0.019 st=0.039 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fee5f48 A sys=mach_msg(opt=0x3000102,rcv=0x1103,to=357) bt=0x0000d5c0,0x32d27b4c,0x32d197ac
+[smp 1] pid=13 syslogd t=2/4 WAIT/swap susp=0 cpu=6 ut=0.039 st=0.000 pc=0x32d2654c lr=0x32cd2f78 sp=0x2ff67f0c A sys=semwait_signal(0x1603,0x1703,0x0,0x0) bt=0x32cd2918,0x0000b050,0x0000de38,0x32d27b4c,0x32d197ac
+[smp 1] pid=13 syslogd t=3/4 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.000 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2ffe9ed8 A sys=mach_msg(opt=0x3,snd=0x80b,id=421,rcv=0x2903,to=0) bt=0x32d93138,0x32d901c8,0x0000ac04,0x32d27b4c,0x32d197ac
+[iobusy] 0s: 0 of 87 services busy
+AMFI: Invalid signature but permitting execution
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 19 copies in 30 s, 364.3 ms each (ARM9)
+[hb] t=30s quiet 0s | abs 484475 dec 120549 timer 37495 irq 38507 vbl 1011 | md0 2016 req 49477 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +0 ms (ratio 0/1000)
+[hb]  pc k80068500 u35e8e294t u35e8e2a6t u35e8e28et u35e8e2b6t u35e8e2b2t u35e8e2fat k8005f6d4t
+[smp 1] pid=12 ios3ds-gltest t=0/1 RUN susp=0 cpu=124 ut=0.059 st=0.019 pc=0x0000b108 lr=0x2fe0658f sp=0x2fdffefc A bt=-
+[smp 1] pid=11 ios3ds-input t=0/3 WAIT/swap susp=0 cpu=1 ut=0.019 st=0.059 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffa20 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00006b4c,0x00007ab8
+[smp 1] pid=11 ios3ds-input t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=11 ios3ds-input t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=10 ios3ds-diag ERR task_for_pid=5
+[smp 1] pid=9 ios3ds-mcud t=0/3 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.049 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffc18 A sys=mach_msg(opt=0x3,snd=0x1203,id=70000,rcv=0xe03,to=0) bt=0x33805cc8,0x337fd190,0x337fd6e8,0x00006b38,0x000077ac
+[smp 1] pid=9 ios3ds-mcud t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=9 ios3ds-mcud t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=7 ios3ds-tone t=0/1 WAIT/swap susp=0 cpu=19 ut=0.029 st=0.059 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffbf0 A sys=semwait_signal(0x20b,0x0,0x1,0x1) bt=0x32ce31ef,0x00005728,0x00007284
+[smp 1] pid=6 ios3ds-wifid t=0/4 WAIT/swap susp=0 cpu=0 ut=0.009 st=0.049 pc=0x32d2654c lr=0x32c9f19f sp=0x2fdffdf8 A sys=semwait_signal(0xc03,0x0,0x1,0x1) bt=0x32c9f117,0x00006ffc,0x00007afc
+[smp 1] pid=6 ios3ds-wifid t=1/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cd1974 lr=0x32da0304 sp=0x2fee5e40 A sys=kevent(0x3,0x0,0x0,0x2fee5f50) bt=0x32d9fd70,0x32d9f790,0x32d28978,0x32d1f304
+[smp 1] pid=6 ios3ds-wifid t=2/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d292fc lr=0x32d28b58 sp=0x2ff67fc4 A sys=workq_kernreturn(0x4,0x0,0x0,0x0) bt=0x32d1f304-
+[smp 1] pid=6 ios3ds-wifid t=3/4 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32cc68d8 lr=0x35ec5a3b sp=0x2ff70bf0 A sys=select(0x19,0x119cc0,0x119cb0,0x0) bt=0x32d27b4c,0x32d197ac
+[smp 1] pid=2 launchctl t=0/1 WAIT/swap susp=0 cpu=0 ut=0.259 st=0.809 pc=0x32cd1974 lr=0x0000ab44 sp=0x2fdfeb24 A sys=kevent(0x3,0x0,0x0,0x2fdffca8) bt=0x000025c0,0x00001cfc
+[smp 1] pid=1 launchd t=0/3 WAIT/swap susp=0 cpu=11 ut=0.119 st=2.559 pc=0x32c9d3b0 lr=0x32c9f89c sp=0x2fdffe94 A sys=mach_msg(opt=0x3000003,snd=0x6213,id=137100,rcv=0xe03,to=0) bt=0x0000d078,0x0000a1a8,0x00002d9c
+[smp 1] pid=1 launchd t=1/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.019 pc=0x32cc68d8 lr=0x32cc68c1 sp=0x2fee5f1c A sys=select(0x4,0x2fee5f38,0x0,0x0) bt=0x0000ec64,0x32d27b4c,0x32d197ac
+[smp 1] pid=1 launchd t=2/3 WAIT/swap susp=0 cpu=0 ut=0.000 st=0.000 pc=0x32d2654c lr=0x32c9f19f sp=0x2ff67f5c A sys=semwait_signal(0xb03,0x0,0x1,0x1) bt=0x32ce31ef,0x0000a410,0x32d27b4c,0x32d197ac
+[smp 1] end
+[a80211] loaded into configd (pid 19)
+AMFI: Invalid signature but permitting execution
+[gl] context 0x897800 uses the ios3ds software rasterizer
+[gl] context created (pid 12) from 0x34ff7438 0x34ff70d4 0x34ff7128 0x7798 0xb130
+gltest: EAGLContext 0x112140
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+gltest: offscreen 320x480 framebuffer status 0x8cd5
+gltest: offscreen frame took 398 ms
+gltest: timing: gettimeofday rc 0/0 errno 0/0 tv 1795211982.671281 -> 1795211983.068901; mach_absolute_time 416499 ticks = 398 ms
+gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds software rasterizer"
+gltest: clear colour                 (160,470) =  26  31  64 ok
+gltest: triangle centroid (grey)     ( 85,347) =  83  85  86 ok
+gltest: triangle red corner          ( 24,302) = 243   6   4 ok
+gltest: texture: white cell          (174,304) = 255 255 255 ok
+gltest: texture: orange cell         (182,304) = 255 128  32 ok
+gltest: drawtex: white cell          ( 11,203) = 255 255 255 ok
+gltest: blend over background        (305,260) = 139  15  32 ok
+gltest: scissored clear              (150,265) = 255 217   0 ok
+gltest: outside scissor              (150,285) =  26  31  64 ok
+gltest: cube centre is drawn         (160,105) = 255  95  95 ok
+gltest: glGetError = 0x0 ok
+gltest: PASS (0 failed)
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT 0x00000000, GX clock 0x00070100, GX stat 0x04000000
+[gpu-diag] as found: rev 00010002 clk 00070100 psc_vram 00000000 stat 04000000 prio 22221200 00000ff2 unk58 00000400 unkD0 00000000
+[gpu-diag] as found: psc0 03060000 03075180 00000000 00000202 psc1 03068ca0 0306fd20 00000000 00000000
+[gpu-diag] as found: ppf in 070afcf0 out 0f2be160 od c5806260 id 0000ccc0 fl 00000000 u14 00000000 cnt 00000000 irq 12f20000
+[gpu-diag] as found: p3d irq ack 00000000 cmp ffffffff mask ffffffff autostop 00000000 draw_func0 00000000
+[gpu-diag] as found: counters ext r/w 0/0 vramA r/w 5036326/0 vramB r/w 65722461/24605676 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 0/0 fill0/1 43200/0 cpu-vram r/w 5037875/24562476
+[gpu-diag] as found: PSC fill VRAM  PA 185c0000: done after 1 ticks (ctrl 00000202, stat 00000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +260; word0 c0de0a11
+[gpu-diag] as found: PSC fill FCRAM PA 25c97000: done after 2 ticks (ctrl 00000202, stat 00000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +0; word0 55aa55aa
+[pica] GX setup as libn3ds hardwareReset: clock 0x00070100 -> 0x00070100, psc_vram 0x00000000 -> 0x00000000, dma prio 0x22221200/0x00000ff2 -> 0x22221200/0x00000ff2
+[pica] arena 12288 KiB at VA 0xcb10f000 = PA 0x250a7000; driver ready (state 0)
+[gpu-diag] after setup: rev 00010002 clk 00070100 psc_vram 00000000 stat 00000000 prio 22221200 00000ff2 unk58 00000400 unkD0 00000000
+[gpu-diag] after setup: psc0 04b92e00 04b93000 c0de0f0c 00000000 psc1 03068ca0 0306fd20 00000000 00000000
+[gpu-diag] after setup: ppf in 04a14e00 out 04a14e04 od c5806260 id 0000ccc0 fl 00000008 u14 00000000 cnt 00000000 irq 12f20000
+[gpu-diag] after setup: p3d irq ack 00000000 cmp 12345678 mask fffffff0 autostop 00000001 draw_func0 00000001
+[gpu-diag] after setup: counters ext r/w 2/2 vramA r/w 5045740/0 vramB r/w 65739506/24612176 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 1/1 fill0/1 43712/0 cpu-vram r/w 5048301/24568720
+[gpu-diag] after setup: PSC fill VRAM  PA 185c0000: done after 1 ticks (ctrl 00000202, stat 20000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +256; word0 c0de0a11
+[gpu-diag] after setup: PSC fill FCRAM PA 25c97000: done after 2 ticks (ctrl 00000202, stat 00000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +33; word0 55aa55aa
+[gpu-diag] PPF FCRAM->VRAM(tiled)->FCRAM: 4096/4096 words back; ppf r/w +2048/+2048; vram tile word1 8d60e26e (want 8d60e26e)
+[gpu-diag] solid quad -> VRAM: P3D done after 23 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] solid quad -> FCRAM: P3D done after 68 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +2176; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] texture 64x64 1:1: P3D done after 24 ticks (stat 80000000); 4096/4096 words right; vtx +116 tex +1024 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 00000000
+[gpu-diag] texture 48x40 (NPOT) 1:1: P3D done after 15 ticks (stat 80000000); 0/1920 words right; vtx +116 tex +256 col-wr +528 ext-wr +0; first wrong word 00000000 (index, or y<<16|x): 7ae7ce98, expected cbf42c98
+[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL
+[gpu] display mirror: LCD framebuffers top 0x18300000/0x18300000 bottom 0x1835dc00/0x1835dc00 (1 set); upload 0x18480000, texture 0x250c7000 (FCRAM, 512x512), targets 0x18516000/0x18573c00..0x185bec00
+[gpu] display mirror ACTIVE: self-test variant 0, 151 ms
+[gpu] mirror self-test variant 0 (as modelled): 0 of 518400 bytes differ, guard intact; GPU 1310/1837/583 ticks (upload/draw/read-out)
+[gpu] display mirror: self-test passed (variant 0) in 151940 us: the PICA200 copies the screen now (every 2. VBlank)
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[gl] pica: GPU up (self-check passed): arena 12288 KiB at PA 0x250a7000 (12160 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+[gl] context 0x89d400 uses the ios3ds PICA200
+gltest: offscreen 320x480 framebuffer status 0x8cd5
+gltest: PICA200 offscreen frame took 326 ms
+gltest: GL_VERSION "OpenGL ES-CM 1.1 ios3ds", GL_RENDERER "ios3ds PICA200"
+gltest: clear colour                 (160,470) =  25  30  64 ok
+gltest: triangle centroid (grey)     ( 85,347) =  83  85  86 ok
+gltest: triangle red corner          ( 24,302) = 243   6   4 ok
+gltest: texture: white cell          (174,304) = 255 255 255 ok
+gltest: texture: orange cell         (182,304) = 255 128  32 ok
+gltest: drawtex: white cell          ( 11,203) = 255 255 255 ok
+gltest: blend over background        (305,260) = 140  15  32 ok
+gltest: scissored clear              (150,265) = 255 217   0 ok
+gltest: outside scissor              (150,285) =  25  30  64 ok
+gltest: cube centre is drawn         (160,105) = 255  96  96 ok
+gltest: glGetError = 0x0 ok
+gltest: scene 1, pica vs software: 125460 of 153600 pixels differ at all, 0 by more than 24 (max 7) ok
+gltest: scene 2, pica vs software: 51861 of 153600 pixels differ at all, 200 by more than 24 (max 127) ok
+gltest: PICA200 PASS (0 failed)
+IOUserEthernetController: Ethernet address 34:af:2c:c6:cf:7b
+[a80211] our 802.11 interface is en0
+[wifid] interface en0 up, MAC 34:af:2c:c6:cf:7b (socket fd 4)
+virtual bool IOUserEthernetController::setLinkState(bool): status=0 mCurrentMedium=0x841a9500
+[wifid] link down (ARM9 state 11)
+systemShutdown false
+[a80211] IOServiceFirstMatch for IO80211Interface (refcon 0x137a00): deferred until the interface has a BSD name
+[a80211] handing en0 to an IO80211Interface client (refcon 0x137a00)
+[a80211] first GET type 12 (len 100): ok
+[a80211] first GET type 19 (len 24): ok
+[a80211] first GET type 204 (len 16): ok
+[a80211] first GET type 201 (len 140): error
+[a80211] first GET type 1 (len 32): error
+[a80211] first GET type 9 (len 6): error
+[gl] pica: GPU up (self-check passed): arena 12288 KiB at PA 0x250a7000 (9567 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+[gl] CA scene check: GPU vs CPU rasterizer: 0 of 9216 pixels differ by more than 24 (max 4)
+[gl] CA compositor: OpenGL ES on the PICA200 (GPU self-check and scene check passed)
+[gl] context 0x83c400 uses the ios3ds PICA200
+[gl] context created (pid 20) from 0x34ff7438 0x346e08a0 0x346e07cc 0x346de624 0x346de4f4 0x346de3ac 0x346dd1e8 0x32da1680
+Iterator had no matching services
+Failed to open connection to MBX
+Failed to initialized MBX2D driver (1).
+Couldn't connect to migrator port (1102).
+Couldn't open shared capabilities memory GSCapabilities (No such file or directory)
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=0
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=44
+AMFI: Invalid signature but permitting execution
+[hwaes] securityd: software IOAESAccelerator
+[hwaes] securityd: software AppleKeyStore (key wrap)
+[input] connected to SpringBoard's HID event system
+[input] mailbox up: touch ok, flipx=1 flipy=0 stretch=0
+[mcud] connected to SpringBoard's HID event system
+[mcud] NoIdleSleepAssertion held (0x0, id 300)
+ios3ds-audio: iic w dev=6500 reg=30 len=1 val=0
+[mcud] volume slider 63/63 -> iOS volume 1.00
+[mcud] accelerometer off
+[mcud] seq 25: battery 84% flags e2 volume 63 3D 14 irq 00000000 home 0 power 0/0 shell 0/0
+[a80211] first GET type 18 (len 0): unsupported
+[a80211] first GET type 5 (len 0): ok
+[a80211] first GET type 7 (len 0): unsupported
+[a80211] first GET type 13 (len 0): ok
+[a80211] first GET type 14 (len 12): ok
+[a80211] first GET type 15 (len 0): ok
+[a80211] first GET type 8 (len 0): error
+[a80211] first GET type 57 (len 0): unsupported
+[a80211] first GET type 16 (len 52): error
+[a80211] first GET type 17 (len 52): error
+[a80211] first GET type 4 (len 16): error
+[a80211] first GET type 2 (len 12): error
+[a80211] first GET type 6 (len 12): unsupported
+Fri Nov 20 22:00:09 localhost SpringBoard[20] <Error>: CGImageCreate: invalid image size: 4096 x 0.
+[mcud] SpringBoard reports no DisplayBrightness: LCD backlight left as Luma set it
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+ios3ds-mcu: LCD backlight as Luma left it: top 0x80, bottom 0x80
+[hb] t=60s quiet 0s | abs 689424 dec 160648 timer 58231 irq 61021 vbl 2790 | md0 3864 req 81368 KiB 0 err
+[hb]  clock: arm11 watchdog +29720 ms vs arm9 timer +29723 ms (ratio 999/1000)
+[hb]  pc k801a5ed0t k801a5a96t k80068010 k801a57det k8003a6f4t k8015976et u32c9fff6t k801a5438t
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=44
+tone: #1 1000 Hz, 400 ms, amplitude 6000 (L), 3000 (R), route "Speaker"
+ios3ds-audio: iic w dev=6600 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=6 len=1 val=20
+ios3ds-audio: amp step 13 -> CSND volume 8000
+ios3ds-audio: iic w dev=6580 reg=0 len=1 val=9b
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=6600 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=6600 reg=3 len=1 val=af
+ios3ds-audio: tx start ch5 src=20c7e000 lli=20cac010 ctl=87249800 cfg=8a81
+[audio] iOS output stream #1 started (CSND starts 1)
+[audio] iOS volume: amp step 19 -> CSND volume 32768/32768
+[gpu] mirror: 712 frames in 30 s (23.7 fps); GPU per frame: upload 5510 us, draw 2316 us, read-out 3175 us; frame avg 13098 us (max 23253, incl. IRQ latency); ARM11 IRQ time 60 us/frame in 5492 steps; 3 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 6 copies in 30 s, 231.7 ms each (ARM9)
+tone: #1 done
+[gl] first BindCoreSurface (pid 20) from 0x3470d548 0x3470d36c 0x3470c984 0x3478fefc 0x346ec6dc 0x346f32c4 0x3327586c 0x337cc88c
+[gl] first SwapNotification (pid 20) from 0x34ff7ef8 0x34719f34 0x3478fe48 0x346eddd8 0x346ec724 0x346f32c4 0x3327586c 0x337cc88c
+[pica] present: GPU writes the caller's surface directly: user VA 0x00325000 = PA 0x18000000 (VRAM, 600 KiB)
+[gl] pica: GPU present check passed (320x480, identical to the CPU read-back within 2)
+[mcud] seq 77: battery 84% flags e2 volume 63 3D 14 irq 00000000 home 0 power 0/0 shell 0/0
+ios3ds-audio: iic w dev=6500 reg=20 len=1 val=2f
+ios3ds-audio: iic w dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+ios3ds-audio: iic r dev=6500 reg=21 len=1 val=80
+launchd[41] Builtin profile: MobileMail (sandbox)
+panic(cpu 0 caller 0x8061cd28): "AppleLIS331DLH::enableAccelerometer - Boot bit did not return to zero in 500 msecs. That is wrong.\n"@/SourceCache/AppleEmbeddedAccelerometer/AppleEmbeddedAccelerometer-46/AppleLIS331DLH.cpp:436
+Debugger message: panic
+OS version: 8C148
+Kernel version: Darwin Kernel Version 10.4.0: Wed Oct 20 20:06:26 PDT 2010; root:xnu-1504.58.28~3/RELEASE_ARM_S5L8720X
+iBoot version: ios3ds-loader
+secure boot?: NO
+Paniclog version: 1
+Epoch Time:        sec       usec
+  Boot    : 0x6b00c2bd 0x00000000
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x6b00c2f1 0x00048c8e
+
+Task 0x80ad9d3c: 4911 pages, 37 threads: pid 0: kernel_task
+	thread 0xc025d9e0
+		kernel backtrace: ca933e64
+		  lr: 0x80068ae9  fp: 0xca933ea0
+		  lr: 0x80068d23  fp: 0xca933eb4
+		  lr: 0x80015d71  fp: 0xca933eec
+		  lr: 0x8061cd28  fp: 0xca933f20
+		  lr: 0x8061bbf0  fp: 0xca933f30
+		  lr: 0x8061c144  fp: 0xca933f54
+		  lr: 0x801bcae5  fp: 0xca933f64
+		  lr: 0x801bc2e7  fp: 0xca933f88
+		  lr: 0x801bc417  fp: 0xca933fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+Task 0x80ad9b58: 171 pages, 3 threads: pid 1: launchd
+Task 0x80ad9974: 163 pages, 1 threads: pid 2: launchctl
+Task 0x80ad9790: 126 pages, 3 threads: pid 6: ios3ds-wifid
+Task 0x80ad93c8: 73 pages, 1 threads: pid 8: ios3ds-sample
+Task 0x80ad91e4: 289 pages, 3 threads: pid 9: ios3ds-mcud
+Task 0x83647d3c: 122 pages, 2 threads: pid 11: ios3ds-input
+Task 0x83647974: 127 pages, 4 threads: pid 13: syslogd
+Task 0x836473c8: 994 pages, 21 threads: pid 16: mediaserverd
+Task 0x836471e4: 317 pages, 3 threads: pid 17: mDNSResponder
+Task 0x83647000: 146 pages, 1 threads: pid 18: fairplayd.N72
+Task 0x8371ad3c: 692 pages, 12 threads: pid 19: configd
+Task 0x8371ab58: 3061 pages, 17 threads: pid 20: SpringBoard
+Task 0x8371a3c8: 152 pages, 2 threads: pid 24: amfid
+Task 0x8371a1e4: 104 pages, 2 threads: pid 25: notifyd
+Task 0x8371a790: 609 pages, 2 threads: pid 36: profiled
+Task 0x8371a000: 323 pages, 4 threads: pid 38: installd
+Task 0x8371a5ac: 213 pages, 2 threads: pid 39: lsd
+Task 0x80ad95ac: 151 pages, 3 threads: pid 40: SCHelper
+Task 0x8371a974: 44 pages, 1 threads: pid 41: MobileMail
+Debugger message: panic
+OS version: 8C148
+Kernel version: Darwin Kernel Version 10.4.0: Wed Oct 20 20:06:26 PDT 2010; root:xnu-1504.58.28~3/RELEASE_ARM_S5L8720X
+iBoot version: ios3ds-loader
+secure boot?: NO
+Paniclog version: 1
+Epoch Time:        sec       usec
+  Boot    : 0x6b00c2bd 0x00000000
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x6b00c2f1 0x000572e0
+
+
+*********  Dumping thread state and stacks *********
+
+Task 0x80ad9d3c: 4911 pages, 37 threads: pid 0: kernel_task
+	thread 0x80284664
+		kernel continuation: 0x80050bfd
+
+	thread 0xc01cab20
+		kernel continuation: 0x8001ee2d
+
+	thread 0xc01ca6d0
+		kernel continuation: 0x8001f685
+
+	thread 0xc01ca280
+		kernel continuation: 0x80023e0d
+
+	thread 0xc01c9e30
+		kernel continuation: 0x80024189
+
+	thread 0xc01c99e0
+		kernel continuation: 0x80024e61
+
+	thread 0xc01c9590
+		kernel continuation: 0x801bc401
+
+	thread 0xc01c8cf0
+		kernel state:
+		  r0: 0xf0f0f0f0  r1: 0xf0f0f0f0  r2: 0xf0f0f0f0  r3: 0xd0f0f0f0
+		  r4: 0xc01c88a0  r5: 0xc01c8cf0  r6: 0x80255000  r7: 0xca8f3e80
+		  r8: 0x00000000  r9: 0xc01c8cf0 r10: 0xc01c8944 r11: 0xc01c88bc
+		 r12: 0x80000093  sp: 0xca8f3e70  lr: 0x800690fd  pc: 0x70f0f0f0
+		cpsr: 0x00000093 fsr: 0xf0f0f0f0 far: 0xf0f0f0f0
+		kernel backtrace: ca8f3e80
+		  lr: 0x8001ea85  fp: 0xca8f3ea8
+		  lr: 0x8001ed67  fp: 0xca8f3ee8
+		  lr: 0x8001edd9  fp: 0xca8f3ef0
+		  lr: 0x8001aa1d  fp: 0xca8f3f08
+		  lr: 0x80156cc9  fp: 0xca8f3f3c
+		  lr: 0x8015701d  fp: 0xca8f3f70
+		  lr: 0x80078cd7  fp: 0xca8f3fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc01c8450
+		kernel continuation: 0x801bc401
+
+	thread 0xc025c450
+		kernel continuation: 0x801bc401
+
+	thread 0xc0267b20
+		kernel continuation: 0x80024f2d
+
+	thread 0xc02676d0
+		kernel continuation: 0x8016f0ed
+
+	thread 0xc0267280
+		kernel continuation: 0x8013f065
+
+	thread 0xc0266e30
+		kernel continuation: 0x8013f065
+
+	thread 0xc02669e0
+		kernel state:
+		  r0: 0xf0f0f070  r1: 0xf0f0d0f0  r2: 0xf0f0f0f0  r3: 0xf0f0f0d0
+		  r4: 0xc04e3000  r5: 0xc02669e0  r6: 0x80255000  r7: 0xca973e9c
+		  r8: 0x00000000  r9: 0x00000002 r10: 0xc04e30a4 r11: 0xc04e301c
+		 r12: 0x80000093  sp: 0xca973e8c  lr: 0x800690fd  pc: 0x70f0f0f0
+		cpsr: 0x00000093 fsr: 0xf0f0f070 far: 0xf0f0f0f0
+		kernel backtrace: ca973e9c
+		  lr: 0x8001ea85  fp: 0xca973ec4
+		  lr: 0x8001ed67  fp: 0xca973f04
+		  lr: 0x8001edd9  fp: 0xca973f0c
+		  lr: 0x8001aa1d  fp: 0xca973f24
+		  lr: 0x80156cc9  fp: 0xca973f58
+		  lr: 0x8015701d  fp: 0xca973f8c
+		  lr: 0x800a4bb3  fp: 0xca973fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc0266590
+		kernel state:
+		  r0: 0xf0f0d0f0  r1: 0xf0f0d0f0  r2: 0xf0f0f0f0  r3: 0xf0f0f0d0
+		  r4: 0xc0266140  r5: 0xc0266590  r6: 0x80255000  r7: 0xca97bdf0
+		  r8: 0x00000000  r9: 0xc0266590 r10: 0xc02661e4 r11: 0xc026615c
+		 r12: 0x80000193  sp: 0xca97bde0  lr: 0x800690fd  pc: 0xb0f0f0f0
+		cpsr: 0x00000093 fsr: 0xd0f0f071 far: 0xf0d0e0f0
+		kernel backtrace: ca97bdf0
+		  lr: 0x8001ea85  fp: 0xca97be18
+		  lr: 0x8001ed67  fp: 0xca97be58
+		  lr: 0x8001edd9  fp: 0xca97be60
+		  lr: 0x8001aa1d  fp: 0xca97be78
+		  lr: 0x80156cc9  fp: 0xca97beac
+		  lr: 0x8015701d  fp: 0xca97bee0
+		  lr: 0x800a36e3  fp: 0xca97bfa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc0266140
+		kernel state:
+		  r0: 0x0d0f0f0d  r1: 0x0f0f0f07  r2: 0x0f0f0f0f  r3: 0x0f0f0f0f
+		  r4: 0xc0265cf0  r5: 0xc0266140  r6: 0x80255000  r7: 0xca983e98
+		  r8: 0x00000000  r9: 0xc0266140 r10: 0xc0265d94 r11: 0xc0265d0c
+		 r12: 0x80000193  sp: 0xca983e88  lr: 0x800690fd  pc: 0x070f0f0f
+		cpsr: 0x00000093 fsr: 0x0f0f0d0f far: 0x0f0f0f0f
+		kernel backtrace: ca983e98
+		  lr: 0x8001ea85  fp: 0xca983ec0
+		  lr: 0x8001ed67  fp: 0xca983f00
+		  lr: 0x8001edd9  fp: 0xca983f08
+		  lr: 0x80156b31  fp: 0xca983f3c
+		  lr: 0x80156f45  fp: 0xca983f6c
+		  lr: 0x800b2b0f  fp: 0xca983fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc0265cf0
+		kernel continuation: 0x8015a209
+
+	thread 0xc025e280
+		kernel state:
+		  r0: 0x69727473  r1: 0x343e676e  r2: 0x2f3c322e  r3: 0x69727473
+		  r4: 0xc0290450  r5: 0xc025e280  r6: 0x80255000  r7: 0xca92bcc4
+		  r8: 0x00000000  r9: 0x00000000 r10: 0xc02904f4 r11: 0xc029046c
+		 r12: 0x80000193  sp: 0xca92bcb4  lr: 0x800690fd  pc: 0x443e7965
+		cpsr: 0x00000093 fsr: 0x726f6674 far: 0x7265566d
+		kernel backtrace: ca92bcc4
+		  lr: 0x8001ea85  fp: 0xca92bcec
+		  lr: 0x8001ed67  fp: 0xca92bd2c
+		  lr: 0x8001edd9  fp: 0xca92bd34
+		  lr: 0x8001aa1d  fp: 0xca92bd4c
+		  lr: 0x801a755d  fp: 0xca92bd60
+		  lr: 0x801b18c9  fp: 0xca92bd98
+		  lr: 0x801b191f  fp: 0xca92bdac
+		  lr: 0x802e46f3  fp: 0xca92bdd8
+		  lr: 0x802e4831  fp: 0xca92bde8
+		  lr: 0x80840e18  fp: 0x801aae61
+
+	thread 0xc02919e0
+		kernel continuation: 0x8004f325
+
+	thread 0xc0291590
+		kernel continuation: 0x8004f641
+
+	thread 0xc0291140
+		kernel continuation: 0x80049673
+
+	thread 0xc0290cf0
+		kernel state:
+		  r0: 0x0f0f0f4f  r1: 0x0f4f0f07  r2: 0x0f0f0f0b  r3: 0x8f0f068e
+		  r4: 0xc02908a0  r5: 0xc0290cf0  r6: 0x80255000  r7: 0xca9bba80
+		  r8: 0x00000000  r9: 0xc0290cf0 r10: 0xc0290944 r11: 0xc02908bc
+		 r12: 0x80000193  sp: 0xca9bba70  lr: 0x800690fd  pc: 0x0f0f074a
+		cpsr: 0x00000093 fsr: 0x0f0f0d1b far: 0x0e270a8e
+		kernel backtrace: ca9bba80
+		  lr: 0x8001ea85  fp: 0xca9bbaa8
+		  lr: 0x8001ed67  fp: 0xca9bbae8
+		  lr: 0x8001edd9  fp: 0xca9bbaf0
+		  lr: 0x802ec675  fp: 0xca9bbfa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc0290450
+		kernel continuation: 0x801bc401
+
+	thread 0xc0290000
+		kernel continuation: 0x801bc401
+
+	thread 0xc025c000
+		kernel continuation: 0x801bc401
+
+	thread 0xc02b68a0
+		kernel continuation: 0x801bc401
+
+	thread 0xc02b6450
+		kernel state:
+		  r0: 0x733c3e79  r1: 0x6e697274  r2: 0x70413e67  r3: 0x41656c70
+		  r4: 0xc025e6d0  r5: 0xc02b6450  r6: 0x80255000  r7: 0xca913e94
+		  r8: 0x00000000  r9: 0xc02b6450 r10: 0xc025e774 r11: 0xc025e6ec
+		 r12: 0x80000193  sp: 0xca913e84  lr: 0x800690fd  pc: 0x3e79656b
+		cpsr: 0x00000093 fsr: 0x3e676e69 far: 0x6c707041
+		kernel backtrace: ca913e94
+		  lr: 0x8001ea85  fp: 0xca913ebc
+		  lr: 0x8001ed67  fp: 0xca913efc
+		  lr: 0x8001edd9  fp: 0xca913f04
+		  lr: 0x8001aa1d  fp: 0xca913f1c
+		  lr: 0x80156cc9  fp: 0xca913f50
+		  lr: 0x8015701d  fp: 0xca913f84
+		  lr: 0x804d3360  fp: 0xca913fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc02b6cf0
+		kernel state:
+		  r0: 0xd0110005  r1: 0x0000005e  r2: 0xc0100001  r3: 0x0000000d
+		  r4: 0xc0290000  r5: 0xc02b6cf0  r6: 0x80255000  r7: 0xca9c3f18
+		  r8: 0x00000000  r9: 0x00000000 r10: 0xc02900a4 r11: 0xc029001c
+		 r12: 0x800f0193  sp: 0xca9c3f08  lr: 0x800690fd  pc: 0x00004007
+		cpsr: 0x00000093 fsr: 0x00000058 far: 0xc0100007
+		kernel backtrace: ca9c3f18
+		  lr: 0x8001ea85  fp: 0xca9c3f40
+		  lr: 0x8001ed67  fp: 0xca9c3f80
+		  lr: 0x8001edcb  fp: 0xca9c3f88
+		  lr: 0x801bc491  fp: 0xca9c3fa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc025e6d0
+		kernel continuation: 0x801bc401
+
+	thread 0xc01c9140
+		kernel continuation: 0x801bc401
+
+	thread 0xc025d140
+		kernel continuation: 0x801bc401
+
+	thread 0xc02b7140
+		kernel continuation: 0x801bc401
+
+>>>>>>>>thread 0xc025d9e0
+>>>>>>>>	kernel backtrace: ca933ea0
+>>>>>>>>	  lr: 0x80068d2b  fp: 0xca933eb4
+>>>>>>>>	  lr: 0x80015d71  fp: 0xca933eec
+>>>>>>>>	  lr: 0x8061cd28  fp: 0xca933f20
+>>>>>>>>	  lr: 0x8061bbf0  fp: 0xca933f30
+>>>>>>>>	  lr: 0x8061c144  fp: 0xca933f54
+>>>>>>>>	  lr: 0x801bcae5  fp: 0xca933f64
+>>>>>>>>	  lr: 0x801bc2e7  fp: 0xca933f88
+>>>>>>>>	  lr: 0x801bc417  fp: 0xca933fa8
+>>>>>>>>	  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc02b8280
+		kernel state:
+		  r0: 0x00000000  r1: 0x00000000  r2: 0x00000000  r3: 0x00c00000
+		  r4: 0xc0291e30  r5: 0xc02b8280  r6: 0x80255000  r7: 0xca99bc48
+		  r8: 0x00000000  r9: 0x00000080 r10: 0xc0291ed4 r11: 0xc0291e4c
+		 r12: 0x80000193  sp: 0xca99bc38  lr: 0x800690fd  pc: 0x00000000
+		cpsr: 0x00000093 fsr: 0x40000000 far: 0x00000000
+		kernel backtrace: ca99bc48
+		  lr: 0x8001ea85  fp: 0xca99bc70
+		  lr: 0x8001ed67  fp: 0xca99bcb0
+		  lr: 0x8001edd9  fp: 0xca99bcb8
+		  lr: 0x8000f377  fp: 0xca99bcdc
+		  lr: 0x80013005  fp: 0xca99bd04
+		  lr: 0x80184907  fp: 0xca99bfa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+	thread 0xc0441b20
+		kernel continuation: 0x80024f2d
+
+	thread 0xc0394000
+		kernel state:
+		  r0: 0x4b4f493e  r1: 0x65507469  r2: 0x6e6f7372  r3: 0x74696c61
+		  r4: 0xc0475cf0  r5: 0xc0394000  r6: 0x80255000  r7: 0xca90be9c
+		  r8: 0x00000000  r9: 0xc0394000 r10: 0xc0475d94 r11: 0xc0475d0c
+		 r12: 0x80000093  sp: 0xca90be8c  lr: 0x800690fd  pc: 0x3c3e7463
+		cpsr: 0x00000093 fsr: 0x6c434f49 far: 0x3c737361
+		kernel backtrace: ca90be9c
+		  lr: 0x8001ea85  fp: 0xca90bec4
+		  lr: 0x8001ed67  fp: 0xca90bf04
+		  lr: 0x8001edd9  fp: 0xca90bf0c
+		  lr: 0x8001aa1d  fp: 0xca90bf24
+		  lr: 0x80156cc9  fp: 0xca90bf58
+		  lr: 0x8015701d  fp: 0xca90bf8c
+		  lr: 0x800a4bb3  fp: 0xca90bfa8
+		  lr: 0x800672bc  fp: 0x00000000
+
+Task 0x80ad9b58: 171 pages, 3 threads: pid 1: launchd
+	thread 0xc0291e30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0005a000  r1: 0x03000003  r2: 0x00000024  r3: 0x00001000
+		  r4: 0x00000e03  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdffed0
+		  r8: 0x00000000  r9: 0x0000153b r10: 0x03000003 r11: 0x00001000
+		 r12: 0xffffffe1  sp: 0x2fdffe94  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x60000010 fsr: 0x0000080f far: 0x3e1b8b38
+		user backtrace: 2fdffed0
+		  lr: 0x0000d078  fp: 0x2fdfff2c
+		  lr: 0x0000a1a8  fp: 0x2fdfff90
+		  lr: 0x00002d9c  fp: 0x00000000
+
+	thread 0xc02b8b20
+		kernel continuation: 0x80156d9b
+		user state:
+		  r0: 0x00000004  r1: 0x2fee5f38  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00001003  r7: 0x2fee5f2c
+		  r8: 0x0000ec00  r9: 0x0000001b r10: 0x00000000 r11: 0x00000000
+		 r12: 0x0000005d  sp: 0x2fee5f1c  lr: 0x32cc68c1  pc: 0x32cc68d8
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x2fee644c
+		user backtrace: 2fee5f2c
+		  lr: 0x0000ec64  fp: 0x2fee5fbc
+		  lr: 0x32d27b4c  fp: 0x2fee5fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc01c8000
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00000b03  r1: 0x00000000  r2: 0x00000001  r3: 0x00000001
+		  r4: 0x0000001e  r5: 0x00000000  r6: 0x00000000  r7: 0x2ff67f90
+		  r8: 0x0000a3f0  r9: 0x00000001 r10: 0x00000000 r11: 0x00000000
+		 r12: 0x0000014e  sp: 0x2ff67f5c  lr: 0x32c9f19f  pc: 0x32d2654c
+		cpsr: 0x00000010 fsr: 0x0000080f far: 0x2ff68044
+		user backtrace: 2ff67f90
+		  lr: 0x32ce31ef  fp: 0x2ff67fac
+		  lr: 0x0000a410  fp: 0x2ff67fbc
+		  lr: 0x32d27b4c  fp: 0x2ff67fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x80ad9974: 163 pages, 1 threads: pid 2: launchctl
+	thread 0xc01c88a0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fdffca8
+		  r4: 0x00000001  r5: 0x00000000  r6: 0x0000e270  r7: 0x2fdffd44
+		  r8: 0x00000000  r9: 0x00000003 r10: 0x00000000 r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fdfeb24  lr: 0x0000ab44  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x3380a664
+		user backtrace: 2fdffd44
+		  lr: 0x000025c0  fp: 0x2fdfff08
+		  lr: 0x00001cfc  fp: 0x00000000
+
+Task 0x80ad9790: 126 pages, 3 threads: pid 6: ios3ds-wifid
+	thread 0xc025eb20
+		kernel state:
+		  r0: 0x00000000  r1: 0x00001000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0xc025c8a0  r5: 0xc025eb20  r6: 0x80255000  r7: 0xcacd3e3c
+		  r8: 0x00000000  r9: 0xc025eb20 r10: 0xc025c944 r11: 0xc025c8bc
+		 r12: 0x80000093  sp: 0xcacd3e2c  lr: 0x800690fd  pc: 0x80b86940
+		cpsr: 0x00000093 fsr: 0x80c73fc0 far: 0x040f8408
+		kernel backtrace: cacd3e3c
+		  lr: 0x8001ea85  fp: 0xcacd3e64
+		  lr: 0x8001ed67  fp: 0xcacd3ea4
+		  lr: 0x8001edcb  fp: 0xcacd3eac
+		  lr: 0x80147201  fp: 0xcacd3eec
+		  lr: 0x8015f46b  fp: 0xcacd3f6c
+		  lr: 0x8015f4c7  fp: 0xcacd3f80
+		  lr: 0x801856a8  fp: 0xcacd3fa8
+		  lr: 0x80066180  fp: 0x2fdfff08
+		user state:
+		  r0: 0x2fdffeb0  r1: 0x00000001  r2: 0x00000004  r3: 0x3e1b8b38
+		  r4: 0x000080c4  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdfff08
+		  r8: 0x00119630  r9: 0x0000001c r10: 0x00000000 r11: 0x00000000
+		 r12: 0x000000e6  sp: 0x2fdffe4c  lr: 0x000076b0  pc: 0x32cfe920
+		cpsr: 0x80000010 fsr: 0x0000080f far: 0x008d1a00
+		user backtrace: 2fdfff08
+		  lr: 0x00007afc  fp: 0x00000000
+
+	thread 0xc0440e30
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x008cf000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc0440590
+		kernel continuation: 0x80156d9b
+		user state:
+		  r0: 0x00000019  r1: 0x00119cc0  r2: 0x00119cb0  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x2ff78fbc
+		  r8: 0x35ec58d1  r9: 0x00000001 r10: 0x00000000 r11: 0x00000020
+		 r12: 0x0000005d  sp: 0x2ff70bf0  lr: 0x35ec5a3b  pc: 0x32cc68d8
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x35ec63b2
+		user backtrace: 2ff78fbc
+		  lr: 0x32d27b4c  fp: 0x2ff78fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x80ad93c8: 73 pages, 1 threads: pid 8: ios3ds-sample
+	thread 0xc02b7590
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x0000020b  r1: 0x00000000  r2: 0x00000001  r3: 0x00000001
+		  r4: 0x0000003c  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdffe14
+		  r8: 0x00000008  r9: 0x00000001 r10: 0x00000000 r11: 0x0000002c
+		 r12: 0x0000014e  sp: 0x2fdffde0  lr: 0x32c9f19f  pc: 0x32d2654c
+		cpsr: 0x00000010 fsr: 0x00000007 far: 0x32ce8d78
+		user backtrace: 2fdffe14
+		  lr: 0x32ce31ef  fp: 0x2fdffe30
+		  lr: 0x0000750c  fp: 0x2fdfff00
+		  lr: 0x000079a8  fp: 0x00000000
+
+Task 0x80ad91e4: 289 pages, 3 threads: pid 9: ios3ds-mcud
+	thread 0xc0292b20
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00000c03  r1: 0x00000000  r2: 0x00000001  r3: 0x00000001
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x05f5e100  r7: 0x2fdffcf8
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x2fdffdb0 r11: 0x00000073
+		 r12: 0x0000014e  sp: 0x2fdffcc4  lr: 0x32c9f19f  pc: 0x32d2654c
+		cpsr: 0x00000010 fsr: 0x00000007 far: 0x34280cec
+		user backtrace: 2fdffcf8
+		  lr: 0x32c9f117  fp: 0x2fdffd10
+		  lr: 0x00007318  fp: 0x2fdfff00
+		  lr: 0x000077ac  fp: 0x00000000
+
+	thread 0xc0440140
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x009d3000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc061e590
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00003303  r1: 0x00003403  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x2ffe9e28
+		  r8: 0x00000000  r9: 0x00000f8d r10: 0x00000001 r11: 0x00000000
+		 r12: 0x0000014e  sp: 0x2ffe9dc4  lr: 0x32cd2f78  pc: 0x32d2654c
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x34275a04
+		user backtrace: 2ffe9e28
+		  lr: 0x32cd2918  fp: 0x2ffe9e34
+		  lr: 0x373e1e58  fp: 0x2ffe9e4c
+		  lr: 0x373e1d34  fp: 0x2ffe9e8c
+		  lr: 0x341c0934  fp: 0x2ffe9ea0
+		  lr: 0x3740c208  fp: 0x2ffe9fbc
+		  lr: 0x32d27b4c  fp: 0x2ffe9fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x83647d3c: 122 pages, 2 threads: pid 11: ios3ds-input
+	thread 0xc02908a0
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00000c03  r1: 0x00000000  r2: 0x00000001  r3: 0x00000001
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00f42400  r7: 0x2fdffb00
+		  r8: 0x00000000  r9: 0x0000001b r10: 0x00008090 r11: 0x00000001
+		 r12: 0x0000014e  sp: 0x2fdffacc  lr: 0x32c9f19f  pc: 0x32d2654c
+		cpsr: 0x00000010 fsr: 0x00000007 far: 0x3e1ae800
+		user backtrace: 2fdffb00
+		  lr: 0x32c9f117  fp: 0x2fdffb18
+		  lr: 0x000070c0  fp: 0x2fdffee8
+		  lr: 0x00007ab8  fp: 0x00000000
+
+	thread 0xc04416d0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x0097b000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x83647974: 127 pages, 4 threads: pid 13: syslogd
+	thread 0xc0292280
+		kernel continuation: 0x80156d9b
+		user state:
+		  r0: 0x00000008  r1: 0x2fdffe14  r2: 0x2fdffd94  r3: 0x2fdffd14
+		  r4: 0x00000000  r5: 0x2fdffedc  r6: 0x00000000  r7: 0x2fdffc7c
+		  r8: 0x2fdfff14  r9: 0x00110140 r10: 0x00000001 r11: 0x2fdfff1c
+		 r12: 0x0000005d  sp: 0x2fdffc6c  lr: 0x32cc68c1  pc: 0x32cc68d8
+		cpsr: 0x00000010 fsr: 0x00000807 far: 0x0010f000
+		user backtrace: 2fdffc7c
+		  lr: 0x00012264  fp: 0x2fdfff10
+		  lr: 0x00001628  fp: 0x00000000
+
+	thread 0xc03959e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x00112580  r1: 0x03000102  r2: 0x00000000  r3: 0x00000084
+		  r4: 0x00001103  r5: 0x0000035f  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x00000000  r9: 0x00110220 r10: 0x03000102 r11: 0x00000084
+		 r12: 0xffffffe1  sp: 0x2fee5f48  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x20000010 fsr: 0x0000080f far: 0x00112050
+		user backtrace: 2fee5f84
+		  lr: 0x0000d5c0  fp: 0x2fee5fbc
+		  lr: 0x32d27b4c  fp: 0x2fee5fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0395590
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00001603  r1: 0x00001703  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x2ff67f70
+		  r8: 0x00000000  r9: 0x00112700 r10: 0x00000001 r11: 0x00000000
+		 r12: 0x0000014e  sp: 0x2ff67f0c  lr: 0x32cd2f78  pc: 0x32d2654c
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0011106e
+		user backtrace: 2ff67f70
+		  lr: 0x32cd2918  fp: 0x2ff67f7c
+		  lr: 0x0000b050  fp: 0x2ff67f94
+		  lr: 0x0000de38  fp: 0x2ff67fbc
+		  lr: 0x32d27b4c  fp: 0x2ff67fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0395140
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2ffe9f28  r1: 0x00000003  r2: 0x00000018  r3: 0x0000003c
+		  r4: 0x00002903  r5: 0x00000000  r6: 0x00000000  r7: 0x2ffe9f14
+		  r8: 0x00000000  r9: 0x00111830 r10: 0x00000003 r11: 0x0000003c
+		 r12: 0xffffffe1  sp: 0x2ffe9ed8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x20000010 fsr: 0x00000007 far: 0x32da84ac
+		user backtrace: 2ffe9f14
+		  lr: 0x32d93138  fp: 0x2ffe9f70
+		  lr: 0x32d901c8  fp: 0x2ffe9fb0
+		  lr: 0x0000ac04  fp: 0x2ffe9fbc
+		  lr: 0x32d27b4c  fp: 0x2ffe9fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x836473c8: 994 pages, 21 threads: pid 16: mediaserverd
+	thread 0xc02b7e30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fdfeff8  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001503  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fdfef6c
+		  r8: 0x00000000  r9: 0x2fdfef50 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fdfef30  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x00007bf0
+		user backtrace: 2fdfef6c
+		  lr: 0x35e8cf83  fp: 0x2fdfef9c
+		  lr: 0x35e8c787  fp: 0x2fdffc18
+		  lr: 0x35e8c50b  fp: 0x2fdffcec
+		  lr: 0x35e8c419  fp: 0x2fdffd08
+		  lr: 0x00003100  fp: 0x2fdffe50
+		  lr: 0x00002a3c  fp: 0x00000000
+
+	thread 0xc02b6000
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x00aa7000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc043f450
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2ffe91b4  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00002b03  r5: 0xffffffff  r6: 0x00000000  r7: 0x2ffe9128
+		  r8: 0x00000000  r9: 0x00000004 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2ffe90ec  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x304e634c
+		user backtrace: 2ffe9128
+		  lr: 0x35e8cf83  fp: 0x2ffe9158
+		  lr: 0x35e8c787  fp: 0x2ffe9dd4
+		  lr: 0x35e8c50b  fp: 0x2ffe9ea8
+		  lr: 0x35e8c419  fp: 0x2ffe9ec4
+		  lr: 0x303e820c  fp: 0x2ffe9ed4
+		  lr: 0x303e7ef0  fp: 0x2ffe9f10
+		  lr: 0x303e7da8  fp: 0x2ffe9fbc
+		  lr: 0x32d27b4c  fp: 0x2ffe9fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc03948a0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0048017c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00003903  r5: 0xffffffff  r6: 0x00000000  r7: 0x004800f0
+		  r8: 0x00000000  r9: 0x00480cf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x004800b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x3740c108
+		user backtrace: 4800f0
+		  lr: 0x35e8cf83  fp: 0x00480120
+		  lr: 0x35e8c787  fp: 0x00480d9c
+		  lr: 0x35e8c50b  fp: 0x00480e70
+		  lr: 0x35e9ce71  fp: 0x00480e8c
+		  lr: 0x341be41c  fp: 0x00480ea0
+		  lr: 0x3740c208  fp: 0x00480fbc
+		  lr: 0x32d27b4c  fp: 0x00480fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0476590
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x00502170  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00003e03  r5: 0xffffffff  r6: 0x00000000  r7: 0x005020e4
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x005020a8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x00ab7400
+		user backtrace: 5020e4
+		  lr: 0x35e8cf83  fp: 0x00502114
+		  lr: 0x35e8c787  fp: 0x00502d90
+		  lr: 0x35e8c50b  fp: 0x00502e64
+		  lr: 0x35e9ce71  fp: 0x00502e80
+		  lr: 0x341be5e4  fp: 0x00502ea0
+		  lr: 0x3740c208  fp: 0x00502fbc
+		  lr: 0x32d27b4c  fp: 0x00502fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0476140
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x00584170  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00004603  r5: 0xffffffff  r6: 0x00000000  r7: 0x005840e4
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x005840a8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x000fd000
+		user backtrace: 5840e4
+		  lr: 0x35e8cf83  fp: 0x00584114
+		  lr: 0x35e8c787  fp: 0x00584d90
+		  lr: 0x35e8c50b  fp: 0x00584e64
+		  lr: 0x35e9ce71  fp: 0x00584e80
+		  lr: 0x341be834  fp: 0x00584ea0
+		  lr: 0x3740c208  fp: 0x00584fbc
+		  lr: 0x32d27b4c  fp: 0x00584fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04769e0
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00004907  r1: 0x0000480b  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x00606dd0
+		  r8: 0x00000000  r9: 0x00606e84 r10: 0x00000001 r11: 0x00000000
+		 r12: 0x0000014e  sp: 0x00606d6c  lr: 0x32cd2f78  pc: 0x32d2654c
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00607048
+		user backtrace: 606dd0
+		  lr: 0x32cd2918  fp: 0x00606ddc
+		  lr: 0x373e1e58  fp: 0x00606df4
+		  lr: 0x373e1d34  fp: 0x00606e34
+		  lr: 0x37424ae4  fp: 0x00606ea0
+		  lr: 0x3740c208  fp: 0x00606fbc
+		  lr: 0x32d27b4c  fp: 0x00606fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc043fcf0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x007a427c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00006f03  r5: 0xffffffff  r6: 0x00000000  r7: 0x007a41f0
+		  r8: 0x00000000  r9: 0x007a4df0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x007a41b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0011e000
+		user backtrace: 7a41f0
+		  lr: 0x35e8cf83  fp: 0x007a4220
+		  lr: 0x35e8c787  fp: 0x007a4e9c
+		  lr: 0x35e8c50b  fp: 0x007a4f70
+		  lr: 0x35e9ce71  fp: 0x007a4f8c
+		  lr: 0x0070bffc  fp: 0x007a4fbc
+		  lr: 0x32d27b4c  fp: 0x007a4fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc025de30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0133412c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00007603  r5: 0xffffffff  r6: 0x00000000  r7: 0x013340a0
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x01334064  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x33447ec0
+		user backtrace: 13340a0
+		  lr: 0x35e8cf83  fp: 0x013340d0
+		  lr: 0x35e8c787  fp: 0x01334d4c
+		  lr: 0x35e8c50b  fp: 0x01334e20
+		  lr: 0x35e8c419  fp: 0x01334e3c
+		  lr: 0x3342a734  fp: 0x01334f08
+		  lr: 0x3342a544  fp: 0x01334fbc
+		  lr: 0x32d27b4c  fp: 0x01334fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0265450
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x013b6144  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00007d03  r5: 0xffffffff  r6: 0x00000000  r7: 0x013b60b8
+		  r8: 0x00000000  r9: 0x00000014 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x013b607c  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x013b5ffc
+		user backtrace: 13b60b8
+		  lr: 0x35e8cf83  fp: 0x013b60e8
+		  lr: 0x35e8c787  fp: 0x013b6d64
+		  lr: 0x35e8c50b  fp: 0x013b6e38
+		  lr: 0x35e9ce71  fp: 0x013b6e54
+		  lr: 0x0108e6a0  fp: 0x013b6f10
+		  lr: 0x01023444  fp: 0x013b6fbc
+		  lr: 0x32d27b4c  fp: 0x013b6fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0475450
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2ff67174  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00009103  r5: 0xffffffff  r6: 0x00000000  r7: 0x2ff670e8
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2ff670ac  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x2ff66e94
+		user backtrace: 2ff670e8
+		  lr: 0x35e8cf83  fp: 0x2ff67118
+		  lr: 0x35e8c787  fp: 0x2ff67d94
+		  lr: 0x35e8c50b  fp: 0x2ff67e68
+		  lr: 0x35e9ce71  fp: 0x2ff67e84
+		  lr: 0x342ea460  fp: 0x2ff67ea0
+		  lr: 0x3740c208  fp: 0x2ff67fbc
+		  lr: 0x32d27b4c  fp: 0x2ff67fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04776d0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x022dc17c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00009703  r5: 0xffffffff  r6: 0x00000000  r7: 0x022dc0f0
+		  r8: 0x00000000  r9: 0x022dccf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x022dc0b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x343821ec
+		user backtrace: 22dc0f0
+		  lr: 0x35e8cf83  fp: 0x022dc120
+		  lr: 0x35e8c787  fp: 0x022dcd9c
+		  lr: 0x35e8c50b  fp: 0x022dce70
+		  lr: 0x35e9ce71  fp: 0x022dce8c
+		  lr: 0x34337c0c  fp: 0x022dcea0
+		  lr: 0x3740c208  fp: 0x022dcfbc
+		  lr: 0x32d27b4c  fp: 0x022dcfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc051a450
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0235e17c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00009d03  r5: 0xffffffff  r6: 0x00000000  r7: 0x0235e0f0
+		  r8: 0x00000000  r9: 0x0235ecf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x0235e0b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x34362000
+		user backtrace: 235e0f0
+		  lr: 0x35e8cf83  fp: 0x0235e120
+		  lr: 0x35e8c787  fp: 0x0235ed9c
+		  lr: 0x35e8c50b  fp: 0x0235ee70
+		  lr: 0x35e9ce71  fp: 0x0235ee8c
+		  lr: 0x34362038  fp: 0x0235eea0
+		  lr: 0x3740c208  fp: 0x0235efbc
+		  lr: 0x32d27b4c  fp: 0x0235efe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc051a000
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x023e017c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000a303  r5: 0xffffffff  r6: 0x00000000  r7: 0x023e00f0
+		  r8: 0x00000000  r9: 0x023e0cf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x023e00b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x34341f9c
+		user backtrace: 23e00f0
+		  lr: 0x35e8cf83  fp: 0x023e0120
+		  lr: 0x35e8c787  fp: 0x023e0d9c
+		  lr: 0x35e8c50b  fp: 0x023e0e70
+		  lr: 0x35e9ce71  fp: 0x023e0e8c
+		  lr: 0x34342900  fp: 0x023e0ea0
+		  lr: 0x3740c208  fp: 0x023e0fbc
+		  lr: 0x32d27b4c  fp: 0x023e0fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061fb20
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0246217c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000a903  r5: 0xffffffff  r6: 0x00000000  r7: 0x024620f0
+		  r8: 0x00000000  r9: 0x02462cf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x024620b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x02463048
+		user backtrace: 24620f0
+		  lr: 0x35e8cf83  fp: 0x02462120
+		  lr: 0x35e8c787  fp: 0x02462d9c
+		  lr: 0x35e8c50b  fp: 0x02462e70
+		  lr: 0x35e9ce71  fp: 0x02462e8c
+		  lr: 0x34357b38  fp: 0x02462ea0
+		  lr: 0x3740c208  fp: 0x02462fbc
+		  lr: 0x32d27b4c  fp: 0x02462fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061f6d0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x024e417c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000af03  r5: 0xffffffff  r6: 0x00000000  r7: 0x024e40f0
+		  r8: 0x00000000  r9: 0x024e4cf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x024e40b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x3436cc94
+		user backtrace: 24e40f0
+		  lr: 0x35e8cf83  fp: 0x024e4120
+		  lr: 0x35e8c787  fp: 0x024e4d9c
+		  lr: 0x35e8c50b  fp: 0x024e4e70
+		  lr: 0x35e9ce71  fp: 0x024e4e8c
+		  lr: 0x3436d79c  fp: 0x024e4ea0
+		  lr: 0x3740c208  fp: 0x024e4fbc
+		  lr: 0x32d27b4c  fp: 0x024e4fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061f280
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0256617c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000b503  r5: 0xffffffff  r6: 0x00000000  r7: 0x025660f0
+		  r8: 0x00000000  r9: 0x02566cf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x025660b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x02567048
+		user backtrace: 25660f0
+		  lr: 0x35e8cf83  fp: 0x02566120
+		  lr: 0x35e8c787  fp: 0x02566d9c
+		  lr: 0x35e8c50b  fp: 0x02566e70
+		  lr: 0x35e9ce71  fp: 0x02566e8c
+		  lr: 0x34368ba4  fp: 0x02566ea0
+		  lr: 0x3740c208  fp: 0x02566fbc
+		  lr: 0x32d27b4c  fp: 0x02566fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061e9e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x025e815c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000bb03  r5: 0xffffffff  r6: 0x00000000  r7: 0x025e80d0
+		  r8: 0x00000000  r9: 0x025e8cd0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x025e8094  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x3e1c62ac
+		user backtrace: 25e80d0
+		  lr: 0x35e8cf83  fp: 0x025e8100
+		  lr: 0x35e8c787  fp: 0x025e8d7c
+		  lr: 0x35e8c50b  fp: 0x025e8e50
+		  lr: 0x35e9ce71  fp: 0x025e8e6c
+		  lr: 0x32e1b650  fp: 0x025e8ea0
+		  lr: 0x3740c208  fp: 0x025e8fbc
+		  lr: 0x32d27b4c  fp: 0x025e8fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061e140
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0266a1bc  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000c503  r5: 0xffffffff  r6: 0x00000000  r7: 0x0266a130
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x0266a0f4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x00015c08
+		user backtrace: 266a130
+		  lr: 0x35e8cf83  fp: 0x0266a160
+		  lr: 0x35e8c787  fp: 0x0266addc
+		  lr: 0x35e8c50b  fp: 0x0266aeb0
+		  lr: 0x35e8c419  fp: 0x0266aecc
+		  lr: 0x0000a440  fp: 0x0266aed8
+		  lr: 0x0000a7c8  fp: 0x0266af14
+		  lr: 0x0000a7e8  fp: 0x0266af1c
+		  lr: 0x0000fc4c  fp: 0x0266afbc
+		  lr: 0x32d27b4c  fp: 0x0266afe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04758a0
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x026ed000  r5: 0x000d01a4  r6: 0x00aa5700  r7: 0x026ecfe0
+		  r8: 0x3e1b7adc  r9: 0x00000000 r10: 0x026ed000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x026ecfc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 26ecfe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc061ee30
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00004e03  r1: 0x00004d03  r2: 0x00000000  r3: 0x0158e751
+		  r4: 0x0158e751  r5: 0x00126e94  r6: 0x00126e60  r7: 0x0281ca90
+		  r8: 0x0281cb10  r9: 0x43300000 r10: 0x00000000 r11: 0x00000001
+		 r12: 0xffffffd9  sp: 0x0281ca8c  lr: 0x32cd4050  pc: 0x32c9d424
+		cpsr: 0x20000010 fsr: 0x00000007 far: 0x303fb2d4
+		user backtrace: 281ca90
+		  lr: 0x32cd2f0c  fp: 0x0281caec
+		  lr: 0x32cd4038  fp: 0x0281caf8
+		  lr: 0x33446e58  fp: 0x0281cb30
+		  lr: 0x3344a928  fp: 0x0281cbfc
+		  lr: 0x33448cac  fp: 0x0281ce60
+		  lr: 0x334482a8  fp: 0x0281cf08
+		  lr: 0x3342a544  fp: 0x0281cfbc
+		  lr: 0x32d27b4c  fp: 0x0281cfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x836471e4: 317 pages, 3 threads: pid 17: mDNSResponder
+	thread 0xc02b86d0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fe75040  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001d03  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fe74fb4
+		  r8: 0x00000000  r9: 0x00000008 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fe74f78  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x1f1479fe
+		user backtrace: 2fe74fb4
+		  lr: 0x35e8cf83  fp: 0x2fe74fe4
+		  lr: 0x35e8c787  fp: 0x2fe75c60
+		  lr: 0x35e8c50b  fp: 0x2fe75d34
+		  lr: 0x35e9ce71  fp: 0x2fe75d50
+		  lr: 0x0007936d  fp: 0x2fe75e00
+		  lr: 0x0009b9a8  fp: 0x00000000
+
+	thread 0xc025d590
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000007  r1: 0x00000000  r2: 0x00000000  r3: 0x2ff5bf50
+		  r4: 0x00000001  r5: 0x2ff5bf6c  r6: 0x00000000  r7: 0x2ff5bf84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2ff5be40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x1f138000
+		user backtrace: 2ff5bf84
+		  lr: 0x32d9fd70  fp: 0x2ff5bf9c
+		  lr: 0x32d9f790  fp: 0x2ff5bfbc
+		  lr: 0x32d28978  fp: 0x2ff5bfe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc04e3000
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x001cbf84
+		  r4: 0x00000001  r5: 0x001cbf98  r6: 0x000d50b0  r7: 0x001cbfbc
+		  r8: 0x4dfef7b2  r9: 0x00000001 r10: 0x4dfef852 r11: 0x0000ccd6
+		 r12: 0x0000016b  sp: 0x001cb4c0  lr: 0x00083c7f  pc: 0x32cd1974
+		cpsr: 0x00000010 fsr: 0x00000007 far: 0x000a5f60
+		user backtrace: 1cbfbc
+		  lr: 0x32d27b4c  fp: 0x001cbfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x83647000: 146 pages, 1 threads: pid 18: fairplayd.N72
+	thread 0xc025ccf0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0059f000  r1: 0x03000002  r2: 0x00000000  r3: 0x00001034
+		  r4: 0x00001303  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdffd74
+		  r8: 0x00000000  r9: 0x00000001 r10: 0x03000002 r11: 0x00001034
+		 r12: 0xffffffe1  sp: 0x2fdffd38  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x60000010 fsr: 0x0000080f far: 0x0059e000
+		user backtrace: 2fdffd74
+		  lr: 0x32d32630  fp: 0x2fdffdb8
+		  lr: 0x00263738  fp: 0x2fdffe58
+		  lr: 0x00001f18  fp: 0x00000000
+
+Task 0x8371ad3c: 692 pages, 12 threads: pid 19: configd
+	thread 0xc0265000
+		kernel continuation: 0x8006678c
+		user state:
+		  r0: 0x00000000  r1: 0x00000001  r2: 0x00000038  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdfef0c
+		  r8: 0x00000000  r9: 0x00127c50 r10: 0x00000001 r11: 0x00000000
+		 r12: 0xffffffe1  sp: 0x2fdfeed0  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x60000010 fsr: 0x00000807 far: 0x00b45000
+		user backtrace: 2fdfef0c
+		  lr: 0x00003844  fp: 0x2fdfefb0
+		  lr: 0x35ea2e37  fp: 0x2fdff000
+		  lr: 0x35e9a5cb  fp: 0x2fdff010
+		  lr: 0x35e9a589  fp: 0x2fdff038
+		  lr: 0x35e8c835  fp: 0x2fdffcb4
+		  lr: 0x35e8c50b  fp: 0x2fdffd88
+		  lr: 0x35e8c419  fp: 0x2fdffda4
+		  lr: 0x00003434  fp: 0x2fdffdb8
+		  lr: 0x000029a0  fp: 0x2fdffe98
+		  lr: 0x00001fdc  fp: 0x00000000
+
+	thread 0xc0477b20
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00000c03  r1: 0x00000000  r2: 0x00000001  r3: 0x00000001
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x0ee6b280  r7: 0x2fee5f60
+		  r8: 0x00035ec6  r9: 0x00000066 r10: 0x00000000 r11: 0x000361a0
+		 r12: 0x0000014e  sp: 0x2fee5f2c  lr: 0x32c9f19f  pc: 0x32d2654c
+		cpsr: 0x00000010 fsr: 0x0000080f far: 0x2fee6044
+		user backtrace: 2fee5f60
+		  lr: 0x32c9f117  fp: 0x2fee5f78
+		  lr: 0x000344d4  fp: 0x2fee5fbc
+		  lr: 0x32d27b4c  fp: 0x2fee5fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc02658a0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2ff67f50
+		  r4: 0x00000001  r5: 0x2ff67f6c  r6: 0x00000000  r7: 0x2ff67f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2ff67e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x00b40800
+		user backtrace: 2ff67f84
+		  lr: 0x32d9fd70  fp: 0x2ff67f9c
+		  lr: 0x32d9f790  fp: 0x2ff67fbc
+		  lr: 0x32d28978  fp: 0x2ff67fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc0477280
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x000fde64  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00002603  r5: 0xffffffff  r6: 0x00000000  r7: 0x000fddd8
+		  r8: 0x00000000  r9: 0x00000058 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x000fdd9c  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x007ce000
+		user backtrace: fddd8
+		  lr: 0x35e8cf83  fp: 0x000fde08
+		  lr: 0x35e8c787  fp: 0x000fea84
+		  lr: 0x35e8c50b  fp: 0x000feb58
+		  lr: 0x35e9ce71  fp: 0x000feb74
+		  lr: 0x00004cfc  fp: 0x000fefbc
+		  lr: 0x32d27b4c  fp: 0x000fefe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc043f000
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x005c0268  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00003403  r5: 0xffffffff  r6: 0x00000000  r7: 0x005c01dc
+		  r8: 0x00000000  r9: 0x00000014 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x005c01a0  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0012343e
+		user backtrace: 5c01dc
+		  lr: 0x35e8cf83  fp: 0x005c020c
+		  lr: 0x35e8c787  fp: 0x005c0e88
+		  lr: 0x35e8c50b  fp: 0x005c0f5c
+		  lr: 0x35e9ce71  fp: 0x005c0f78
+		  lr: 0x0046f4c8  fp: 0x005c0fbc
+		  lr: 0x32d27b4c  fp: 0x005c0fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04409e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0064226c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00004503  r5: 0xffffffff  r6: 0x00000000  r7: 0x006421e0
+		  r8: 0x00000000  r9: 0x00000008 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x006421a4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x00640910
+		user backtrace: 6421e0
+		  lr: 0x35e8cf83  fp: 0x00642210
+		  lr: 0x35e8c787  fp: 0x00642e8c
+		  lr: 0x35e8c50b  fp: 0x00642f60
+		  lr: 0x35e9ce71  fp: 0x00642f7c
+		  lr: 0x00484643  fp: 0x00642fbc
+		  lr: 0x32d27b4c  fp: 0x00642fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0441280
+		kernel continuation: 0x80156d9b
+		user state:
+		  r0: 0x00000020  r1: 0x00126060  r2: 0x00126050  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000005  r6: 0x00000800  r7: 0x2fffafbc
+		  r8: 0x3e927384  r9: 0x00000001 r10: 0x00000005 r11: 0x00000020
+		 r12: 0x0000005d  sp: 0x2fff2bf0  lr: 0x35ec5a3b  pc: 0x32cc68d8
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x2fffbc50
+		user backtrace: 2fffafbc
+		  lr: 0x32d27b4c  fp: 0x2fffafe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc02b79e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x006c8284  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00007607  r5: 0xffffffff  r6: 0x00000000  r7: 0x006c81f8
+		  r8: 0x00000000  r9: 0x00000014 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x006c81bc  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00b467fe
+		user backtrace: 6c81f8
+		  lr: 0x35e8cf83  fp: 0x006c8228
+		  lr: 0x35e8c787  fp: 0x006c8ea4
+		  lr: 0x35e8c50b  fp: 0x006c8f78
+		  lr: 0x35e9ce71  fp: 0x006c8f94
+		  lr: 0x00427430  fp: 0x006c8fbc
+		  lr: 0x32d27b4c  fp: 0x006c8fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0475cf0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0074a290  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00009a03  r5: 0xffffffff  r6: 0x00000000  r7: 0x0074a204
+		  r8: 0x00000000  r9: 0x0074ae04 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x0074a1c8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0012857e
+		user backtrace: 74a204
+		  lr: 0x35e8cf83  fp: 0x0074a234
+		  lr: 0x35e8c787  fp: 0x0074aeb0
+		  lr: 0x35e8c50b  fp: 0x0074af84
+		  lr: 0x35e9ce71  fp: 0x0074afa0
+		  lr: 0x0045856c  fp: 0x0074afbc
+		  lr: 0x32d27b4c  fp: 0x0074afe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e49e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x007cc240  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000be03  r5: 0xffffffff  r6: 0x00000000  r7: 0x007cc1b4
+		  r8: 0x00000000  r9: 0x00000004 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x007cc178  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x007ce000
+		user backtrace: 7cc1b4
+		  lr: 0x35e8cf83  fp: 0x007cc1e4
+		  lr: 0x35e8c787  fp: 0x007cce60
+		  lr: 0x35e8c50b  fp: 0x007ccf34
+		  lr: 0x35e9ce71  fp: 0x007ccf50
+		  lr: 0x309de534  fp: 0x007ccfbc
+		  lr: 0x32d27b4c  fp: 0x007ccfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e38a0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x01f242a0  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000cf03  r5: 0xffffffff  r6: 0x00000000  r7: 0x01f24214
+		  r8: 0x00000000  r9: 0x01f24e14 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x01f241d8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x01f25048
+		user backtrace: 1f24214
+		  lr: 0x35e8cf83  fp: 0x01f24244
+		  lr: 0x35e8c787  fp: 0x01f24ec0
+		  lr: 0x35e8c50b  fp: 0x01f24f94
+		  lr: 0x35e9ce71  fp: 0x01f24fb0
+		  lr: 0x0048f148  fp: 0x01f24fbc
+		  lr: 0x32d27b4c  fp: 0x01f24fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc051c6d0
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x2ffea000  r5: 0x0007932c  r6: 0x00b26e00  r7: 0x2ffe9fe0
+		  r8: 0x3e1b7adc  r9: 0x00000000 r10: 0x2ffea000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x2ffe9fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 2ffe9fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371ab58: 3061 pages, 17 threads: pid 20: SpringBoard
+	thread 0xc025c8a0
+		kernel continuation: 0x8006678c
+		user state:
+		  r0: 0xffffffff  r1: 0xffffffff  r2: 0x00000001  r3: 0x00000000
+		  r4: 0x00000009  r5: 0x00000000  r6: 0x0067a000  r7: 0x2fdfeb68
+		  r8: 0x2fdfebcb  r9: 0x00000030 r10: 0x2fdfeb30 r11: 0x00000001
+		 r12: 0x3e9084d4  sp: 0x2fdfeabc  lr: 0x35e7c797  pc: 0x3037e240
+		cpsr: 0x800f0010 fsr: 0x00000007 far: 0x33a7aa24
+		user backtrace: 2fdfeb68
+		  lr: 0x35e7c559  fp: 0x2fdfebe4
+		  lr: 0x35e7c19b  fp: 0x2fdfec30
+		  lr: 0x35e7c13f  fp: 0x2fdfec50
+		  lr: 0x35e7c09f  fp: 0x2fdfec70
+		  lr: 0x3526fb8c  fp: 0x2fdfec90
+		  lr: 0x35272bec  fp: 0x2fdfecb4
+		  lr: 0x35273acc  fp: 0x2fdfecd0
+		  lr: 0x35ebc8d1  fp: 0x2fdfecd8
+		  lr: 0x35e8cecd  fp: 0x2fdfed08
+		  lr: 0x35e8c6f9  fp: 0x2fdff984
+		  lr: 0x35e8c50b  fp: 0x2fdffa58
+		  lr: 0x35e8c419  fp: 0x2fdffa74
+		  lr: 0x35261d24  fp: 0x2fdffa84
+		  lr: 0x3386557c  fp: 0x2fdffaa4
+		  lr: 0x33862558  fp: 0x2fdffaec
+		  lr: 0x00004029  fp: 0x2fdffd10
+		  lr: 0x00003764  fp: 0x00000000
+
+	thread 0xc043f8a0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00838000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc04e4140
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2ff670d4  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00012e03  r5: 0xffffffff  r6: 0x00000000  r7: 0x2ff67048
+		  r8: 0x00000000  r9: 0x2ff67c48 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2ff6700c  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x0027f040
+		user backtrace: 2ff67048
+		  lr: 0x35e8cf83  fp: 0x2ff67078
+		  lr: 0x35e8c787  fp: 0x2ff67cf4
+		  lr: 0x35e8c50b  fp: 0x2ff67dc8
+		  lr: 0x35e9ce71  fp: 0x2ff67de4
+		  lr: 0x307df054  fp: 0x2ff67e04
+		  lr: 0x33fc2551  fp: 0x2ff67f60
+		  lr: 0x33fc22af  fp: 0x2ff67f68
+		  lr: 0x33fd6b93  fp: 0x2ff67f90
+		  lr: 0x32d9f270  fp: 0x2ff67f9c
+		  lr: 0x32d9f790  fp: 0x2ff67fbc
+		  lr: 0x32d28978  fp: 0x2ff67fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc04e3450
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2ffe8f90  r1: 0x00000006  r2: 0x00000000  r3: 0x00001000
+		  r4: 0x00002103  r5: 0x00000000  r6: 0x00000000  r7: 0x2ffe8f7c
+		  r8: 0x00000000  r9: 0x3e36295c r10: 0x00000006 r11: 0x00001000
+		 r12: 0xffffffe1  sp: 0x2ffe8f40  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x20000010 fsr: 0x00000007 far: 0x33ebe7f8
+		user backtrace: 2ffe8f7c
+		  lr: 0x346ddee4  fp: 0x2ffe9fac
+		  lr: 0x346dde38  fp: 0x2ffe9fbc
+		  lr: 0x32d27b4c  fp: 0x2ffe9fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc051c280
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x006fd018  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00003f03  r5: 0xffffffff  r6: 0x00000000  r7: 0x006fcf8c
+		  r8: 0x00000000  r9: 0x006fdb8c r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x006fcf50  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x006faf6c
+		user backtrace: 6fcf8c
+		  lr: 0x35e8cf83  fp: 0x006fcfbc
+		  lr: 0x35e8c787  fp: 0x006fdc38
+		  lr: 0x35e8c50b  fp: 0x006fdd0c
+		  lr: 0x35e8c419  fp: 0x006fdd28
+		  lr: 0x33fb823f  fp: 0x006fdd54
+		  lr: 0x33fb8151  fp: 0x006fdd70
+		  lr: 0x33b731b4  fp: 0x006fddb8
+		  lr: 0x33fb7b97  fp: 0x006fdfbc
+		  lr: 0x32d27b4c  fp: 0x006fdfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e3cf0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x007ef230  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00004903  r5: 0xffffffff  r6: 0x00000000  r7: 0x007ef1a4
+		  r8: 0x00000000  r9: 0x3e91ed9c r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x007ef168  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x370bdff0
+		user backtrace: 7ef1a4
+		  lr: 0x35e8cf83  fp: 0x007ef1d4
+		  lr: 0x35e8c787  fp: 0x007efe50
+		  lr: 0x35e8c50b  fp: 0x007eff24
+		  lr: 0x35e8c419  fp: 0x007eff40
+		  lr: 0x369e7d1c  fp: 0x007effbc
+		  lr: 0x32d27b4c  fp: 0x007effe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0475000
+		kernel continuation: 0x8006678c
+		user state:
+		  r0: 0x00000000  r1: 0x00000003  r2: 0x000000d0  r3: 0x000010b8
+		  r4: 0x00005f03  r5: 0x00000000  r6: 0x00000000  r7: 0x032c1d9c
+		  r8: 0x00000000  r9: 0x3e36295c r10: 0x00000003 r11: 0x000010b8
+		 r12: 0xffffffe1  sp: 0x032c1d60  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x20000010 fsr: 0x00000007 far: 0x34791afc
+		user backtrace: 32c1d9c
+		  lr: 0x3380b494  fp: 0x032c2e90
+		  lr: 0x337cc18c  fp: 0x032c2eec
+		  lr: 0x337cc4f8  fp: 0x032c2f0c
+		  lr: 0x33275bfc  fp: 0x032c2f1c
+		  lr: 0x346ede9c  fp: 0x032c2fa8
+		  lr: 0x346ec724  fp: 0x032c40b0
+		  lr: 0x346f32c4  fp: 0x032c4124
+		  lr: 0x3327586c  fp: 0x032c4160
+		  lr: 0x337cc88c  fp: 0x032c4184
+		  lr: 0x35ea2e37  fp: 0x032c41d4
+		  lr: 0x35e9a5cb  fp: 0x032c41e4
+		  lr: 0x35e9a589  fp: 0x032c420c
+		  lr: 0x35e8c835  fp: 0x032c4e88
+		  lr: 0x35e8c50b  fp: 0x032c4f5c
+		  lr: 0x35e9ce71  fp: 0x032c4f78
+		  lr: 0x346ecc74  fp: 0x032c4fac
+		  lr: 0x346dde38  fp: 0x032c4fbc
+		  lr: 0x32d27b4c  fp: 0x032c4fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc0394cf0
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x03347000  r5: 0x00320188  r6: 0x00836d00  r7: 0x03346fe0
+		  r8: 0x3e1b7adc  r9: 0x0051f820 r10: 0x03347000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x03346fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 3346fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc04e5b20
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x033e8254  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00008503  r5: 0xffffffff  r6: 0x00000000  r7: 0x033e81c8
+		  r8: 0x00000000  r9: 0x0021d5a0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x033e818c  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x008ca5fe
+		user backtrace: 33e81c8
+		  lr: 0x35e8cf83  fp: 0x033e81f8
+		  lr: 0x35e8c787  fp: 0x033e8e74
+		  lr: 0x35e8c50b  fp: 0x033e8f48
+		  lr: 0x35e9ce71  fp: 0x033e8f64
+		  lr: 0x337ff11c  fp: 0x033e8fbc
+		  lr: 0x32d27b4c  fp: 0x033e8fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e5280
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0346a27c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00009903  r5: 0xffffffff  r6: 0x00000000  r7: 0x0346a1f0
+		  r8: 0x00000000  r9: 0x0346adf0 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x0346a1b4  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x008c7c00
+		user backtrace: 346a1f0
+		  lr: 0x35e8cf83  fp: 0x0346a220
+		  lr: 0x35e8c787  fp: 0x0346ae9c
+		  lr: 0x35e8c50b  fp: 0x0346af70
+		  lr: 0x35e8c419  fp: 0x0346af8c
+		  lr: 0x000570ef  fp: 0x0346afbc
+		  lr: 0x32d27b4c  fp: 0x0346afe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061dcf0
+		kernel continuation: 0x80020df1
+		user state:
+		  r0: 0x00002603  r1: 0x00002703  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x00000000  r5: 0x00000000  r6: 0x00000000  r7: 0x034ece28
+		  r8: 0x00000000  r9: 0x3e4dabc4 r10: 0x00000001 r11: 0x00000000
+		 r12: 0x0000014e  sp: 0x034ecdc4  lr: 0x32cd2f78  pc: 0x32d2654c
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0085d5fe
+		user backtrace: 34ece28
+		  lr: 0x32cd2918  fp: 0x034ece34
+		  lr: 0x373e1e58  fp: 0x034ece4c
+		  lr: 0x373e1d34  fp: 0x034ece8c
+		  lr: 0x341c0934  fp: 0x034ecea0
+		  lr: 0x3740c208  fp: 0x034ecfbc
+		  lr: 0x32d27b4c  fp: 0x034ecfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc061d8a0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0356e03c  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x0000c103  r5: 0xffffffff  r6: 0x00000000  r7: 0x0356dfb0
+		  r8: 0x00000000  r9: 0x00000008 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x0356df74  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x340288e6
+		user backtrace: 356dfb0
+		  lr: 0x35e8cf83  fp: 0x0356dfe0
+		  lr: 0x35e8c787  fp: 0x0356ec5c
+		  lr: 0x35e8c50b  fp: 0x0356ed30
+		  lr: 0x35e8c419  fp: 0x0356ed4c
+		  lr: 0x33fb823f  fp: 0x0356ed78
+		  lr: 0x33fb8151  fp: 0x0356ed94
+		  lr: 0x000856d9  fp: 0x0356edb0
+		  lr: 0x33fbeb91  fp: 0x0356edb8
+		  lr: 0x33fb7b97  fp: 0x0356efbc
+		  lr: 0x32d27b4c  fp: 0x0356efe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc02926d0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x03c9c1f0  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00011103  r5: 0xffffffff  r6: 0x00000000  r7: 0x03c9c164
+		  r8: 0x00000000  r9: 0x00000004 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x03c9c128  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x008bd400
+		user backtrace: 3c9c164
+		  lr: 0x35e8cf83  fp: 0x03c9c194
+		  lr: 0x35e8c787  fp: 0x03c9ce10
+		  lr: 0x35e8c50b  fp: 0x03c9cee4
+		  lr: 0x35e8c419  fp: 0x03c9cf00
+		  lr: 0x309fa829  fp: 0x03c9cfbc
+		  lr: 0x32d27b4c  fp: 0x03c9cfe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc051be30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x03d1e1c0  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00011703  r5: 0xffffffff  r6: 0x00000000  r7: 0x03d1e134
+		  r8: 0x00000000  r9: 0x00000004 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x03d1e0f8  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x040e2ffe
+		user backtrace: 3d1e134
+		  lr: 0x35e8cf83  fp: 0x03d1e164
+		  lr: 0x35e8c787  fp: 0x03d1ede0
+		  lr: 0x35e8c50b  fp: 0x03d1eeb4
+		  lr: 0x35e8c419  fp: 0x03d1eed0
+		  lr: 0x309f9aab  fp: 0x03d1efbc
+		  lr: 0x32d27b4c  fp: 0x03d1efe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e4e30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x03da0034  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00011e03  r5: 0xffffffff  r6: 0x00000000  r7: 0x03d9ffa8
+		  r8: 0x00000000  r9: 0x00000004 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x03d9ff6c  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x03d9fffc
+		user backtrace: 3d9ffa8
+		  lr: 0x35e8cf83  fp: 0x03d9ffd8
+		  lr: 0x35e8c787  fp: 0x03da0c54
+		  lr: 0x35e8c50b  fp: 0x03da0d28
+		  lr: 0x35e8c419  fp: 0x03da0d44
+		  lr: 0x33fb823f  fp: 0x03da0d70
+		  lr: 0x33fb8151  fp: 0x03da0d8c
+		  lr: 0x309fb595  fp: 0x03da0db8
+		  lr: 0x33fb7b97  fp: 0x03da0fbc
+		  lr: 0x32d27b4c  fp: 0x03da0fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+	thread 0xc04e56d0
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x03ea9000  r5: 0x003200fc  r6: 0x00836e80  r7: 0x03ea8fe0
+		  r8: 0x3e1b7adc  r9: 0x002824c0 r10: 0x03ea9000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x03ea8fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 3ea8fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc0476e30
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x03f2b000  r5: 0x0032008c  r6: 0x00836d80  r7: 0x03f2afe0
+		  r8: 0x3e1b7adc  r9: 0x00000000 r10: 0x03f2b000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x03f2afc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 3f2afe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371a3c8: 152 pages, 2 threads: pid 24: amfid
+	thread 0xc03966d0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x00030000  r1: 0x03000002  r2: 0x00000000  r3: 0x00001034
+		  r4: 0x00001603  r5: 0x00000000  r6: 0x00000000  r7: 0x2fdffe94
+		  r8: 0x00000000  r9: 0x0010cbb0 r10: 0x03000002 r11: 0x00001034
+		 r12: 0xffffffe1  sp: 0x2fdffe58  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x60000010 fsr: 0x00000807 far: 0x0004e000
+		user backtrace: 2fdffe94
+		  lr: 0x32d32630  fp: 0x2fdffed8
+		  lr: 0x00001e9c  fp: 0x2fdfff08
+		  lr: 0x00001bc0  fp: 0x00000000
+
+	thread 0xc0394450
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x2fee6048
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371a1e4: 104 pages, 2 threads: pid 25: notifyd
+	thread 0xc0396280
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fdff610
+		  r4: 0x00000001  r5: 0x00000000  r6: 0x0000a490  r7: 0x2fdff634
+		  r8: 0x0000a4bc  r9: 0x00000042 r10: 0x2fdff67a r11: 0x0010b0a0
+		 r12: 0x0000016b  sp: 0x2fdff600  lr: 0x00002170  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x0095b3fe
+		user backtrace: 2fdff634
+		  lr: 0x00002bc0  fp: 0x2fdfff10
+		  lr: 0x0000171c  fp: 0x00000000
+
+	thread 0xc0395e30
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x0010b720  r1: 0x03000002  r2: 0x00000000  r3: 0x00000088
+		  r4: 0x00001003  r5: 0x00000000  r6: 0x00000000  r7: 0x2fee5f94
+		  r8: 0x00000000  r9: 0x00000035 r10: 0x03000002 r11: 0x00000088
+		 r12: 0xffffffe1  sp: 0x2fee5f58  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x60000010 fsr: 0x00000807 far: 0x0011b000
+		user backtrace: 2fee5f94
+		  lr: 0x0000203c  fp: 0x2fee5fbc
+		  lr: 0x32d27b4c  fp: 0x2fee5fe0
+		  lr: 0x32d197ac  fp: 0x00000000
+
+Task 0x8371a790: 609 pages, 2 threads: pid 36: profiled
+	thread 0xc04e4590
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fdfefa8  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001703  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fdfef1c
+		  r8: 0x00000000  r9: 0x00000000 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fdfeee0  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x33fe8dac
+		user backtrace: 2fdfef1c
+		  lr: 0x35e8cf83  fp: 0x2fdfef4c
+		  lr: 0x35e8c787  fp: 0x2fdffbc8
+		  lr: 0x35e8c50b  fp: 0x2fdffc9c
+		  lr: 0x35e8c419  fp: 0x2fdffcb8
+		  lr: 0x33fb823f  fp: 0x2fdffce4
+		  lr: 0x000027d3  fp: 0x2fdffd20
+		  lr: 0x00002618  fp: 0x00000000
+
+	thread 0xc051cb20
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x008e0000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371a000: 323 pages, 4 threads: pid 38: installd
+	thread 0xc051b9e0
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fdff0dc  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001803  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fdff050
+		  r8: 0x00000000  r9: 0xfffffffc r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fdff014  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x00129002
+		user backtrace: 2fdff050
+		  lr: 0x35e8cf83  fp: 0x2fdff080
+		  lr: 0x35e8c787  fp: 0x2fdffcfc
+		  lr: 0x35e8c50b  fp: 0x2fdffdd0
+		  lr: 0x35e8c419  fp: 0x2fdffdec
+		  lr: 0x00011fe0  fp: 0x2fdffe00
+		  lr: 0x00002e80  fp: 0x2fdffe40
+		  lr: 0x00002774  fp: 0x00000000
+
+	thread 0xc051b590
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00a4a000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc06aeb20
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x2ff68000  r5: 0x000c42f4  r6: 0x00a48900  r7: 0x2ff67fe0
+		  r8: 0x3e1b7adc  r9: 0x00000000 r10: 0x2ff68000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x2ff67fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x000c9004
+		user backtrace: 2ff67fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc06ae6d0
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x2ffea000  r5: 0x000c4310  r6: 0x00a48a80  r7: 0x2ffe9fe0
+		  r8: 0x3e1b7adc  r9: 0x00000000 r10: 0x2ffea000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x2ffe9fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000807 far: 0x2ffea048
+		user backtrace: 2ffe9fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371a5ac: 213 pages, 2 threads: pid 39: lsd
+	thread 0xc0396b20
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fdff130  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001c03  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fdff0a4
+		  r8: 0x00000000  r9: 0x2fdff088 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fdff068  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00049000
+		user backtrace: 2fdff0a4
+		  lr: 0x35e8cf83  fp: 0x2fdff0d4
+		  lr: 0x35e8c787  fp: 0x2fdffd50
+		  lr: 0x35e8c50b  fp: 0x2fdffe24
+		  lr: 0x35e9ce71  fp: 0x2fdffe40
+		  lr: 0x359299b4  fp: 0x2fdffe60
+		  lr: 0x00001d00  fp: 0x2fdffe68
+		  lr: 0x00001ce8  fp: 0x00000000
+
+	thread 0xc051a8a0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000003  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x0093a000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x80ad95ac: 151 pages, 3 threads: pid 40: SCHelper
+	thread 0xc051b140
+		kernel continuation: 0x8000ea1d
+		user state:
+		  r0: 0x2fdff0dc  r1: 0x07000006  r2: 0x00000000  r3: 0x00000c00
+		  r4: 0x00001503  r5: 0xffffffff  r6: 0x00000000  r7: 0x2fdff050
+		  r8: 0x00000000  r9: 0x2fdff034 r10: 0x07000006 r11: 0x00000c00
+		 r12: 0xffffffe1  sp: 0x2fdff014  lr: 0x32c9f89c  pc: 0x32c9d3b0
+		cpsr: 0x40000010 fsr: 0x00000007 far: 0x00003e4c
+		user backtrace: 2fdff050
+		  lr: 0x35e8cf83  fp: 0x2fdff080
+		  lr: 0x35e8c787  fp: 0x2fdffcfc
+		  lr: 0x35e8c50b  fp: 0x2fdffdd0
+		  lr: 0x35e8c419  fp: 0x2fdffdec
+		  lr: 0x00001ddc  fp: 0x2fdffe20
+		  lr: 0x00001ba4  fp: 0x00000000
+
+	thread 0xc051acf0
+		kernel continuation: 0x801483eb
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x2fee5f50
+		  r4: 0x00000001  r5: 0x2fee5f6c  r6: 0x00000000  r7: 0x2fee5f84
+		  r8: 0x3e1b87b4  r9: 0x00000000 r10: 0x3e1b120c r11: 0x00000000
+		 r12: 0x0000016b  sp: 0x2fee5e40  lr: 0x32da0304  pc: 0x32cd1974
+		cpsr: 0x40000010 fsr: 0x0000080f far: 0x00b5c000
+		user backtrace: 2fee5f84
+		  lr: 0x32d9fd70  fp: 0x2fee5f9c
+		  lr: 0x32d9f790  fp: 0x2fee5fbc
+		  lr: 0x32d28978  fp: 0x2fee5fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+	thread 0xc061d450
+		kernel continuation: 0x8017fb61
+		user state:
+		  r0: 0x00000004  r1: 0x00000000  r2: 0x00000000  r3: 0x00000000
+		  r4: 0x2ff68000  r5: 0x000450c4  r6: 0x00b58e00  r7: 0x2ff67fe0
+		  r8: 0x3e1b7adc  r9: 0x00119b20 r10: 0x2ff68000 r11: 0x00000000
+		 r12: 0x00000170  sp: 0x2ff67fc4  lr: 0x32d28b58  pc: 0x32d292fc
+		cpsr: 0x40000010 fsr: 0x00000000 far: 0x00000000
+		user backtrace: 2ff67fe0
+		  lr: 0x32d1f304  fp: 0x00000000
+
+Task 0x8371a974: 44 pages, 1 threads: pid 41: MobileMail
+	thread 0xc061d000
+		kernel continuation: 0x8006678c
+		user state:
+		  r0: 0x00000002  r1: 0x2fdfe58c  r2: 0x2fdfe60f  r3: 0xffffffff
+		  r4: 0x2fdff1ec  r5: 0x00002278  r6: 0x2fdfe60f  r7: 0x2fdfe574
+		  r8: 0x2fdff1ec  r9: 0x00000008 r10: 0x00002278 r11: 0x2fdfe60f
+		 r12: 0x00000152  sp: 0x2fdfe4bc  lr: 0x2fe04465  pc: 0x2fe211f8
+		cpsr: 0xa0000010 fsr: 0x00000807 far: 0x2fe2d004
+		user backtrace: 2fdfe574
+		  lr: 0x2fe045cb  fp: 0x2fdfe628
+		  lr: 0x2fe048eb  fp: 0x2fdfe6ec
+		  lr: 0x2fe054c5  fp: 0x2fdfec24
+		  lr: 0x2fe05571  fp: 0x2fdfec44
+		  lr: 0x2fe05777  fp: 0x2fdfed04
+		  lr: 0x2fe05873  fp: 0x2fdff1e4
+		  lr: 0x2fe05a41  fp: 0x2fdff208
+		  lr: 0x2fe0b543  fp: 0x2fdff5e8
+		  lr: 0x2fe0b5df  fp: 0x2fdff6dc
+		  lr: 0x2fe05efd  fp: 0x2fdff788
+		  lr: 0x2fe06491  fp: 0x2fdffce0
+		  lr: 0x2fe0128d  fp: 0x2fdffd38
+		  lr: 0x2fe01060  fp: 0x00000000
+
+[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 6 busy skips, 0 timeouts)
+[gpu] mirror did not acknowledge the mode change within 100 ms
+[monitor] screen mode: bottom (X = next)
+[hb] t=76s quiet 10s | abs 4630427 dec 170663 timer 63112 irq 66455 vbl 3129 | md0 4049 req 84596 KiB 0 err
+[hb]  clock: arm11 watchdog +35453 ms vs arm9 timer +46099 ms (ratio 769/1000)
+[hb]  pc k807a8934 k80068010 k80840320 k808b16e0 k808404e8 k80840304 k80840394 k80017926t
+[hb] t=86s quiet 20s | abs 8182922 dec 170663 timer 63112 irq 66455 vbl 3129 | md0 4049 req 84596 KiB 0 err
+[hb]  clock: arm11 watchdog +35453 ms vs arm9 timer +55574 ms (ratio 637/1000)
+[hb]  pc k807a8934 k80068010 k80840320 k808b16e0 k808404e8 k80840304 k80840394 k80017926t
+[gpu] mirror: 139 frames in 32 s (4.3 fps); GPU per frame: upload 1514 us, draw 2793 us, read-out 1004 us; frame avg 10645 us (max 23253, incl. IRQ latency); ARM11 IRQ time 62 us/frame in 1105 steps; 6 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 256 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 164 copies in 32 s, 90.1 ms each (ARM9)
+[hb] t=98s quiet 32s | abs 12651900 dec 170663 timer 63112 irq 66455 vbl 3129 | md0 4049 req 84596 KiB 0 err
+[hb]  clock: arm11 watchdog +35453 ms vs arm9 timer +67490 ms (ratio 525/1000)
+[hb]  pc k807a8934 k80068010 k80840320 k808b16e0 k808404e8 k80840304 k80840394 k80017926t
+[mcu] POWER held: iOS power-off slider
+[mcu] POWER hold released
+[hb] t=108s quiet 42s | abs 16360305 dec 170663 timer 63112 irq 66455 vbl 3129 | md0 4049 req 84596 KiB 0 err
+[hb]  clock: arm11 watchdog +35453 ms vs arm9 timer +77380 ms (ratio 458/1000)
+[hb]  pc k807a8934 k80068010 k80840320 k808b16e0 k808404e8 k80840304 k80840394 k80017926t

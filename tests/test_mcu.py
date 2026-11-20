@@ -140,3 +140,40 @@ class McuPatches(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccelDeviceTree(unittest.TestCase):
+    """issue #7: the n72 accelerometer node also lists 'accelerometer,lis331dl',
+    which AppleLIS331DLH matches; with that class on the node the shim's
+    LIS302DL emulation made enableAccelerometer panic. Only the LIS302DL may
+    match the accelerometer; the gyro node is the LIS331DLH's."""
+
+    def test_only_lis302dl(self):
+        import sys
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        sys.path.insert(0, os.path.join(ROOT, "tools", "ios3ds-mcu"))
+        from fwlib.appledt import Node
+        import dt_mcu
+
+        def node(name, **props):
+            n = Node()
+            n.set("name", name.encode() + b"\0")
+            for k, v in props.items():
+                n.set(k.replace("_", "-").replace("AAPL-", "AAPL,"), v)
+            return n
+        root = node("device-tree")
+        arm = node("arm-io")
+        i2c0 = node("i2c0")
+        acc = node("accelerometer",
+                   compatible=b"accelerometer,lis331dl\0accelerometer,lis302dl\0",
+                   reg=struct.pack("<4I", dt_mcu.ACCEL_I2C_ADDR, 0x9c4, 0, 0),
+                   AAPL_phandle=struct.pack("<I", 0x40))
+        acc.set("interrupt-parent", struct.pack("<I", 0x10))
+        root.children.append(arm)
+        arm.children.append(i2c0)
+        i2c0.children.append(acc)
+        dt_mcu.apply(root)
+        self.assertEqual(acc.get("compatible"), b"accelerometer,lis302dl\0")
+        gyro = [c for c in i2c0.children if c.name == "gyro"]
+        self.assertEqual(len(gyro), 1)
+        self.assertEqual(gyro[0].get("compatible"), b"accelerometer,lis331dlh\0")

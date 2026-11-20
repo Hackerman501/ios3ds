@@ -69,6 +69,13 @@ def apply(root):
     compat = acc.get("compatible") or b""
     if b"accelerometer,lis302dl" not in compat:
         raise ValueError("dt_mcu: accelerometer is not a LIS302DL: %r" % compat)
+    # The n72 node lists 'accelerometer,lis331dl|accelerometer,lis302dl' (the
+    # iPod touch 2G shipped with either chip). AppleLIS331DLH's IONameMatch
+    # 'accelerometer,lis331dlh' matches the first entry too, so which class
+    # drives the node depended on boot timing. The shim emulates a LIS302DL;
+    # with AppleLIS331DLH on it, enableAccelerometer panicked ("Boot bit did
+    # not return to zero", issue #7, Old 3DS XL). Only the LIS302DL stays.
+    acc.set("compatible", b"accelerometer,lis302dl\0")
     reg = acc.get("reg")
     if reg is None or int.from_bytes(reg[:4], "little") != ACCEL_I2C_ADDR:
         raise ValueError("dt_mcu: accelerometer I2C address is not %#x" % ACCEL_I2C_ADDR)

@@ -445,20 +445,22 @@ int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
         }
         return 0;
     }
-    if (!mcu_live() || b->acc_off) {
-        if (!acc_logged++)
-            IOLog("ios3ds-mcu: accelerometer hidden from iOS (%s)\n", b->acc_off ? "boot.cfg mcu_acc=0" : "no MCU");
-        return (int)kIOReturnNoDevice;
-    }
+    /* No MCU or mcu_acc=0: the register file is still answered (a failing
+       transfer makes Apple's driver panic waiting for the BOOT bit, issue #7);
+       the samples read as lying still, face up. */
+    int hidden = !mcu_live() || b->acc_off;
+    if (hidden && !acc_logged++)
+        IOLog("ios3ds-mcu: accelerometer hidden from iOS (%s): still samples\n",
+              b->acc_off ? "boot.cfg mcu_acc=0" : "no MCU");
     u32 a = sublen && sub ? (sub[sublen - 1] & 0x3F) : 0;
     int8_t s[3] = { 0, 0, 0 };
     int sampled = 0;
     for (u32 i = 0; i < len; i++, a = (a + 1) & 0x3F) {
         if (op == 2) {
             lis[0][a] = buf[i];
-            if (a == 0x21) lis[0][a] &= (u8)~0x40;      /* BOOT: reload done at once */
-            if (a == 0x20) {
-                acc_driver = (buf[i] & 0x40) != 0;      /* PD: sensor powered */
+            if (a == 0x21) lis[0][a] &= (u8)~0xC0;      /* BOOT (LIS302DL bit 6, LIS331DLH bit 7): done at once */
+            if (a == 0x20 && !hidden) {
+                acc_driver = (buf[i] & 0xE0) != 0;      /* LIS302DL PD (bit 6) / LIS331DLH PM (bits 5-7) */
                 acc_request();
                 IOLog("ios3ds-mcu: accelerometer %s by AppleLIS302DL (CTRL_REG1 0x%02x)\n",
                       acc_driver ? "powered on" : "powered off", buf[i]);
@@ -469,7 +471,9 @@ int shim_mcu_iic(void *nub, u32 op, u32 sublen, const u8 *sub, u32 len, u8 *buf)
             else if (a == 0x27) v = 0x0F;               /* STATUS: new X/Y/Z data */
             else if (a == 0x31 || a == 0x35) v = 0;     /* FF_WU_SRC: no events */
             else if (a == 0x29 || a == 0x2B || a == 0x2D) {
-                if (!sampled++) {
+                if (!sampled++ && hidden) {
+                    s[2] = -ACC_COUNTS_G;               /* still, face up */
+                } else if (sampled == 1) {
                     static u32 served;
                     acc_sample(s);
                     if (++served == 1 || served == 100 || served == 1000 || served % 10000 == 0)
