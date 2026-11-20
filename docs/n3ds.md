@@ -7,8 +7,9 @@ On a New 3DS, New 3DS XL or New 2DS XL, ios3ds can use the faster CPU clock, the
 | `n3ds_clock=1` | **on** | ARM11 at 804 MHz instead of 268 MHz (3×) |
 | `n3ds_l2=0` | **off** | the 2 MiB L2C-310 L2 cache, write-through (experimental, section 2) |
 | `n3ds_hid=1` | **on** | read the C-stick / ZL / ZR chip (section 3) |
+| `n3ds_ram=1` | **on** | iOS gets 256 MiB of FCRAM instead of 128 MiB (section 6) |
 
-Still not used on any model: CPU cores 1–3 (XNU 1504 is uniprocessor), the extra 128 MiB of FCRAM, and the extra QTM RAM.
+Still not used on any model: CPU cores 1–3 (XNU 1504 is uniprocessor) and the extra QTM RAM.
 
 **None of this has run on a New 3DS yet.** Section 5 lists what the first hardware log must show.
 
@@ -159,3 +160,15 @@ In `sd:/ios3ds/log.txt`:
 4. **L2 (only with `n3ds_l2=1`):** `[n3ds] L2 cache: on, write-through (L2C-310 id 410000cX aux … ctrl 1)`. Then use iOS normally: Safari, Settings, Camera, sound. Any data corruption, a garbled screen or a hang that `n3ds_l2=0` doesn't have is an L2 coherency bug. Report it with the log.
 5. **C-stick:** `[exthid] C-stick + ZL/ZR at I2C 3:54: 80 …` at boot. With `diag=1`, move the stick in each direction and press ZL and ZR: the raw lines tell us the signs, the range and the ZR bit.
 6. **GPU:** the `[gpu] mirror self-test` and `[gl] pica: GPU self-check` lines must still pass, because the GPU now runs in N3DS mode (`CFG11_GPU_N3DS_CNT` = 3).
+7. **256 MiB (section 6):** `[a11] New 3DS: … , FCRAM extension OK`, then `[n3ds] FCRAM extension: iOS gets 256 MiB`, and `phys 20000000 virt 80000000 memSize 08000000` is followed by XNU booting as usual. With `ios3ds_mem=1` in the cmdline the `[mem]` lines show about 128 MiB more free memory. `FCRAM extension NOT usable` means the probe saw no RAM of its own at 0x28000000; iOS then keeps 128 MiB.
+
+## 6. 256 MiB of FCRAM (`n3ds_ram=1`)
+
+A New 3DS has 256 MiB of FCRAM; the second half, 0x28000000-0x2FFFFFFF, is the "extension" that `PDN_LGR_CNT` bit 0 switches on (libn3ds, linux-3ds). iOS used to get the first 128 MiB only.
+
+- **ARM11 stub:** with `N3REQ_RAM` it sets `PDN_LGR_CNT` bit 0 (also when `n3ds_clock=0`, which otherwise never writes it), then probes three words (0x28000000, 0x2BFFF000, 0x2FFFFFF0): each is written with a pattern while its Old 3DS alias 128 MiB lower holds another, and both must read back. A mirror or open bus fails the probe; every word is restored. Result bit `N3RES_RAM`.
+- **ARM9:** with `N3RES_RAM`, `boot_args.memSize` and the device tree's `/memory` `reg` become 256 MiB (`n3ds_ram()` walks the flattened tree). The Wi-Fi scratch (top 4 MiB of the first 128 MiB) and every ios3ds region stay where they are.
+- **XNU:** the entry stub maps `[0x80000000, 0x80000000 + memSize)` with supersections and the VM takes every page above `topOfKernelData`: nothing else changes (QEMU: boot, Safari, the soak).
+- **What must stay below 0x28000000:** memory a 3DS DMA engine reads. Only the GPU does that with memory XNU allocates: the shim takes the GPU arena with `IOMallocContiguous` and gives it back when it lands in the extension (whether the GPU reaches the extension is unverified), and `PICA_OP_PRESENT` still only accepts destinations below 0x28000000 (others are read back by the CPU). The CPU paths (page-table walks in `pica.c`, Apple's audio buffers in `audio.c`) accept all 256 MiB. md0, Wi-Fi, audio rings and the camera use fixed buffers below 0x20900000.
+- **QEMU:** `-M nintendo3ds,new3ds=on` has 256 MiB of FCRAM; the GPU model still only reaches the first 128 MiB.
+- `n3ds_ram=0`, or any `mem_size` other than 128 MiB in boot.cfg, keeps iOS at 128 MiB.

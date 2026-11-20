@@ -17,7 +17,7 @@ on the console.
 | ARM9 | QEMU `arm946`, with its own address space (ITCM + mirrors, ARM9 RAM, DTCM, ARM9-only IO) |
 | CPU clusters | separate clusters, because QEMU requires that for different CPU types |
 | MPCore private region | `arm11mpcore_priv` at 0x17E00000 (SCU, GIC with 128 IRQs, private timer, watchdog) |
-| RAM | FCRAM 128 MiB, VRAM 6 MiB, AXI WRAM 512 KiB, DSP RAM, all shared between both CPUs |
+| RAM | FCRAM 128 MiB (`new3ds=on`: 256 MiB, the GPU model reaches the first 128), VRAM 6 MiB, AXI WRAM 512 KiB, DSP RAM, all shared between both CPUs |
 | Boot ROMs | stub vector ROMs: boot9 → 0x08000000 veneers, boot11 → 0x1FFFFFA0 RAM vectors, plus the boot11 wait loop on 0x1FFFFFFC |
 | Luma chainload | `-kernel x.firm`: sections copied, ARM9 gets argc=2 and argv with the fb pointers when the FIRM sets screen-init, ARM11 jumps to its entry. MMU/caches off. |
 | SD | TMIO host at 0x10006000 (the command, status, FIFO32 and auto-CMD12 subset that Normmatt's driver uses) on top of QEMU's real SD card model (`-drive if=sd`) |
@@ -79,6 +79,18 @@ guest time ARM11/ARM9 busy %, md0 pending %). It waits for the boot to
 settle, cold-launches Settings, Notes and Safari, and writes a phase table
 to `build/emu/bootprof/report.md`. `emu/hfsmap.py` maps the md0 sectors to
 HFS+ files. See [boot-perf.md](boot-perf.md).
+
+### Safari and memory: `emu/safari_test.py`
+`python3 emu/safari_test.py --icount 2` boots with the Wi-Fi model, opens
+pages from a host HTTP server in Safari (`ios3ds-diag -urlpoll`, boot-arg
+`ios3ds_urltest=1`, which opens each new URL through SpringBoardServices),
+fails a page on any Safari alert and prints the `[mem]` report (boot-arg
+`ios3ds_mem=1`: vm_stat, jetsam level, mbufs, resident size per process)
+before Safari, after the first page and at the end. `--host 10.0.2.2.nip.io`
+makes Safari resolve a name, `--www DIR --urls a.html,b.html` serves saved
+pages, `--mem-size 0x06000000` gives XNU less RAM, `--new3ds` the New 3DS
+model with 256 MiB. Load errors are logged as `[applog] MobileSafari load
+error (…): domain code userInfo` (re-log 75).
 
 ### Scripted debugging: `emu/gdb/`
 The Arm gdb 14.2 has no Python and the host gdb has no ARM target, so the

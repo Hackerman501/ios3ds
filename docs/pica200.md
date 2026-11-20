@@ -102,8 +102,9 @@ address registers) before anything untrusted may use GL.
 - VRAM (0x18000000, 6 MiB) is taken: `/vram` gives iOS the first 3 MiB for the
   CLCD framebuffer, Luma's LCD framebuffers (which the ARM9 draws) start at
   0x18300000.
-- So the arena is FCRAM: `IOMallocContiguous(8 MiB, page aligned, &pa)` at the
-  first request (falling back to 4 and 2 MiB). It is ordinary wired, cached
+- So the arena is FCRAM: `IOMallocContiguous(12 MiB, page aligned, &pa)` at the
+  first request (falling back to 8, 4 and 2 MiB; on a New 3DS with 256 MiB it
+  must lie below 0x28000000, docs/n3ds.md section 6). It is ordinary wired, cached
   kernel memory; the GPU sees it by physical address. `CFG11_GPUPROT`
   (0x10140140) is written 0 so GPU DMA may reach all of FCRAM.
 - Right after allocating, the shim cleans and invalidates the whole D-cache
@@ -114,6 +115,14 @@ address registers) before anything untrusted may use GL.
   them (`c7,c6,1`). Blocks are multiples of 128 bytes, so a line never holds
   two owners' data.
 - The first 128 KiB are the driver's command-list staging buffer.
+- Placement (`pica_drv.c`, re-log 75): blocks of 256 KiB and more (render
+  targets, depth buffers, read-back staging, the mirror's texture) are placed
+  first-fit from the top of the arena, smaller ones (textures) first-fit from
+  the bottom; the block table holds 224 entries (160 filled up on a New 2DS
+  XL, issue 1). When a big block does not fit, the GL engine evicts the
+  textures highest in the arena first, which frees the space next to the big
+  blocks; LRU order is kept for small requests (test_pica: about 4x fewer
+  bytes evicted for the same targets).
 
 ### Power and clock
 
