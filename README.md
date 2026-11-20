@@ -27,7 +27,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically. Fixed for the next build: the connection dropped after a few minutes (the router's group key renewal went unanswered) |
+| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically; stays connected (the router's group key renewal is answered since build m1-0.3.0-27) |
 | ✅ | Cydia | pre-installed |
 | ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
 | ✅ | D-pad page swipes | turned 90° to match the upright iOS screen in the next build |
