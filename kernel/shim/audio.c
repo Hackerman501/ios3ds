@@ -737,6 +737,8 @@ static void hp_service(void)
 }
 
 /* ---- the emulator: advance everything to tick `now` ----------------------- */
+u32 shim_cam_irq(u32 now);
+
 void aud_service(u32 now)
 {
     volatile u32 *d = dmac_regs();
@@ -836,6 +838,15 @@ void aud_service(u32 now)
         if (!have_next || (int)(t - next) < 0) next = t;
         have_next = 1;
     }
+#ifndef AUD_HOST_TEST
+    {   /* the camera FIFO drain rides on the same wake-ups (kernel/shim/cam.c) */
+        u32 t = shim_cam_irq(now);
+        if (t) {
+            if (!have_next || (int)(t - next) < 0) next = t;
+            have_next = 1;
+        }
+    }
+#endif
     for (u32 ch = 0; ch < 8; ch++)
         if (d[DMAC_CH(ch) + CH_CFG] & CFG_E) enabled |= 1u << ch;
     d[DMAC_ENBLD_CHNS] = enabled;

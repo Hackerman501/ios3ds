@@ -63,6 +63,7 @@
 #include "target/arm/cpu-qom.h"
 #include "picasim.h"
 #include "ctr_csnd.h"
+#include "ctr_cam.h"
 #include "ctr_wifi.h"
 
 /* ------------------------------------------------------------------------ */
@@ -583,6 +584,7 @@ typedef struct {
     uint8_t  cntex[2], scl[2];
     bool     active;            /* between START and STOP */
     bool     dev_ok;            /* addressed device exists */
+    bool     cam;               /* the addressed device is a camera (ctr_cam.c) */
     uint8_t  addr;              /* 8 bit device address incl. R/W bit */
 } CtrI2c;
 
@@ -638,6 +640,7 @@ typedef struct {
     PicaSim pica;                  /* GX block: PSC, PPF, P3D */
     qemu_irq gx_irq[4];            /* GIC 40 PSC0, 41 PSC1, 44 PPF, 45 P3D */
     uint32_t gpu_cnt, gpuprot;     /* PDN_GPU_CNT, CFG11_GPUPROT */
+    uint32_t camera_cnt;           /* CFG11_CAMERA_CNT (0x10141224) */
     struct { uint32_t off, val; int64_t due; } gx_q[8];   /* started GPU operations, not run yet */
     int gx_nq;
     QEMUTimer *gx_timer;
@@ -1421,7 +1424,8 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             b->active = true;
             mcu = b->bus == 1 && (b->addr & 0xFE) == I2C_ADDR_MCU;
             gyro = b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_GYRO;
-            b->dev_ok = mcu || gyro;
+            b->cam = !mcu && !gyro && ctr_cam_i2c_start(b->bus, b->addr);
+            b->dev_ok = mcu || gyro || b->cam;
             ack = b->dev_ok;
             if (mcu && !(b->addr & 1)) {
                 s->mcu.got_reg = false;         /* a write transfer starts with the register */
@@ -1438,6 +1442,8 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
                 s->gyro.reg = (s->gyro.reg + 1) & 0x3F;
             }
             ack = true;
+        } else if (b->active && b->cam && !(b->addr & 1)) {
+            ack = ctr_cam_i2c_write(b->bus, b->data);
         } else if (b->active && b->dev_ok && !(b->addr & 1)) {
             if (!s->mcu.got_reg) {
                 s->mcu.reg = b->data;
@@ -1452,7 +1458,9 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             ack = true;
         }
     } else {                                    /* receive one byte */
-        if (b->active && b->dev_ok && gyro && (b->addr & 1)) {
+        if (b->active && b->cam && (b->addr & 1)) {
+            b->data = ctr_cam_i2c_read(b->bus);
+        } else if (b->active && b->dev_ok && gyro && (b->addr & 1)) {
             b->data = gyro_read_reg(s, s->gyro.reg);
             s->gyro.reg = (s->gyro.reg + 1) & 0x3F;
         } else if (b->active && b->dev_ok && (b->addr & 1)) {
@@ -1826,6 +1834,9 @@ static const MemoryRegionOps cfg11_ops = {
 static uint64_t pdn_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
+    if ((addr & ~3) == 0x224) {
+        return reg_lane(s->camera_cnt, addr);
+    }
     return (addr & ~3) == 0x200 ? reg_lane(s->gpu_cnt, addr) : 0;
 }
 
@@ -1834,6 +1845,10 @@ static void pdn_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
     CtrMachine *s = opaque;
     if (addr == 0x200 && size == 4) {
         s->gpu_cnt = v & 0x1007F;
+    }
+    if (addr == 0x224) {                        /* CFG11_CAMERA_CNT: camera clock (docs/camera.md) */
+        s->camera_cnt = v & 1;
+        ctr_cam_clock(v & 1);
     }
 }
 
@@ -2468,6 +2483,7 @@ static void ctr_init(MachineState *machine)
     /* Wi-Fi: TMIO2 + AR6014 + access point -> -nic user,model=ctr-wifi (ctr_wifi.c) */
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
     ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
+    ctr_cam_init(&s->io_shared, 0x10120000 - CTR_IO_SHARED_BASE, sys);    /* docs/camera.md */
     /* headphone jack GPIO2 bit 0 + machine property "headphones" (ctr_csnd.c) */
     ctr_jack_init(OBJECT(machine), &s->io_shared, 0x10147010 - CTR_IO_SHARED_BASE);
     {

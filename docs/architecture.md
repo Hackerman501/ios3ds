@@ -21,7 +21,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 |---|---|
 | 0x20001000 | kernelcache, flat image with patches applied (8.1 MB) |
 | after the kernel | device tree, then boot_args |
-| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
+| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x7E00 camera mailbox ([camera.md](camera.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
 | 0x20850000 | XNU log ring (256 KB) |
 | 0x208A0000 | network mailbox (docs/wifi.md) |
 | 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
@@ -89,6 +89,7 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
 - The dyld shared cache gets small byte patches:
   - liblockdown is stubbed: `lockdown_copy_value` answers from a table (ActivationState "Activated", BrickState false, DeviceClass "iPod", ProductType "iPod2,1", ProductVersion, BuildVersion, HardwareModel, DeviceName; re-log 62);
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
+- The cameras: `vcd.mediacapture` in `/System/Library/MediaCapture` (Celestial's virtual-camera slot, enabled by the `vcd` preference of com.apple.coremedia), `still-camera`/`front-facing-camera` in N72AP.plist and our own `Celestial.framework/N72/AVCapture.plist`; see [camera.md](camera.md).
 - Two libraries are inserted with `DYLD_INSERT_LIBRARIES`: `ios3ds-a80211.dylib` into configd (WiFiManager sees en0 as Apple 802.11 hardware) and `ios3ds-hwaes.dylib` into securityd (software AppleKeyStore key wrap, so the keychain can store items). See [wifi.md](wifi.md) §10.
 - SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash`, `SBDisableAutoDim` and `SBNoWatchdogs` (no launch watchdog, [wifi.md](wifi.md) §10.4; `SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
 - OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:

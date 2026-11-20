@@ -41,6 +41,17 @@ def exists(img, path):
     return any(l.split()[-1:] == [name] for l in out.splitlines() if l.strip())
 
 
+def merge_dict(dst, src):
+    """recipe "plist_merge": nested dictionaries are merged key by key (e.g. one
+    capability added to N72AP.plist's capabilities without restating the rest)."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            merge_dict(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
 def local_path(local, rootfs_add=None):
     """Recipe source path -> file: repo-relative, except build/rootfs-add/ -> rootfs_add."""
     if rootfs_add and local.startswith(ADD_PREFIX):
@@ -122,14 +133,19 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
                 raise SystemExit("hfsplus symlink %s failed: %s" % (path, res.strip()))
             if verbose:
                 print("[mkrootfs] symlink %s -> %s" % (path, target))
-        for path, keys in recipe.get("plist_set", {}).items():
+        edits = [(p, k, False) for p, k in recipe.get("plist_set", {}).items()]
+        edits += [(p, k, True) for p, k in recipe.get("plist_merge", {}).items()]
+        for path, keys, deep in edits:
             import plistlib
             tmp = os.path.join(td, "p.plist")
             with open(tmp, "wb") as f:
                 f.write(hfs_cat(out, path))
             with open(tmp, "rb") as f:
                 pl = plistlib.load(f)
-            pl.update(keys)
+            if deep:
+                merge_dict(pl, keys)
+            else:
+                pl.update(keys)
             with open(tmp, "wb") as f:
                 plistlib.dump(pl, f, fmt=plistlib.FMT_XML)
             hfs(out, "rm", path)

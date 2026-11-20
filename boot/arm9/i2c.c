@@ -72,19 +72,28 @@ static bool send(i2c_regs_t *r, u8 byte, u8 flags)
     return true;
 }
 
-static bool start(i2c_regs_t *r, u8 dev, u8 reg, bool read)
+/* device + sub-address bytes (+ repeated start for a read) */
+static bool start_sub(i2c_regs_t *r, u8 dev, const u8 *sub, u32 sublen, bool read)
 {
     for (int tries = 0; tries < 8; tries++) {
+        u32 i;
         if (!wait_busy(r)) {
             r->cnt = I2C_EN | I2C_IRQ | I2C_ERROR | I2C_STOP;
             continue;
         }
         if (!send(r, dev, I2C_START)) continue;
-        if (!send(r, reg, 0)) continue;
+        for (i = 0; i < sublen; i++)
+            if (!send(r, sub[i], 0)) break;
+        if (i < sublen) continue;
         if (read && !send(r, dev | 1u, I2C_START)) continue;
         return true;
     }
     return false;
+}
+
+static bool start(i2c_regs_t *r, u8 dev, u8 reg, bool read)
+{
+    return start_sub(r, dev, &reg, 1, read);
 }
 
 void i2c_init(u8 bus)
@@ -113,6 +122,33 @@ bool i2c_write(u8 bus, u8 dev, u8 reg, const u8 *in, u32 len)
 {
     i2c_regs_t *r = regs(bus);
     if (!len || !start(r, dev, reg, false)) return false;
+    while (--len)
+        if (!send(r, *in++, 0)) return false;
+    return send(r, *in, I2C_STOP);
+}
+
+/* 16-bit register index, big endian (Aptina MT9V113 cameras, docs/camera.md) */
+bool i2c_read16(u8 bus, u8 dev, u16 idx, u8 *out, u32 len)
+{
+    i2c_regs_t *r = regs(bus);
+    u8 sub[2] = { (u8)(idx >> 8), (u8)idx };
+    if (!len || !start_sub(r, dev, sub, 2, true)) return false;
+    while (--len) {
+        r->cnt = I2C_EN | I2C_IRQ | I2C_READ | I2C_ACK;
+        if (!wait_busy(r)) return false;
+        *out++ = r->data;
+    }
+    r->cnt = I2C_EN | I2C_IRQ | I2C_READ | I2C_STOP;
+    if (!wait_busy(r)) return false;
+    *out = r->data;
+    return true;
+}
+
+bool i2c_write16(u8 bus, u8 dev, u16 idx, const u8 *in, u32 len)
+{
+    i2c_regs_t *r = regs(bus);
+    u8 sub[2] = { (u8)(idx >> 8), (u8)idx };
+    if (!len || !start_sub(r, dev, sub, 2, false)) return false;
     while (--len)
         if (!send(r, *in++, 0)) return false;
     return send(r, *in, I2C_STOP);

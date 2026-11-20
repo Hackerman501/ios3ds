@@ -96,7 +96,8 @@ def build_shim(outdir):
     srcs += [os.path.join(sd, "pica.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c"),
-             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c")]
+             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c"),
+             os.path.join(sd, "cam.c")]                     # camera data side (docs/camera.md)
     with tempfile.TemporaryDirectory() as td:
         elf = os.path.join(td, "shim.elf")
         objs = []
@@ -104,7 +105,7 @@ def build_shim(outdir):
             o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
             # main shim part: -Os (it must end below +0x5F00; CI's newer gcc
             # overflowed it at -O2); the GPU part (*pica*) keeps -O2
-            opt = ["-O2"] if "pica" in os.path.basename(s) else []
+            opt = ["-O2"] if "pica" in os.path.basename(s) or "cam" in os.path.basename(s) else []
             subprocess.run([gcc] + flags + opt + ["-c", s, "-o", o], check=True)
             objs.append(o)
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +
@@ -284,6 +285,9 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "# hp_route=0: iOS is never told about the headphone jack and stays on its speaker route",
         "# (the CODEC still switches speaker/headphones itself; docs/audio.md)",
         "hp_route=1",
+        "# camera=0: the kernel never touches the 3DS cameras; iOS's camera device reports",
+        "# none and Camera.app shows no picture (docs/camera.md)",
+        "camera=1",
         "# diag=1: diagnostics for bring-up (docs/boot-perf.md): adds the boot-arg ios3ds_diag=1,",
         "# which starts the test launchd jobs (ios3ds-gltest, the boot tone, the [smp] sampler)",
         "diag=0",

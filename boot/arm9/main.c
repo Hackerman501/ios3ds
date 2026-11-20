@@ -25,6 +25,7 @@
 #include "gpu_mirror.h"
 #include "mcu.h"
 #include "gyro.h"
+#include "camera.h"
 #include "powersave.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
@@ -133,6 +134,7 @@ typedef struct {
     u32 log_ts;          /* 1: "[s.ms]" timestamps on forwarded console lines */
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
+    u32 camera;          /* 0 = never touch the cameras (docs/camera.md) */
     u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
     u32 nloads;
     char load_path[4][64];
@@ -179,6 +181,7 @@ static int parse_bootcfg(char *txt)
     cfg.gyro = 1;
     cfg.powersave = 1;
     cfg.mic = 1;
+    cfg.camera = 1;
     cfg.hp_route = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
@@ -196,7 +199,7 @@ static int parse_bootcfg(char *txt)
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
-        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route },
+        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
@@ -577,6 +580,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
         mcu_poll(clk_ticks());      /* RTC, battery, sliders, HOME/POWER (docs/mcu.md) */
         gyro_poll(clk_ticks());     /* gyroscope while iOS wants it (docs/mcu.md 11) */
+        camera_poll();              /* sensor power + I2C set-up for the shim (docs/camera.md) */
         static bool ios_display, x_latched;
         static int screen_mode;
         /* screen copy pacing: <= 15 fps; while md0 is busy (a request in the
@@ -944,6 +948,7 @@ void a9_main(int argc, char **argv)
     mcu_set_led(cfg.notify_led != 0);
     audio_set_mic(cfg.mic != 0);
     audio_set_hp_route(cfg.hp_route != 0);
+    camera_init(cfg.shim_pa, cfg.camera != 0);   /* docs/camera.md */
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);

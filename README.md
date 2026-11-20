@@ -51,6 +51,7 @@ See [docs/architecture.md](docs/architecture.md) for the full picture.
 - [docs/wifi.md](docs/wifi.md): Wi-Fi: the ARM9 AR6014 driver, WPA2, the network mailbox, iOS bridge, firmware extraction and the QEMU model
 - [docs/cydia.md](docs/cydia.md): Cydia pre-installed (APT/dpkg base system downloaded from Saurik's repository at build time)
 - [docs/mcu.md](docs/mcu.md): the 3DS system controller (RTC, battery, HOME/POWER, sliders, accelerometer) in iOS
+- [docs/camera.md](docs/camera.md): the 3DS cameras in Camera.app / AVFoundation (Celestial's virtual-camera plug-in slot, ARM9 sensor set-up, ARM11 FIFO drain, QEMU model)
 - [docs/real-hardware.md](docs/real-hardware.md): testing on a real console safely: backups, stages, why nothing can touch NAND
 - [docs/re-log.md](docs/re-log.md): reverse-engineering log, step by step, with addresses
 - [docs/release.md](docs/release.md): CI, the release zip, and why nothing in it is Apple's
@@ -107,6 +108,7 @@ The first real-hardware runs are expected to fail early. Every stage writes a re
   - touch is untested (buttons work in the emulator);
   - Wi-Fi (WPA2, DHCP, DNS) works end to end in QEMU against a model of the AR6014 and an access point, but has never run on a console; it needs the Wi-Fi firmware from your own console's NWM module (one GodMode9 script, NAND read-only, docs/wifi.md §3). iOS's Settings > Wi-Fi scans and joins (password on the on-screen keyboard) and the status bar shows the bars ([docs/wifi.md](docs/wifi.md) §10);
   - the system controller (date and time, battery, HOME/POWER, sliders, brightness, accelerometer) is implemented but has only run in QEMU ([docs/mcu.md](docs/mcu.md));
+  - the cameras (outer left = back, inner = front) work in Camera.app in QEMU, 320x240 preview and photos, no video recording; never run on a console; `camera=0` in boot.cfg turns them off ([docs/camera.md](docs/camera.md));
   - no data-protection keybag (keybagd is disabled; lock state is stubbed);
   - no activation (liblockdown is stubbed to report "Activated" for research);
   - OpenGL ES 1.1 is CPU-rendered (`tools/ios3ds-gl`): no PVRTC textures, no mipmaps or stencil yet, and no ES 2.0 (the MBX engine slot is ES1 only).

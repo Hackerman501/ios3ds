@@ -26,7 +26,7 @@ endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
-USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-wifi/a80211 tools/ios3ds-keychain tools/ios3ds-audio/tone tools/ios3ds-mcu/daemon tools/ios3ds-mcu/gyrotest
+USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-wifi/a80211 tools/ios3ds-keychain tools/ios3ds-audio/tone tools/ios3ds-mcu/daemon tools/ios3ds-mcu/gyrotest tools/ios3ds-camera/vcd
 
 .PHONY: all help toolchain fwprep firm shim launcher userland hfsplus sd sdimg qemu emu kscan test release clean
 

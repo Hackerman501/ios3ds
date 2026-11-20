@@ -20,6 +20,11 @@ ln -sf "$ROOT/tools/ios3ds-pica/sim/picasim.h" "$Q/hw/arm/picasim.h"
 # the CSND sound block model (docs/audio.md section 6)
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_csnd.c" "$Q/hw/arm/ctr_csnd.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_csnd.h" "$Q/hw/arm/ctr_csnd.h"
+# the camera model (docs/camera.md section 5) and the headers it shares with ios3ds
+ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.c" "$Q/hw/arm/ctr_cam.c"
+ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.h" "$Q/hw/arm/ctr_cam.h"
+ln -sf "$ROOT/boot/common/cam_proto.h" "$Q/hw/arm/cam_proto.h"
+ln -sf "$ROOT/boot/common/cam_pattern.h" "$Q/hw/arm/cam_pattern.h"
 # the Wi-Fi model: TMIO SDIO controller 2 + AR6014 + WPA2 access point (docs/wifi.md section 7)
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.c" "$Q/hw/arm/ctr_wifi.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.h" "$Q/hw/arm/ctr_wifi.h"
@@ -31,6 +36,8 @@ grep -q ctr_csnd "$Q/hw/arm/meson.build" || \
     sed -i "s/'picasim.c')/'picasim.c', 'ctr_csnd.c')/" "$Q/hw/arm/meson.build"
 grep -q ctr_wifi "$Q/hw/arm/meson.build" || \
     sed -i "s/'ctr_csnd.c')/'ctr_csnd.c', 'ctr_wifi.c')/" "$Q/hw/arm/meson.build"
+grep -q ctr_cam "$Q/hw/arm/meson.build" || \
+    sed -i "s/'ctr_wifi.c')/'ctr_wifi.c', 'ctr_cam.c')/" "$Q/hw/arm/meson.build"
 grep -q NINTENDO3DS "$Q/hw/arm/Kconfig" || cat >> "$Q/hw/arm/Kconfig" <<'KC'
 
 config NINTENDO3DS

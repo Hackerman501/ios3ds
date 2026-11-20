@@ -10,6 +10,8 @@
 #include "gpu_mirror.h"
 
 void shim_pica_register(void);
+void shim_cam_register(void);
+uint32_t shim_cam_service(uint32_t now);
 void shim_gpu_thread_poll(void);
 void shim_gpu_irq(uint32_t id);
 
@@ -21,8 +23,17 @@ static int gpu_part(void)
 /* thread context: register the ios3ds_gpu sysctl (blk.c, first md0 request) */
 void shim_gpu_register(void)
 {
-    if (gpu_part())
+    if (gpu_part()) {
         shim_pica_register();
+        shim_cam_register();        /* kernel/shim/cam.c: ios3ds_cam (docs/camera.md) */
+    }
+}
+
+/* IRQ mode (audio.c aud_service): drain the camera FIFO; returns the tick it
+   wants to run again at, 0 = no camera running */
+uint32_t shim_cam_irq(uint32_t now)
+{
+    return gpu_part() ? shim_cam_service(now) : 0;
 }
 
 /* thread context: the input daemon's sysctl (tools/ios3ds-input/shim/input.c) */
