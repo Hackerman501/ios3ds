@@ -22,6 +22,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PEM = os.path.join(ROOT, "rootfs", "certs", "roots.pem")
+PEM_EC = os.path.join(ROOT, "rootfs", "certs", "roots-ec.pem")
 # securityd's own schema (strings in /usr/libexec/securityd, 8C148)
 SCHEMA = ("CREATE TABLE tsettings(sha1 BLOB NOT NULL DEFAULT '',subj BLOB NOT NULL DEFAULT '',"
           "tset BLOB,data BLOB,PRIMARY KEY(sha1));CREATE INDEX isubj ON tsettings(subj);")
@@ -29,6 +30,7 @@ HOST_BUNDLES = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bun
                 "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem"]
 
 OID_RSA = bytes.fromhex("2a864886f70d010101")
+OID_EC = bytes.fromhex("2a8648ce3d0201")          # id-ecPublicKey
 OID_EC = bytes.fromhex("2a8648ce3d0201")
 PRINTABLE = 0x13
 
@@ -140,12 +142,16 @@ def read_pem(path):
     return out
 
 
-def usable(c, now=None):
+def usable(c, now=None, ec=False):
     """iOS 4.2.1's Security.framework verifies RSA signatures only (md5/sha1/sha256/
     sha384/sha512 with RSA; its only ECDSA OID is ecdsa-with-SHA1 and it has no P-256/
-    P-384 curve), so EC roots can never anchor a chain. Expired roots are useless."""
+    P-384 curve), so EC roots can never anchor a chain there; ec=True selects exactly
+    those, for TLSFix's own OpenSSL check of EC chains (write_profile). Expired roots
+    are useless."""
     now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    if c.key_oid != OID_RSA:
+    if ec and c.key_oid != OID_EC:
+        return False, "not EC"
+    if not ec and c.key_oid != OID_RSA:
         return False, "not RSA"
     if c.not_after < now:
         return False, "expired"
@@ -168,9 +174,31 @@ def write_db(out, pems):
     return n
 
 
-def update(src, out, extra_src=None, extra=()):
+def write_profile(out, pems, ident="org.ios3ds.roots"):
+    """The roots as a configuration-profile plist (one com.apple.security.root payload
+    each). TLSFix 1.3 verifies chains with EC certificates, which iOS 4.2.1 cannot,
+    with OpenSSL against the CA payloads of the files in
+    /var/mobile/Library/ConfigurationProfiles (its tlsfix_ecc.c); this file is that
+    anchor list. iOS itself lists only the profiles it installed (*.stub)."""
+    import plistlib
+    payloads = []
+    for der in pems:
+        c = Cert(der)
+        payloads.append({"PayloadType": "com.apple.security.root", "PayloadVersion": 1,
+                         "PayloadIdentifier": "%s.%s" % (ident, c.sha1().hex()),
+                         "PayloadUUID": c.sha1().hex(), "PayloadDisplayName": c.cn(),
+                         "PayloadContent": der})
+    with open(out, "wb") as f:
+        plistlib.dump({"PayloadType": "Configuration", "PayloadVersion": 1, "PayloadIdentifier": ident,
+                       "PayloadUUID": ident, "PayloadDisplayName": "ios3ds root certificates",
+                       "PayloadContent": payloads}, f, fmt=plistlib.FMT_XML)
+    return len(payloads)
+
+
+def update(src, out, extra_src=None, extra=(), ec=False):
     """Regenerate roots.pem from a Mozilla-derived bundle (host ca-certificates/certifi),
-    plus the roots named in `extra` taken from another (older) bundle."""
+    plus the roots named in `extra` taken from another (older) bundle; ec=True: the
+    EC roots instead (roots-ec.pem)."""
     keep, skipped, seen = [], [], set()
     pool = [(der, True) for der in read_pem(src)]
     if extra_src:
@@ -179,7 +207,7 @@ def update(src, out, extra_src=None, extra=()):
         c = Cert(der)
         if c.sha1() in seen or (not primary and c.cn() not in extra):
             continue
-        ok, why = usable(c)
+        ok, why = usable(c, ec=ec)
         if ok:
             seen.add(c.sha1())
             keep.append(c)
@@ -190,15 +218,21 @@ def update(src, out, extra_src=None, extra=()):
         sys.exit("[certs] extra roots not found/usable: " + ", ".join(sorted(missing)))
     keep.sort(key=lambda c: c.cn().lower())
     with open(out, "w") as f:
-        f.write("# Root certificates added to iOS 4.2.1's trust store (scripts/certs.py update,\n"
-                "# docs/certificates.md): the RSA roots of Mozilla's CA bundle (%s)%s,\n"
-                "# generated %s. EC and expired roots are left out (iOS 4.2.1 cannot use them).\n\n"
-                % (os.path.basename(src), " plus " + ", ".join(sorted(extra)) if extra else "",
-                   datetime.date.today().isoformat()))
+        if ec:
+            f.write("# EC root certificates for TLSFix's check of EC chains (scripts/certs.py update --ec,\n"
+                    "# docs/certificates.md): the EC roots of Mozilla's CA bundle (%s),\n"
+                    "# generated %s. iOS 4.2.1's own trust store cannot use them.\n\n"
+                    % (os.path.basename(src), datetime.date.today().isoformat()))
+        else:
+            f.write("# Root certificates added to iOS 4.2.1's trust store (scripts/certs.py update,\n"
+                    "# docs/certificates.md): the RSA roots of Mozilla's CA bundle (%s)%s,\n"
+                    "# generated %s. EC and expired roots are left out (iOS 4.2.1 cannot use them).\n\n"
+                    % (os.path.basename(src), " plus " + ", ".join(sorted(extra)) if extra else "",
+                       datetime.date.today().isoformat()))
         for c in keep:
             b64 = base64.b64encode(c.der).decode()
-            f.write("# %s (RSA %d, until %s)\n-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n\n"
-                    % (c.cn(), c.key_bits, c.not_after.date(),
+            f.write("# %s (%s, until %s)\n-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n\n"
+                    % (c.cn(), "EC" if ec else "RSA %d" % c.key_bits, c.not_after.date(),
                        "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64))))
     print("[certs] %s: %d roots, %d skipped (%s)" % (out, len(keep), len(skipped),
           ", ".join(sorted(set(w for _, w in skipped)))))
@@ -215,6 +249,7 @@ def main():
     u.add_argument("--out", default=PEM)
     u.add_argument("--extra-from", help="older bundle to take --extra roots from")
     u.add_argument("--extra", action="append", default=[], help="CN of a root to add from --extra-from")
+    u.add_argument("--ec", action="store_true", help="the EC roots, into roots-ec.pem")
     a = ap.parse_args()
     if a.cmd == "db":
         print("[certs] %s: %d roots" % (a.out, write_db(a.out, read_pem(a.pem))))
@@ -228,7 +263,8 @@ def main():
                 src = certifi.where()
             except ImportError:
                 sys.exit("no CA bundle found; pass --from")
-        update(src, a.out, a.extra_from, a.extra)
+        out = a.out if not a.ec or a.out != PEM else PEM_EC
+        update(src, out, a.extra_from, a.extra, ec=a.ec)
 
 
 if __name__ == "__main__":

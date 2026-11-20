@@ -60,7 +60,8 @@ def build_tree(args):
         mkboot.build(args.staging, os.path.join(tree, "ios3ds"), cmdline=args.cmdline,
                      patches=not args.no_patches, prebuilt=args.prebuilt,
                      hfsplus=args.hfsplus, rootfs_add=args.rootfs_add,
-                     cydia=not args.no_cydia, cydia_cache=args.cydia_cache)
+                     cydia=not args.no_cydia, cydia_cache=args.cydia_cache,
+                     tlsfix=not args.no_tlsfix)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
     return tree
@@ -103,6 +104,8 @@ def parser():
     ap.add_argument("--rootfs-add", help="dir standing in for build/rootfs-add/")
     ap.add_argument("--no-cydia", action="store_true",
                     help="no Cydia in the rootfs (else downloaded per rootfs/cydia.json, docs/cydia.md)")
+    ap.add_argument("--no-tlsfix", action="store_true",
+                    help="no TLSFix (TLS 1.2/1.3 for iOS) in the rootfs (docs/certificates.md)")
     ap.add_argument("--cydia-cache", help="where to keep the Cydia .debs (default build/cydia)")
     return ap
 

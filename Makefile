@@ -8,7 +8,8 @@
 #   make userland             our iOS binaries -> build/rootfs-add/ (scripts/build-ios-toolchain.sh)
 #   make hfsplus              xpwn's HFS+ editor -> build/tools/hfsplus
 #   make sd                   SD card tree -> build/sd/  (copy its contents to the card root;
-#                             downloads Cydia's debs into build/cydia, CYDIA=0 to skip)
+#                             downloads Cydia's debs into build/cydia, CYDIA=0 to skip,
+#                             TLSFIX=0 for no TLSFix)
 #   make sdimg                same, plus a 2 GiB raw SD image for the emulator (build/sd.img)
 #   make qemu                 build QEMU with the 'nintendo3ds' dev machine (build/qemu)
 #   make emu                  boot build/sd.img in the emulator, print the SD log
@@ -22,6 +23,10 @@ PYTHON  ?= python3
 # CYDIA=0: build the rootfs without the downloaded Cydia/APT base system (docs/cydia.md)
 ifneq ($(filter 0 no off,$(CYDIA)),)
 MKSD_FLAGS += --no-cydia
+endif
+# TLSFIX=0: leave out TLSFix, the Substrate tweak that gives iOS TLS 1.2/1.3 (docs/certificates.md)
+ifneq ($(filter 0 no off,$(TLSFIX)),)
+MKSD_FLAGS += --no-tlsfix
 endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging

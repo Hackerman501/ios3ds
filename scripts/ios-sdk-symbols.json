@@ -187,6 +187,7 @@
    "reexports": [],
    "text": [
     "_CCCrypt",
+    "__NSGetExecutablePath",
     "___error",
     "__exit",
     "_atoi",

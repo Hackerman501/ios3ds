@@ -54,6 +54,22 @@
    "sha256": "ad0cb4b6333a32423bafbac36da54f149dbe395f1083a1bdeaded46fa545e7cc"
   },
   {
+   "package": "com.saurik.substrate.safemode",
+   "version": "0.9.6001",
+   "path": "debs/com.saurik.substrate.safemode_0.9.6001_iphoneos-arm.deb",
+   "size": 13226,
+   "sha256": "86515cb9f6832247dbeae8427b996099dc8759bb1ef1d719c293123f2f531ee1"
+  },
+  {
+   "package": "com.skyglow.tlsfix",
+   "version": "1.3",
+   "group": "tlsfix",
+   "url": "https://github.com/ObscureMosquito/TLSFix/releases/download/1.3/com.skyglow.tlsfix_1.3_iphoneos-arm.deb",
+   "path": "com.skyglow.tlsfix_1.3_iphoneos-arm.deb",
+   "size": 3325538,
+   "sha256": "ca2f6bb470c6639fe3db482e8b417d1d1ac503821c372431d716c628e018cb94"
+  },
+  {
    "package": "coreutils",
    "version": "8.12-13",
    "path": "debs/coreutils_8.12-13_iphoneos-arm.deb",
@@ -150,6 +166,13 @@
    "path": "debs/lzma_4.32.7-5_iphoneos-arm.deb",
    "size": 94200,
    "sha256": "eeb6f7a7859d3f5233bc422d01a54fbdde48490be438131ccbd14df4f24998e8"
+  },
+  {
+   "package": "mobilesubstrate",
+   "version": "0.9.6301",
+   "path": "debs/mobilesubstrate_0.9.6301_iphoneos-arm.deb",
+   "size": 122342,
+   "sha256": "8dc91a066f088632409fecf65613831b8d6802e3b799f2dc87563c3ea2ed06ca"
   },
   {
    "package": "ncurses",
@@ -276,5 +299,9 @@
  "write": {
   "/.cydia_no_stash": "",
   "/var/lib/cydia/firmware.ver": "6\n"
+ },
+ "substrate": {
+  "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 67). So Substrate is inserted where it is needed: launchd jobs whose recipe plist_set has DYLD_INSERT_LIBRARIES (SpringBoard, configd, securityd: after our interposer); apps load it from ios3ds-applog.dylib, which SpringBoard inserts into every app as libgmalloc.dylib (tools/ios3ds-diag/applog.c); ios3ds-nettest loads it after CFNetwork. docs/cydia.md",
+  "insert": "/Library/MobileSubstrate/MobileSubstrate.dylib"
  }
 }

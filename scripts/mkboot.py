@@ -161,9 +161,10 @@ def use_prebuilt_shim(outdir, prebuilt):
 
 
 def build(staging, outdir, cmdline=None, patches=True, verbose=True,
-          prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None):
+          prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None,
+          tlsfix=True):
     """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
-    hfsplus / rootfs_add / cydia / cydia_cache: passed on to mkrootfs.build."""
+    hfsplus / rootfs_add / cydia / cydia_cache / tlsfix: passed on to mkrootfs.build."""
     import dtgen
     import patcher
 
@@ -178,7 +179,7 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         import mkrootfs
         mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose,
                        hfsplus=hfsplus, rootfs_add=rootfs_add, cydia=cydia,
-                       cydia_cache=cydia_cache)
+                       cydia_cache=cydia_cache, tlsfix=tlsfix)
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
     shim = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
     # the DT size doesn't depend on the layout values, so two passes converge

@@ -66,6 +66,8 @@ ios3ds-<version>/
 | firmware keys (`keys-*.json`) | **no** | fetched from api.ipsw.me at install time, like `make fwprep` |
 | `boot.cfg` | **no** (generated) | ours, but it holds the patched kernel's SHA-1 and a memory layout computed from Apple's kernel size; `mkboot.py` writes it during install, defaults in `mkboot.py` |
 | `fakeio.bin` | **no** (generated) | ours (`dtgen.fakeio_image()`: PrimeCell IDs and CLCD defaults), but written by `mkboot.py` during install anyway; not shipping it keeps one source of truth |
+| Cydia, its base packages, Cydia Substrate (`*.deb` from apt.saurik.com), TLSFix (`*.deb` from github.com/ObscureMosquito/TLSFix) | **no** (downloaded) | third-party; `rootfs/cydia.json` pins each by sha256 and the installer fetches them (docs/cydia.md). TLSFix is MIT-licensed; its notice is in README.md |
+| `rootfs/certs/roots.pem`, `roots-ec.pem` | yes | public CA certificates (Mozilla's list) |
 | `build/toolchain/cache/` (dyld cache), full stub dylibs | **never** | Apple-derived; only exist on machines with the IPSW, never on CI or in the zip |
 
 ## Verification done for the first version

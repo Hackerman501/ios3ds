@@ -35,7 +35,8 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Circle pad scrolling | in the direction of the upright iOS screen |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
-| 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
+| 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
+| 🧪 | Cydia Substrate (tweaks) | SpringBoard and unsandboxed apps; see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | ❌ | 3D screen, IR, NFC, video recording | Currently unplanned |
 
@@ -88,7 +89,7 @@ Use your own paths. The card is `/Volumes/NAME` on macOS and `/mnt/e` (or anothe
 
 It takes a few minutes and needs about 4 GB of free space on the PC while it works. It:
 1. decrypts the kernel and the iOS disk from your IPSW, and checks that it is the right file;
-2. patches the kernel and builds the iOS disk, including Cydia (6.5 MB from apt.saurik.com; add `--no-cydia` to skip it);
+2. patches the kernel and builds the iOS disk, including Cydia and Cydia Substrate (6.6 MB from apt.saurik.com; add `--no-cydia` to skip it) and TLSFix (3.2 MB from GitHub; `--no-tlsfix` to skip it);
 3. writes three things to the card and touches nothing else:
 
 | On the SD card | What it is |
@@ -177,7 +178,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 ### Limitations
 
 - **iOS 4.2.1 is the newest possible:** later versions need an ARMv7 CPU, and the 3DS's ARM11 is ARMv6.
-- **HTTPS:** iOS 4.2.1 speaks TLS 1.0 at most. Sites that require TLS 1.2 or newer (GitHub, Wikipedia, apple.com, …) can't be opened. Current root certificates are added, so sites that still allow TLS 1.0 work ([docs/certificates.md](docs/certificates.md)).
+- **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out: they still speak TLS 1.0 only, so GitHub, Wikipedia, apple.com, … don't open there. Sites with expired or untrusted certificates are refused everywhere.
 - **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 
@@ -258,5 +259,33 @@ GPL-3.0-or-later ([LICENSE](LICENSE)), with these exceptions:
 - `boot/arm9/sdmmc.c` and `emu/qemu/` are GPL-2.0-or-later.
 - `boot/arm9/fatfs/` is under FatFs's 1-clause BSD licence.
 - `boot/common/font8x8_basic.h` is public domain.
+
+Downloaded during install, never shipped in the release zip: Cydia and its base
+packages and Cydia Substrate (Jay Freeman, from apt.saurik.com), and **TLSFix**
+1.3 ([ObscureMosquito/TLSFix](https://github.com/ObscureMosquito/TLSFix), fork of
+[nfzerox/TLSFix](https://github.com/nfzerox/TLSFix); it contains OpenSSL 1.1.1w,
+under the OpenSSL and SSLeay licences), under this licence:
+
+> MIT License
+>
+> Copyright (c) 2026 nfzerox
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 iOS, iPod and XNU are trademarks of Apple; Nintendo 3DS is a trademark of Nintendo. This is an independent research project, not affiliated with either.

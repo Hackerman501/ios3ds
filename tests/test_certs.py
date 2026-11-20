@@ -86,6 +86,27 @@ class Roots(unittest.TestCase):
             self.assertEqual(hdr[18:20], b"\x01\x01")      # rollback journal, readable by SQLite 3.6
             self.assertEqual(hdr[44:48], b"\x00\x00\x00\x04")
 
+    def test_ec_roots_and_profile(self):
+        """roots-ec.pem + the profile TLSFix 1.3 reads its EC-chain anchors from."""
+        import plistlib
+        ec = [certs.Cert(d) for d in certs.read_pem(certs.PEM_EC)]
+        names = {c.cn() for c in ec}
+        for n in ("ISRG Root X2", "GTS Root R4", "DigiCert Global Root G3", "USERTrust ECC Certification Authority"):
+            self.assertIn(n, names)
+        soon = datetime.datetime(2027, 6, 1)
+        for c in ec:
+            self.assertEqual(c.key_oid, certs.OID_EC, c.cn())
+            self.assertGreater(c.not_after, soon, c.cn())
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "roots.plist")
+            ders = self.ders + [c.der for c in ec]
+            self.assertEqual(certs.write_profile(p, ders), len(ders))
+            with open(p, "rb") as f:
+                pl = plistlib.load(f)
+            pay = pl["PayloadContent"]
+            self.assertEqual({x["PayloadType"] for x in pay}, {"com.apple.security.root"})
+            self.assertEqual([x["PayloadContent"] for x in pay], ders)
+
 
 if __name__ == "__main__":
     unittest.main()

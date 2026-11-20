@@ -14,7 +14,7 @@ warning line), never fails.
 
 ## What gets installed
 
-`rootfs/cydia.json` pins 32 packages: Cydia and the closure of its `Depends`/
+`rootfs/cydia.json` pins 35 packages: Cydia and the closure of its `Depends`/
 `Pre-Depends`, plus every `Essential: yes` package, each at the newest version in
 `http://apt.saurik.com/` `dists/tangelo-3.7` (identical to the `ios` dist; `.deb`
 files redirect to `cache.saurik.com`). 6.5 MB download, about 40 MB unpacked
@@ -32,6 +32,8 @@ files redirect to `cache.saurik.com`). 6.5 MB download, about 40 MB unpacked
 | sed, grep, findutils, diffutils | 4.1.5-8, 2.5.4-3, 4.2.33-7, 2.8.1-6 | | tar, gzip, bzip2, lzma | 1.29-10, 1.6-7, 1.0.5-8, 4.32.7-5 |
 | gnupg, berkeleydb | 1.4.8-4, 4.6.21-5 | | ncurses, readline | 5.7-15, 6.0-8 |
 | pam, pam-modules | 32.1-4, 36.1-5 | | org.thebigboss.repo.icons | 1.0 |
+| mobilesubstrate (Cydia Substrate) | 0.9.6301 | | com.saurik.substrate.safemode | 0.9.6001 |
+| com.skyglow.tlsfix (TLSFix, from GitHub, group `tlsfix`) | 1.3 | | | |
 
 Why these versions: Cydia 1.1.30 (2017) is the last release and still has an
 **armv6** slice with `LC_VERSION_MIN_IPHONEOS 2.0`; it links only libraries 4.2.1
@@ -40,10 +42,70 @@ was checked to have an armv6 or generic-ARM slice. The 2011 package versions a
 greenpois0n bootstrap installed are no longer all served, and an old Cydia would
 immediately offer these upgrades anyway.
 
-Not installed: **Cydia Substrate (MobileSubstrate)**. It injects into every process
-through `DYLD_INSERT_LIBRARIES`, which our `configd` already uses for the Wi-Fi bridge
-(`rootfs/recipe.json`), and SpringBoard runs our GL/CA environment; it stays out
-until it is tested against those. Install it from Cydia at your own risk.
+Also installed: **Cydia Substrate** 0.9.6301 (`mobilesubstrate`, the last
+Telesphoreo release; armv6 slices, `LC_VERSION_MIN_IPHONEOS 2.0`) and its
+**Substrate Safe Mode** 0.9.6001, and the **TLSFix** 1.3 tweak (TLS 1.2/1.3 for
+iOS, [certificates.md](certificates.md) section 4) from
+`github.com/ObscureMosquito/TLSFix/releases` (entry with its own `url` and
+`"group": "tlsfix"`: left out with `TLSFIX=0` / `--no-tlsfix` / `IOS3DS_TLSFIX=0` /
+recipe `"tlsfix": false`; if only its download fails, the image is built without
+it). How Substrate gets into processes on
+ios3ds is not how Substrate does it itself, see the next section.
+
+## Cydia Substrate on 4.2.1 (re-log 67)
+
+**What Substrate 0.9.6301 would do.** Its `extrainst_` (a Mach-O, not run here)
+appends `bsexec .. /usr/bin/cynject 1 .../SubstrateLauncher.dylib` to
+`/etc/launchd.conf` (or links `/etc/rc.d/substrate` for jailbreaks with an rc.d
+untether). 4.2.1's `launchctl` reads `/etc/launchd.conf` at boot and waits for each
+`bsexec`, so no untether is needed: `cynject` (`task_for_pid(1)`, allowed by our
+boot-arg `amfi_unrestrict_task_for_pid=1`) loads `SubstrateLauncher.dylib` into
+launchd, which hooks `posix_spawn` and adds `DYLD_INSERT_LIBRARIES=
+/Library/MobileSubstrate/MobileSubstrate.dylib` to everything launchd starts.
+**On 4.2.1 this hangs the boot:** `cynject` returns 0, launchd forks its ~38 jobs,
+and every one of them blocks for good (QEMU: no daemon ever execs, CPU idle; the
+children's last system calls are `kill`/`waitpid` from the hook's helper-process
+path). Putting the same `DYLD_INSERT_LIBRARIES` into launchd's global environment
+(`setenv` in `/etc/launchd.conf`, how pre-2011 MobileSubstrate worked) also hangs
+the boot. Not debugged further (Substrate is closed source).
+
+**What ios3ds does instead** (`rootfs/cydia.json` `substrate`, applied by
+`cydia.substrate_setup` after the recipe):
+
+| Process | How Substrate gets in | Our own library |
+|---|---|---|
+| SpringBoard | its launchd plist: `DYLD_INSERT_LIBRARIES=/usr/lib/ios3ds-applog.dylib:/Library/MobileSubstrate/MobileSubstrate.dylib` | ios3ds-applog, first |
+| configd | `.../ios3ds-a80211.dylib:.../MobileSubstrate.dylib` | Wi-Fi bridge interposer, first |
+| securityd | `.../ios3ds-hwaes.dylib:.../MobileSubstrate.dylib` | AES interposer, first |
+| every app | SpringBoard inserts `/usr/lib/libgmalloc.dylib` (= ios3ds-applog, `SBGuardMallocAlways`) into each app, replacing anything else; ios3ds-applog's constructor `dlopen`s MobileSubstrate.dylib in executables inside a `.app` (after adding it to `DYLD_INSERT_LIBRARIES`, where Substrate's loader looks for and removes itself) | ios3ds-applog |
+| ios3ds-nettest | `dlopen` after it loads CFNetwork (TLSFix filters on CFNetwork) | |
+| other daemons | none | |
+| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **none**: the sandbox refuses every file under `/Library` (`open` gives `EPERM` for `/Library/MobileSubstrate/...`, `/Library/Frameworks/CydiaSubstrate.framework/...`, and for `/var/mobile/Library/ConfigurationProfiles`), so the `dlopen` fails and the app runs without tweaks | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
+
+Every launchd job that the recipe gives its own `DYLD_INSERT_LIBRARIES` gets
+Substrate appended automatically; our interposers stay first, so their
+`__interpose` entries and constructors run before any tweak. Without Cydia
+(`CYDIA=0`) none of this happens and the plists are as before.
+
+Inside a process, `MobileSubstrate.dylib` (= `SubstrateInjection.dylib`) loads
+`SubstrateLoader.dylib` only if CoreFoundation is loaded, and the loader then loads
+each `/Library/MobileSubstrate/DynamicLibraries/*.dylib` whose plist filter
+matches (Bundles / Executables / Classes / CoreFoundationVersion). Installed
+extensions: `MobileSafety` (safe mode, SpringBoard) and `tlsfix` (any process with
+`com.apple.CFNetwork`; TLSFix itself skips SpringBoard, launchd, lockdownd and
+securityd).
+
+**Sandboxed apps** need what every iOS 4 jailbreak did in the kernel: a patch to
+the Sandbox kext (`com.apple.security.sandbox`, 0x803cd000 in 8C148) that lets
+the MAC checks pass for those paths (comex's datautils0 hooked its evaluate
+function). ios3ds does not patch the sandbox (yet), so MobileSafari keeps iOS's
+own TLS 1.0; Cydia, Settings and other unsandboxed apps get Substrate and TLSFix.
+
+**Safe mode:** MobileSafety (filter `com.apple.springboard`) and the loader's
+crash handlers load in SpringBoard as on a jailbroken device, so a tweak that
+crashes SpringBoard should bring it back in safe mode; not exercised in QEMU.
+Our interposers are plain `DYLD_INSERT_LIBRARIES` entries, not extensions, so
+they load in safe mode too.
 
 ## What the build does (scripts/cydia.py)
 
@@ -124,12 +186,13 @@ still carry an armv6 (or generic ARM) slice.
 
 ## Known issues
 
-- **HTTPS:** fixed by the current root store the build adds
-  ([docs/certificates.md](certificates.md)): Cydia's home page and depictions on
-  https://cydia.saurik.com (same server) load. HTTPS repositories or depictions on servers that
-  require TLS 1.2+ (or use SHA-384-signed chains) still fail; iOS 4.2.1 has only
-  TLS 1.0.
+- **HTTPS:** the current root store ([certificates.md](certificates.md)) and
+  TLSFix (TLS 1.2/1.3, EC chains) inside Cydia: Cydia's home page loads; HTTPS
+  depictions/repositories on TLS 1.2-only servers go through the same CFNetwork
+  path that ios3ds-nettest tested (not tried in the Cydia UI). BigBoss's HTTPS host still
+  fails: its certificate expired on 2026-06-15 (its repository is plain HTTP).
 - Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh.
 - The startup daemon re-runs `firmware.sh` on every boot (stock behaviour); it
   is a few seconds of background shell work.
-- No Cydia Substrate (see above).
+- Substrate is not in daemons other than configd and securityd (see above):
+  tweaks for other daemons don't load.

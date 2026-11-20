@@ -60,11 +60,12 @@ def local_path(local, rootfs_add=None):
 
 
 def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add=None,
-          cydia=True, cydia_cache=None):
+          cydia=True, cydia_cache=None, tlsfix=True):
     """hfsplus: path of xpwn's hfsplus tool (default build/tools/hfsplus, built on
     demand); rootfs_add: directory standing in for build/rootfs-add/ (release zip);
     cydia: False leaves Cydia out even if the recipe has it (docs/cydia.md);
-    cydia_cache: where the downloaded debs are kept (default build/cydia)."""
+    cydia_cache: where the downloaded debs are kept (default build/cydia);
+    tlsfix: False leaves TLSFix (and only it) out of the Cydia set."""
     global HFS
     if hfsplus:
         HFS = hfsplus
@@ -91,10 +92,11 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             raise SystemExit("hfsplus grow failed: " + res.strip())
         if verbose:
             print("[mkrootfs] grew volume to %d MiB" % (os.path.getsize(out) >> 20))
+    cydia_mod = cydia_set = None
     if recipe.get("cydia") and cydia:
         # before our own files: whatever the recipe writes below wins over a deb
         import cydia as cydia_mod
-        cydia_mod.apply(out, hfs, recipe, cydia_cache, verbose)
+        cydia_set = cydia_mod.apply(out, hfs, recipe, cydia_cache, verbose, tlsfix)
     elif verbose and recipe.get("cydia"):
         print("[mkrootfs] Cydia left out (--no-cydia)")
     with tempfile.TemporaryDirectory() as td:
@@ -110,6 +112,19 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "chmod", "0644", ts["path"])
             if verbose:
                 print("[mkrootfs] trust store %s: %d root certificates" % (ts["path"], n))
+            if ts.get("profile"):
+                # RSA + EC roots as profile CA payloads: TLSFix's OpenSSL check of EC chains
+                ders = certs.read_pem(os.path.join(ROOT, ts["pem"]))
+                ders += certs.read_pem(os.path.join(ROOT, ts["ec_pem"])) if ts.get("ec_pem") else []
+                tmp = os.path.join(td, "roots.plist")
+                n = certs.write_profile(tmp, ders)
+                hfs(out, "mkdir", ts["profile"].rsplit("/", 1)[0], check=False)
+                if exists(out, ts["profile"]):
+                    hfs(out, "rm", ts["profile"])
+                hfs(out, "add", tmp, ts["profile"])
+                hfs(out, "chmod", "0644", ts["profile"])
+                if verbose:
+                    print("[mkrootfs] %s: %d root certificates for TLSFix's EC check" % (ts["profile"], n))
         for path, text in recipe.get("write", {}).items():
             tmp = os.path.join(td, "f")
             with open(tmp, "w") as f:
@@ -152,6 +167,9 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "add", tmp, path)
             if verbose:
                 print("[mkrootfs] %s: set %s" % (path, ", ".join(keys)))
+        if cydia_set:
+            # Cydia Substrate next to our interposers (after the plists above exist)
+            cydia_mod.substrate_setup(out, hfs, hfs_cat, recipe, cydia_set, verbose)
         by_path = {}
         for fp in recipe.get("file_patches", []):
             by_path.setdefault(fp["path"], []).append(fp)
@@ -202,8 +220,9 @@ def main():
     ap.add_argument("--staging", default=os.path.join(ROOT, "build", "staging"))
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds", "rootfs.hfs"))
     ap.add_argument("--no-cydia", action="store_true", help="leave Cydia out (docs/cydia.md)")
+    ap.add_argument("--no-tlsfix", action="store_true", help="leave TLSFix out (docs/certificates.md)")
     a = ap.parse_args()
-    build(a.staging, a.out, cydia=not a.no_cydia)
+    build(a.staging, a.out, cydia=not a.no_cydia, tlsfix=not a.no_tlsfix)
 
 
 if __name__ == "__main__":

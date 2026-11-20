@@ -119,30 +119,79 @@ noted; the UI rows were driven with `emu/session.py --wifi`.
 | https://letsencrypt.org/ | (EC chain) | -9836 | -9836: server requires TLS 1.2 (section 4) |
 | https://untrusted-root.badssl.com/, https://expired.badssl.com/ | negative controls | -9807 | -9807: checking is still on |
 
-**SHA-384 chains:** the Sectigo R36/R46 hierarchy (every certificate signed with
-`sha384WithRSAEncryption`) does not verify even with both of its roots present,
-while SHA-256 chains with 2048- and 4096-bit keys do. 4.2.1's Security.framework
-has the sha384WithRSA OID and imports `CC_SHA384`, so the cause is in its
-signature check (hash or the 3072-bit intermediate key); not pinned down. Sites on
-that hierarchy (apt.thebigboss.org also has a certificate for a different name)
-keep failing; adding roots can't change it.
+**SHA-384 chains (corrected, re-log 67):** the BigBoss failure was not the
+hash. Its certificate (Sectigo DV R36 -> R46 -> USERTrust RSA, all
+`sha384WithRSAEncryption`) **expired on 2026-06-15**, and apt.thebigboss.org serves
+the same certificate, issued for moreinfo.thebigboss.org. github.com's RSA
+certificate is on the same SHA-384 hierarchy and verifies through
+`SecTrustEvaluate` (with TLSFix, section 4), so 4.2.1 does check SHA-384 RSA
+chains. BigBoss over HTTPS keeps failing until its owner renews the certificate;
+the repository itself is plain HTTP and works.
 
 Not needed: an opt-in "ignore certificate errors" switch. Renewing the roots fixed
 Cydia's pages, so certificate checking stays on with no bypass.
 
-## 4. TLS protocol limits (not fixable with certificates)
+## 4. TLS 1.2/1.3: TLSFix
 
 iOS 4.2.1's SecureTransport speaks **SSL 3.0 and TLS 1.0 at most** (TLS 1.1/1.2
-arrived with iOS 5), with CBC/RC4 cipher suites only: no TLS 1.2 AEAD suites
-(AES-GCM, ChaCha20). Many servers now
-accept only TLS 1.2 or newer (letsencrypt.org, github.com, wikipedia.org,
-apple.com, python.org, kernel.org, debian.org, most of Cloudflare's defaults in
-2026). Those fail during the handshake, before any certificate is looked at, with
-a different error (`[nettest]`: SSL error -9836 `errSSLPeerProtocolVersion` /
--9806; Safari shows an error page instead of the site). No root store fixes that; it would need a newer TLS
-library in iOS or a TLS-terminating proxy on another machine. Sites that still
-accept TLS 1.0 (cydia.saurik.com, apt.saurik.com, www.google.com,
-apt.thebigboss.org, badssl.com's `tls-v1-0` host, ...) work with the new roots.
+arrived with iOS 5), with CBC/RC4 cipher suites only. Many servers now accept
+only TLS 1.2 or newer (letsencrypt.org, github.com, wikipedia.org, apple.com,
+most of Cloudflare's defaults in 2026); with the stock stack they fail in the
+handshake (`[nettest]`: -9836 `errSSLPeerProtocolVersion` / -9806).
+
+ios3ds images therefore come with **TLSFix 1.3**
+([ObscureMosquito/TLSFix](https://github.com/ObscureMosquito/TLSFix), a fork of
+[nfzerox/TLSFix](https://github.com/nfzerox/TLSFix); MIT, notice in the README),
+a Cydia Substrate tweak downloaded at build time like Cydia (`rootfs/cydia.json`,
+pinned sha256, docs/cydia.md). It hooks the SecureTransport functions
+(`SSLNewContext`, `SSLSetIOFuncs`, `SSLHandshake`, `SSLRead`, `SSLWrite`, ...)
+and runs the connection through a statically linked **OpenSSL 1.1.1w** instead
+(TLS 1.0 to 1.3, AES-GCM, ChaCha20, ECDHE, SNI), while CFNetwork keeps driving the
+socket. It loads into every process that has CFNetwork and Cydia Substrate
+(Cydia and other unsandboxed apps, `ios3ds-nettest`) except SpringBoard, launchd,
+lockdownd and securityd. **Not in MobileSafari or App Store apps:** their sandbox
+refuses the files under `/Library` that Substrate and TLSFix live in
+(docs/cydia.md, re-log 67), so Safari still speaks TLS 1.0 only.
+
+**Certificate checks** stay iOS's: the server's chain is handed to
+`SecTrustEvaluate` with an SSL policy for the host name, i.e. the trust store of
+sections 1-2 (an expired, wrong-name or untrusted certificate is refused with
+-9807 as before). 4.2.1 cannot verify EC keys or ECDSA signatures (section 2), so
+for a chain that contains an EC certificate TLSFix 1.3 falls back to OpenSSL's
+`X509_verify_cert` (purpose SSL server, host name, dates) against the CA payloads
+of the files in `/var/mobile/Library/ConfigurationProfiles`. The build writes
+`ios3ds-roots.plist` there (`trust_store.profile` in `rootfs/recipe.json`,
+`certs.write_profile`): the 80 RSA roots of `roots.pem` plus the **40 EC roots** of
+`rootfs/certs/roots-ec.pem` (Mozilla's EC roots: ISRG Root X2, GTS Root R3/R4,
+DigiCert Global Root G3, USERTrust ECC, Sectigo E46, Amazon Root CA 3/4, ...;
+`scripts/certs.py update --ec`). iOS lists only the profiles it installed
+itself (`*.stub`), so the file does not show up in Settings.
+
+Results (QEMU, ctr-wifi + slirp, `emu/wifi_test.py --https`, `ios3ds-nettest`
+with Substrate + TLSFix 1.3; re-log 67):
+
+| Site | Without TLSFix | With TLSFix 1.3 |
+|---|---|---|
+| https://github.com/ (ECDSA or RSA/SHA-384 Sectigo chain) | -9836 / -9806 | **200** (537 KB) |
+| https://en.wikipedia.org/ (Let's Encrypt EC chain) | -9836 | **200** (267 KB) |
+| https://www.apple.com/ (RSA, DigiCert G2) | -9836 | **200** (250 KB) |
+| https://www.google.com/, https://cydia.saurik.com/ | 200 | 200 |
+| https://ecc256.badssl.com/ (EC) | | 200 |
+| https://letsencrypt.org/ | -9836 | TLS ok, then CFNetwork HTTP error -4 (domain 4) on the response |
+| https://moreinfo.thebigboss.org/, https://apt.thebigboss.org/ | -9807 | -9807: certificate expired 2026-06-15 (section 3) |
+| https://expired.badssl.com/, untrusted-root, wrong.host | -9807 | -9807 (still refused) |
+| Cydia app home page | loads | loads (Substrate + TLSFix in Cydia) |
+| Safari: github.com, www.apple.com | "could not establish a secure connection" | unchanged: sandboxed, no TLSFix |
+
+**Cost** (`--icount 2`, about the Old 3DS ARM11 speed, whole request incl.
+DNS and body): cydia.saurik.com 2 s with and without TLSFix, www.google.com 3 s
+vs 2 s, www.apple.com 4 s and en.wikipedia.org 9 s (EC chain, OpenSSL check)
+where the stock stack fails. TLSFix's armv6 code is 1.9 MB (file-backed, shared)
+plus 144 KB `__DATA` per process that loads it; OpenSSL is set up on the first TLS
+connection, not at launch.
+
+Turn it off: `make sd TLSFIX=0`, `install.py --no-tlsfix`, `IOS3DS_TLSFIX=0`, or
+`"tlsfix": false` in `rootfs/recipe.json`.
 
 ## 5. Testing it
 

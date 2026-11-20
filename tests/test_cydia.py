@@ -8,6 +8,7 @@ import io
 import json
 import lzma
 import os
+import plistlib
 import re
 import sys
 import tarfile
@@ -121,9 +122,20 @@ class Manifest(unittest.TestCase):
         for p in m["packages"]:
             self.assertRegex(p["sha256"], r"^[0-9a-f]{64}$", p["package"])
             self.assertGreater(p["size"], 0)
-            self.assertTrue(p["path"].startswith("debs/") and p["path"].endswith(".deb"))
+            self.assertTrue(p["path"].endswith(".deb"))
+            if p.get("url"):                                  # not from Telesphoreo: optional
+                self.assertTrue(p["url"].startswith("https://") and p.get("group"), p["package"])
+            else:
+                self.assertTrue(p["path"].startswith("debs/"), p["package"])
         self.assertTrue(all(u.startswith("http") for u in m["mirrors"]))
         self.assertIn("/.cydia_no_stash", m["write"])        # one volume: no stashing
+        # Substrate + its safe mode in the base set, inserted by launchd's environment
+        for want in ("mobilesubstrate", "com.saurik.substrate.safemode"):
+            self.assertIn(want, names)
+        self.assertEqual(m["substrate"]["insert"], "/Library/MobileSubstrate/MobileSubstrate.dylib")
+        self.assertNotIn("/etc/launchd.conf", m["write"])      # Substrate's launchd hook hangs 4.2.1
+        tls = [p for p in m["packages"] if p["package"] == "com.skyglow.tlsfix"]
+        self.assertEqual([p.get("group") for p in tls], ["tlsfix"])
 
     def test_recipe_and_release(self):
         with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
@@ -140,6 +152,12 @@ class Manifest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"IOS3DS_CYDIA": "1"}):
             self.assertTrue(cydia.enabled({"cydia": "rootfs/cydia.json"}))
             self.assertFalse(cydia.enabled({"cydia": False}))
+        with mock.patch.dict(os.environ, {"IOS3DS_TLSFIX": "0"}):
+            self.assertFalse(cydia.tlsfix_enabled({"tlsfix": True}))
+        with mock.patch.dict(os.environ, {"IOS3DS_TLSFIX": "1"}):
+            self.assertTrue(cydia.tlsfix_enabled({"tlsfix": True}))
+            self.assertTrue(cydia.tlsfix_enabled({}))
+            self.assertFalse(cydia.tlsfix_enabled({"tlsfix": False}))
 
 
 class Deb(unittest.TestCase):
@@ -193,6 +211,29 @@ class Deb(unittest.TestCase):
             self.assertEqual(fs["/private/var/lib/dpkg/info/foo.postinst"][1], 0o755)
             self.assertIn("/sbin/fsck", fs["/private/var/lib/dpkg/info/firmware-sbin.list"][2].decode())
 
+    def test_substrate_setup(self):
+        """Substrate goes after our own interposers in the jobs that insert one."""
+        fake = FakeHfs()
+        for d in ("/System", "/System/Library", "/System/Library/LaunchDaemons"):
+            fake.fs[d] = ("d", 0o755, None)
+        sb = "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
+        other = "/System/Library/LaunchDaemons/com.apple.other.plist"
+        fake.fs[sb] = ("f", 0o644, plistlib.dumps({"Label": "sb", "EnvironmentVariables": {
+            "DYLD_INSERT_LIBRARIES": "/usr/lib/ios3ds-applog.dylib", "X": "1"}}))
+        fake.fs[other] = ("f", 0o644, plistlib.dumps({"Label": "o"}))
+        recipe = {"plist_set": {sb: {"EnvironmentVariables": {"DYLD_INSERT_LIBRARIES": "x"}},
+                                other: {"StandardErrorPath": "/dev/console"}}}
+        m = {"substrate": {"insert": "/Library/MobileSubstrate/MobileSubstrate.dylib"}}
+        cat = lambda img, path: fake.fs[path][2]                    # noqa: E731
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            cydia.substrate_setup("img", fake, cat, recipe, m)
+            cydia.substrate_setup("img", fake, cat, recipe, m)   # idempotent
+        env = plistlib.loads(fake.fs[sb][2])["EnvironmentVariables"]
+        self.assertEqual(env["DYLD_INSERT_LIBRARIES"],
+                         "/usr/lib/ios3ds-applog.dylib:/Library/MobileSubstrate/MobileSubstrate.dylib")
+        self.assertEqual(env["X"], "1")
+        self.assertEqual(plistlib.loads(fake.fs[other][2]), {"Label": "o"})
+
     def test_fetch_offline(self):
         m = cydia.load_manifest()
         with tempfile.TemporaryDirectory() as td, mock.patch("sys.stdout", new=io.StringIO()), \
@@ -207,6 +248,23 @@ class Deb(unittest.TestCase):
                 mock.patch.object(cydia, "_get", return_value=b"abc"):
             self.assertIsNone(cydia.fetch(m, td))
             self.assertEqual(os.listdir(td), [])
+
+    def test_fetch_optional_group(self):
+        good = b"deb"
+        m = {"mirrors": ["http://x/"], "packages": [
+            {"package": "p", "version": "1", "path": "debs/p.deb", "size": 3,
+             "sha256": hashlib.sha256(good).hexdigest()},
+            {"package": "t", "version": "1", "group": "tlsfix", "url": "https://y/t.deb",
+             "path": "t.deb", "size": 3, "sha256": "0" * 64}]}
+        with tempfile.TemporaryDirectory() as td, mock.patch("sys.stdout", new=io.StringIO()), \
+                mock.patch.object(cydia, "_get", return_value=good) as get:
+            got = cydia.fetch(m, td)                          # bad optional deb: only it is dropped
+            self.assertEqual([p["package"] for p, _ in got], ["p"])
+            self.assertIn(mock.call("https://y/t.deb"), get.call_args_list)
+            get.reset_mock()
+            got = cydia.fetch(m, td, groups=())               # switched off: not even fetched
+            self.assertEqual([p["package"] for p, _ in got], ["p"])
+            get.assert_not_called()
 
 
 if __name__ == "__main__":

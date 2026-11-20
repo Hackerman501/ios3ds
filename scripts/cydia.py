@@ -14,6 +14,11 @@ warns: the image is then built without Cydia.
                                                   in rootfs/cydia.json from the repo
 Turn it off: recipe.json "cydia": false, IOS3DS_CYDIA=0, `make sd CYDIA=0`,
 or `install.py --no-cydia`.
+
+Packages with a "group" are optional parts of the set: "tlsfix" (TLSFix, a
+Substrate tweak from its GitHub release, "url") is on by default; recipe
+"tlsfix": false, IOS3DS_TLSFIX=0, `make sd TLSFIX=0` or `--no-tlsfix` leave it
+out. A failed download of an optional package drops only its group.
 """
 import argparse
 import bz2
@@ -49,6 +54,12 @@ def enabled(recipe=None):
     return bool(recipe is None or recipe.get("cydia", False))
 
 
+def tlsfix_enabled(recipe=None):
+    if os.environ.get("IOS3DS_TLSFIX", "1").lower() in ("0", "no", "off", "false"):
+        return False
+    return bool(recipe is None or recipe.get("tlsfix", True))
+
+
 def load_manifest(path=None):
     with open(path or MANIFEST) as f:
         return json.load(f)
@@ -63,6 +74,13 @@ def deb_name(p):
     return os.path.basename(p["path"])
 
 
+def urls(m, p):
+    """Where a pinned deb comes from: its own "url", else every mirror + path."""
+    if p.get("url"):
+        return [p["url"]]
+    return [base.rstrip("/") + "/" + p["path"] for base in m["mirrors"]]
+
+
 # --- download -----------------------------------------------------------------
 
 def _get(url, timeout=60):
@@ -71,21 +89,25 @@ def _get(url, timeout=60):
         return r.read()
 
 
-def fetch(manifest=None, cache=None, verbose=True):
+def fetch(manifest=None, cache=None, verbose=True, groups=("tlsfix",)):
     """Return [(package entry, local .deb path)] with every hash verified, or None
-    (with a warning) if any package can't be had: then no Cydia at all."""
+    (with a warning) if any base package can't be had: then no Cydia at all.
+    Packages of an optional "group" are fetched only if the group is in groups;
+    if one of them can't be had, only that group is left out."""
     m = manifest or load_manifest()
     cache = cache or os.environ.get("IOS3DS_CYDIA_CACHE") or CACHE
     os.makedirs(cache, exist_ok=True)
-    out = []
+    out, dropped = [], set()
     for p in m["packages"]:
+        g = p.get("group")
+        if g and (g not in groups or g in dropped):
+            continue
         dst = os.path.join(cache, deb_name(p))
         if os.path.exists(dst) and sha256_file(dst) == p["sha256"]:
             out.append((p, dst))
             continue
         data, err = None, None
-        for base in m["mirrors"]:
-            url = base.rstrip("/") + "/" + p["path"]
+        for url in urls(m, p):
             for attempt in range(2):
                 try:
                     data = _get(url)
@@ -95,13 +117,20 @@ def fetch(manifest=None, cache=None, verbose=True):
                     time.sleep(1)
             if data is not None:
                 break
+        bad = None
         if data is None:
-            say("WARNING: could not download %s (%s); building WITHOUT Cydia" % (p["package"], err))
-            return None
-        h = hashlib.sha256(data).hexdigest()
-        if h != p["sha256"] or len(data) != p["size"]:
-            say("WARNING: %s: sha256/size mismatch (got %s, %d bytes); building WITHOUT Cydia"
-                % (deb_name(p), h, len(data)))
+            bad = "could not download %s (%s)" % (p["package"], err)
+        else:
+            h = hashlib.sha256(data).hexdigest()
+            if h != p["sha256"] or len(data) != p["size"]:
+                bad = "%s: sha256/size mismatch (got %s, %d bytes)" % (deb_name(p), h, len(data))
+        if bad and g:
+            say("WARNING: %s; building without %s" % (bad, g))
+            dropped.add(g)
+            out = [(q, d) for q, d in out if q.get("group") != g]
+            continue
+        if bad:
+            say("WARNING: %s; building WITHOUT Cydia" % bad)
             return None
         with open(dst + ".part", "wb") as f:
             f.write(data)
@@ -375,20 +404,64 @@ def install(img, hfs, debs, manifest=None, verbose=True):
         return nfiles
 
 
-def apply(img, hfs, recipe, cache=None, verbose=True):
+def apply(img, hfs, recipe, cache=None, verbose=True, tlsfix=True):
     """mkrootfs hook: fetch + install if enabled; never fails the build on a
-    download problem (returns False then)."""
+    download problem (returns None then, else the manifest for
+    substrate_setup). tlsfix=False leaves TLSFix out."""
     if not enabled(recipe):
         if verbose:
             say("disabled (recipe 'cydia' / IOS3DS_CYDIA=0): no Cydia in this image")
-        return False
+        return None
     mpath = recipe["cydia"] if isinstance(recipe.get("cydia"), str) else MANIFEST
     m = load_manifest(os.path.join(ROOT, mpath) if not os.path.isabs(mpath) else mpath)
-    debs = fetch(m, cache, verbose)
+    groups = ("tlsfix",) if tlsfix and tlsfix_enabled(recipe) else ()
+    if verbose and not groups:
+        say("TLSFix left out (recipe 'tlsfix' / IOS3DS_TLSFIX=0 / --no-tlsfix)")
+    debs = fetch(m, cache, verbose, groups)
     if not debs:
-        return False
+        return None
     install(img, hfs, debs, m, verbose)
-    return True
+    return m
+
+
+def substrate_setup(img, hfs, hfs_cat, recipe, manifest, verbose=True):
+    """mkrootfs hook, after the recipe's own files and plist edits: make every
+    process load Cydia Substrate next to our DYLD_INSERT_LIBRARIES interposers
+    (manifest "substrate", docs/cydia.md)."""
+    import plistlib
+    sub = manifest.get("substrate")
+    if not sub:
+        return
+    ins = sub["insert"]
+    with tempfile.TemporaryDirectory() as td:
+        im = Image(img, hfs, td)
+        for path, text in sub.get("write", {}).items():
+            im.put(path, text.encode())
+        for path, target in sub.get("symlink", {}).items():
+            im.symlink(path, target)
+        edits = {}
+        # launchd jobs that set their own DYLD_INSERT_LIBRARIES don't see launchd's
+        # global one: append Substrate to theirs (ours first, so our interposers stay)
+        for path, keys in recipe.get("plist_set", {}).items():
+            env = keys.get("EnvironmentVariables", {})
+            if "DYLD_INSERT_LIBRARIES" in env:
+                edits.setdefault(path, []).append(("insert", env["DYLD_INSERT_LIBRARIES"]))
+        for path, names in sub.get("plist_delete", {}).items():
+            edits.setdefault(path, []).extend(("delete", n) for n in names)
+        for path, ops in edits.items():
+            pl = plistlib.loads(hfs_cat(img, im.real(path)))
+            for op, arg in ops:
+                if op == "insert":
+                    cur = [x for x in pl["EnvironmentVariables"]["DYLD_INSERT_LIBRARIES"].split(":") if x]
+                    if ins not in cur:
+                        cur.append(ins)
+                    pl["EnvironmentVariables"]["DYLD_INSERT_LIBRARIES"] = ":".join(cur)
+                else:
+                    pl.pop(arg, None)
+            im.put(path, plistlib.dumps(pl, fmt=plistlib.FMT_XML))
+            if verbose:
+                say("substrate: %s: %s" % (path, ", ".join(
+                    "DYLD_INSERT_LIBRARIES += %s" % ins if op == "insert" else "no %s" % arg for op, arg in ops)))
 
 
 # --- maintainer helper ------------------------------------------------------------
@@ -396,7 +469,7 @@ def apply(img, hfs, recipe, cache=None, verbose=True):
 def pin(path=MANIFEST):
     m = load_manifest(path)
     for p in m["packages"]:
-        data = _get(m["mirrors"][0].rstrip("/") + "/" + p["path"])
+        data = _get(urls(m, p)[0])
         p["size"], p["sha256"] = len(data), hashlib.sha256(data).hexdigest()
         print("%-28s %-20s %8d %s" % (p["package"], p["version"], p["size"], p["sha256"]))
     with open(path, "w") as f:

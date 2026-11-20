@@ -55,7 +55,7 @@ SOURCES = [
     "tools/ios3ds-audio/dt_audio.py", "tools/ios3ds-mcu/dt_mcu.py",
     "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
     "scripts/cydia.py", "scripts/certs.py", "rootfs/recipe.json", "rootfs/cydia.json",
-    "rootfs/files/*", "rootfs/certs/roots.pem",
+    "rootfs/files/*", "rootfs/certs/roots.pem", "rootfs/certs/roots-ec.pem",
     "README.md", "LICENSE", "docs/INSTALL.md",
 ]
 XPWN_FILES = ["hfs/*.c", "common/abstractfile.c", "common/base64.c", "includes/**/*.h", "LICENSE",

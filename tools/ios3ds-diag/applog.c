@@ -12,6 +12,13 @@
  * points stdout and stderr at /dev/console, and logs every alert's title and
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
  * popup). Otherwise it does nothing.
+ *
+ * Cydia Substrate in apps (docs/cydia.md): the libgmalloc.dylib that SpringBoard
+ * inserts replaces any DYLD_INSERT_LIBRARIES an app would otherwise get, so an
+ * app (an executable inside a .app bundle) loads
+ * /Library/MobileSubstrate/MobileSubstrate.dylib from here, before main(), as if
+ * it had been inserted with it; without Substrate on the image nothing happens.
+ * Sandboxed apps cannot read /Library and stay without it (docs/cydia.md).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <dlfcn.h>
@@ -25,6 +32,7 @@
 int sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 extern const char *getprogname(void);
 int unsetenv(const char *name);
+int _NSGetExecutablePath(char *buf, unsigned int *size);
 
 /* libobjc through dlsym: the stub SDK lists only the symbols the tools import */
 typedef void *id;
@@ -184,9 +192,27 @@ static void modal_start(void)
     if (t) add(main_rl(), t, *common);
 }
 
+static void load_substrate(void)
+{
+    static const char ms[] = "/Library/MobileSubstrate/MobileSubstrate.dylib";
+    const char *e = getenv("DYLD_INSERT_LIBRARIES");
+    char exe[1024], old[1024], v[1200];
+    unsigned int n = sizeof(exe);
+    if (!e || strstr(e, ms) || strlen(e) >= sizeof(old)) return;   /* SpringBoard: has it from its plist */
+    if (_NSGetExecutablePath(exe, &n) != 0 || !strstr(exe, ".app/")) return;
+    memcpy(old, e, strlen(e) + 1);
+    snprintf(v, sizeof(v), "%s:%s", old, ms);
+    /* Substrate's loader looks for itself in DYLD_INSERT_LIBRARIES and takes
+     * itself out again, leaving ours. Sandboxed apps (MobileSafari, App Store
+     * apps) may not read /Library: the dlopen fails and they run without it. */
+    setenv("DYLD_INSERT_LIBRARIES", v, 1);
+    if (!dlopen(ms, RTLD_LAZY | RTLD_GLOBAL)) setenv("DYLD_INSERT_LIBRARIES", old, 1);
+}
+
 __attribute__((constructor)) static void applog_init(void)
 {
     if (!strcmp(getprogname(), "SpringBoard")) modal_start();
+    load_substrate();
     char ba[512];
     size_t n = sizeof(ba) - 1;
     if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) != 0) return;
@@ -202,8 +228,12 @@ __attribute__((constructor)) static void applog_init(void)
     if (fd > 2) close(fd);
     /* the app's children (and the next exec) need not inherit us */
     unsetenv("DYLD_INSERT_LIBRARIES");
-    char line[96];
-    int l = snprintf(line, sizeof(line), "[applog] %s pid %d\n", getprogname(), (int)getpid());
+    char line[160];
+    int l = snprintf(line, sizeof(line), "[applog] %s pid %d%s%s\n", getprogname(), (int)getpid(),
+                     dlopen("/Library/MobileSubstrate/MobileSubstrate.dylib", RTLD_LAZY | 0x10 /* NOLOAD */)
+                         ? ", Substrate loaded" : "",
+                     dlopen("/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib", RTLD_LAZY | 0x10)
+                         ? ", TLSFix loaded" : "");
     write(2, line, l);
     hook_alerts();
 }

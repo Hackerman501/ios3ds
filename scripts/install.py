@@ -133,7 +133,7 @@ def fwprep(ipsw, staging, keys, force):
         die("extracting the IPSW failed (see the [fwprep] lines above)")
 
 
-def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None):
+def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, tlsfix=True):
     import mksd
     args = mksd.parser().parse_args([])
     args.staging = staging
@@ -145,6 +145,7 @@ def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None):
     args.rootfs_add = os.path.join(prebuilt, "rootfs-add")
     args.no_cydia = not cydia
     args.cydia_cache = cydia_cache
+    args.no_tlsfix = not tlsfix
     mksd.build_tree(args)
 
 
@@ -199,6 +200,8 @@ def main():
     ap.add_argument("--force", action="store_true", help="accept an IPSW other than iPod2,1 8C148")
     ap.add_argument("--no-cydia", action="store_true",
                     help="don't download and pre-install Cydia (docs/cydia.md)")
+    ap.add_argument("--no-tlsfix", action="store_true",
+                    help="leave out TLSFix, the TLS 1.2/1.3 tweak (docs/certificates.md)")
     ap.add_argument("--prebuilt", default=os.path.join(ROOT, "prebuilt"), help=argparse.SUPPRESS)
     ap.add_argument("--check", action="store_true",
                     help="only check this release and the tools on this PC, then exit")
@@ -254,7 +257,7 @@ def main():
     step(3, "Patching the kernel, building the iOS disk image (a few minutes)")
     tree = os.path.join(work, "sd")
     build_tree(staging, tree, a.prebuilt, hfs, cydia=not a.no_cydia,
-               cydia_cache=os.path.join(work, "cydia"))
+               cydia_cache=os.path.join(work, "cydia"), tlsfix=not a.no_tlsfix)
 
     step(4, "Writing the SD card files to %s" % sd)
     os.makedirs(os.path.dirname(sd), exist_ok=True)

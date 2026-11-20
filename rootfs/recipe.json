@@ -39,10 +39,15 @@
  "grow_bytes": 1073741824,
  "_cydia": "Cydia + APT/dpkg base system, downloaded at build time (scripts/cydia.py, docs/cydia.md); false = no Cydia",
  "cydia": "rootfs/cydia.json",
+ "_tlsfix": "TLSFix 1.3 (MIT, github.com/ObscureMosquito/TLSFix, fork of nfzerox/TLSFix): Cydia Substrate tweak that runs iOS's TLS through OpenSSL 1.1.1 (TLS 1.2/1.3), verified against the trust store below; part of the Cydia set (rootfs/cydia.json, group tlsfix); false = leave it out",
+ "tlsfix": true,
  "_trust_store": "current root certificates (RSA roots of Mozilla's bundle) as user anchors in securityd's trust store, which every SecTrust evaluation (Safari, Cydia, NSURLConnection) consults; scripts/certs.py, docs/certificates.md",
  "trust_store": {
   "pem": "rootfs/certs/roots.pem",
-  "path": "/private/var/Keychains/TrustStore.sqlite3"
+  "path": "/private/var/Keychains/TrustStore.sqlite3",
+  "_profile": "RSA + EC roots (roots-ec.pem) as a configuration profile's CA payloads: TLSFix verifies chains with EC certificates, which iOS 4.2.1's Security.framework cannot, with OpenSSL against the profiles in this folder",
+  "ec_pem": "rootfs/certs/roots-ec.pem",
+  "profile": "/private/var/mobile/Library/ConfigurationProfiles/ios3ds-roots.plist"
  },
  "remove": [
   "/System/Library/Frameworks/CoreLocation.framework/Support/consolidated.db",

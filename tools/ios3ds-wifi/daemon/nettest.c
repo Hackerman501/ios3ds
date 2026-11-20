@@ -27,6 +27,10 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <dlfcn.h>
+int unsetenv(const char *name);  /* not in the stub SDK's stdlib.h */
+#ifndef RTLD_NOLOAD
+#define RTLD_NOLOAD 0x10         /* Darwin dlfcn.h; not in the stub SDK header */
+#endif
 
 /* ---- libSystem (stub SDK: Darwin arm32 layouts declared here) --------- */
 typedef uint32_t socklen_t;
@@ -215,6 +219,19 @@ static struct {
     CFTypeRef *Version11, *ResponseHeader, *AutoRedirect, *True;
 } cf;
 
+/* Cydia Substrate (docs/cydia.md), so the tweaks an app would get see this
+ * process too: TLSFix (TLS 1.2/1.3) filters on CFNetwork, which nettest only
+ * loads here, after Substrate would have looked at it in a launch-time insert */
+static void substrate_load(void)
+{
+    static const char ms[] = "/Library/MobileSubstrate/MobileSubstrate.dylib";
+    setenv("DYLD_INSERT_LIBRARIES", ms, 1);           /* where Substrate looks for itself */
+    if (dlopen(ms, RTLD_LAZY | RTLD_GLOBAL))
+        say("[nettest] Cydia Substrate loaded%s", dlopen("/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib",
+            RTLD_LAZY | RTLD_NOLOAD) ? ", TLSFix active" : "");
+    unsetenv("DYLD_INSERT_LIBRARIES");
+}
+
 static int cf_load(void)
 {
     static int state;               /* 0 = not tried, 1 = ok, -1 = failed */
@@ -223,6 +240,7 @@ static int cf_load(void)
     void *n = dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork", RTLD_NOW);
     state = -1;
     if (!c || !n) { say("[nettest] https: CFNetwork not loadable"); return state; }
+    substrate_load();
 #define SYM(lib, field, name) if (!(*(void **)&cf.field = dlsym(lib, name))) { \
         say("[nettest] https: no %s", name); return state; }
     SYM(c, StringCreateWithCString, "CFStringCreateWithCString");
