@@ -52,7 +52,7 @@ SOURCES = [
     "scripts/fwprep.py", "scripts/mkboot.py", "scripts/mkrootfs.py", "scripts/mksd.py",
     "scripts/install.py", "scripts/fwlib/*.py",
     "kernel/dtgen.py", "kernel/patcher.py", "kernel/patches*.json",
-    "tools/ios3ds-audio/dt_audio.py",
+    "tools/ios3ds-audio/dt_audio.py", "tools/ios3ds-mcu/dt_mcu.py",
     "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
     "scripts/cydia.py", "scripts/certs.py", "rootfs/recipe.json", "rootfs/cydia.json",
     "rootfs/files/*", "rootfs/certs/roots.pem",
@@ -98,6 +98,32 @@ def check_clean(name, data):
     for m in MAGICS:
         if m in data:
             raise SystemExit("[mkrelease] refusing %s: contains %r (Apple firmware content?)" % (name, m))
+
+
+def missing_imports(srcs):
+    """Fail if a packaged script imports a module that is a repo .py file but
+    not in the zip (issue #4: 0.3.0 shipped kernel/dtgen.py without
+    tools/ios3ds-mcu/dt_mcu.py, so install.py died at 'import dt_mcu')."""
+    import ast
+    import subprocess
+    tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "*.py"], capture_output=True, text=True).stdout.split()
+    repo_mods = {}
+    for t in tracked:
+        repo_mods.setdefault(os.path.splitext(os.path.basename(t))[0], []).append(t)
+    shipped = {os.path.splitext(os.path.basename(r))[0] for r in srcs if r.endswith(".py")}
+    bad = []
+    for rel in sorted(r for r in srcs if r.endswith(".py")):
+        tree = ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read(), rel)
+        for n in ast.walk(tree):
+            names = [a.name for a in n.names] if isinstance(n, ast.Import) else \
+                    [n.module] if isinstance(n, ast.ImportFrom) and n.module and not n.level else []
+            for name in names:
+                top = name.split(".")[0]
+                if top in repo_mods and top not in shipped and not any(
+                        r.startswith(top + "/") or "/%s/" % top in "/" + r for r in srcs):
+                    bad.append("%s imports %s (%s)" % (rel, top, ", ".join(repo_mods[top])))
+    if bad:
+        raise SystemExit("[mkrelease] the installer would fail, modules missing from SOURCES:\n  " + "\n  ".join(bad))
 
 
 def userland_list():
@@ -150,6 +176,7 @@ def main():
             raise SystemExit("[mkrelease] no file matches %s" % pat)
         srcs.update(os.path.relpath(h, ROOT) for h in hits if os.path.isfile(h))
     srcs.update(recipe_sources())
+    missing_imports(srcs)
     for rel in sorted(srcs):
         files.append((rel, os.path.join(ROOT, rel), 0o755 if rel.endswith(".py") else 0o644))
     xpwn = os.path.join(B, "xpwn")
