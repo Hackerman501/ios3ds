@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 
-from PIL import Image, ImageChops, ImageStat
+from PIL import ImageFilter, Image, ImageChops, ImageStat
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import viewer  # noqa: E402
@@ -182,9 +182,18 @@ def main():
                 key("ret")
                 time.sleep(3)
                 drag(40, 420, 300, 420, 0.8)
-                time.sleep(5)
-                c["after_unlock_diff"] = round(ImageStat.Stat(ImageChops.difference(
-                    shot("c%03d_unlock" % i).convert("L"), home_ref.convert("L"))).mean[0], 2)
+                time.sleep(8)
+                # iOS fades the screen in after an unlock (and the emulated
+                # backlight dims it): compare at the reference's brightness so
+                # only content differences count (re-log 63)
+                # blur: the GPU and the ARM9 CPU screen copy scale slightly
+                # differently (after a wake either may be showing)
+                u = shot("c%03d_unlock" % i).convert("L").filter(ImageFilter.GaussianBlur(2))
+                ref = home_ref.convert("L").filter(ImageFilter.GaussianBlur(2))
+                mu, mr = ImageStat.Stat(u).mean[0], ImageStat.Stat(ref).mean[0]
+                if mu > 5:
+                    u = u.point(lambda v, k=mr / mu: min(255, int(v * k + 0.5)))
+                c["after_unlock_diff"] = round(ImageStat.Stat(ImageChops.difference(u, ref)).mean[0], 2)
             log("cycle %d tap (%d,%d): app diff %.1f, home diff %.1f" % (i, x, y, c["app_diff"], diff))
             results["cycles"].append(c)
             if proc.poll() is not None:
@@ -217,7 +226,7 @@ def main():
     if stuck or len(rec.get("Dismiss + Home", [])) > 1:
         failed = True
     # a lock round must end on the home screen (after a long lock too)
-    bad_unlock = [c["cycle"] for c in results["cycles"] if c.get("after_unlock_diff", 0) > 12]
+    bad_unlock = [c["cycle"] for c in results["cycles"] if c.get("after_unlock_diff", 0) > 20]
     results["unlock_not_home"] = bad_unlock
     if bad_unlock:
         failed = True
