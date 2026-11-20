@@ -227,7 +227,6 @@
     "_memcpy",
     "_memmove",
     "_memset",
-    "_memset_pattern16",
     "_notify_get_state",
     "_notify_post",
     "_notify_register_check",
@@ -304,6 +303,7 @@
    "text": [
     "_objc_getClass",
     "_objc_msgSend",
+    "_objc_msgSend_stret",
     "_sel_registerName"
    ],
    "weak": []
