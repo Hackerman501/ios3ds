@@ -962,3 +962,15 @@ Log: build/hwlogs/run23.txt (main + agent/camera, `camera=1 diag=1`), lines 689-
 - **Ranking:** (1) the CAM block needs more than `CAM_CNT 0x8010`: +6 (bits 0-5, GBATEK suspects the DSi's CAM_MCNT, 0x22 = on) and/or the DRQ bit the official driver (CDMA) uses; (2) the outer left sensor feeds CAM0, not CAM1; (3) the DSi code list leaves the 3DS sensor in standby or with parallel output off; (4) `CFG11_CAMERA_CNT` bit 1 (GBATEK: "reportedly turn on/off cameras") is needed; (5) the shim never started the drain (mailbox/IRQ path; ran in QEMU).
 - **Changes:** shim watches both blocks until data appears and moves to the one that gets it; set-up variants 0 (0x8010), 1 (+6 = 0x22), 2 (+ bit 14 DRQ, bit 9 IRQ) cycled every 2 s while nothing arrives; restart at a frame start once data is seen; diagnostics in a new mailbox line (services, services with data, CAM_STAT of both blocks, max fill, CAM_CNT readback, variant, port). ARM9: `CFG11_CAMERA_CNT` |= 3 with readback; `[cam-diag]` dumps of both CAM blocks at boot, before the set-up and 0.2/1/5 s after a start, a 50 ms sampler counting CAM_CNT bit 0/1 changes and FIFO fill changes per block, sensor registers (PLL, CLOCKS, STANDBY, RESET_MISC, 0x301A, SEQ_CMD, SEQ_STATE, SEQ_CAP_MODE, output size/format, read mode); sensor waits 500 ms; sensors probed at boot (present known before the first start, then standby and clock off). Host test: no data for 5 s → variant 2 still probing, then frames whole and in order.
 - **Next hardware log must show** (open Camera.app, wait 15 s): the `[cam-diag]` toggle lines (does CAM_CNT bit 0/1 change on CAM0 or CAM1?), the sensor dump (`STANDBY` bit 14 clear, `RESET_MISC` bit 9 set, `SEQ_STATE`), and the 10 s stats line with `services` > 0 and the variant/port. Frames > 0 with some variant/port = that is the fix to make default.
+
+## 69. Launcher: NWM .code path rejected on hardware (issue #5) (2026-11-20)
+
+- **Report:** first hardware report of the launcher's firmware copy, on a New 2DS XL with Luma3DS: `cannot open NWM .code (FS E0E046BE, FSPXI E0E046BE)`.
+- **Decoding E0E046BE:** level Usage, summary InvalidArgument, module FS (17), description 702 = FS InvalidPath. FS and FSPXI both rejected our path layout: archive 0x2345678A with a 20-byte file path `{0, 0, 1, ".code"}`.
+- **What Luma3DS's own loader uses** (`sysmodules/loader/source/loader.c`): archive 0x2345678E (SaveDataAndContent2), FS_ProgramInfo `{u64 programId, u8 mediaType, pad}` as the archive path, and the 12-byte file path `{u32 1, ".code"}`.
+- **The launcher now tries, in order**, each through FS and then FSPXI:
+  1. Luma's layout `678E/1` (only under Luma3DS: Azahar 2126.2 crashes on that archive ID instead of returning an error);
+  2. `678A/1`;
+  3. `678A/2` (FBI's type for ExeFS files such as `icon`).
+- **Reporting:** every attempt's result goes on screen and into `sd:/ios3ds/wififw-status.txt`, which the ARM9 copies into `log.txt` when Wi-Fi has no firmware.
+- **Azahar check:** `678A/1 FS C8804478; 678A/2 FS C8804478` (no NWM title there).

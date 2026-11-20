@@ -77,6 +77,23 @@ static void reboot(void)
  * Both are opened FS_OPEN_READ only; the archive cannot be written anyway. */
 static const u32 nwm_arch[4] = { (u32)NWM_TID, (u32)(NWM_TID >> 32), MEDIATYPE_NAND, 0 };
 static const u32 nwm_file[5] = { 0, 0, 1, 0x646F632E /* ".cod" */, 0x00000065 /* "e\0\0\0" */ };
+static const u32 nwm_file2[5] = { 0, 0, 2, 0x646F632E, 0x00000065 };
+/* Luma3DS's loader (sysmodules/loader/source/loader.c): archive 0x2345678E
+   (SaveDataAndContent2) with FS_ProgramInfo {u64 programId, u8 mediaType,
+   pad} as the archive path and the 12-byte file path {u32 1, ".code"}.
+   Hardware (issue #5, New 2DS XL): the 0x2345678A layout above gave
+   E0E046BE (FS InvalidPath) from both FS and FSPXI. */
+#define ARCHIVE_SAVEDATA_AND_CONTENT2_ID 0x2345678E
+static const u32 nwm_arch2[4] = { (u32)NWM_TID, (u32)(NWM_TID >> 32), MEDIATYPE_NAND, 0 };
+static const u32 nwm_file3[3] = { 1, 0x646F632E, 0x00000065 };
+
+typedef struct { u32 archive; const void *ap; u32 al; const void *fp; u32 fl; const char *name; } nwmpath_t;
+static const nwmpath_t nwm_paths[3] = {
+    { ARCHIVE_SAVEDATA_AND_CONTENT2_ID, nwm_arch2, sizeof(nwm_arch2), nwm_file3, sizeof(nwm_file3), "678E/1" },
+    { ARCHIVE_SAVEDATA_AND_CONTENT, nwm_arch, sizeof(nwm_arch), nwm_file, sizeof(nwm_file), "678A/1" },
+    { ARCHIVE_SAVEDATA_AND_CONTENT, nwm_arch, sizeof(nwm_arch), nwm_file2, sizeof(nwm_file2), "678A/2" },
+};
+static char nwm_tried[160];             /* "678E/1 FS xxxxxxxx PXI xxxxxxxx; ..." for the status file */
 
 static Result luma_steal_session(Handle *out, const char *name)
 {
@@ -100,23 +117,43 @@ typedef struct {
     FSPXI_File pf;
 } nwmsrc_t;
 
-static Result src_open(nwmsrc_t *s, Result *user_err)
+static Result src_open_one(nwmsrc_t *s, const nwmpath_t *p, Result *user_err)
 {
-    FS_Path a = { PATH_BINARY, sizeof(nwm_arch), nwm_arch };
-    FS_Path f = { PATH_BINARY, sizeof(nwm_file), nwm_file };
+    FS_Path a = { PATH_BINARY, p->al, p->ap };
+    FS_Path f = { PATH_BINARY, p->fl, p->fp };
     memset(s, 0, sizeof(*s));
-    Result r = *user_err = FSUSER_OpenFileDirectly(&s->file, ARCHIVE_SAVEDATA_AND_CONTENT, a, f, FS_OPEN_READ, 0);
+    Result r = *user_err = FSUSER_OpenFileDirectly(&s->file, (FS_ArchiveID)p->archive, a, f, FS_OPEN_READ, 0);
     if (R_SUCCEEDED(r)) return r;
     if (!is_luma()) return r;
     s->pxi = true;
     if (R_FAILED(r = luma_steal_session(&s->pxs, "PxiFS0"))) { s->pxs = 0; return r; }
-    if (R_FAILED(r = FSPXI_OpenArchive(s->pxs, &s->arch, ARCHIVE_SAVEDATA_AND_CONTENT, a))) {
+    if (R_FAILED(r = FSPXI_OpenArchive(s->pxs, &s->arch, (FS_ArchiveID)p->archive, a))) {
         svcCloseHandle(s->pxs); s->pxs = 0; return r;
     }
     if (R_FAILED(r = FSPXI_OpenFile(s->pxs, &s->pf, s->arch, f, FS_OPEN_READ, 0))) {
         FSPXI_CloseArchive(s->pxs, s->arch); svcCloseHandle(s->pxs); s->pxs = 0; return r;
     }
     return 0;
+}
+
+/* try each known path layout (FS first, then FSPXI) until one opens */
+static Result src_open(nwmsrc_t *s, Result *user_err)
+{
+    Result r = 0;
+    nwm_tried[0] = 0;
+    for (unsigned i = 0; i < sizeof(nwm_paths) / sizeof(nwm_paths[0]); i++) {
+        /* 0x2345678E only under Luma3DS (always there on a console): Azahar
+           2126.2 crashes on that archive id instead of returning an error */
+        if (nwm_paths[i].archive == ARCHIVE_SAVEDATA_AND_CONTENT2_ID && !is_luma()) continue;
+        r = src_open_one(s, &nwm_paths[i], user_err);
+        size_t n = strlen(nwm_tried);
+        snprintf(nwm_tried + n, sizeof(nwm_tried) - n, "%s%s FS %08lX%s", n ? "; " : "", nwm_paths[i].name,
+                 (unsigned long)*user_err, R_SUCCEEDED(r) ? " ok" : "");
+        if (R_SUCCEEDED(r)) return r;
+        n = strlen(nwm_tried);
+        if (s->pxi) snprintf(nwm_tried + n, sizeof(nwm_tried) - n, " PXI %08lX", (unsigned long)r);
+    }
+    return r;
 }
 
 static Result src_size(nwmsrc_t *s, u64 *n)
@@ -175,13 +212,11 @@ static bool fetch_nwm_code(void)
     Result ue = 0, r = src_open(&s, &ue);
     if (R_FAILED(r)) {
         if (s.pxi) {
-            printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(FS %08lX, FSPXI %08lX): Wi-Fi off\x1b[0m\n\n",
-                   (unsigned long)ue, (unsigned long)r);
-            fw_status("cannot open NWM .code (FS %08lX, FSPXI %08lX)", (unsigned long)ue, (unsigned long)r);
+            printf("\x1b[31mWi-Fi fw: cannot open NWM .code:\n%s\nWi-Fi off\x1b[0m\n\n", nwm_tried);
+            fw_status("cannot open NWM .code: %s", nwm_tried);
         } else {
-            printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(FS %08lX, no Luma3DS for FSPXI): Wi-Fi off\x1b[0m\n\n",
-                   (unsigned long)ue);
-            fw_status("cannot open NWM .code (FS %08lX, no Luma3DS for FSPXI)", (unsigned long)ue);
+            printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(no Luma3DS for FSPXI):\n%s\nWi-Fi off\x1b[0m\n\n", nwm_tried);
+            fw_status("cannot open NWM .code (no Luma3DS for FSPXI): %s", nwm_tried);
         }
         return false;
     }
@@ -230,7 +265,7 @@ static bool fetch_nwm_code(void)
         fw_status("%s (%08lX, %llu bytes)", why, (unsigned long)r, (unsigned long long)sz64);
         return false;
     }
-    fw_status("copied NWM .code (%lu bytes, via %s)", (unsigned long)got, s.pxi ? "FSPXI" : "FS");
+    fw_status("copied NWM .code (%lu bytes, via %s; %s)", (unsigned long)got, s.pxi ? "FSPXI" : "FS", nwm_tried);
     printf("Wrote %s\n(%lu bytes). Keep it private.\n\n", NWMCODE + 5, (unsigned long)got);
     return true;
 }
