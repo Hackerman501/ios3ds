@@ -10,4 +10,6 @@ void i2c_init(u8 bus);
 /* 16-bit big-endian register index (Aptina cameras) */
 bool i2c_read16(u8 bus, u8 dev, u16 idx, u8 *out, u32 len);
 bool i2c_write16(u8 bus, u8 dev, u16 idx, const u8 *in, u32 len);
+/* read without a register index (New 3DS C-stick chip) */
+bool i2c_read_noreg(u8 bus, u8 dev, u8 *out, u32 len);
 u32 i2c_timeouts(void);         /* busy waits that ran out (bus never answered) */

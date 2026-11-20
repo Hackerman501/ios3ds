@@ -27,7 +27,7 @@ def main():
         args = args[2:]
         if os.path.exists(mon):
             os.remove(mon)
-        proc = subprocess.Popen([QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=multi", "-kernel",
+        proc = subprocess.Popen([QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", "tcg,thread=multi", "-kernel",
                                  os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
                                  "-display", "none", "-serial", "none",
                                  "-monitor", "unix:%s,server,nowait" % mon,

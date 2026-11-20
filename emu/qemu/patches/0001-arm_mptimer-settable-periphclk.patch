@@ -24,11 +24,13 @@ index 7cc5915..f02c4f6 100644
  /* Must be called within a ptimer transaction block */
  static inline void timerblock_set_count(struct ptimer_state *timer,
                                          uint32_t control, uint64_t *count)
-@@ -155,7 +170,7 @@ static void timerblock_write(void *opaque, hwaddr addr,
+@@ -155,7 +170,8 @@ static void timerblock_write(void *opaque, hwaddr addr,
              ptimer_stop(tb->timer);
          }
-         if ((control & 0xff00) != (value & 0xff00)) {
+-        if ((control & 0xff00) != (value & 0xff00)) {
 -            ptimer_set_period(tb->timer, timerblock_scale(value));
++        /* ios3ds: also when the board changed PERIPHCLK (New 3DS 804 MHz) */
++        if ((control & 0xff00) != (value & 0xff00) || arm_mptimer_periphclk_hz) {
 +            timerblock_set_rate(tb->timer, value);
          }
          if (value & 1) {

@@ -103,6 +103,149 @@ static void run_probe(u32 idx, u32 encoding, u32 (*fn)(void))
     if (idx + 1 > sh->nprobes) sh->nprobes = idx + 1;
 }
 
+
+/* ---- New 3DS: model, 804 MHz, L2 cache, timer calibration (docs/n3ds.md) ----
+   The clock switch is libn3ds PDN_core123Init()/PDN_setSocmode() and
+   linux-3ds firm_linux_loader smp.c: GIC interrupt 88 enabled for core 0,
+   PDN_LGR_CNT = L2C | FCRAM/QTM extension, ~400 cycles, write the mode, WFI
+   until PDN_LGR_SOCMODE bit 15 (ack), write it back, clear GIC 88; then
+   CFG11_GPU_N3DS_CNT like libn3ds. Here MMU and caches are still off. */
+#define CFG11_SOCINFO   (*(vu16 *)0x10140FFCu)
+#define CFG11_GPU_N3DS  (*(vu8 *)0x10140400u)
+#define PDN_SOCMODE     (*(vu16 *)0x10141300u)
+#define PDN_LGR_CNT     (*(vu16 *)0x10141304u)
+#define MPC(off)        (*(vu32 *)(0x17E00000u + (off)))
+#define MPC8(off)       (*(vu8 *)(0x17E00000u + (off)))
+#define L2C(off)        (*(vu32 *)(0x17E10000u + (off)))
+#define GICD_CLR_EN(n)  MPC(0x1180u + 4u * (n))
+#define GICD_SET_EN(n)  MPC(0x1100u + 4u * (n))
+#define GICD_CLR_PEND(n) MPC(0x1280u + 4u * (n))
+#define IRQ_SOCMODE     88u
+#define PERIPH_O3DS     134055928u      /* 268111856 / 2 */
+
+static void wait_cycles(u32 n) { while (n--) __asm__ volatile("nop"); }
+
+/* returns 1 when acknowledged; the private timer (GIC 29, ~10 ms per wake at
+   any clock) bounds the WFI loop so a missing ack cannot hang the boot */
+static int set_socmode(u32 mode)
+{
+    u32 wakes = 0;
+    PDN_SOCMODE = (u16)mode;
+    MPC(0x608) = 0; MPC(0x60C) = 1;
+    MPC(0x600) = 0x400000u;             /* 4 Mi PERIPHCLK ticks: 31 ms at 134 MHz, 10 ms at 402 */
+    MPC(0x608) = 4u | 2u | 1u;          /* IT enable, auto-reload, enable, prescaler 0 */
+    GICD_CLR_PEND(0) = 1u << 29;
+    GICD_SET_EN(0) = 1u << 29;
+    while (!(PDN_SOCMODE & 0x8000u)) {
+        __asm__ volatile("mcr p15, 0, %0, c7, c0, 4" :: "r"(0) : "memory");   /* WFI */
+        if (MPC(0x60C) & 1u) {
+            MPC(0x60C) = 1;
+            GICD_CLR_PEND(0) = 1u << 29;
+            if (++wakes > 100) break;   /* > 1 s */
+        }
+    }
+    MPC(0x608) = 0; MPC(0x60C) = 1;
+    GICD_CLR_EN(0) = 1u << 29;
+    GICD_CLR_PEND(0) = 1u << 29;
+    if (!(PDN_SOCMODE & 0x8000u)) return 0;
+    PDN_SOCMODE = PDN_SOCMODE;          /* acknowledge (bit 15 set) */
+    GICD_CLR_PEND(IRQ_SOCMODE / 32) = 1u << (IRQ_SOCMODE % 32);
+    return 1;
+}
+
+/* MPCore PERIPHCLK against the ARM9's 65457 Hz timer: the ARM9 marks the
+   start (cal_state 2) and, 1309 of its ticks (20.0 ms) later, the end (3).
+   0 = the ARM9 did not take part. */
+static u32 measure_periphclk(void)
+{
+    u32 w0, w1, t;
+    MPC(0x634) = 0x12345678u; MPC(0x634) = 0x87654321u;    /* watchdog -> timer mode */
+    MPC(0x620) = 0xFFFFFFFFu;
+    MPC(0x628) = 2u | 1u;                                   /* prescaler 0, auto-reload, on */
+    sh->cal_state = 1;
+    for (t = 0; sh->cal_state != 2; t++) if (t > 50000000u) goto fail;
+    w0 = MPC(0x624);
+    for (t = 0; sh->cal_state != 3; t++) if (t > 50000000u) goto fail;
+    w1 = MPC(0x624);
+    MPC(0x628) = 0;
+    sh->cal_a11 = w0 - w1;
+    sh->cal_state = 4;
+    return (u32)((u64)(w0 - w1) * 65457u / 1309u);
+fail:
+    MPC(0x628) = 0;
+    sh->cal_state = 5;
+    return 0;
+}
+
+static void l2_enable(void)
+{
+    u32 aux, ways;
+    sh->n3ds_l2_id = L2C(0x000);
+    if (L2C(0x100) & 1u) { a11_printf("[a11] L2C-310 already on: left alone\n"); return; }
+    aux = L2C(0x104) | (1u << 22);      /* shared attribute override (no "cacheable no-allocate" for shared NC) */
+    L2C(0x104) = aux;
+    L2C(0xF40) = 2u;                    /* debug control DWB: force write-through, never dirty */
+    if ((L2C(0xF40) & 2u) == 0) { a11_printf("[a11] L2C-310: write-through refused, L2 stays off\n"); return; }
+    ways = (aux & (1u << 16)) ? 0xFFFFu : 0xFFu;
+    L2C(0x77C) = ways;                  /* invalidate all ways */
+    while (L2C(0x77C) & ways) ;
+    L2C(0x730) = 0;                     /* sync */
+    while (L2C(0x730) & 1u) ;
+    L2C(0x220) = 0x1FFu;                /* clear interrupts */
+    L2C(0x100) = 1u;
+    sh->n3ds_l2_aux = L2C(0x104);
+    sh->n3ds_l2_ctrl = L2C(0x100);
+    if (sh->n3ds_l2_ctrl & 1u) sh->n3ds_res |= N3RES_L2;
+}
+
+static void a11_n3ds(void)
+{
+    u32 req = sh->n3ds_req, res = 0, soc = CFG11_SOCINFO, hz, r, pre, shift = 0;
+    sh->n3ds_socinfo = soc;
+    sh->n3ds_res = 0;
+    if (soc & 2u) {
+        res |= N3RES_NEW;
+        MPC(0x100) = 1;                                     /* GIC CPU interface on, all priorities */
+        MPC(0x104) = 0xF0;
+        MPC(0x1000) |= 1u;
+        for (u32 i = 0; i < 4; i++) GICD_CLR_EN(i) = 0xFFFFFFFFu;
+        GICD_CLR_PEND(IRQ_SOCMODE / 32) = 1u << (IRQ_SOCMODE % 32);
+        MPC8(0x1400 + IRQ_SOCMODE) = 0;
+        MPC8(0x1800 + IRQ_SOCMODE) = 1;
+        GICD_SET_EN(IRQ_SOCMODE / 32) = 1u << (IRQ_SOCMODE % 32);
+        PDN_SOCMODE = PDN_SOCMODE;                          /* stale ack from a bootloader */
+        if (req & N3REQ_CLOCK) {
+            PDN_LGR_CNT = (soc & 4u) ? 0x101u : 0x001u;     /* L2C (LGR2) + extension RAM */
+            wait_cycles(403);
+        }
+        if ((req & N3REQ_CLOCK) && (PDN_SOCMODE & 7u) != 5u) {
+            if (!set_socmode((soc & 4u) ? 5u : 3u)) res |= N3RES_TIMEOUT;
+            else CFG11_GPU_N3DS = 3;                        /* TEX_FIX | N3DS_MODE */
+        } else if (!(req & N3REQ_CLOCK) && (PDN_SOCMODE & 7u) != 0u) {
+            if (!set_socmode(0)) res |= N3RES_TIMEOUT;      /* fallback: plain CTR mode like libn3ds */
+        }
+        GICD_CLR_EN(IRQ_SOCMODE / 32) = 1u << (IRQ_SOCMODE % 32);
+        if ((PDN_SOCMODE & 7u) == 5u) res |= N3RES_804;
+        sh->n3ds_socmode = PDN_SOCMODE;
+        sh->n3ds_lgr_cnt = PDN_LGR_CNT;
+    }
+    /* timers: XNU's timebase is 1047311 Hz = PERIPHCLK / 128 on the Old 3DS.
+       PERIPHCLK x3 (804 MHz) needs /384 > the 8-bit prescaler: /192 and the
+       shim halves the counts (tbshift 1). */
+    hz = measure_periphclk();
+    sh->n3ds_periph_hz = hz;
+    r = hz ? (hz + PERIPH_O3DS / 2) / PERIPH_O3DS : ((res & N3RES_804) ? 3u : 1u);
+    if (r != 1 && r != 2 && r != 3) r = (res & N3RES_804) ? 3u : 1u;
+    pre = r == 1 ? 127u : r == 2 ? 255u : 191u;
+    if (r == 3) shift = 1;
+    sh->n3ds_res = res;
+    if ((req & N3REQ_L2) && (res & N3RES_804) && (soc & 4u)) l2_enable();   /* L2 only with the LGR2 clock mode */
+    a11_printf("[a11] %s 3DS: SOCINFO %x, SOCMODE %x, LGR_CNT %x, PERIPHCLK %u Hz, timer /%u >>%u%s\n",
+               (res & N3RES_NEW) ? "New" : "Old", soc, sh->n3ds_socmode, sh->n3ds_lgr_cnt, hz,
+               pre + 1, shift, (res & N3RES_TIMEOUT) ? ", CLOCK SWITCH TIMED OUT" : "");
+    sh->n3ds_res = sh->n3ds_res | pre | (shift << 8) | N3RES_DONE;
+}
+
 void a11_main(void)
 {
     /* own the mailbox: clear everything except the ARM9's token */
@@ -162,6 +305,11 @@ void a11_main(void)
             restore_vectors();
             a11_printf("[a11] probes done\n");
             sh->probes_done = 1;
+            sh->a11_stage = A11_STAGE_READY;
+        }
+        if (sh->a9_cmd == A9CMD_N3DS && !(sh->n3ds_res & N3RES_DONE)) {
+            sh->a11_stage = A11_STAGE_N3DS;
+            a11_n3ds();
             sh->a11_stage = A11_STAGE_READY;
         }
         if (sh->a9_cmd == A9CMD_JUMP) {

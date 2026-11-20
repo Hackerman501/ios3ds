@@ -43,9 +43,11 @@ static inline void dclean(volatile void *p, u32 len)
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
 
+void shim_l2_inv_kva(const volatile void *va, u32 len);    /* entry.S: New 3DS L2 (docs/n3ds.md) */
 static inline void dinval(volatile void *p, u32 len)
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }

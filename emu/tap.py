@@ -38,7 +38,7 @@ out = a.out
 os.makedirs(out, exist_ok=True)
 tmp = tempfile.mkdtemp(prefix="ios3ds-tap-")
 sock = os.path.join(tmp, "qmp.sock")
-cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=%s" % ("single" if a.icount else "multi"),
+cmd = [viewer.QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", "tcg,thread=%s" % ("single" if a.icount else "multi"),
        "-kernel", os.path.join(viewer.ROOT, "build", "boot", "ios3ds.firm"),
        "-drive", "file=%s,if=sd,format=raw" % a.sd, "-serial", "none",
        "-display", "none", "-qmp", "unix:%s,server,nowait" % sock]

@@ -12,7 +12,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
    4. Builds XNU's `boot_args` (Version must be **5**).
    5. Opens `rootfs.hfs` for the block server and tells the ARM11 to jump.
    6. Stays alive forever as the monitor.
-3. **ARM11 stub** (`boot/arm11`): reads the CP15 ID registers, optionally probes CPU instructions, enables VFP, then jumps to the kernel entry point (PA 0x20067050) with r0 = boot_args, MMU off. Core 1 stays parked in boot11.
+3. **ARM11 stub** (`boot/arm11`): reads the CP15 ID registers, optionally probes CPU instructions, enables VFP, on a New 3DS switches to 804 MHz and measures the timer clock ([n3ds.md](n3ds.md)), then jumps to the kernel entry point (PA 0x20067050) with r0 = boot_args, MMU off. Core 1 stays parked in boot11.
 4. **XNU** builds its page tables at `topOfKernelData`, turns on the MMU (virtual 0x80000000 = physical 0x20000000), and boots.
 
 ## 2. Physical memory

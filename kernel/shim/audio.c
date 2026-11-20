@@ -123,13 +123,17 @@ static struct {
 #define PT_CTRL     0x608
 #define PT_ISR      0x60C
 #define GICC_EOIR   0x110
-#define PT_CTRL_RUN ((127u << 8) | 4u | 1u)
+extern u32 shim_pt_ctrl_run, cfg_n3ds;   /* entry.S: timer prescaler, New 3DS tick shift (docs/n3ds.md) */
+u32 shim_now32(void);
+void shim_l2_inv_kva(const volatile void *va, u32 len);
+#define PT_CTRL_RUN shim_pt_ctrl_run
+#define TB_SHIFT    ((cfg_n3ds >> 8) & 0xFu)
 #define SHIM_CFG_VIC0   0x70        /* entry.S cfg_vic0_pa */
 
 #define REG32(va)   (*(vu32 *)(va))
 #define REG16(va)   (*(vu16 *)(va))
 
-static inline u32 now_ticks(void) { return ~REG32(PRIV_VA + WD_COUNT); }
+static inline u32 now_ticks(void) { return shim_now32(); }   /* 1047311 Hz on every model */
 static inline volatile u32 *dmac_regs(void) { return (volatile u32 *)(shim_audio_cfg.dmac_pa - AXI_PA + AXI_VA); }
 
 /* XNU maps all of RAM at VIRT_BASE (static map set up by the entry stub) */
@@ -142,6 +146,7 @@ static inline void *p2v(u32 pa, u32 len)
 static void dinval(const volatile void *p, u32 len)   /* the ARM9 wrote RAM behind our cache */
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
 }
 
@@ -997,7 +1002,7 @@ static void pt_load(u32 ticks)
 {
     REG32(PRIV_VA + PT_CTRL) = 0;
     REG32(PRIV_VA + PT_ISR) = 1;
-    REG32(PRIV_VA + PT_LOAD) = ticks ? ticks : 1;
+    REG32(PRIV_VA + PT_LOAD) = (ticks ? ticks : 1) << TB_SHIFT;
     REG32(PRIV_VA + PT_CTRL) = PT_CTRL_RUN;
 }
 

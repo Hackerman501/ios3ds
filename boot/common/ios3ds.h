@@ -52,11 +52,27 @@ enum {
     A11_STAGE_VFP     = 4,
     A11_STAGE_READY   = 5,
     A11_STAGE_JUMPING = 6,
+    A11_STAGE_N3DS    = 7,
 };
 
 #define A9CMD_NONE  0u
 #define A9CMD_JUMP  0x4A554D50u    /* 'JUMP' */
 #define A9CMD_PROBE 0x50524F42u    /* 'PROB': run the instruction probes */
+#define A9CMD_N3DS  0x5344334Eu    /* 'N3DS': model check, New 3DS clock / L2 (n3ds_req) */
+
+/* New 3DS extras (docs/n3ds.md). ARM9 -> stub request bits (shared_t.n3ds_req) */
+#define N3REQ_CLOCK  (1u << 0)     /* 804 MHz (boot.cfg n3ds_clock) */
+#define N3REQ_L2     (1u << 1)     /* L2C-310 on, write-through (boot.cfg n3ds_l2) */
+/* stub -> ARM9 result (shared_t.n3ds_res); the ARM9 copies it into the shim
+   word SHIM_N3DS_OFF, which tells the shim how its timers run */
+#define N3RES_DONE        (1u << 31)
+#define N3RES_NEW         (1u << 16)  /* CFG11_SOCINFO bit 1 */
+#define N3RES_804         (1u << 17)  /* PDN_LGR_SOCMODE = 804 MHz, acknowledged */
+#define N3RES_L2          (1u << 18)  /* L2C-310 enabled (write-through) */
+#define N3RES_TIMEOUT     (1u << 19)  /* clock switch not acknowledged: back in CTR mode */
+#define N3RES_PRESCALE(r) ((r) & 0xFFu)          /* MPCore timer prescaler (0 = 127) */
+#define N3RES_TBSHIFT(r)  (((r) >> 8) & 0xFu)    /* timer ticks = XNU ticks << shift */
+#define SHIM_N3DS_OFF     0x0Cu       /* shim word (kernel/shim/entry.S cfg_n3ds) */
 
 #define PROBE_MAX 10
 enum { PROBE_NOT_RUN = 0, PROBE_OK = 1, PROBE_EXCEPTION = 2 };
@@ -98,6 +114,12 @@ typedef struct {
     u32 nprobes;
     probe_t probe[PROBE_MAX];
     u32 unexpected_count, unexpected_slot, unexpected_mode, unexpected_lr;
+    /* New 3DS (A9CMD_N3DS): request, result, and the clock calibration
+       handshake against the ARM9's fixed 65457 Hz timer (cal_state 1..3) */
+    u32 n3ds_req, n3ds_res, n3ds_socinfo, n3ds_socmode, n3ds_lgr_cnt;
+    u32 n3ds_periph_hz;     /* measured MPCore PERIPHCLK (timers), Hz */
+    u32 n3ds_l2_aux, n3ds_l2_ctrl, n3ds_l2_id;
+    u32 cal_state, cal_a11;
     /* ARM11 -> ARM9 text log ring (single producer = ARM11) */
     u32 log_head;
     char log_buf[SHARED_LOG_SIZE];

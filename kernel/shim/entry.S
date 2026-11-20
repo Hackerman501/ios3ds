@@ -56,9 +56,11 @@
     .equ WD_CTRL,   0x628
     .equ WD_DISABLE,0x634
 
-    .equ PRESCALE,  127
+    .equ PRESCALE,  127             @ default; New 3DS at 804 MHz: cfg_n3ds (191, shift 1)
     .equ PT_CTRL_RUN, ((PRESCALE << 8) | 4 | 1)     @ IT enable + enable, one-shot
     .equ WD_CTRL_RUN, ((PRESCALE << 8) | 2 | 1)     @ auto-reload + enable, timer mode
+    .equ N3RES_L2,  (1 << 18)
+    .equ L2C_VA,    (PRIV_VA + 0x10000) @ L2C-310 (New 3DS) at PA 0x17E10000, same section
     .equ IRQ_PTIMER, 29
     .equ IRQ_PDC0,   42                             @ top screen VBlank
     .equ PDC_PA,     0x10400000                     @ GPU/PDC block (1 MiB section)
@@ -73,7 +75,8 @@ _shim_base:
     b shim_putc                     @ +0x00
     .word 0x4D494853                @ +0x04 'SHIM'
     .word 2                         @ +0x08 version
-    .word 0                         @ +0x0C
+cfg_n3ds:   .word 0                 @ +0x0C New 3DS word from the ARM9 (ios3ds.h N3RES_*): timer
+    .global cfg_n3ds                    @ prescaler (0 = 127), tick shift, L2 on. docs/n3ds.md
     b shim_get_abstime              @ +0x10
     b shim_get_decrementer          @ +0x14
     b shim_set_decrementer          @ +0x18
@@ -217,8 +220,14 @@ shim_init:
     str r1, [r0, #WD_DISABLE]
     mvn r1, #0
     str r1, [r0, #WD_LOAD]
-    ldr r1, =WD_CTRL_RUN
-    str r1, [r0, #WD_CTRL]
+    ldr r1, cfg_n3ds                @ prescaler from the ARM9 (New 3DS 804 MHz), 0 = default
+    ands r1, r1, #0xFF
+    moveq r1, #PRESCALE
+    mov r1, r1, lsl #8
+    orr r2, r1, #(4 | 1)
+    str r2, shim_pt_ctrl_run        @ private timer: IT enable + enable, one-shot
+    orr r1, r1, #(2 | 1)
+    str r1, [r0, #WD_CTRL]          @ watchdog: auto-reload + enable, timer mode
     @ private timer stopped, status clear
     mov r1, #0
     str r1, [r0, #PT_CTRL]
@@ -437,7 +446,16 @@ shim_get_abstime:
     ldr r2, =st_abs_calls
     mcr p15, 0, r2, c7, c10, 1      @ clean the probe line
     msr cpsr_c, r12
-    ldr r2, [r3, #0x50]
+    ldr r12, cfg_n3ds               @ New 3DS 804 MHz: the counter runs at 2x the timebase
+    ands r12, r12, #0xF00
+    beq 2f
+1:  movs r1, r1, lsr #1             @ (r1:r0) >>= 1
+    mov r0, r0, rrx
+    subs r12, r12, #0x100
+    bne 1b
+    adds r0, r0, #1                 @ never 0: rtclock_init's tick base must not be 0 (the
+    adc r1, r1, #0                  @ first read comes 1 raw tick after the start, >> 1 = 0)
+2:  ldr r2, [r3, #0x50]
     adds r0, r0, r2
     ldr r2, [r3, #0x54]
     adc r1, r1, r2
@@ -455,6 +473,10 @@ shim_get_decrementer:
     bxeq lr
     ldr r2, =PRIV_VA
     ldr r0, [r2, #PT_COUNT]
+    ldr r2, cfg_n3ds
+    and r2, r2, #0xF00
+    mov r2, r2, lsr #8
+    mov r0, r0, lsr r2              @ timer ticks -> timebase ticks
     bx lr
 
 @ void set_decrementer(u32 ticks /* r0 */, cpu_data *r3) - normal kernel context
@@ -478,15 +500,80 @@ shim_set_decrementer:
     pop {r3, lr}
     cmp r0, #0
     moveq r0, #1
+    ldr r1, cfg_n3ds                @ timebase ticks -> timer ticks (New 3DS: << shift)
+    and r1, r1, #0xF00
+    mov r1, r1, lsr #8
+    cmp r0, #0x40000000
+    movhs r0, #0x40000000           @ no overflow (18 min at the timebase)
+    mov r0, r0, lsl r1
     ldr r2, =PRIV_VA
     mov r1, #0
     str r1, [r2, #PT_CTRL]          @ stop
     mov r1, #1
     str r1, [r2, #PT_ISR]           @ clear a stale event
     str r0, [r2, #PT_LOAD]          @ load (also reloads the counter)
-    ldr r1, =PT_CTRL_RUN
+    ldr r1, shim_pt_ctrl_run
     str r1, [r2, #PT_CTRL]
     bx lr
+
+@ u32 shim_now32(void): low word of the 64-bit timebase count (1047311 Hz on
+@ every model), for C code (audio.c, cam.c, pica.c) instead of the raw
+@ watchdog, which runs 2x faster at 804 MHz. Clobbers r0-r3, r12.
+    .global shim_now32
+shim_now32:
+    mrs r12, cpsr
+    cpsid if
+    ldr r2, =PRIV_VA
+    ldr r0, [r2, #WD_COUNT]
+    mvn r0, r0
+    ldr r2, st_last_up
+    ldr r1, st_ticks_hi
+    cmp r0, r2
+    addlo r1, r1, #1
+    strlo r1, st_ticks_hi
+    str r0, st_last_up
+    msr cpsr_c, r12
+    ldr r2, cfg_n3ds
+    ands r2, r2, #0xF00
+    bxeq lr
+    mov r2, r2, lsr #8
+    rsb r3, r2, #32
+    mov r0, r0, lsr r2
+    orr r0, r0, r1, lsl r3
+    bx lr
+
+@ void shim_l2_inv(u32 pa, u32 len) / shim_l2_inv_kva(void *va, u32 len) (XNU's
+@ linear map): New 3DS with n3ds_l2=1 only. The L2C-310 runs write-through
+@ (boot/arm11/main.c), so it never holds dirty data, but it can hold stale
+@ copies of RAM the ARM9 or the GPU wrote: drop them before reading such
+@ RAM (callers do it next to their L1 invalidate). Clobbers r0-r2.
+    .global shim_l2_inv, shim_l2_inv_kva
+shim_l2_inv_kva:
+    sub r0, r0, #(VIRT_BASE - PHYS_BASE)
+shim_l2_inv:
+    ldr r2, cfg_n3ds
+    tst r2, #N3RES_L2
+    bxeq lr
+    ldr r2, =L2C_VA
+    add r1, r1, r0
+    bic r0, r0, #31
+1:  cmp r0, r1
+    strlo r0, [r2, #0x770]          @ invalidate line by PA
+    addlo r0, r0, #32
+    blo 1b
+    mov r0, #0
+    str r0, [r2, #0x730]            @ cache sync
+2:  ldr r0, [r2, #0x730]
+    tst r0, #1
+    bne 2b
+    ldr r0, st_l2_inv
+    add r0, r0, #1
+    str r0, st_l2_inv
+    bx lr
+    .global shim_pt_ctrl_run
+shim_pt_ctrl_run: .word PT_CTRL_RUN
+st_l2_inv:  .word 0                 @ shim_l2_inv calls that reached the L2C (debugging)
+    .global st_l2_inv
 
 shim_user_panic:
     mov r2, #0
@@ -575,7 +662,7 @@ shim_irq_resume:
     str r2, st_deferred
     mov r2, #64
     str r2, [r0, #PT_LOAD]
-    ldr r2, =PT_CTRL_RUN
+    ldr r2, shim_pt_ctrl_run
     str r2, [r0, #PT_CTRL]
     b 9f
 

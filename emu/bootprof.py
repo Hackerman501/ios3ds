@@ -94,7 +94,7 @@ def run(a, out, qprof):
             (p.split(":") for p in a.apps.split(";") if p)]
     tmp = tempfile.mkdtemp()
     sock = os.path.join(tmp, "qmp.sock")
-    cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=single",
+    cmd = [viewer.QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", "tcg,thread=single",
            "-kernel", os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
            "-drive", "file=%s,if=sd,format=raw" % a.sd, "-serial", "none",
            "-display", "none", "-qmp", "unix:%s,server,nowait" % sock,

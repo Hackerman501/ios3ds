@@ -15,7 +15,10 @@
  *   - PDC0/PDC1 framebuffer registers @0x10400400/500 + a 400x480 display
  *     (top screen above bottom screen), rotated framebuffers like hardware
  *   - HID pad register @0x10146000 (keyboard mapped)
- *   - CFG11 SOCINFO (reports Old 3DS)
+ *   - CFG11 SOCINFO (Old 3DS; New 3DS with -M nintendo3ds,new3ds=on, which
+ *     also adds PDN_LGR_SOCMODE/LGR_CNT with the GIC 88 handshake and the
+ *     804 MHz PERIPHCLK, an L2C-310 register block @0x17E10000 and the
+ *     C-stick/ZL/ZR chip on I2C bus 3 @0x54; docs/n3ds.md)
  *   - the PICA200 GX block @0x10400000 (PSC memory fill, PPF transfer engine,
  *     P3D command-list processor) backed by the software model in
  *     tools/ios3ds-pica/sim/picasim.c, and PDN_GPU_CNT @0x10141200 reading
@@ -641,6 +644,18 @@ typedef struct {
     qemu_irq gx_irq[4];            /* GIC 40 PSC0, 41 PSC1, 44 PPF, 45 P3D */
     uint32_t gpu_cnt, gpuprot;     /* PDN_GPU_CNT, CFG11_GPUPROT */
     uint32_t camera_cnt;           /* CFG11_CAMERA_CNT (0x10141224) */
+    /* New 3DS (new3ds=on, docs/n3ds.md) */
+    uint32_t socmode, lgr_cnt, gpu_n3ds_cnt, socmode_switches;
+    QEMUTimer *socmode_timer;
+    uint16_t socmode_want;
+    qemu_irq socmode_irq;          /* GIC 88 */
+    MemoryRegion l2c;
+    uint32_t l2c_regs[0x400];      /* 0x17E10000..+0xFFF, word registers */
+    uint32_t l2c_inv_lines, l2c_syncs, l2c_inv_ways;
+    int32_t  cs_x, cs_y;           /* C-stick, -127..127 (qom cstick-x/-y; keypad 4/6/8/2) */
+    uint32_t exthid_btn;           /* bit 2 ZL, bit 1 ZR (qom exthid-buttons; keys z / n) */
+    uint32_t exthid_reads;
+    uint8_t  exthid_idx;
     struct { uint32_t off, val; int64_t due; } gx_q[8];   /* started GPU operations, not run yet */
     int gx_nq;
     QEMUTimer *gx_timer;
@@ -682,6 +697,7 @@ typedef struct {
 } CtrMachine;
 
 static CtrMachine *ctr;
+static bool ctr_new3ds;            /* -M nintendo3ds,new3ds=on */
 extern uint32_t arm_mptimer_periphclk_hz;   /* emu/qemu/patches/0001 */
 
 static uint16_t ctr_sdmmcctl(void)
@@ -705,8 +721,8 @@ static uint64_t cfg9_read(void *opaque, hwaddr addr, unsigned size)
         return reg_lane(0x0103, addr);
     case 0x20:
         return reg_lane(s->sdmmcctl, addr);
-    case 0xFFC:     /* SOCINFO: CTR */
-        return reg_lane(1, addr);
+    case 0xFFC:     /* SOCINFO: CTR, New 3DS = CTR | LGR1 | LGR2 */
+        return reg_lane(ctr_new3ds ? 7 : 1, addr);
     }
     return 0;
 }
@@ -1410,10 +1426,30 @@ static uint8_t gyro_read_reg(CtrMachine *s, uint8_t reg)
     return g->regs[reg];
 }
 
+/* --- New 3DS: C-stick + ZL/ZR chip, I2C bus 3 device 0x54 (GBATEK) -------
+   No register index: each read transfer returns the report from byte 0:
+   status 0x80, buttons (ZL bit 2, ZR bit 1), X/Y coarse (+-0x1F), 0xFF, X/Y
+   fine (+-0x7F), then 0x00. */
+#define I2C_ADDR_EXTHID 0x54
+static uint8_t exthid_byte(CtrMachine *s, int i)
+{
+    switch (i) {
+    case 0: return 0x80;
+    case 1: return s->exthid_btn & 6;
+    case 2: return (uint8_t)(int8_t)(s->cs_x / 4);
+    case 3: return (uint8_t)(int8_t)(s->cs_y / 4);
+    case 4: return 0xFF;
+    case 5: return (uint8_t)(int8_t)s->cs_x;
+    case 6: return (uint8_t)(int8_t)s->cs_y;
+    }
+    return 0;
+}
+
 static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
 {
     bool mcu = b->bus == 1 && (b->addr & 0xFE) == I2C_ADDR_MCU;
     bool gyro = b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_GYRO;
+    bool ext = ctr_new3ds && b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_EXTHID;
     bool ack = false;
 
     if (cnt & I2C_CNT_ERROR) {                  /* abort after a NACK */
@@ -1424,8 +1460,12 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             b->active = true;
             mcu = b->bus == 1 && (b->addr & 0xFE) == I2C_ADDR_MCU;
             gyro = b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_GYRO;
-            b->cam = !mcu && !gyro && ctr_cam_i2c_start(b->bus, b->addr);
-            b->dev_ok = mcu || gyro || b->cam;
+            ext = ctr_new3ds && b->bus == 2 && (b->addr & 0xFE) == I2C_ADDR_EXTHID;
+            b->cam = !mcu && !gyro && !ext && ctr_cam_i2c_start(b->bus, b->addr);
+            b->dev_ok = mcu || gyro || ext || b->cam;
+            if (ext) {
+                s->exthid_idx = 0;              /* every transfer reads the report from byte 0 */
+            }
             ack = b->dev_ok;
             if (mcu && !(b->addr & 1)) {
                 s->mcu.got_reg = false;         /* a write transfer starts with the register */
@@ -1433,6 +1473,8 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
             if (gyro && !(b->addr & 1)) {
                 s->gyro.got_reg = false;
             }
+        } else if (b->active && b->dev_ok && ext && !(b->addr & 1)) {
+            ack = true;                         /* a "mode" byte (GBATEK): ignored */
         } else if (b->active && b->dev_ok && gyro && !(b->addr & 1)) {
             if (!s->gyro.got_reg) {
                 s->gyro.reg = b->data & 0x3F;
@@ -1460,6 +1502,11 @@ static void i2c_run(CtrMachine *s, CtrI2c *b, uint8_t cnt)
     } else {                                    /* receive one byte */
         if (b->active && b->cam && (b->addr & 1)) {
             b->data = ctr_cam_i2c_read(b->bus);
+        } else if (b->active && b->dev_ok && ext && (b->addr & 1)) {
+            if (s->exthid_idx == 0) {
+                s->exthid_reads++;
+            }
+            b->data = exthid_byte(s, s->exthid_idx++);
         } else if (b->active && b->dev_ok && gyro && (b->addr & 1)) {
             b->data = gyro_read_reg(s, s->gyro.reg);
             s->gyro.reg = (s->gyro.reg + 1) & 0x3F;
@@ -1646,6 +1693,68 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_uint32_ptr(obj, "mcu-led-steps", &s->mcu.led_lit, OBJ_PROP_FLAG_READ);
 }
 
+/* --- New 3DS: L2C-310 registers (ARM DDI 0246) ---------------------------
+   Caches are not modelled (all RAM accesses are coherent here), so only the
+   registers: ID, type, control, aux control (fixed while enabled), debug
+   control, and the maintenance operations, which complete at once and are
+   counted (qom l2c-inv-lines, l2c-syncs, l2c-ctrl) so a test can see the
+   shim's L2 maintenance happen. */
+#define L2C_ID      0x410000C9u     /* ARM, L2C-310 r3p3 */
+#define L2C_AUX0    0x02090000u     /* 16 ways x 128 KiB = 2 MiB */
+static uint64_t l2c_read(void *opaque, hwaddr addr, unsigned size)
+{
+    CtrMachine *s = opaque;
+    switch (addr) {
+    case 0x000: return L2C_ID;
+    case 0x004: return 0x9E300300u;
+    case 0x730: case 0x770: case 0x77C: case 0x7B0: case 0x7BC: case 0x7F0: case 0x7FC:
+        return 0;                   /* operations finish at once */
+    }
+    return s->l2c_regs[(addr & 0xFFF) >> 2];
+}
+
+static void l2c_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
+{
+    CtrMachine *s = opaque;
+    switch (addr) {
+    case 0x000: case 0x004: return;
+    case 0x104:
+        if (s->l2c_regs[0x100 >> 2] & 1) {
+            qemu_log_mask(LOG_GUEST_ERROR, "l2c: aux control written while enabled\n");
+            return;
+        }
+        break;
+    case 0x730: s->l2c_syncs++; return;
+    case 0x770: case 0x7F0: s->l2c_inv_lines++; return;
+    case 0x77C: case 0x7FC: s->l2c_inv_ways++; return;
+    case 0x220: return;             /* interrupt clear */
+    }
+    s->l2c_regs[(addr & 0xFFF) >> 2] = v;
+}
+
+static const MemoryRegionOps l2c_ops = {
+    .read = l2c_read, .write = l2c_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 4 },
+};
+
+static void ctr_add_n3ds_props(CtrMachine *s, Object *obj)
+{
+    object_property_add_uint32_ptr(obj, "n3ds-socmode", &s->socmode, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "n3ds-socmode-switches", &s->socmode_switches, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "n3ds-lgr-cnt", &s->lgr_cnt, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "n3ds-gpu-cnt", &s->gpu_n3ds_cnt, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "l2c-ctrl", &s->l2c_regs[0x100 >> 2], OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "l2c-debug", &s->l2c_regs[0xF40 >> 2], OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "l2c-inv-lines", &s->l2c_inv_lines, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "l2c-inv-ways", &s->l2c_inv_ways, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "l2c-syncs", &s->l2c_syncs, OBJ_PROP_FLAG_READ);
+    object_property_add(obj, "cstick-x", "int32", gyro_prop_get, gyro_prop_set, NULL, &s->cs_x);
+    object_property_add(obj, "cstick-y", "int32", gyro_prop_get, gyro_prop_set, NULL, &s->cs_y);
+    object_property_add_uint32_ptr(obj, "exthid-buttons", &s->exthid_btn, OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint32_ptr(obj, "exthid-reads", &s->exthid_reads, OBJ_PROP_FLAG_READ);
+}
+
 /* --- LCD registers (backlight only; libn3ds lcd.h, 3dbrew LCD Registers) -- */
 static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -1712,6 +1821,13 @@ static void ctr_key_event(CtrMachine *s, int q, bool down)
     case Q_KEY_CODE_K: s->cpad_y = down ? -1 : (s->cpad_y == -1 ? 0 : s->cpad_y); break;
     case Q_KEY_CODE_L: s->cpad_x = down ? 1 : (s->cpad_x == 1 ? 0 : s->cpad_x); break;
     case Q_KEY_CODE_J: s->cpad_x = down ? -1 : (s->cpad_x == -1 ? 0 : s->cpad_x); break;
+    /* New 3DS (new3ds=on): ZL = Z, ZR = N, C-stick = keypad 8/2/4/6 */
+    case Q_KEY_CODE_Z: s->exthid_btn = down ? s->exthid_btn | 4 : s->exthid_btn & ~4u; break;
+    case Q_KEY_CODE_N: s->exthid_btn = down ? s->exthid_btn | 2 : s->exthid_btn & ~2u; break;
+    case Q_KEY_CODE_KP_8: s->cs_y = down ? 127 : 0; break;
+    case Q_KEY_CODE_KP_2: s->cs_y = down ? -127 : 0; break;
+    case Q_KEY_CODE_KP_6: s->cs_x = down ? 127 : 0; break;
+    case Q_KEY_CODE_KP_4: s->cs_x = down ? -127 : 0; break;
     case Q_KEY_CODE_H:      /* HOME: MCU IRQ on press and on release */
         mcu_raise(s, down ? MCU_IRQ_HOME_PRESS : MCU_IRQ_HOME_RELEASE);
         break;
@@ -1808,8 +1924,10 @@ static uint64_t cfg11_read(void *opaque, hwaddr addr, unsigned size)
         return reg_lane(s->gpuprot, addr);
     case 0x1C0:              /* CFG11_SPI_CNT */
         return reg_lane(s->spi_cnt, addr);
-    case 0xFFC:              /* CFG11_SOCINFO: bit0 = CTR, bit1 = New3DS */
-        return reg_lane(1, addr);
+    case 0xFFC:              /* CFG11_SOCINFO: bit0 = CTR, bit1 = LGR1, bit2 = LGR2 (libn3ds cfg11.h) */
+        return reg_lane(ctr_new3ds ? 7 : 1, addr);
+    case 0x400:              /* CFG11_GPU_N3DS_CNT (New 3DS only) */
+        return ctr_new3ds ? reg_lane(s->gpu_n3ds_cnt, addr) : 0;
     }
     return 0;
 }
@@ -1821,6 +1939,8 @@ static void cfg11_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
         s->spi_cnt = v & 7;
     } else if (addr == 0x140) {
         s->gpuprot = v & 0x10F;
+    } else if (addr == 0x400 && ctr_new3ds) {
+        s->gpu_n3ds_cnt = v & 3;
     }
 }
 
@@ -1831,9 +1951,30 @@ static const MemoryRegionOps cfg11_ops = {
 };
 
 /* --- PDN: only PDN_GPU_CNT (+0x200) ------------------------------------- */
+/* PDN_LGR_SOCMODE (+0x300, New 3DS): a new mode takes effect a moment later,
+   sets bit 15 and raises GIC 88 until the guest writes bit 15 back (libn3ds
+   PDN_setSocmode). The MPCore timers' PERIPHCLK follows the CPU clock
+   (CPU/2), so 804 MHz triples it: the boot stub measures that (docs/n3ds.md). */
+static void socmode_done(void *opaque)
+{
+    CtrMachine *s = opaque;
+    static const uint32_t cpu_hz[8] = { 268111856, 268111856, 268111856, 536223712,
+                                        268111856, 804335568, 268111856, 268111856 };
+    s->socmode = s->socmode_want | 0x8000;
+    s->socmode_switches++;
+    arm_mptimer_periphclk_hz = cpu_hz[s->socmode_want & 7] / 2;
+    qemu_irq_raise(s->socmode_irq);
+}
+
 static uint64_t pdn_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
+    if (ctr_new3ds && (addr & ~3) == 0x300) {
+        return addr & 2 ? 0 : s->socmode;
+    }
+    if (ctr_new3ds && (addr & ~3) == 0x304) {
+        return reg_lane(s->lgr_cnt, addr);
+    }
     if ((addr & ~3) == 0x224) {
         return reg_lane(s->camera_cnt, addr);
     }
@@ -1845,6 +1986,18 @@ static void pdn_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
     CtrMachine *s = opaque;
     if (addr == 0x200 && size == 4) {
         s->gpu_cnt = v & 0x1007F;
+    }
+    if (ctr_new3ds && addr == 0x300) {
+        if (v & 0x8000) {                       /* acknowledge */
+            s->socmode &= ~0x8000u;
+            qemu_irq_lower(s->socmode_irq);
+        } else if ((v & 7) != (s->socmode & 7) && !timer_pending(s->socmode_timer)) {
+            s->socmode_want = v & 7;
+            timer_mod(s->socmode_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 20 * SCALE_US);
+        }
+    }
+    if (ctr_new3ds && addr == 0x304) {
+        s->lgr_cnt = v & 0x101;
     }
     if (addr == 0x224) {                        /* CFG11_CAMERA_CNT: camera clock (docs/camera.md) */
         s->camera_cnt = v & 1;
@@ -2279,6 +2432,13 @@ static void ctr_reset_io(void *opaque)
     }
     s->ptr_down = false;
     s->cpad_x = s->cpad_y = 0;
+    s->socmode = s->lgr_cnt = s->gpu_n3ds_cnt = 0;
+    if (s->socmode_timer) {
+        timer_del(s->socmode_timer);
+    }
+    memset(s->l2c_regs, 0, sizeof(s->l2c_regs));
+    s->l2c_regs[0x104 >> 2] = L2C_AUX0;
+    arm_mptimer_periphclk_hz = 268111856 / 2;
     gx_reset(s);
 }
 
@@ -2464,6 +2624,13 @@ static void ctr_init(MachineState *machine)
     s->gx_irq[2] = qdev_get_gpio_in(dev, 44 - 32);
     s->gx_irq[3] = qdev_get_gpio_in(dev, 45 - 32);
     s->mcu_irq = qdev_get_gpio_in(dev, 113 - 32);
+    s->socmode_irq = qdev_get_gpio_in(dev, 88 - 32);
+    s->socmode_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, socmode_done, s);
+    if (ctr_new3ds) {               /* New 3DS: L2C-310 next to the MPCore private region */
+        memory_region_init_io(&s->l2c, NULL, &l2c_ops, s, "ctr.l2c310", 0x1000);
+        memory_region_add_subregion(sys, CTR_MPCORE_BASE + 0x10000, &s->l2c);
+        s->l2c_regs[0x104 >> 2] = L2C_AUX0;
+    }
     s->hblank = timer_new_ns(QEMU_CLOCK_VIRTUAL, ctr_hblank, s);
     s->gx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, gx_run_due, s);
     s->mcu.power_held = timer_new_ns(QEMU_CLOCK_VIRTUAL, mcu_power_held, s);
@@ -2557,6 +2724,7 @@ static void ctr_init(MachineState *machine)
     qemu_console_resize(s->con, CTR_TOP_W, CTR_SCR_H * 2);
     qemu_input_handler_register(NULL, &ctr_input_handler);
     ctr_add_mcu_props(s, OBJECT(machine));
+    ctr_add_n3ds_props(s, OBJECT(machine));
     ctr_prof_init(s);
 
     /* ---- payload ---- */
@@ -2570,6 +2738,9 @@ static void ctr_init(MachineState *machine)
     qemu_register_reset(ctr_reset_arm9, s);
 }
 
+static bool ctr_get_new3ds(Object *obj, Error **errp) { return ctr_new3ds; }
+static void ctr_set_new3ds(Object *obj, bool v, Error **errp) { ctr_new3ds = v; }
+
 static void ctr_machine_init(MachineClass *mc)
 {
     mc->desc = "Nintendo 3DS (Old 3DS subset for ios3ds development; Luma FIRM boot)";
@@ -2580,6 +2751,9 @@ static void ctr_machine_init(MachineClass *mc)
     mc->ignore_memory_transaction_failures = false;
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("arm11mpcore");
     mc->auto_create_sdcard = true;
+    object_class_property_add_bool(OBJECT_CLASS(mc), "new3ds", ctr_get_new3ds, ctr_set_new3ds);
+    object_class_property_set_description(OBJECT_CLASS(mc), "new3ds",
+        "model a New 3DS: SOCINFO, 804 MHz switch, L2C-310 registers, C-stick/ZL/ZR (docs/n3ds.md)");
 }
 
 DEFINE_MACHINE_ARM("nintendo3ds", ctr_machine_init)

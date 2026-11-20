@@ -24,6 +24,16 @@
 #define INBTN_PAD_MASK   0x0FFFu
 #define INBTN_HOME       (1u << 12)     /* MCU IRQ bits 2/3 (boot/arm9/mcu.c, docs/mcu.md) */
 #define INBTN_POWER      (1u << 13)     /* MCU IRQ bits 0/1 (boot/arm9/mcu.c) */
+#define INBTN_ZL         (1u << 14)     /* New 3DS (boot/arm9/exthid.c, docs/n3ds.md) */
+#define INBTN_ZR         (1u << 15)     /* New 3DS */
+
+/* inmbox_t.ext: the New 3DS C-stick, updated on every ARM9 poll (a level,
+   not an event: the daemon reads the latest value). 0 = no such chip. */
+#define INEXT_X(e)       ((int)(int8_t)((e) & 0xFFu))          /* right positive, about +-0x7x */
+#define INEXT_Y(e)       ((int)(int8_t)(((e) >> 8) & 0xFFu))   /* up positive */
+#define INEXT_VALID      (1u << 24)
+#define INEXT_ZL         (1u << 25)
+#define INEXT_ZR         (1u << 26)
 
 #define INFLAG_PEN       (1u << 0)      /* stylus/finger on the panel; tx/ty valid */
 #define INFLAG_CPAD      (1u << 1)      /* cx/cy valid */
@@ -45,7 +55,8 @@ typedef struct {
     uint32_t head;          /* samples ever pushed; s[(head-1) % INPUT_RING] is the newest */
     uint32_t tsc_ok;        /* 1 = CODEC answered and the touch ADC is running */
     uint32_t polls;         /* total ARM9 polls (liveness) */
-    uint32_t _r[3];
+    uint32_t ext;           /* New 3DS C-stick (INEXT_*), 0 on other models */
+    uint32_t _r[2];
     insample_t s[INPUT_RING];
 } inmbox_t;
 

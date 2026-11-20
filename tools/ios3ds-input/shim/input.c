@@ -52,9 +52,11 @@ _Static_assert(sizeof(struct sysctl_oid) == 36, "xnu-1504 arm sysctl_oid");
 /* The ARM9 writes the mailbox behind the ARM11's back (FCRAM is uncached on
    the ARM9): drop our cached copy of those lines before every read. Nothing on
    the ARM11 ever writes them, so invalidating cannot lose data. */
+void shim_l2_inv_kva(const volatile void *va, u32 len);    /* entry.S: New 3DS L2 (docs/n3ds.md) */
 static void input_dinval(volatile void *p, u32 len)
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }

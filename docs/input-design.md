@@ -415,3 +415,15 @@ iOS 4 has no pointer, so the circle pad scrolls whatever is under the screen cen
   - D-pad right turns to home page 2;
   - holding the circle pad down for 1.2 s scrolls Settings by about 90 points.
 - **Hardware:** the real stick's raw range is not measured yet. Full tilt is assumed to be about 1200 raw units, as modelled. If scrolling is too slow or too fast on a 3DS, change `CPAD_FULL` / `CPAD_SPEED`.
+
+## 9. New 3DS C-stick and ZL/ZR (2026-11-20)
+
+`tools/ios3ds-input/daemon/n3ds.h` is pure logic, host-tested by `tools/ios3ds-input/tests/test_n3ds.c` (part of `make test`). The chip and the protocol are in [n3ds.md](n3ds.md) section 3.
+
+- **C-stick:** a flick past 64 of about ±127 on its dominant axis acts as one directional press for `cpad_step`, with hysteresis: the stick must come back inside 32 before the next flick.
+  - **Left/right:** page swipe, like the D-pad.
+  - **Up/down:** a new vertical gesture in `cpad.h`. The finger moves 0.6 of the screen over 7 ticks and is held still for `CPAD_STILL` ticks before it lifts, so the list scrolls about that far and does not fling.
+- **ZL:** a tap on the status bar (dpad bit 4: down at (0.5, 0.012), one still tick, up), which scrolls the frontmost list to its top. A double HOME press for the app switcher was tried first, but the iPod touch 2G has no multitasking, and in QEMU it only did what one press does.
+- **ZR:** HOME down, POWER down (+150 ms), POWER up (+100 ms), HOME up (+100 ms). This is a screenshot to the Camera Roll; QEMU shows the white flash.
+- **Mailbox:** ZL and ZR are button bits 14 and 15 (events in the ring). The stick is `inmbox_t.ext`, a level the daemon reads on every poll. `INPUT_VERSION` stays 1: the field used to be reserved and is 0 on an Old 3DS.
+- **Kill switches:** `non3ds` in the daemon's ProgramArguments, or `n3ds_hid=0` in boot.cfg.

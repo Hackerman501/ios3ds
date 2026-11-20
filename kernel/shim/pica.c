@@ -122,9 +122,21 @@ static void dc_clean(volatile void *p, uint32_t len)
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c10, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
+void shim_l2_inv(uint32_t pa, uint32_t len);   /* entry.S: New 3DS L2, write-through (docs/n3ds.md) */
+static uint32_t arena_va, arena_pa, arena_size;
+/* drop stale L2 lines of a kernel buffer: the arena (IOMallocContiguous VA)
+   or XNU's linear map. Invalidating clean lines never loses data (the L2
+   runs write-through), so a wrong guess only costs time. */
+static void l2_inv_kbuf(const volatile void *p, uint32_t len)
+{
+    uint32_t v = (uint32_t)p;
+    if (v - arena_va < arena_size) shim_l2_inv(arena_pa + (v - arena_va), len);
+    else if (v - 0x80000000u < 0x08000000u) shim_l2_inv(v - 0x60000000u, len);
+}
 static void dc_inval(volatile void *p, uint32_t len)
 {
     uint32_t a = (uint32_t)p & ~31u, end = (uint32_t)p + len;
+    l2_inv_kbuf(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
@@ -152,6 +164,7 @@ static void p_to_gpu(void *p, uint32_t len)
 static void p_from_gpu(void *p, uint32_t len)
 {
     uint32_t a = (uint32_t)p & ~31u, end = (uint32_t)p + len;
+    l2_inv_kbuf(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
@@ -234,6 +247,10 @@ static void bringup(void)
        CPU access to the arena does its own line maintenance. QEMU has no
        caches, so only hardware can show this matters. */
     __asm__ volatile("mcr p15, 0, %0, c7, c14, 0\n\tmcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+    arena_va = (uint32_t)va;
+    arena_pa = pa;
+    arena_size = size;
+    shim_l2_inv(pa, size);              /* New 3DS L2: no stale copies either */
     /* staged diagnostics on the GPU as Luma left it, then the part of
        libn3ds' hardwareReset() Luma never does (GX clock, VRAM banks, DMA
        priorities), then the same tests again (docs/pica200.md section 12) */
@@ -330,6 +347,7 @@ static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t byt
     for (a = va & ~31u; a < va + bytes; a += 32)
         __asm__ volatile("mcr p15, 0, %0, c7, c14, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+    shim_l2_inv(pa0, bytes);            /* New 3DS L2: the caller reads the GPU's picture later */
     if (!said_ok++)
         k_printf("[pica] present: GPU writes the caller's surface directly: user VA 0x%08x = PA 0x%08x (%s, %u KiB)\n",
                  va, pa0, pa0 >= 0x20000000u ? "FCRAM" : "VRAM", bytes >> 10);
@@ -435,7 +453,8 @@ void shim_pica_register(void)
 #define TICK_HZ    1047311u
 #define GUARD      4096u
 
-static uint32_t m_ticks(void) { return ~WD_COUNT; }
+uint32_t shim_now32(void);                 /* entry.S: TICK_HZ on every model (docs/n3ds.md) */
+static uint32_t m_ticks(void) { return shim_now32(); }
 static void m_to_gpu(void *p, uint32_t len) { dc_clean(p, len); }
 static void m_from_gpu(void *p, uint32_t len) { dc_inval(p, len); }
 

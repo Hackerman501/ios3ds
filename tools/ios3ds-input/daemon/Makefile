@@ -7,7 +7,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../..)
 CC   := $(ROOT)/scripts/ios-cc
 OUT  ?= $(ROOT)/build/rootfs-add/usr/libexec/ios3ds-input
 
-$(OUT): input.c $(ROOT)/boot/common/input_proto.h
+$(OUT): input.c cpad.h n3ds.h $(ROOT)/boot/common/input_proto.h
 	mkdir -p $(dir $@)
 	$(CC) -Os -Wall -Wextra -I$(ROOT)/boot/common input.c -framework IOKit -framework CoreFoundation -o $@
 

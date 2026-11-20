@@ -27,6 +27,7 @@
 #include "gyro.h"
 #include "camera.h"
 #include "powersave.h"
+#include "exthid.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -41,7 +42,7 @@ static void delay_ms(u32 ms)
 
 static const char *stage_name(u32 s)
 {
-    static const char *n[] = { "none", "entry", "id-regs", "probes", "vfp", "ready", "jumping" };
+    static const char *n[] = { "none", "entry", "id-regs", "probes", "vfp", "ready", "jumping", "n3ds" };
     return s < ARRAY_SIZE(n) ? n[s] : "?";
 }
 
@@ -136,6 +137,9 @@ typedef struct {
     u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
     u32 camera;          /* 0 = never touch the cameras (docs/camera.md) */
     u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
+    u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
+    u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
+    u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -183,6 +187,8 @@ static int parse_bootcfg(char *txt)
     cfg.mic = 1;
     cfg.camera = 1;
     cfg.hp_route = 1;
+    cfg.n3ds_clock = 1;
+    cfg.n3ds_hid = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -200,6 +206,7 @@ static int parse_bootcfg(char *txt)
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera },
+        { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
@@ -422,7 +429,7 @@ static void heartbeat(u32 quiet_s)
         static u64 a11_0;
         static u32 a9_0;
         static bool have0;
-        u64 a11 = (u64)st[0x44 / 4] << 32 | st[0x48 / 4];
+        u64 a11 = ((u64)st[0x44 / 4] << 32 | st[0x48 / 4]) >> N3RES_TBSHIFT(st[SHIM_N3DS_OFF / 4]);
         u32 a9 = clk_ticks();
         if (!have0) {
             a11_0 = a11;
@@ -518,6 +525,7 @@ static void poll_buttons(void)
     input_poll(cfg.shim_pa);
     mcu_poll(t);
     gyro_poll(t);
+    exthid_poll(t);
 }
 
 static void __attribute__((noreturn)) monitor(const char *phase)
@@ -580,6 +588,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
         mcu_poll(clk_ticks());      /* RTC, battery, sliders, HOME/POWER (docs/mcu.md) */
         gyro_poll(clk_ticks());     /* gyroscope while iOS wants it (docs/mcu.md 11) */
+        exthid_poll(clk_ticks());   /* New 3DS C-stick, ZL/ZR (docs/n3ds.md) */
         camera_poll();              /* sensor power + I2C set-up for the shim (docs/camera.md) */
         static bool ios_display, x_latched;
         static int screen_mode;
@@ -711,7 +720,59 @@ static void __attribute__((noreturn)) monitor(const char *phase)
 
 /* ------------------------------------------------------------------------ */
 
-static char cfgbuf[4096];
+/* New 3DS: ask the ARM11 stub for the model, the 804 MHz clock and the L2
+   cache (boot.cfg n3ds_clock / n3ds_l2), and take part in its timer
+   calibration (cal_state 1 -> 2 now -> 3 after 1309 ticks = 20.0 ms of the
+   ARM9 timer). The result word goes into the shim (SHIM_N3DS_OFF): the shim
+   programs its timer prescaler and tick shift from it. docs/n3ds.md */
+static u32 n3ds_res;
+static void n3ds_setup(void)
+{
+    volatile shared_t *sh = SHARED;
+    sh->n3ds_res = 0;
+    sh->cal_state = 0;
+    sh->n3ds_req = (cfg.n3ds_clock ? N3REQ_CLOCK : 0) | (cfg.n3ds_l2 ? N3REQ_L2 : 0);
+    sh->a9_cmd = A9CMD_N3DS;
+    for (u32 t0 = clk_ticks(); !(sh->n3ds_res & N3RES_DONE) && clk_ticks() - t0 < 3 * T9_HZ;) {
+        if (sh->cal_state == 1) {
+            u32 c = clk_ticks(), c0;
+            while ((c0 = clk_ticks()) == c) ;          /* start on a tick edge */
+            sh->cal_state = 2;
+            while (clk_ticks() - c0 < 1309u) ;
+            sh->cal_state = 3;
+        }
+        drain_a11_log();
+    }
+    sh->a9_cmd = A9CMD_NONE;
+    drain_a11_log();
+    n3ds_res = sh->n3ds_res;
+    if (!(n3ds_res & N3RES_DONE)) {
+        log_err("[n3ds] ARM11 stub did not answer (old stub?): Old 3DS timings assumed\n");
+        n3ds_res = 0;
+        return;
+    }
+    if (n3ds_res & N3RES_NEW) {
+        u32 hz = sh->n3ds_periph_hz;
+        logp("[n3ds] model: New 3DS (CFG11_SOCINFO %x), ARM11 %s MHz, PDN_LGR_SOCMODE %x, LGR_CNT %x\n",
+             sh->n3ds_socinfo, (n3ds_res & N3RES_804) ? "804" : "268", sh->n3ds_socmode, sh->n3ds_lgr_cnt);
+        logp("[n3ds] MPCore timers: PERIPHCLK %u.%02u MHz measured, prescaler /%u, tick shift %u -> %u Hz\n",
+             hz / 1000000u, hz / 10000u % 100u, N3RES_PRESCALE(n3ds_res) + 1, N3RES_TBSHIFT(n3ds_res),
+             hz / ((N3RES_PRESCALE(n3ds_res) + 1) << N3RES_TBSHIFT(n3ds_res)));
+        if (n3ds_res & N3RES_TIMEOUT)
+            log_err("[n3ds] clock switch not acknowledged (GIC 88): set n3ds_clock=0 in boot.cfg\n");
+        if (cfg.n3ds_l2)
+            logp("[n3ds] L2 cache: %s (L2C-310 id %08x aux %08x ctrl %x)\n",
+                 (n3ds_res & N3RES_L2) ? "on, write-through" : "OFF", sh->n3ds_l2_id, sh->n3ds_l2_aux, sh->n3ds_l2_ctrl);
+        else
+            logp("[n3ds] L2 cache: off (boot.cfg n3ds_l2=0)\n");
+    } else {
+        logp("[n3ds] model: Old 3DS (CFG11_SOCINFO %x), PERIPHCLK %u Hz\n", sh->n3ds_socinfo, sh->n3ds_periph_hz);
+    }
+    if (cfg.shim[0] && cfg.shim_pa)
+        *(vu32 *)(cfg.shim_pa + SHIM_N3DS_OFF) = n3ds_res;
+}
+
+static char cfgbuf[16384];     /* boot.cfg passed 4 KiB with the New 3DS switches: the cmdline at the end was cut off */
 
 void a9_main(int argc, char **argv)
 {
@@ -786,6 +847,8 @@ void a9_main(int argc, char **argv)
         status(9, CON_RED, "NO boot.cfg");
         monitor("nothing to boot");
     }
+    if (n >= (int)sizeof(cfgbuf) - 1)
+        log_err("boot.cfg is larger than %u bytes: the rest is ignored\n", (unsigned)sizeof(cfgbuf) - 1);
     parse_bootcfg(cfgbuf);
     log_ts = cfg.log_ts != 0;
     blksrv_profile(cfg.ioprof, clk_ticks, T9_HZ);
@@ -954,6 +1017,9 @@ void a9_main(int argc, char **argv)
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
     }
     stamp("Wi-Fi, audio, MCU, GPU set up");
+    n3ds_setup();                   /* model, 804 MHz, L2, timer calibration (docs/n3ds.md) */
+    exthid_init(cfg.n3ds_hid != 0 && (n3ds_res & N3RES_NEW), cfg.diag != 0, T9_HZ);
+    stamp("New 3DS check");
     if (!cfg.jump) {
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");

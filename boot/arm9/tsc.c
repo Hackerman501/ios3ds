@@ -30,6 +30,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "tsc.h"
+#include "exthid.h"
 #include "mcu.h"
 
 typedef struct {
@@ -240,6 +241,10 @@ void input_poll(u32 shim_pa)
     if ((s.buttons & (HID_SELECT | HID_START)) == (HID_SELECT | HID_START))
         s.buttons &= (u16)~(HID_SELECT | HID_START);
     s.buttons |= mcu_buttons();     /* HOME / POWER from the MCU (mcu.c) */
+    u32 ext = exthid_state();       /* New 3DS: C-stick level + ZL/ZR (exthid.c) */
+    if (ext & INEXT_ZL) s.buttons |= INBTN_ZL;
+    if (ext & INEXT_ZR) s.buttons |= INBTN_ZR;
+    m->ext = ext;
 
     if (m->tsc_ok && !input_idle) {         /* screen off: no touches to read (docs/mcu.md section 9) */
         bool pen;

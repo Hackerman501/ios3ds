@@ -99,8 +99,10 @@ void CFRelease(const void *cf);
 #define PAD_LEFT   (1u << 5)
 
 #include "cpad.h"
+#include "n3ds.h"
 static cpad_t cpad;
-static int opt_nocpad;
+static cstick_t cstick;
+static int opt_nocpad, opt_non3ds;
 
 static const struct { uint16_t btn, usage; } keymap[] = {
     { PAD_START,  kHIDUsage_Csmr_Menu },
@@ -393,7 +395,15 @@ static void apply(const insample_t *prev, const insample_t *cur)
     for (i = 0; i < sizeof keymap / sizeof keymap[0]; i++)
         if (diff & keymap[i].btn)
             key_edge(i, (cur->buttons & keymap[i].btn) != 0);
-
+    if ((diff & cur->buttons & INBTN_ZR) && !opt_non3ds) {     /* New 3DS: n3ds.h */
+        n3key_t k[4];
+        int n = zr_keys(1, k);
+        if (opt_debug) say("[input] ZR: screenshot");
+        for (i = 0; i < (unsigned)n; i++) {
+            if (k[i].wait_ms) usleep(k[i].wait_ms * 1000u);
+            send_key(k[i].key == N3K_MENU ? kHIDUsage_Csmr_Menu : kHIDUsage_Csmr_Power, k[i].down);
+        }
+    }
     if (is && !was) {
         if (cpad.finger) {                  /* a real touch ends the virtual finger first */
             send_touch(cpad.x, cpad.y, 0, kIOHIDDigitizerEventRange | kIOHIDDigitizerEventTouch);
@@ -440,6 +450,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "stretch")) opt_stretch = 1;
         else if (!strcmp(argv[i], "debug")) opt_debug = 1;
         else if (!strcmp(argv[i], "nocpad")) opt_nocpad = 1;
+        else if (!strcmp(argv[i], "non3ds")) opt_non3ds = 1;
     }
 
     /* the shim registers the sysctl at root mount; no sysctl = old shim */
@@ -496,6 +507,12 @@ int main(int argc, char **argv)
         if (synced && !screen_off && !opt_nocpad) {    /* circle pad / D-pad gestures */
             cpad_out_t o;
             unsigned dpad = ((state.buttons & PAD_LEFT) ? 1u : 0u) | ((state.buttons & PAD_RIGHT) ? 2u : 0u);
+            if (!opt_non3ds) {          /* New 3DS C-stick flicks: pages and page scrolls (n3ds.h) */
+                static int said;
+                if ((box.ext & INEXT_VALID) && !said++) say("[input] New 3DS C-stick, ZL/ZR: on");
+                dpad |= cstick_dirs(&cstick, INEXT_X(box.ext), INEXT_Y(box.ext), (box.ext & INEXT_VALID) != 0);
+                if (state.buttons & INBTN_ZL) dpad |= 16u;     /* ZL: tap the status bar (scroll to top) */
+            }
             cpad_step(&cpad, state.cx, state.cy, (state.flags & INFLAG_CPAD) != 0,
                       (state.flags & INFLAG_PEN) != 0, dpad, &o);
             if (o.ev == CP_DOWN || o.ev == CP_UP) {

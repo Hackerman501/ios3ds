@@ -83,9 +83,11 @@ struct sysctl_oid {
 
 #define BOX ((volatile mcubox_t *)(SHIM_VA + SHIM_MCU_OFF))
 
+void shim_l2_inv_kva(const volatile void *va, u32 len);    /* kernel/shim/entry.S: New 3DS L2 (docs/n3ds.md) */
 static void dinval(volatile void *p, u32 len)
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }

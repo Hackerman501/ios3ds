@@ -62,10 +62,13 @@ struct sysctl_oid {
 #define MBOX        ((volatile cammbox_t *)(SHIM_VA + SHIM_CAM_OFF))
 #define REG32(va)   (*(vu32 *)(va))
 #define REG16(va)   (*(vu16 *)(va))
-static inline u32 now_ticks(void) { return ~REG32(PRIV_VA + WD_COUNT); }
+u32 shim_now32(void);                                       /* entry.S: 1047311 Hz on every model */
+void shim_l2_inv_kva(const volatile void *va, u32 len);     /* entry.S: New 3DS L2 (docs/n3ds.md) */
+static inline u32 now_ticks(void) { return shim_now32(); }
 static void dinval(const volatile void *p, u32 len)
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
 }
 static void dclean(const volatile void *p, u32 len)

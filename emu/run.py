@@ -58,15 +58,18 @@ def main():
     ap.add_argument("--icount", default="", metavar="SHIFT",
                     help="instruction-clocked time (-icount shift=N,sleep=off; 2 = ~250 MHz, close to the "
                          "Old 3DS ARM11): reproduces real-hardware timer ordering; single-threaded TCG")
+    ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--regs", action="store_true", help="dump ARM11/ARM9 registers before quitting")
     a = ap.parse_args()
+    if a.new3ds:
+        os.environ["IOS3DS_NEW3DS"] = "1"
     out_dir = a.out
     os.makedirs(out_dir, exist_ok=True)
     mon = os.path.join(out_dir, "monitor.sock")
     if os.path.exists(mon):
         os.remove(mon)
     accel = "tcg,thread=single" if a.icount else "tcg,thread=multi"
-    cmd = [QEMU, "-M", "nintendo3ds", "-accel", accel, "-kernel", a.firm, "-display", "none",
+    cmd = [QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", accel, "-kernel", a.firm, "-display", "none",
            "-monitor", "unix:%s,server,nowait" % mon, "-serial", "none"]
     if os.path.exists(a.sd):
         cmd += ["-drive", "file=%s,if=sd,format=raw" % a.sd]

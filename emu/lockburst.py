@@ -41,7 +41,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="ios3ds-lockburst-")
     sock = os.path.join(tmp, "qmp.sock")
-    cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=multi",
+    cmd = [viewer.QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", "tcg,thread=multi",
            "-kernel", os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
            "-drive", "file=%s,if=sd,format=raw" % a.sd, "-serial", "none",
            "-display", "none", "-qmp", "unix:%s,server,nowait" % sock]

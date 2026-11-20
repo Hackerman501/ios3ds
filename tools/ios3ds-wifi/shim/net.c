@@ -30,9 +30,11 @@ static inline void net_dclean(volatile void *p, u32 len)
 }
 
 /* Only ever used on lines the ARM11 never writes, so nothing can be lost. */
+void shim_l2_inv_kva(const volatile void *va, u32 len);    /* kernel/shim/entry.S: New 3DS L2 (docs/n3ds.md) */
 static inline void net_dinval(volatile void *p, u32 len)
 {
     u32 a = (u32)p & ~31u, end = (u32)p + len;
+    shim_l2_inv_kva(p, len);
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }

@@ -58,18 +58,21 @@ def main():
     ap.add_argument("--cycles", type=int, default=40)
     ap.add_argument("--boot-timeout", type=float, default=1200)
     ap.add_argument("--settle", type=float, default=15, help="seconds an app gets after its tap")
+    ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--icount", default="")
     ap.add_argument("--long-lock", type=float, default=130, help="seconds locked on every 10th cycle")
     ap.add_argument("--targets", default="", help="x,y;x,y;... iOS points to tap instead of the icon grid + dock")
     ap.add_argument("--settles", default="", help="comma list of per-cycle settle seconds (cycled)")
     a = ap.parse_args()
+    if a.new3ds:
+        os.environ["IOS3DS_NEW3DS"] = "1"
     os.makedirs(a.out, exist_ok=True)
     targets = [tuple(float(v) for v in p.split(",")) for p in a.targets.split(";") if p] or TARGETS
     settles = [float(v) for v in a.settles.split(",") if v] or [a.settle]
     tmp = tempfile.mkdtemp(prefix="ios3ds-soak-")
     sock = os.path.join(tmp, "qmp.sock")
     accel = "tcg,thread=single" if a.icount else "tcg,thread=multi"
-    cmd = [viewer.QEMU, "-M", "nintendo3ds", "-accel", accel,
+    cmd = [viewer.QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", accel,
            "-kernel", os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
            "-drive", "file=%s,if=sd,format=raw" % a.sd, "-serial", "none",
            "-display", "none", "-qmp", "unix:%s,server,nowait" % sock]

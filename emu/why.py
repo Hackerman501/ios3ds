@@ -30,7 +30,7 @@ def main():
     log = os.path.join(OUT, "why.log")
     if os.path.exists(mon):
         os.remove(mon)
-    p = subprocess.Popen([QEMU, "-M", "nintendo3ds", "-accel", "tcg,thread=multi", "-kernel", os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
+    p = subprocess.Popen([QEMU, "-M", ("nintendo3ds,new3ds=on" if os.environ.get("IOS3DS_NEW3DS") == "1" else "nintendo3ds"), "-accel", "tcg,thread=multi", "-kernel", os.path.join(ROOT, "build", "boot", "ios3ds.firm"),
                           "-display", "none", "-serial", "none", "-monitor", "unix:%s,server,nowait" % mon,
                           "-drive", "file=%s,if=sd,format=raw" % os.path.join(ROOT, "build", "sd.img"),
                           "-d", "int,in_asm,nochain", "-D", log],

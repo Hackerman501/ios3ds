@@ -8,6 +8,11 @@
  * Back in the dead zone the finger is held still for a few ticks before it
  * lifts, so UIScrollView sees no velocity and does not fling.
  * D-pad left/right: one page swipe (home screen pages, Photos).
+ * Up/down "swipes" (the New 3DS C-stick, n3ds.h): the finger moves 0.6 of
+ * the screen and is held still before it lifts, so a list scrolls by about
+ * that much and does not fling.
+ * Status-bar tap (the New 3DS ZL, n3ds.h): a tap at the top centre, which
+ * makes iOS scroll the frontmost list to its top.
  * A real touch always wins: the virtual finger lifts and nothing is
  * synthesised while the pen is down.
  *
@@ -32,7 +37,8 @@ typedef struct {
     int   still;            /* ticks it has been held still */
     int   regrip;           /* lifting to re-grip, not because the stick is centred */
     int   swipe;            /* ticks left in a D-pad swipe, 0 = none */
-    float swipe_dx;         /* per-tick x step of the swipe */
+    float swipe_dx, swipe_dy;   /* per-tick step of the swipe */
+    int   swipe_still;      /* ticks held still at the swipe's end */
     unsigned prev_pad;      /* D-pad bits last tick */
 } cpad_t;
 
@@ -48,7 +54,9 @@ static float cpad_axis(int v)
 }
 
 /* cx/cy: raw circle pad (right/up positive); valid: the ARM9 delivers it;
-   pen: a real touch is down; dpad: bit0 left, bit1 right (pressed).
+   pen: a real touch is down; dpad: bit0 left, bit1 right, bit2 up, bit3
+   down (pressed; up/down come from the New 3DS C-stick), bit4 tap the
+   status bar (New 3DS ZL).
    Returns the one event to send this tick in *o (CP_NONE = nothing). */
 static void cpad_step(cpad_t *c, int cx, int cy, int valid, int pen, unsigned dpad, cpad_out_t *o)
 {
@@ -61,7 +69,8 @@ static void cpad_step(cpad_t *c, int cx, int cy, int valid, int pen, unsigned dp
     }
     if (c->swipe) {                             /* D-pad swipe in progress */
         if (--c->swipe == 0) { c->finger = 0; o->ev = CP_UP; }
-        else { c->x += c->swipe_dx; o->ev = CP_MOVE; }
+        else if (c->swipe <= c->swipe_still) return;            /* held still: no fling */
+        else { c->x += c->swipe_dx; c->y += c->swipe_dy; o->ev = CP_MOVE; }
         o->x = c->x; o->y = c->y;
         return;
     }
@@ -74,6 +83,29 @@ static void cpad_step(cpad_t *c, int cx, int cy, int valid, int pen, unsigned dp
             c->x = (edge & 1) ? 0.15f : 0.85f;  /* left: finger moves right (previous page) */
             c->y = 0.5f;
             c->swipe_dx = ((edge & 1) ? 0.70f : -0.70f) / (SWIPE_TICKS - 1);
+            c->swipe_dy = 0.0f;
+            c->swipe_still = 0;
+            o->ev = CP_DOWN; o->x = c->x; o->y = c->y;
+            return;
+        }
+        if (edge & 16) {                        /* status-bar tap: down, held one tick, up */
+            c->finger = 1;
+            c->swipe_still = 1;
+            c->swipe = 2;
+            c->x = 0.5f;
+            c->y = 0.012f;
+            c->swipe_dx = c->swipe_dy = 0.0f;
+            o->ev = CP_DOWN; o->x = c->x; o->y = c->y;
+            return;
+        }
+        if (edge & 12) {                        /* scroll by about a page */
+            c->finger = 1;
+            c->swipe_still = CPAD_STILL;
+            c->swipe = SWIPE_TICKS + CPAD_STILL;
+            c->x = 0.5f;
+            c->y = (edge & 4) ? 0.20f : 0.80f;  /* up: finger moves down (show what is above) */
+            c->swipe_dx = 0.0f;
+            c->swipe_dy = ((edge & 4) ? 0.60f : -0.60f) / (SWIPE_TICKS - 1);
             o->ev = CP_DOWN; o->x = c->x; o->y = c->y;
             return;
         }

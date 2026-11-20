@@ -154,4 +154,30 @@ bool i2c_write16(u8 bus, u8 dev, u16 idx, const u8 *in, u32 len)
     return send(r, *in, I2C_STOP);
 }
 
+/* no register index: start with the read address at once (GBATEK "3DS I2C
+   New3DS C-Stick and ZL/ZR-Buttons": reading returns its report array) */
+bool i2c_read_noreg(u8 bus, u8 dev, u8 *out, u32 len)
+{
+    i2c_regs_t *r = regs(bus);
+    int tries;
+    if (!len) return false;
+    for (tries = 0; tries < 8; tries++) {
+        if (!wait_busy(r)) {
+            r->cnt = I2C_EN | I2C_IRQ | I2C_ERROR | I2C_STOP;
+            continue;
+        }
+        if (send(r, dev | 1u, I2C_START)) break;
+    }
+    if (tries == 8) return false;
+    while (--len) {
+        r->cnt = I2C_EN | I2C_IRQ | I2C_READ | I2C_ACK;
+        if (!wait_busy(r)) return false;
+        *out++ = r->data;
+    }
+    r->cnt = I2C_EN | I2C_IRQ | I2C_READ | I2C_STOP;
+    if (!wait_busy(r)) return false;
+    *out = r->data;
+    return true;
+}
+
 u32 i2c_timeouts(void) { return timeouts; }
