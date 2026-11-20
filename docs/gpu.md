@@ -254,6 +254,7 @@ work (blending, texture sampling, transforms) moves to the GPU.
 | `[gl] Get: unknown pname 0x84f8` | max rectangle size = 1024 |
 | `GL error 0x500` in `GetString` → `CoreAnimation: rendering error 500` | `glGetString(0x8A1E)` returns "" |
 | screen black except for one icon | `glFlush` did nothing and `glFinish` only synced the *bound* framebuffer; CA flushes with FBO 0 bound. Now `glFlush`/`glFinish`/`SwapNotification` write every GPU target back (`Backend.flush_all`) |
+| photo grids empty (Settings > Wallpaper, re-log 62): `[gl] IOSurface pixel format 'L555' not supported` | PhotoLibrary's album rows are IOSurface CGImages in `'L555'` (x1R5G5B5, MusicLibrary's thumbnail formats); `BindCoreSurface` on a texture target converts `'L555'`/`'L565'` surfaces to a 32 bpp copy at bind (CA binds again for a new texture). Render targets stay 32 bpp only |
 
 `IOS3DS_GL_TRACE=1` (set for SpringBoard) logs the first GL error of every
 call site as `[gl] trace: GL error 0x… at engine+0x…` (look it up with `nm`).

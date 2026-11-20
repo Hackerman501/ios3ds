@@ -6,6 +6,7 @@ built by scripts/build-hfsplus.sh). Output stays in build/ (never committed).
   scripts/mkrootfs.py [--staging build/staging] [--out build/sd/ios3ds/rootfs.hfs]
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -145,9 +146,16 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             with open(tmp, "r+b") as f:
                 for fp in fps:
                     off = int(fp["offset"], 0)
-                    orig, new = bytes.fromhex(fp["orig"]), bytes.fromhex(fp["new"])
+                    new = bytes.fromhex(fp["new"])
                     f.seek(off)
-                    if f.read(len(orig)) != orig:
+                    # "orig": the bytes replaced; "orig_sha256": their hash instead, for
+                    # longer patches (keeps Apple's code out of the recipe)
+                    if "orig_sha256" in fp:
+                        ok = hashlib.sha256(f.read(len(new))).hexdigest() == fp["orig_sha256"]
+                    else:
+                        orig = bytes.fromhex(fp["orig"])
+                        ok = f.read(len(orig)) == orig
+                    if not ok:
                         raise SystemExit("file patch %s @%#x: original bytes differ" % (path, off))
                     f.seek(off)
                     f.write(new)

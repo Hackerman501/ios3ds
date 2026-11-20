@@ -62,6 +62,8 @@ During boot the ARM11 is 80–97 % busy in every phase. md0 has a request outsta
 
 `diag=1` also runs the ARM11 instruction probes. `probes=0` is the new default (`probes=1` alone still works). The jump countdown is 1 s instead of 2 s, and B still cancels it.
 
+**App logs (re-log 62).** With `diag=1`, or `ios3ds_applog=1` added to boot.cfg's `cmdline`, `/usr/lib/ios3ds-applog.dylib` (tools/ios3ds-diag/applog.c) sends SpringBoard's and every app's NSLog/stderr to the console, logs each alert's title and text (`[applog] <program> alert ...`) and, on every `viewDidAppear:`, the controller's class and view tree. SpringBoard loads it through its plist's `DYLD_INSERT_LIBRARIES`; the apps get it from SpringBoard's own debug switch `SBGuardMallocAlways`, which inserts `/usr/lib/libgmalloc.dylib` (a symlink to it, the device has no libgmalloc). Without either boot-arg the library returns at once.
+
 **For hardware test runs, set `diag=1`.** Otherwise the `gltest:`, `tone:` and `[smp]` lines that docs/pica200.md, docs/audio.md and docs/real-hardware.md ask for are not in the log.
 
 ## 4. What was fixed

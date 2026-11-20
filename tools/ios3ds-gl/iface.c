@@ -81,18 +81,14 @@ static void io_init(void)
         gl_log("IOSurface functions missing");
 }
 
-/* Pixels of a surface we can draw into or sample: 32 bpp only. */
-static uint32_t *surface_pixels(IOSurfaceRef s, int *w, int *h, int *pitch)
+/* Map a surface: its base address, size, bytes per row and pixel format. */
+static void *surface_map(IOSurfaceRef s, uint32_t *fmt, int *w, int *h, int *bpr)
 {
     void *p;
     io_init();
     if (!s || !io.base)
         return NULL;
-    if (io.fmt && io.fmt(s) != FOURCC_BGRA && io.fmt(s) != 0) {
-        uint32_t f = io.fmt(s);
-        gl_log("IOSurface pixel format '%c%c%c%c' not supported", f >> 24, f >> 16 & 0xff, f >> 8 & 0xff, f & 0xff);
-        return NULL;
-    }
+    *fmt = io.fmt ? io.fmt(s) : 0;
     p = io.base(s);
     if (!p && io.lock) {                /* not mapped yet: a lock maps it */
         io.lock(s, 0, NULL);
@@ -101,8 +97,69 @@ static uint32_t *surface_pixels(IOSurfaceRef s, int *w, int *h, int *pitch)
     }
     *w = (int)io.width(s);
     *h = (int)io.height(s);
-    *pitch = (int)(io.bpr(s) / 4);
+    *bpr = (int)io.bpr(s);
     return p;
+}
+
+static void log_format(uint32_t f, const char *what)
+{
+    gl_log("IOSurface pixel format '%c%c%c%c' %s", f >> 24, f >> 16 & 0xff, f >> 8 & 0xff, f & 0xff, what);
+}
+
+/* Pixels of a surface we can draw into or sample in place: 32 bpp only. */
+static uint32_t *surface_pixels(IOSurfaceRef s, int *w, int *h, int *pitch)
+{
+    uint32_t f;
+    int bpr;
+    void *p = surface_map(s, &f, w, h, &bpr);
+    if (p && f != FOURCC_BGRA && f != 0) {
+        log_format(f, "not supported");
+        return NULL;
+    }
+    *pitch = bpr / 4;
+    return p;
+}
+
+/* 16 bpp surfaces CA samples as textures: PhotoLibrary's album rows (Settings >
+ * Wallpaper, Photos; MusicLibrary's 'L555' thumbnail formats from
+ * Checkpoint.xml's ImageSpecifications) are IOSurface-backed CGImages in
+ * 'L555' (x1 R5 G5 B5, little endian). CA's software compositor reads them
+ * directly; we convert them to our 32 bpp texels when CA binds the surface
+ * (re-log 62). The copy is a snapshot: CA binds an image's surface again when
+ * it makes a new texture for it. */
+#define FOURCC_L555 0x4C353535u
+#define FOURCC_L565 0x4C353635u
+static uint32_t *surface_texels16(IOSurfaceRef s, int *w, int *h)
+{
+    static int said555, said565;
+    uint32_t f, *out;
+    int bpr, x, y;
+    const unsigned char *p = surface_map(s, &f, w, h, &bpr);
+    if (!p || (f != FOURCC_L555 && f != FOURCC_L565) || *w <= 0 || *h <= 0 || bpr < *w * 2)
+        return NULL;
+    out = malloc((size_t)*w * *h * 4);
+    if (!out)
+        return NULL;
+    if (f == FOURCC_L555 ? !said555++ : !said565++)
+        log_format(f, "texture: converted to 32 bpp at bind");
+    for (y = 0; y < *h; y++) {
+        const uint16_t *src = (const uint16_t *)(p + (size_t)y * bpr);
+        uint32_t *dst = out + (size_t)y * *w;
+        for (x = 0; x < *w; x++) {
+            unsigned v = src[x], r, g, b;
+            if (f == FOURCC_L555) {
+                r = v >> 10 & 31; g = v >> 5 & 31; b = v & 31;
+                g = g << 3 | g >> 2;
+            } else {
+                r = v >> 11; g = v >> 5 & 63; b = v & 31;
+                g = g << 2 | g >> 4;
+            }
+            r = r << 3 | r >> 2;
+            b = b << 3 | b >> 2;
+            dst[x] = 0xFF000000u | r << 16 | g << 8 | b;
+        }
+    }
+    return out;
 }
 
 /* ------------------------------------------------------------ drawables */
@@ -288,9 +345,13 @@ static int glesBindCoreSurface(void *g, GLenum target, IOSurfaceRef s)
     int w, h, pitch;
     uint32_t *px = NULL;
     static unsigned calls;
+    int own = 0;
     if (!calls++)
         log_callers("first BindCoreSurface");
-    if (s && !(px = surface_pixels(s, &w, &h, &pitch))) {
+    if (s && target != GL_RENDERBUFFER && (px = surface_texels16(s, &w, &h)) != NULL) {
+        own = 1;                        /* a 16 bpp image: our 32 bpp copy */
+        pitch = w;
+    } else if (s && !(px = surface_pixels(s, &w, &h, &pitch))) {
         gl_set_error(gc, GL_INVALID_VALUE);
         return 0;
     }
@@ -317,22 +378,26 @@ static int glesBindCoreSurface(void *g, GLenum target, IOSurfaceRef s)
     if (target == TARGET_SURFACE_TEX || target == GL_TEXTURE_2D) {
         Tex *t = gl_bound_tex(gc, gc->active_tex);
         if (!t) {
+            if (own)
+                free(px);
             gl_set_error(gc, GL_INVALID_OPERATION);
             return 0;
         }
         gl_tex_drop_image(t);
         if (s) {
-            t->surface = (void *)CFRetain(s);
+            t->surface = own ? NULL : (void *)CFRetain(s);
             t->px = px;
             t->w = w;
             t->h = h;
             t->pitch = pitch;
             t->base = GL_RGBA;
-            t->own_px = 0;
+            t->own_px = own;
         }
         gl_tex_dirty(gc, t);
         return 1;
     }
+    if (own)
+        free(px);
     gl_set_error(gc, GL_INVALID_ENUM);
     return 0;
 }
