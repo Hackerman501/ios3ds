@@ -942,3 +942,15 @@ Design and tester checklist: docs/n3ds.md.
 - **Two bugs the New-model QEMU runs found:**
   1. `rtclock_init`'s tick base was 0. The first clock read comes one raw tick after `shim_init` starts the watchdog, and 1 >> 1 = 0, so the calendar conversion spun forever with IRQs masked (PC 0x8006918e, the hang described in entry.S). The shifted clock now adds 1.
   2. With the three new lines, the generated boot.cfg grew to 4249 bytes. The ARM9 read only 4095 (`cfgbuf[4096]`), so the `cmdline=` line at the end was lost: no `rd=md0`, and the kernel waited for a root device until the watchdog panic. The buffer is now 16 KiB, and the ARM9 logs an error if a boot.cfg ever fills it.
+
+### 67.1 QEMU evidence (`--icount 2`)
+- **New model, defaults** (`emu/run.py --new3ds --icount 2`): `[a11] New 3DS: SOCINFO 7, SOCMODE 5, LGR_CNT 101, PERIPHCLK 402236315 Hz, timer /192 >>1` (the model's 402,167,784 Hz measured to 0.02 %). `[n3ds] … prescaler /192, tick shift 1 -> 1047490 Hz`. The heartbeat compares the ARM11 clock with the ARM9 timer: `[hb] clock: arm11 watchdog +589026 ms vs arm9 timer +589021 ms (ratio 1000/1000)`. `mcud`: `gettimeofday +70546 ms, mach_absolute_time +70546 ms`. The kernel reaches SpringBoard, and the GPU mirror runs with `0 of 512 sampled LCD pixels differ`.
+- **Old model:** `[a11] Old 3DS: SOCINFO 1, SOCMODE 0, LGR_CNT 0, PERIPHCLK 133893818 Hz, timer /128 >>0`. Nothing else changes; 0x17E10000 stays unmapped.
+- **C-stick and buttons** (keypad 6, Z, N; `emu/tap.py` in Settings):
+  - keypad 6 on the home screen → `[input] cpad down 272,240` / `up 47,240`: page 2.
+  - keypad 2 twice in Settings scrolls about a page each time without a fling.
+  - Z (ZL) → the list animates back to Airplane Mode at the top.
+  - N (ZR) → the white screenshot flash (`[exthid] 80 02 … ZR`, `[input] ZR: screenshot`).
+  - First mapping tried for ZL: a double HOME press for the app switcher. In QEMU it only scrolled page 2 back to page 1: no multitasking on the iPod touch 2G.
+- **`n3ds_l2=1`** (boot.cfg edited in the image): `[n3ds] L2 cache: on, write-through (L2C-310 id 410000c9 aux 02490000 ctrl 1)`. After 190 s: `l2c-ctrl 1`, `l2c-debug 2` (DWB), `l2c-inv-ways 1`, `l2c-inv-lines 6810479`, `l2c-syncs 868416` (the shim's invalidates reach the controller), clock ratio 999/1000, SpringBoard up. That the maintenance is *enough* can only be shown on hardware.
+- **Soak:** `python3 emu/soak.py --cycles 5` PASS on the Old model and with `--new3ds` (0 panics, 0 hangs, 0 watchdogs). `make test` OK (test_n3ds: 35 checks).
