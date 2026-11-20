@@ -273,6 +273,7 @@
     "_sscanf",
     "_strchr",
     "_strcmp",
+    "_strcpy",
     "_strcspn",
     "_strlen",
     "_strncmp",
