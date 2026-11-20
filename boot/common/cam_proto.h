@@ -73,7 +73,7 @@ typedef struct {               /* CAM_OP_INFO result, copied into cam_req_t.a[] 
 /* ---- shim <-> ARM9 mailbox ------------------------------------------------
    Shim (ARM11, cached, cleans after writing) owns the first 32 bytes, the
    ARM9 (uncached) the second 32. */
-#define SHIM_CAM_OFF        0x7E00u         /* cammbox_t in the shim page (64 bytes) */
+#define SHIM_CAM_OFF        0x7E00u         /* cammbox_t in the shim page (128 bytes) */
 #define CAM_MBOX_MAGIC      0x304D4143u     /* 'CAM0' */
 #define CAM_ST_OFF          0u      /* sensors in standby / unpowered */
 #define CAM_ST_STARTING     1u      /* ARM9 is initialising the requested camera */
@@ -100,8 +100,19 @@ typedef struct {
     uint32_t enabled;          /* boot.cfg camera (1 = yes) */
     uint32_t err;              /* last error code (camera.c CAMERR_*) */
     uint32_t pad1;
+    /* shim -> ARM9, line 3: hardware diagnostics (docs/camera.md section 7) */
+    uint32_t services;         /* drain services while streaming */
+    uint32_t data_seen;        /* services that found a non-empty FIFO */
+    uint32_t stat_last;        /* last CAM_STAT: drained port | other port << 16 */
+    uint32_t stat_max;         /* largest FIFO fill seen (8-byte units) */
+    uint32_t cnt_rb;           /* CAM_CNT read back: drained port | other port << 16 */
+    uint32_t variant;          /* CAM block set-up variant in use (cam.c cam_variants) */
+    uint32_t port_used;        /* port the shim drains (may move to where data appears) */
+    uint32_t probing;          /* 1 while no data has arrived since the start */
+    uint32_t pad2[8];
 } cammbox_t;
-_Static_assert(sizeof(cammbox_t) == 64, "cammbox layout");
+_Static_assert(sizeof(cammbox_t) == 128, "cammbox layout");
+#define CAM_NVARIANTS       3u
 
 /* ---- hardware (GBATEK "3DS Video CAM Registers", "3DS I2C" ; 3dbrew "IO Registers") ----
    CAM0 0x10120000: inner camera + outer right camera (the DSi pair, shared bus)

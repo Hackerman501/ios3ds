@@ -82,10 +82,11 @@ static inline u32 irq_off(void)
     return cpsr;
 }
 static inline void irq_restore(u32 cpsr) { __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory"); }
-#define CAM_REG(o)      (IO_VA + (CAM_REG_PA(C.port) - IO_PA) + (o))
-#define cnt_w(v)        (REG32(CAM_REG(CAM_CNT)) = (v))
-#define stat_r()        REG16(CAM_REG(CAM_STAT))
-#define clr_w(v)        (REG16(CAM_REG(CAM_CLR)) = (v))
+#define CAM_REG(p, o)   (IO_VA + (CAM_REG_PA(p) - IO_PA) + (o))
+#define cnt_w(p, v)     (REG32(CAM_REG(p, CAM_CNT)) = (v))
+#define cnt_r(p)        REG32(CAM_REG(p, CAM_CNT))
+#define stat_r(p)       REG16(CAM_REG(p, CAM_STAT))
+#define clr_w(p, v)     (REG16(CAM_REG(p, CAM_CLR)) = (v))
 #define fifo_r(i)       REG32(FIFO_VA + (CAM_FIFO_PA(C.port) - FIFO_PA) + (i) * 4)
 #else   /* host test (tools/ios3ds-camera/tests/test_cam.c): a model CAM block */
 extern volatile cammbox_t cam_host_mbox;
@@ -94,15 +95,29 @@ u32 cam_host_stat_r(void);
 void cam_host_clr_w(u32 v);
 u32 cam_host_fifo_r(u32 word);
 #define MBOX            (&cam_host_mbox)
-#define cnt_w(v)        cam_host_cnt_w(v)
-#define stat_r()        cam_host_stat_r()
-#define clr_w(v)        cam_host_clr_w(v)
+#define cnt_w(p, v)     ((p) == C.port ? cam_host_cnt_w(v) : (void)0)
+#define cnt_r(p)        0u
+#define stat_r(p)       ((p) == C.port ? cam_host_stat_r() : 0u)
+#define clr_w(p, v)     ((p) == C.port ? cam_host_clr_w(v) : (void)0)
 #define fifo_r(i)       cam_host_fifo_r(i)
 static inline void dclean(const volatile void *p, u32 len) { (void)p; (void)len; }
 static inline void dinval(const volatile void *p, u32 len) { (void)p; (void)len; }
 #endif
 
 #define CAM_STEP_TICKS  1047u       /* 1 ms of the 1.047 MHz time base: the FIFO (10 KiB) lasts ~4 ms at 15 fps */
+#define CAM_PROBE_TICKS (1047u * 2000u) /* 2 s without data: next set-up variant */
+
+/* CAM block set-up variants, tried in turn every 2 s until data arrives (the
+   first hardware run, re-log 67, saw no data at all with variant 0):
+     0  CAM_CNT 0x8010 (bit 4 "must be 1", bit 15 transfer), +6 = 0
+     1  as 0, +6 bits 0-5 = 0x22: GBATEK suspects +6 resembles the DSi's
+        CAM_MCNT, where 0x22 is the "module on" value DSi software writes
+     2  as 1, plus bit 14 (data request) and bit 9 (IRQ): the 3DS's own
+        driver uses DMA, maybe the block only fills its FIFO with DRQ on */
+static const u16 cam_var_clr[CAM_NVARIANTS] = { 0x00, 0x22, 0x22 };
+static const u32 cam_var_cnt[CAM_NVARIANTS] = {
+    CAM_CNT_B4 | CAM_CNT_EN, CAM_CNT_B4 | CAM_CNT_EN, CAM_CNT_B4 | CAM_CNT_EN | CAM_CNT_DRQ | CAM_CNT_IRQ,
+};
 #define CAM_WORDS       (CAM_FRAME_BYTES / 4u)
 
 static struct {
@@ -118,14 +133,21 @@ static struct {
     u32 io_ok;
     u32 frames, overruns, restarts, words;
     u32 logged;
+    u32 variant, probing, t_probe;  /* no data seen yet: both ports on, variants cycled */
+    u32 services, data_seen, stat_max, stat_last;
 } C = { .reading = CAM_NBUF, .newest = CAM_NBUF };
 
 /* ---- IRQ side ------------------------------------------------------------- */
+static void port_start(u32 p)
+{
+    cnt_w(p, CAM_CNT_B4);                               /* transfer off */
+    clr_w(p, 0x8000u | cam_var_clr[C.variant]);         /* clear overrun (+ variant bits 0-5) */
+    cnt_w(p, cam_var_cnt[C.variant]);                   /* on: the next frame starts at word 0 */
+}
+
 static void cnt_restart(void)
 {
-    cnt_w(CAM_CNT_B4);                                  /* transfer off */
-    clr_w(0x8000);                                      /* clear overrun */
-    cnt_w(CAM_CNT_B4 | CAM_CNT_EN);                     /* on: the next frame starts at word 0 */
+    port_start(C.port);
     C.off = 0;
 }
 
@@ -144,6 +166,43 @@ static void publish_stats(void)
     b->restarts = C.restarts;
     b->words = C.words;
     dclean(b, 32);
+    b->services = C.services;
+    b->data_seen = C.data_seen;
+    b->stat_last = C.stat_last;
+    b->stat_max = C.stat_max;
+    b->cnt_rb = (cnt_r(C.port) & 0xFFFF) | cnt_r(C.port ^ 1) << 16;
+    b->variant = C.variant;
+    b->port_used = C.port;
+    b->probing = C.probing;
+    dclean(&b->services, 32);
+}
+
+/* No word has arrived since the start: watch both ports (the camera may sit
+   on the other CAM block than GBATEK's map says) and cycle the set-up
+   variants. Once data is found, C.port points at it and probing ends. */
+static void probe(u32 now, u32 st)
+{
+    u32 o = C.port ^ 1, so = stat_r(o);
+    C.stat_last = (st & 0xFFFF) | so << 16;
+    if (CAM_STAT_FILL(st) || (st & CAM_STAT_OVR)) {
+        cnt_w(o, 0);
+        cnt_restart();                                  /* start over at a frame start */
+    } else if (CAM_STAT_FILL(so) || (so & CAM_STAT_OVR)) {
+        cnt_w(C.port, 0);
+        C.port = o;                                     /* data comes in on the other block */
+        cnt_restart();
+    } else {
+        if (now - C.t_probe > CAM_PROBE_TICKS) {
+            C.variant = (C.variant + 1) % CAM_NVARIANTS;
+            C.t_probe = now;
+            port_start(C.port);
+            port_start(o);
+            publish_stats();
+        }
+        return;
+    }
+    C.probing = 0;
+    publish_stats();
 }
 
 /* Returns the tick at which it wants to run again, 0 = no need. */
@@ -153,7 +212,8 @@ u32 shim_cam_service(u32 now)
     u32 st, units;
     if (!C.running) {
         if (C.streaming) {
-            cnt_w(0);
+            cnt_w(0, 0);
+            cnt_w(1, 0);
             C.streaming = 0;
         }
         return 0;
@@ -164,10 +224,26 @@ u32 shim_cam_service(u32 now)
         C.port = b->port & 1;
         C.streaming = 1;
         C.fill = next_fill();
+        C.probing = 1;
+        C.variant = 0;
+        C.t_probe = now;
         cnt_restart();
+        port_start(C.port ^ 1);
+        publish_stats();
         return now + CAM_STEP_TICKS;
     }
-    st = stat_r();
+    st = stat_r(C.port);
+    C.services++;
+    if (CAM_STAT_FILL(st)) C.data_seen++;
+    if (CAM_STAT_FILL(st) > C.stat_max) C.stat_max = CAM_STAT_FILL(st);
+    if (!(C.services & 1023)) {
+        C.stat_last = (st & 0xFFFF) | (u32)stat_r(C.port ^ 1) << 16;
+        publish_stats();
+    }
+    if (C.probing) {                                    /* drained from the next service on */
+        probe(now, st);
+        return now + CAM_STEP_TICKS;
+    }
     if (st & CAM_STAT_OVR) {
         C.overruns++;
         C.restarts++;
@@ -274,7 +350,8 @@ static u32 op_stop(void)
     u32 s = irq_off();
     C.running = 0;
     if (C.streaming) {
-        cnt_w(0);
+        cnt_w(0, 0);
+        cnt_w(1, 0);
         C.streaming = 0;
     }
     send_want(0);
@@ -369,4 +446,5 @@ u32 cam_test_newest(u32 *seq, u32 *reading)
     return C.newest;
 }
 void cam_test_stats(u32 *frames, u32 *overruns) { *frames = C.frames; *overruns = C.overruns; }
+u32 cam_test_variant(u32 *probing) { *probing = C.probing; return C.variant; }
 #endif

@@ -1,9 +1,11 @@
 # Camera: the 3DS cameras in iOS 4.2.1
 
-Status: **Camera.app shows a live preview and takes photos in QEMU, through the
-whole path (QEMU camera model → ARM9 sensor set-up → ARM11 FIFO drain →
-mediaserverd plug-in → Celestial → Camera.app → Camera Roll)**. Nothing of it
-has run on a console yet (section 7). Video recording is not offered (section 8).
+Status: **on the first console run the sensors answer but no picture data
+arrives (section 7); diagnostics and fallbacks are in for the next run.**
+In QEMU Camera.app shows a live preview and takes photos through the whole
+path (QEMU camera model → ARM9 sensor set-up → ARM11 FIFO drain → mediaserverd
+plug-in → Celestial → Camera.app → Camera Roll). Video recording is not
+offered (section 8).
 
 ```
  Camera.app / UIImagePickerController / AVFoundation (in the app)
@@ -166,27 +168,57 @@ com.apple.coremedia's preferences) bypasses the kernel path entirely.
 - Photos are 320x240. VGA would need 4x the FIFO bandwidth; with the CPU drain
   that is only reasonable at a few frames per second (or with CDMA).
 
-## 7. Hardware: what is unverified, what the log shows
-Everything here has only run against the QEMU model. On a console check, in
-`sd:/ios3ds/log.txt`:
-1. `[cam] inner camera (I2C 0x10161000 0x7A): chip id 2280` and the same for
-   the outer cameras: proves CFG11_CAMERA_CNT and the I2C bus/address map. `no
-   answer` → the camera clock or bus assignment is wrong (GBATEK vs 3dbrew
-   numbering: GBATEK bus 0 = 0x10161000 holds the DSi pair, bus 1 = 0x10144000
-   the left-eye camera).
-2. `[cam] ... streaming 320x240 YUV422 into CAMn (init N ms)`: the Aptina code
-   list worked (it is the DSi one; the 3DS sensors are the same chip).
-3. `[cam] cameras off (frames F, FIFO overruns O, CAM restarts R)`: F > 0 means
-   the CAM block, CAM_CNT bits (0x10 | 0x8000, no DRQ) and the FIFO window
-   read work. F = 0 with words drained points at the frame size or the CAM_CNT
-   bits (GBATEK lists bits 2/13 as "must be 0", bit 4 "must be 1"; the DSi's
-   transfer-unit field is unknown on the 3DS). Many overruns: the 1 ms service
-   is too slow on hardware, CDMA would be the fix.
-4. A picture with wrong colours: Y/U/V byte order (GBATEK: Y0 U Y1 V).
-5. Upside-down or mirrored preview: `SensorOrientation` in AVCapture.plist or
-   the sensor read mode (`0x2717`/`0x272D` bit 0 = x-flip).
-`camera=0` in boot.cfg keeps the kernel away from the cameras (the plug-in then
-reports no device and Camera.app shows no picture).
+## 7. Hardware: first run, diagnostics, what the log shows
+**Run 23 (Old 3DS, re-log 67):** all three sensors answer (`chip id 2280`),
+the outer left one comes up in ~135 ms, but `0 frames, 0 FIFO overruns`
+every 10 s: no word ever reached the CAM1 FIFO. A third start timed out in
+the sequencer refresh (`init failed (step 5)`). The shim's FIFO drain itself
+is not in question yet: without overruns the FIFO never filled at all.
+
+What the code does about it (all logged):
+- **Both CAM blocks are watched** until data appears: if the left camera's
+  data arrives on CAM0 instead of CAM1, the shim moves there
+  (`CAM0`/`CAM1` in the stats line).
+- **Set-up variants**, 2 s each, cycled until data appears
+  (`kernel/shim/cam.c` `cam_var_*`): 0 = `CAM_CNT 0x8010`; 1 = plus `+6 =
+  0x22` (GBATEK suspects +6 is the DSi's CAM_MCNT, whose "on" value is 0x22);
+  2 = plus `CAM_CNT` bit 14 (data request) and bit 9 (IRQ).
+- `CFG11_CAMERA_CNT` = 3 (bit 1 "reportedly turns the cameras on", GBATEK),
+  read back and logged.
+- Sensor waits 500 ms instead of 100 ms; the cameras are probed at boot (iOS
+  saw "present 0x0" until the first start).
+
+`[cam-diag]` lines in `sd:/ios3ds/log.txt`, in this order:
+1. `[cam-diag] boot: CFG11_CAMERA_CNT .. CAM0 cnt .. stat .. +6 .. CAM1 ...`
+   and the three `chip id` lines at boot.
+2. `[cam-diag] CFG11_CAMERA_CNT xx -> yy`: whether bit 1 sticks.
+3. After `streaming ... into CAM1`: the sensor registers (`STANDBY` bit 14 = in
+   standby, should be 0; `RESET_MISC` bit 9 = parallel output, should be 1;
+   `SEQ_STATE`: 3 = preview/streaming on the MT9V113 family; `OUT_W_A`/`OUT_H_A`
+   = 0140/00f0).
+4. At 0.2 s, 1 s, 5 s: both CAM blocks again (CAM_CNT as the shim set it), and
+   per block over 50 ms: how often CAM_CNT bits 0/1 changed (GBATEK: they
+   toggle during a transfer = the block sees sync from the sensor) and how
+   often the FIFO fill changed.
+5. Every 10 s: `shim: N services, M with data, stat ..., CAM_CNT ..., variant
+   V, CAMp[, still probing: no data yet], W words`. `services` = 0 means the
+   interrupt-time drain never ran for the camera (a shim problem, not the
+   hardware's).
+
+How to read it:
+- Bits 0/1 toggle and the fill changes on one block → data arrives; the
+  variant/port in the stats line is the working set-up (make it the default).
+- No toggles on either block, sensor reports streaming (`STANDBY` 0, parallel
+  bit set) → the CAM block is not clocked or not enabled: look at
+  `CFG11_CAMERA_CNT` and the CAM_CNT readback (bits that did not stick).
+- Sensor in standby / `SEQ_STATE` not 3 → the DSi code list does not bring the
+  3DS sensor to streaming; the sensor side needs the official sequence.
+
+Other unverified points: the colour byte order (GBATEK: Y0 U Y1 V), the
+picture's orientation/mirroring (`SensorOrientation`, read mode 0x2717/0x272D
+bit 0 = x-flip), and whether a 1 ms CPU drain keeps up on the console (many
+overruns would mean CDMA is needed). `camera=0` in boot.cfg keeps the kernel
+away from the cameras (the plug-in then reports no device).
 
 ## 8. Not done
 - **Video recording**: Camera.app's video switch needs `video-camera` and an

@@ -23,11 +23,12 @@ u32 shim_cam_service(u32 now);
 void cam_test_start(u8 *b0, u8 *b1, u8 *b2);
 u32 cam_test_newest(u32 *seq, u32 *reading);
 void cam_test_stats(u32 *frames, u32 *overruns);
+u32 cam_test_variant(u32 *probing);
 
 #define FIFO_WORDS (CAM_FIFO_UNITS * 2)
 volatile cammbox_t cam_host_mbox;
 static struct {
-    u32 cnt, q[FIFO_WORDS], head, count, last_i, last_w, frame, line, armed, overrun;
+    u32 cnt, q[FIFO_WORDS], head, count, last_i, last_w, frame, line, armed, overrun, dead;
     u32 popped;
 } M = { .last_i = ~0u };
 
@@ -55,8 +56,8 @@ u32 cam_host_fifo_r(u32 i)
 static void model_line(void)
 {
     if (M.line == CAM_H + 20) { M.line = 0; M.frame++; }
-    if (M.line == 0) M.armed = 0;
-    if (M.line < CAM_H && (M.cnt & CAM_CNT_EN) && !M.armed && !M.overrun) {
+    if (M.line == 0 && !M.dead) M.armed = 0;   /* a dead sensor sends no frame start */
+    if (M.line < CAM_H && (M.cnt & CAM_CNT_EN) && !M.armed && !M.overrun && !M.dead) {
         for (u32 x = 0; x < CAM_W; x += 2) {
             if (M.count == FIFO_WORDS) { M.overrun = 1; break; }
             M.q[(M.head + M.count++) % FIFO_WORDS] = cam_pattern_word(0, M.frame, x, M.line, CAM_W, CAM_H);
@@ -90,6 +91,14 @@ static void test_drain(void)
     cam_host_mbox.state = CAM_ST_RUNNING;
     cam_host_mbox.port = 1;
     cam_test_start(bufs[0], bufs[1], bufs[2]);
+    {   /* no data for 5 s: the shim keeps probing and moves on to other set-up variants */
+        u32 probing, v;
+        M.dead = 1;
+        for (u32 i = 0; i < 5000; i++) { model_line(); shim_cam_service(now += 1047); }
+        v = cam_test_variant(&probing);
+        CHECK(probing && v == 2, "no data: variant %u, probing %u (want 2, 1)", v, probing);
+        M.dead = 0;
+    }
     for (u32 step = 0; step < 40000; step++) {
         /* between services: usually 1-4 lines, sometimes a long gap (IRQs masked) */
         u32 lines = (step % 997 == 500) ? 40 : 1 + (u32)(rand() % 4);
