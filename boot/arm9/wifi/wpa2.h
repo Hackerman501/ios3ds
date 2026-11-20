@@ -70,3 +70,21 @@ u32 wpa2_rsn_ie(const wpa2_t *w, u8 out[22]);
  * that has to be sent to the AP before the keys are installed.
  */
 int wpa2_rx_eapol(wpa2_t *w, const u8 *eapol, u32 len, u8 *out, u32 cap, u32 *outlen);
+
+/* An AP's RSN IE (from its beacon / probe response), parsed. */
+typedef struct {
+    u8 ok;                  /* well-formed up to the AKM list */
+    u8 group;               /* group cipher suite type (00-0F-AC-n): 2 TKIP, 4 CCMP */
+    u8 ccmp, tkip;          /* offered as pairwise */
+    u8 psk, psk256, sae;    /* AKMs: 2 WPA2-PSK, 6 PSK-SHA256, 8 WPA3-SAE */
+    u8 n_akm;
+    u8 mfpc, mfpr;          /* RSN capabilities: management frame protection capable / required */
+} rsn_info_t;
+enum {
+    RSN_MODE_WPA2 = 0,      /* plain WPA2-PSK */
+    RSN_MODE_MIXED,         /* WPA2 + WPA3 transition: we join with WPA2-PSK */
+    RSN_MODE_WPA3_ONLY,     /* SAE only, or PMF required: the AR6014 cannot join */
+    RSN_MODE_OTHER,         /* no PSK at all (802.1X / enterprise) or malformed */
+};
+/* ie: the element (0x30, len, ...), n: bytes available. Returns RSN_MODE_*. */
+int wpa2_rsn_parse(const u8 *ie, u32 n, rsn_info_t *r);

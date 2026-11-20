@@ -125,6 +125,7 @@ static struct {
     u8 verbose, switching, from_ios;
     u8 nonet, rescan;               /* NO_NETWORK_AVAIL failures in a row; a directed rescan is running */
     u8 cancelling;                  /* our WMI_DISCONNECT that ends the firmware's own retries */
+    u8 rsn_mode;                    /* RSN_MODE_* of the target AP (scan), see wpa2_rsn_parse */
     u16 disc_reason, disc_code;
     u32 link_seq;
     /* [wifi-diag] */
@@ -480,7 +481,7 @@ static int wmi_connect(void)
            the host already matched its security. The firmware's own matching
            answered NO_NETWORK_AVAIL for an AP our scans see fine (run21/22:
            FRITZ!Box on channel 13; WPA2/WPA3 mixed RSN IEs are a suspect). */
-        if (A.nonet & 1) p.ctrl_flags = 0x0001 | 0x0008;
+        if ((A.nonet & 1) || A.rsn_mode == RSN_MODE_MIXED) p.ctrl_flags = 0x0001 | 0x0008;
     }
     /* dsiwifi's pre-connect settings: max performance power mode, 5 s
        disconnect timeout, no keepalive */
@@ -690,6 +691,17 @@ static void target_lookup(void);
 
 static void do_connect(void)
 {
+    if (A.found && T.security == WIFI_SEC_WPA2 && A.rsn_mode == RSN_MODE_WPA3_ONLY) {
+        /* SAE / required PMF: not in the AR6014 firmware, and no WPA2 fallback offered */
+        log_err("[wifi] \"%s\" is WPA3-only (or requires protected management frames): the 3DS Wi-Fi chip "
+                "can't join it. Set the router to \"WPA2 + WPA3\" or \"WPA2\".\n", T.ssid);
+        T.have = 0;
+        A.state = NET_ST_IDLE;
+        A.err = -95;
+        return;
+    }
+    if (A.found && A.rsn_mode == RSN_MODE_MIXED)
+        logp("[wifi] \"%s\" is a WPA2 + WPA3 network: joining with WPA2-PSK\n", T.ssid);
     int r = wmi_connect();
     logp("[wifi] connect \"%s\" (%s%s), %s: %d\n", T.ssid,
          T.security == WIFI_SEC_WPA2 ? "WPA2-PSK/CCMP" : "open",
@@ -754,12 +766,14 @@ static void on_wmi(const u8 *b, u32 len)
         }
         if (A.state == NET_ST_SCAN && !A.scan_done) {
             A.cancelling = 0;
-            if (A.rescan) {                     /* after NO_NETWORK_AVAIL: fresh BSSID/channel, */
-                A.rescan = 0;                   /* every other try the firmware picks the AP */
-                target_lookup();
-                if (!(A.nonet & 1)) A.found = 0;
+            /* use what this scan found (run22: a join that had to scan first
+               still connected "not seen in scan" with the BSSID unknown) */
+            if (T.have) target_lookup();
+            if (A.rescan) {                     /* after NO_NETWORK_AVAIL: every other try the */
+                A.rescan = 0;                   /* firmware picks the AP, except for WPA2+WPA3 */
+                if (!(A.nonet & 1) && A.rsn_mode != RSN_MODE_MIXED) A.found = 0;
             }
-            do_connect();
+            if (T.have) do_connect();
         }
         break;
     case WMI_EV_CONNECT:
@@ -1013,13 +1027,16 @@ static void target_lookup(void)
     }
     A.found = 0;
     A.group_crypt = CRYPT_AES;
+    A.rsn_mode = RSN_MODE_WPA2;
     if (!best) return;
     A.found = 1;
     A.channel = best->channel_mhz;
     memcpy(A.bssid, best->bssid, 6);
     for (u32 i = 0; i + 2 <= best->ie_len; i += 2 + best->ie[i + 1])
         if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6) {
-            A.group_crypt = best->ie[i + 7] == 2 ? CRYPT_TKIP : CRYPT_AES;
+            rsn_info_t ri;
+            A.rsn_mode = (u8)wpa2_rsn_parse(best->ie + i, best->ie_len - i, &ri);
+            A.group_crypt = (ri.ok ? ri.group : best->ie[i + 7]) == 2 ? CRYPT_TKIP : CRYPT_AES;
             u32 l = 2 + best->ie[i + 1];
             if (l > 40) l = 40;
             if (i + l > best->ie_len) l = best->ie_len - i;

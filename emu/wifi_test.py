@@ -90,7 +90,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
-                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip",
+                    choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip", "mixed", "wpa3",
                              "settings", "nwm", "badnwm"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
@@ -153,6 +153,10 @@ def main():
         extra += ["-global", "ctr-wifi.hidden=on"]
     if a.case == "tkip":
         extra += ["-global", "ctr-wifi.group=tkip"]
+    if a.case == "mixed":                   # FRITZ!Box "WPA2 + WPA3" (hardware run 22)
+        extra += ["-global", "ctr-wifi.security=wpa2-wpa3"]
+    if a.case == "wpa3":
+        extra += ["-global", "ctr-wifi.security=wpa3"]
     cmd = [sys.executable, os.path.join(ROOT, "emu", "run.py"), "--time", str(a.time),
            "--sd", a.sd, "--out", a.out, "--extra", " ".join(extra)]
     if a.icount:
@@ -207,6 +211,14 @@ def main():
         "hidden": [
             ("probe response found", r"ctr-wifi: .*BSSINFO.*probe response"),
             ("ARM9 link up", r"\[wifi\] link up"),
+        ],
+        "mixed": [
+            ("mixed network detected", r"\[wifi\] .* is a WPA2 \+ WPA3 network: joining with WPA2-PSK"),
+            ("4-way: message 4 OK", r"4-way: message 4 OK"),
+            ("ARM9 link up", r"\[wifi\] link up"),
+        ],
+        "wpa3": [
+            ("WPA3-only refused once", r"\[wifi\] .* is WPA3-only"),
         ],
         "tkip": [
             ("TKIP group seen", r"\[wifi\] connect .*TKIP group"),

@@ -51,7 +51,7 @@ KC
 # user-mode networking (slirp; meson fetches libslirp as a subproject when
 # the host has none) for the Wi-Fi model's access point: a build configured
 # without it is redone once
-if [[ -f "$Q/b/build.ninja" ]] && ! grep -q "CONFIG_SLIRP" "$Q/b/config-host.h" 2>/dev/null; then
+if [[ -f "$Q/b/build.ninja" ]] && ! grep -q "#define CONFIG_SLIRP" "$Q/b/config-host.h" 2>/dev/null; then
     rm -rf "$Q/b"
 fi
 mkdir -p "$Q/b"

@@ -907,3 +907,24 @@ Design: docs/camera.md. All addresses: the 8C148 iPod2,1 shared cache.
 - **Kernel path in QEMU** (`ctr_cam.c`): the ARM9 finds all three MT9V113 (`chip id 2280`), brings the outer left one up in ~5-10 ms, the shim streams. Plain QEMU timing: every frame overruns (0 frames, ~60 overruns / 10 s: the guest runs ~3x slower than the virtual clock). `--icount 2`: 0 overruns, live preview of the model's pattern in Camera.app, photo saved.
 - **Final QEMU run** (rebased on main with the gyroscope, default image with Cydia, `--icount 2`): outer preview → photo → switch → inner preview → photo → Photos "Camera Roll (2)"; `[cam] inner camera: 144 frames, 0 FIFO overruns in the last 10 s`; `cameras off (frames 611, FIFO overruns 0, CAM restarts 0)`. `make test` OK; `emu/soak.py --cycles 5`: PASS (0 panics/hangs; the one "SpringBoard restart" is the boot connection).
 - **Unverified on hardware:** everything 3DS-side (docs/camera.md section 7): CFG11_CAMERA_CNT, the I2C bus/address map, the DSi code list on the 3DS sensors, CAM_CNT = 0x8010 without DRQ, the FIFO window semantics, whether a 1 ms CPU drain keeps up on the console.
+
+## 66. WPA2 + WPA3 mixed networks: detect them and join with WPA2-PSK (2026-11-20)
+
+- **The report:** the user's "Adlerhorst 2" is a FRITZ!Box in "WPA2 + WPA3" mode. In hardware run 22 the AR6014 answered every WMI_CONNECT with NO_NETWORK_AVAIL, although our scans saw the AP at -76 dBm.
+- **The mixed RSN IE:** AKMs PSK (2) and SAE (8), RSN capabilities MFPC, often a PMKID count and the BIP group management cipher. The 2010-era firmware's own profile match most likely rejects that IE.
+- **`wpa2_rsn_parse`** (boot/arm9/wifi/wpa2.c, host-tested) classifies an AP's IE as WPA2, MIXED, WPA3_ONLY or OTHER:
+  - WPA3_ONLY: SAE without PSK, or MFPR set;
+  - OTHER: no PSK at all (802.1X), or a malformed IE.
+- **The ARM9 driver:**
+  - **MIXED:** it always connects to the scanned BSSID and channel with CONNECT_ASSOC_POLICY_USER | CONNECT_PROFILE_MATCH_DONE. The firmware builds a WPA2-PSK/CCMP association IE, and message 2 carries that IE.
+  - **WPA3_ONLY:** one log line saying so and what to set on the router, then idle. No retry loop.
+  - **The target's RSN IE** is logged in hex.
+  - **Scan-complete path:** it now re-reads the scan results before connecting. Before, a join that had to scan first connected "not seen in scan" with the BSSID unknown (run 22).
+- **QEMU:**
+  - `ctr-wifi.security=wpa2-wpa3` and `=wpa3` announce those IEs.
+  - In mixed mode the model refuses a connect without PROFILE_MATCH_DONE, which is the suspected firmware behaviour.
+  - New `emu/wifi_test.py` cases:
+    - `mixed`: detected, 4-way OK, link up;
+    - `wpa3`: refused with the log line;
+    - `ok` still 20/20.
+- **Also:** `emu/build-qemu.sh` treated `#undef CONFIG_SLIRP` as "slirp present", so a QEMU built without the user-mode network backend was never reconfigured. It now looks for `#define`.

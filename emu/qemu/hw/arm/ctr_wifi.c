@@ -218,6 +218,7 @@ struct CtrWifiState {
     QEMUTimer *scan_timer;
     AssocState assoc;
     uint8_t conn[52];               /* the WMI_CONNECT parameters */
+    int sec_mode;                   /* SEC_*: from the "security" property */
     QEMUTimer *assoc_timer;
     bool sta_tk_ok, sta_gtk_ok;     /* installed keys equal the AP's */
     bool sta_tk_set, sta_gtk_set;
@@ -675,13 +676,24 @@ static int channel_of(uint32_t mhz)
 
 /* the AP's own RSN IE (beacon, probe response, message 3): CCMP pairwise,
    PSK, capabilities 0x000C (16 PTKSA replay counters, as hostapd with WMM) */
+enum { SEC_WPA2 = 0, SEC_MIXED, SEC_WPA3 };
+
 static int ap_rsn_ie(CtrWifiState *s, uint8_t *o)
 {
     static const uint8_t ie[22] = { 0x30, 20, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 4,
                                     1, 0, 0x00, 0x0F, 0xAC, 2, 0x0C, 0x00 };
-    memcpy(o, ie, 22);
+    /* security=wpa2-wpa3: as a FRITZ!Box in "WPA2 + WPA3" mode announces it
+       (AKM PSK + SAE, MFPC, PMKID count 0) */
+    static const uint8_t mixed[28] = { 0x30, 26, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 4,
+                                       2, 0, 0x00, 0x0F, 0xAC, 2, 0x00, 0x0F, 0xAC, 8, 0x8C, 0x00, 0, 0 };
+    /* security=wpa3: SAE only, PMF required */
+    static const uint8_t wpa3[22] = { 0x30, 20, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 4,
+                                      1, 0, 0x00, 0x0F, 0xAC, 8, 0xCC, 0x00 };
+    const uint8_t *src = s->sec_mode == SEC_MIXED ? mixed : s->sec_mode == SEC_WPA3 ? wpa3 : ie;
+    int n = src[1] + 2;
+    memcpy(o, src, n);
     o[7] = s->group_tkip ? 2 : 4;
-    return 22;
+    return n;
 }
 
 /* Other networks "on the air" (beacons only): they make a scan list look
@@ -711,8 +723,8 @@ static int bss_ies(uint8_t *o, const char *ssid, int ssid_len, uint32_t mhz, con
     o[n++] = 1;
     o[n++] = channel_of(mhz);
     if (rsn) {
-        memcpy(o + n, rsn, 22);
-        n += 22;
+        memcpy(o + n, rsn, rsn[1] + 2);
+        n += rsn[1] + 2;
     }
     return n;
 }
@@ -736,7 +748,7 @@ static void send_bss(CtrWifiState *s, const char *ssid, int ssid_len, const uint
 
 static void send_bssinfo(CtrWifiState *s, bool probe_resp)
 {
-    uint8_t rsn[22];
+    uint8_t rsn[40];
     if (s->wpa2) {
         ap_rsn_ie(s, rsn);
     }
@@ -840,6 +852,19 @@ static void assoc_done(void *opaque)
     if (c[0] != 1 || c[1] != 1) {
         WLOG(s, 1, "connect: network type %u / 802.11 auth %u not supported by the AP", c[0], c[1]);
         disconnect_event(s, DISC_ASSOC_FAILED, 13);
+        return;
+    }
+    if (s->sec_mode == SEC_WPA3) {
+        WLOG(s, 1, "connect: the AP is WPA3-only (SAE, PMF required): this firmware can't join it");
+        disconnect_event(s, DISC_NO_NETWORK, 0);
+        return;
+    }
+    if (s->sec_mode == SEC_MIXED && !(rd16le(c + 48) & 0x0008)) {
+        /* what the real AR6014 is suspected to do with a WPA2+WPA3 RSN IE
+           (hardware run 22): its own profile match drops the BSS unless the
+           host says CONNECT_PROFILE_MATCH_DONE */
+        WLOG(s, 1, "connect: WPA2+WPA3 RSN IE and no CONNECT_PROFILE_MATCH_DONE: no network (as the AR6014 firmware)");
+        disconnect_event(s, DISC_NO_NETWORK, 0);
         return;
     }
     if (s->wpa2) {
@@ -2169,6 +2194,8 @@ static void ctr_wifi_realize(DeviceState *dev, Error **errp)
         return;
     }
     s->wpa2 = !s->security || strcmp(s->security, "open");
+    s->sec_mode = !s->security ? SEC_WPA2 : !strcmp(s->security, "wpa2-wpa3") ? SEC_MIXED :
+                  !strcmp(s->security, "wpa3") ? SEC_WPA3 : SEC_WPA2;
     if (s->wpa2 && (!s->psk || strlen(s->psk) < 8 || strlen(s->psk) > 63)) {
         error_setg(errp, "ctr-wifi: psk must be an 8-63 character passphrase");
         return;

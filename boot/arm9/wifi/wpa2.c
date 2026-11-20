@@ -330,6 +330,55 @@ u32 wpa2_rsn_ie(const wpa2_t *w, u8 out[22])
     return 22;
 }
 
+int wpa2_rsn_parse(const u8 *ie, u32 n, rsn_info_t *r)
+{
+    memset(r, 0, sizeof(*r));
+    if (n < 2 || ie[0] != 0x30) return RSN_MODE_OTHER;
+    u32 len = ie[1], p = 2, end;
+    if (len + 2 > n || len < 2) return RSN_MODE_OTHER;
+    end = 2 + len;
+    if (ie[2] != 1 || ie[3] != 0) return RSN_MODE_OTHER;           /* version 1 */
+    p = 4;
+    r->group = 4;                                                   /* defaults (802.11-2016 9.4.2.25) */
+    r->ccmp = 1;
+    r->psk = 0;
+    if (p + 4 <= end) { r->group = ie[p + 3]; p += 4; }
+    if (p + 2 <= end) {
+        u32 c = ie[p] | ie[p + 1] << 8;
+        p += 2;
+        if (p + 4 * c > end) return RSN_MODE_OTHER;
+        r->ccmp = 0;
+        for (u32 i = 0; i < c; i++, p += 4) {
+            if (ie[p] != 0x00 || ie[p + 1] != 0x0F || ie[p + 2] != 0xAC) continue;
+            if (ie[p + 3] == 4) r->ccmp = 1;
+            if (ie[p + 3] == 2) r->tkip = 1;
+        }
+    }
+    if (p + 2 <= end) {
+        u32 c = ie[p] | ie[p + 1] << 8;
+        p += 2;
+        if (p + 4 * c > end) return RSN_MODE_OTHER;
+        r->n_akm = (u8)c;
+        for (u32 i = 0; i < c; i++, p += 4) {
+            if (ie[p] != 0x00 || ie[p + 1] != 0x0F || ie[p + 2] != 0xAC) continue;
+            if (ie[p + 3] == 2) r->psk = 1;
+            if (ie[p + 3] == 6) r->psk256 = 1;
+            if (ie[p + 3] == 8) r->sae = 1;
+        }
+    } else {
+        r->psk = 0;                                                 /* default AKM is 802.1X */
+    }
+    if (p + 2 <= end) {
+        r->mfpc = (ie[p] >> 7) & 1;
+        r->mfpr = (ie[p] >> 6) & 1;
+    }
+    r->ok = 1;
+    if (r->psk && !r->mfpr && (r->ccmp || r->tkip))
+        return r->sae || r->psk256 ? RSN_MODE_MIXED : RSN_MODE_WPA2;
+    if (r->sae || r->psk256 || r->mfpr) return RSN_MODE_WPA3_ONLY;
+    return RSN_MODE_OTHER;
+}
+
 /* MIC over the whole EAPOL frame with the MIC field taken as zero */
 static void eapol_mic(const u8 kck[16], const u8 *f, u32 len, u8 mic[16])
 {
