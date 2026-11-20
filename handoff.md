@@ -67,12 +67,11 @@ wiggle with pixels instead of guessing (build 44, this commit):
      Verified states so far: dump fires at stop 1 with correct content
      (307232 bytes, header + 2 frames, `analyze_dump.py` reads it); stop-2
      skips are explained by the pa bug and fixed in the last iteration.
-   - **camrun5 was still running when this handoff was written**
-     (`build/emu-camtest/camrun5.log`, `--out build/emu-camtest/camrun5`).
-     If it exists: check the log inside `build/sd.img`
-     (`MTOOLS_SKIP_CHECK=1 mcopy -o -i build/sd.img@@1M ::/ios3ds/log.txt /tmp/log.txt`)
-     for a `dump check` + `dumped frames` line at **every** stop; that is the
-     final confirmation of the pa fix. If camrun5 died early, just re-run:
+   - Final run (camrun5, the pa fix): **all three sessions dumped**
+     (`dump check` + `dumped frames` at every stop: seq 11/10, 15/14,
+     169/168; three 307232-byte RAWs on the SD image; buffer PAs stay valid
+     across restarts, no skip lines). The card carries this exact build.
+     Reproduce with:
      `python3 emu/tap.py --icount 2 --time 520 --tap 392:127,314 --key 505:h --out build/emu-camtest/camrun6`
      (Camera.app's icon is at iOS points (127,314) - row 3, second column).
      Note: `make sdimg` (re)builds `build/sd.img` and wipes the old emu run's
