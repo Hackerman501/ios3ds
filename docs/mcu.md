@@ -143,7 +143,7 @@ polls `kern.ios3ds_mcu` every 100 ms:
   the kernel driver, §6.2): while the screen is on it asks the ARM9 for
   samples and sends `IOHIDEventCreateAccelerometerEvent(x, y, z)` (type 13) into
   SpringBoard's HID event system, normalised so the running mean of |a| is
-  1 g (the raw unit does not matter). Axis map `acc=-y,x,-z` (default, an
+  1 g (the raw unit does not matter). Axis map `acc=-y,-x,-z` (default, an
   argument): iOS x, y, z from the 3DS axes, see §7.
 - **Clock check:** logs the same interval measured by the RTC,
   `gettimeofday` and `mach_absolute_time` at ~60 s and ~300 s (§8).

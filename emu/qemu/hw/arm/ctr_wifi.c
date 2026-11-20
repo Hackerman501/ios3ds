@@ -149,7 +149,7 @@ enum { DISC_NO_NETWORK = 1, DISC_CMD = 3, DISC_BSS_DISCONNECTED = 4, DISC_ASSOC_
 typedef enum { CARD_IDLE, CARD_READY, CARD_STBY, CARD_CMD } CardState;
 typedef enum { TGT_OFF, TGT_BMI, TGT_BOOTING, TGT_FW, TGT_DEAD } TgtMode;
 typedef enum { ASSOC_NONE, ASSOC_PENDING, ASSOC_UP } AssocState;
-typedef enum { HS_IDLE, HS_M1, HS_M3, HS_DONE } HsState;
+typedef enum { HS_IDLE, HS_M1, HS_M3, HS_DONE, HS_GROUP } HsState;
 
 struct CtrWifiState {
     SysBusDevice parent_obj;
@@ -163,6 +163,7 @@ struct CtrWifiState {
     bool hidden;
     bool fifo32;                    /* false: the FIFO32 port does not move data */
     bool decoys;                    /* other (beacon-only) networks in scans */
+    uint32_t rekey_s;               /* group key rekey every N s after the 4-way (0 = never) */
     uint32_t debug;
 
     /* 3DS side power */
@@ -237,6 +238,8 @@ struct CtrWifiState {
     int hs_tries;
     bool port_open;
     QEMUTimer *hs_timer;
+    QEMUTimer *rekey_timer;
+    int rekeys;                     /* group rekeys completed */
 };
 
 #define WLOG(s, lvl, fmt, ...) do { \
@@ -810,6 +813,7 @@ static void disconnect_event(CtrWifiState *s, uint8_t reason, uint16_t proto)
     s->hs = HS_IDLE;
     s->port_open = false;
     timer_del(s->hs_timer);
+    timer_del(s->rekey_timer);
     wmi_event(s, EV_DISCONNECT, d, sizeof(d));
     WLOG(s, 1, "WMI_DISCONNECT_EVENT: reason %u (802.11 reason/status %u)", reason, proto);
 }
@@ -989,7 +993,7 @@ static void hs_send_m1(CtrWifiState *s)
 
 static void hs_send_m3(CtrWifiState *s)
 {
-    uint8_t kd[64], wrapped[72];
+    uint8_t kd[104], wrapped[112];
     int n = ap_rsn_ie(s, kd);
     kd[n++] = 0xDD;                                 /* GTK KDE */
     kd[n++] = 6 + s->gtk_len;
@@ -1012,10 +1016,62 @@ static void hs_send_m3(CtrWifiState *s)
     WLOG(s, 1, "4-way: message 3 sent (GTK index %d, %d key data bytes)", s->gtk_idx, n + 8);
 }
 
+/* group key handshake message 1 (rekey): new GTK, other key index */
+static void hs_send_g1(CtrWifiState *s)
+{
+    uint8_t kd[48], wrapped[56];
+    int n = 0;
+    kd[n++] = 0xDD;                                 /* GTK KDE */
+    kd[n++] = 6 + s->gtk_len;
+    kd[n++] = 0x00; kd[n++] = 0x0F; kd[n++] = 0xAC; kd[n++] = 0x01;
+    kd[n++] = s->gtk_idx;
+    kd[n++] = 0;
+    memcpy(kd + n, s->gtk, s->gtk_len);
+    n += s->gtk_len;
+    if (n % 8) {
+        kd[n++] = 0xDD;
+        while (n % 8) {
+            kd[n++] = 0;
+        }
+    }
+    key_wrap(s->ptk + 16, kd, n, wrapped);
+    s->replay++;
+    s->hs = HS_GROUP;
+    eapol_key(s, KI_V2 | KI_ACK | KI_MIC | KI_SECURE | KI_ENC, wrapped, n + 8, true);
+    WLOG(s, 1, "group rekey: message 1 sent (GTK index %d, try %d)", s->gtk_idx, s->hs_tries + 1);
+}
+
+static void rekey_timeout(void *opaque)
+{
+    CtrWifiState *s = opaque;
+    if (s->assoc != ASSOC_UP || s->hs != HS_DONE) {
+        return;
+    }
+    s->gtk_idx = s->gtk_idx == 1 ? 2 : 1;
+    for (int i = 0; i < s->gtk_len; i++) {
+        s->gtk[i] = g_random_int_range(0, 256);
+    }
+    s->sta_gtk_ok = false;
+    s->hs_tries = 0;
+    hs_send_g1(s);
+    timer_mod(s->hs_timer, now_ns() + 1000 * SCALE_MS);
+}
+
 static void hs_timeout(void *opaque)
 {
     CtrWifiState *s = opaque;
     if (s->assoc != ASSOC_UP || s->hs == HS_DONE) {
+        return;
+    }
+    if (s->hs == HS_GROUP) {
+        if (++s->hs_tries >= 4) {
+            /* what a FRITZ!Box did in hardware run 23 */
+            WLOG(s, 1, "group rekey: no answer after 4 tries: deauthenticating (reason 16, group key handshake timeout)");
+            disconnect_event(s, DISC_BSS_DISCONNECTED, 16);
+            return;
+        }
+        hs_send_g1(s);
+        timer_mod(s->hs_timer, now_ns() + 1000 * SCALE_MS);
         return;
     }
     if (s->hs != HS_IDLE && ++s->hs_tries >= 4) {
@@ -1062,6 +1118,27 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
         rc = rc << 8 | f[K_REPLAY + i];
     }
     int dlen = rd16be(f + K_DLEN);
+    if (s->hs == HS_GROUP && (info & 7) == KI_V2 && !(info & (KI_PAIRWISE | KI_ACK | KI_INSTALL)) &&
+        (info & KI_MIC) && (info & KI_SECURE)) {
+        uint8_t gm[16];
+        if (rc != s->replay) {
+            WLOG(s, 1, "group rekey: replay counter %" PRIu64 ", expected %" PRIu64, rc, s->replay);
+            return;
+        }
+        eapol_mic(s->ptk, f, len, gm);
+        if (memcmp(gm, f + K_MIC, 16)) {
+            WLOG(s, 1, "group rekey: message 2 MIC is wrong");
+            return;
+        }
+        s->hs = HS_DONE;
+        s->rekeys++;
+        timer_del(s->hs_timer);
+        WLOG(s, 1, "group rekey: message 2 OK (rekey %d)", s->rekeys);
+        if (s->rekey_s) {
+            timer_mod(s->rekey_timer, now_ns() + (int64_t)s->rekey_s * 1000 * SCALE_MS);
+        }
+        return;
+    }
     if ((info & 7) != KI_V2 || !(info & KI_PAIRWISE) || (info & (KI_ACK | KI_INSTALL)) || !(info & KI_MIC)) {
         WLOG(s, 1, "4-way: unexpected key info %04x", info);
         return;
@@ -1103,6 +1180,9 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
         s->port_open = true;
         timer_del(s->hs_timer);
         WLOG(s, 1, "4-way: message 4 OK: AP installed the PTK, 802.1X port open");
+        if (s->rekey_s) {
+            timer_mod(s->rekey_timer, now_ns() + (int64_t)s->rekey_s * 1000 * SCALE_MS);
+        }
     } else {
         WLOG(s, 1, "4-way: EAPOL-Key %04x in state %d ignored", info, s->hs);
     }
@@ -1218,7 +1298,7 @@ static void sta_tx(CtrWifiState *s, const uint8_t *d, uint32_t len)
     if (et == 0x888E) {
         if (memcmp(eth, s->bssid, 6)) {
             WLOG(s, 1, "tx: EAPOL to %s instead of the AP: dropped", mac_str(eth));
-        } else if (s->wpa2 && s->hs != HS_DONE) {
+        } else if (s->wpa2 && s->hs != HS_DONE) {           /* 4-way, or a group rekey */
             ap_rx_eapol(s, eth + 14, elen - 14);
         }
         return;
@@ -2218,6 +2298,7 @@ static void ctr_wifi_realize(DeviceState *dev, Error **errp)
     s->scan_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, scan_step, s);
     s->assoc_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, assoc_done, s);
     s->hs_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, hs_timeout, s);
+    s->rekey_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, rekey_timeout, s);
     s->credit_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, credit_flush, s);
 
     memory_region_init_io(&s->tmio_mr, OBJECT(dev), &tmio_ops, s, "ctr.tmio2-wifi", 0x200);
@@ -2243,6 +2324,7 @@ static const Property ctr_wifi_props[] = {
        +0x10C (docs/wifi.md 7.2); the driver must fall back to CMD52 */
     DEFINE_PROP_BOOL("fifo32", CtrWifiState, fifo32, true),
     DEFINE_PROP_BOOL("decoys", CtrWifiState, decoys, true),
+    DEFINE_PROP_UINT32("rekey", CtrWifiState, rekey_s, 0),
     DEFINE_PROP_UINT32("debug", CtrWifiState, debug, 1),
 };
 

@@ -17,7 +17,7 @@
  *
  * Arguments: debug (log every change), acc (turn the accelerometer on:
  * off by default, SpringBoard ignores client-dispatched IOHID events, see
- * docs/mcu.md section 6.2), acc=AXES (implies acc; default "-y,x,-z": iOS x,
+ * docs/mcu.md section 6.2), acc=AXES (implies acc; default "-y,-x,-z": iOS x,
  * y, z from the 3DS axes), novol, nobl.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -106,7 +106,7 @@ static void clock_check(const mcubox_t *b, const char *when)
     say("[mcud] clocks %s: RTC +%d s, gettimeofday +%.0f ms, mach_absolute_time +%.0f ms (%llu ticks, timebase %u/%u)",
         when, (int)(b->rtc_utc - clk0.rtc), gtod, mach, (unsigned long long)(m - clk0.m), tb.numer, tb.denom);
 }
-static int accmap[3][2] = { { 1, -1 }, { 0, 1 }, { 2, -1 } };   /* iOS axis <- (3DS axis, sign) */
+static int accmap[3][2] = { { 1, -1 }, { 0, -1 }, { 2, -1 } };   /* iOS axis <- (3DS axis, sign) */
 
 static void say(const char *fmt, ...)            /* one line to the console (= the 3DS log) */
 {
@@ -194,7 +194,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "sleepok")) opt_sleepok = 1;
         else if (!strncmp(argv[i], "acc=", 4)) {
             opt_noacc = 0;
-            if (!parse_accmap(argv[i] + 4)) say("[mcud] bad %s (want e.g. acc=-y,x,-z); keeping the default", argv[i]);
+            if (!parse_accmap(argv[i] + 4)) say("[mcud] bad %s (want e.g. acc=-y,-x,-z); keeping the default", argv[i]);
         }
     }
 

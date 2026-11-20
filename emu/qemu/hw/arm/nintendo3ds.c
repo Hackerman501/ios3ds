@@ -1212,9 +1212,9 @@ static const MemoryRegionOps nspi_ops = {
  * 90 degrees clockwise: the left side is up), then 90 degree steps.
  */
 static const int16_t mcu_poses[4][3] = {
-    { -MCU_ACC_1G, 0, 0 },          /* left side up: iOS portrait */
+    { MCU_ACC_1G, 0, 0 },           /* left side up: iOS portrait (+x: sign as on hardware) */
     { 0, -MCU_ACC_1G, 0 },          /* hinge down: iOS landscape (home button left) */
-    { MCU_ACC_1G, 0, 0 },           /* right side up: iOS upside down */
+    { -MCU_ACC_1G, 0, 0 },          /* right side up: iOS upside down */
     { 0, MCU_ACC_1G, 0 },           /* hinge up (held normally, upright): iOS landscape */
 };
 

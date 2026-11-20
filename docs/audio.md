@@ -176,7 +176,7 @@ warning). `hp_route=0` keeps iOS on the speaker route; the CODEC still
 follows the jack.
 
 **Test client** `tools/ios3ds-audio/tone` (`/usr/libexec/ios3ds-tone`,
-launchd job `com.ios3ds.tone`): plays a test tone through AudioQueue (left =
+run by hand, e.g. over SSH; until 2026-11-20 also the `diag=1` boot job `com.ios3ds.tone`, removed because the beep after the boot sound was confusing once audio was confirmed on hardware): plays a test tone through AudioQueue (left =
 tone, right = half amplitude) 30 s after launch; default once, 400 ms, 1 kHz,
 amplitude 6000. Arguments: `count interval_s ms hz amplitude delay_s`.
 AudioToolbox is loaded with dlopen; every failure is logged once

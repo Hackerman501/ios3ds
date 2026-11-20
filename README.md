@@ -23,23 +23,24 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | | Feature | Notes |
 |:-:|---|---|
 | ✅ | Boot to the home screen, built-in apps | about a minute from power-on |
-| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls) |
+| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls). Fixed for the next build: touch could stop reacting after a popup or after unlocking |
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2 (also routers in WPA2 + WPA3 mode), Safari | needs the console's own Wi-Fi firmware, copied automatically. Fixed, waiting for a console test: the connection dropped after a few minutes (the router's group key renewal went unanswered) |
+| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically. Fixed for the next build: the connection dropped after a few minutes (the router's group key renewal went unanswered) |
+| ✅ | Safari | loads pages; the first load sometimes fails with "cannot allocate memory", a retry works |
 | ✅ | Cydia | pre-installed |
-| ⚠️ | Safari | loads pages; the first load sometimes fails with "cannot allocate memory", a retry works |
-| ⚠️ | Screen rotation (accelerometer) | landscape works; portrait came up upside down, fixed, waiting for a console test |
-| ⚠️ | D-pad, circle pad | work; now turned 90° to match the upright iOS screen, waiting for a console test |
+| ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
+| ✅ | D-pad page swipes | turned 90° to match the upright iOS screen in the next build |
 | ❌ | Cameras | the sensors are found and start, but no picture arrives yet: being worked on |
+| 🧪 | Circle pad scrolling | |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
-| 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | 🧪 | Current HTTPS root certificates | TLS 1.0 only, see [Limitations](#limitations) |
+| 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | ❌ | 3D screen, IR, NFC, video recording | |
 
-✅ confirmed on a real 3DS · ⚠️ works on a console, with a known problem · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
+✅ works on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
 ### Compatibility
 
@@ -49,9 +50,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | **Old 3DS XL** | ✅ supported (same hardware as the Old 3DS) |
 | **Old 2DS** | ✅ supported (same hardware as the Old 3DS) |
 | **New 2DS XL** | ✅ boots to the home screen with sound, power button and battery ([#1](https://github.com/devilAPI/ios3ds/issues/1)) |
-| New 3DS, New 3DS XL | untested; expected to behave like the New 2DS XL |
-
-On New models ios3ds runs the CPU at 804 MHz and reads the C-stick and ZL/ZR (not yet confirmed on a console). The L2 cache is optional (`n3ds_l2=1`). The extra CPU cores and RAM are not used. See [docs/n3ds.md](docs/n3ds.md).
+| New 3DS, New 3DS XL | untested; expected to behave like the New 2DS XL. On all New models the extra CPU cores, RAM, C-stick and ZL/ZR are not used |
 
 All models need Luma3DS (boot9strap). Reports for any model are welcome in the [issues](https://github.com/devilAPI/ios3ds/issues).
 
@@ -162,7 +161,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 
 ## Troubleshooting
 
-- **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please attach `log.txt` to bug reports.
+- **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please [open an issue](https://github.com/devilAPI/ios3ds/issues/new/choose) and attach `log.txt`.
 - **Settings:** they live in **`sd:/ios3ds/boot.cfg`**, a text file. Useful switches:
 
   | Switch | Effect |
@@ -171,7 +170,6 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `ca_gpu=0` | draw the iOS interface in software (slower) |
   | `screen=0/1/2` | start in screen layout top / both / bottom |
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
-  | `n3ds_clock=0`, `n3ds_l2=1`, `n3ds_hid=0` | New 3DS: stay at 268 MHz, try the L2 cache, ignore the C-stick ([docs/n3ds.md](docs/n3ds.md)) |
   | `diag=1` | extra diagnostics in the log |
 
 - **Re-running the installer** replaces `boot.cfg`; the old one is kept as `boot.cfg.old`. The installer refuses a card with a leftover `ios3ds/luma.firm`: start ios3ds once, or restore Luma first.
@@ -240,7 +238,6 @@ Optional:
 | [wifi.md](docs/wifi.md) · [certificates.md](docs/certificates.md) | Wi-Fi driver, WPA2, iOS integration; HTTPS roots |
 | [camera.md](docs/camera.md) | cameras in Camera.app |
 | [input-design.md](docs/input-design.md) | touch, buttons, circle pad |
-| [n3ds.md](docs/n3ds.md) | New 3DS: 804 MHz, L2 cache, C-stick, ZL/ZR |
 | [cydia.md](docs/cydia.md) | the pre-installed Cydia |
 | [re-log.md](docs/re-log.md) | the reverse-engineering log, step by step |
 | [hwlogs/](docs/hwlogs/README.md) | logs from real hardware runs |

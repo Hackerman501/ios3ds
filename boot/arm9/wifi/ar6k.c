@@ -578,7 +578,10 @@ static void on_eapol(const u8 *eth, u32 len)
     frame[12] = 0x88; frame[13] = 0x8E;
     u32 n = wifi_frame_to_wmi(frame, 14 + rlen, out, sizeof(out));
     int r = n ? mbox_send(A.ep_data, 0, 0, out, n) : SDIO_ERR_ARG;
-    logp("[wifi] EAPOL event %d, reply %u bytes: %d\n", ev, rlen, r);
+    if (ev == WPA2_EV_GTK && A.state == NET_ST_UP)
+        logp("[wifi] group key renewed by the AP (index %u): %d\n", A.wpa.gtk_idx, r);
+    else
+        logp("[wifi] EAPOL event %d, reply %u bytes: %d\n", ev, rlen, r);
     if (ev == WPA2_EV_KEYS || ev == WPA2_EV_GTK) {
         if (ev == WPA2_EV_KEYS) wmi_add_key(0, 0, A.wpa.tk, 16, NULL);          /* pairwise */
         wmi_add_key(A.wpa.gtk_idx, 1, A.wpa.gtk, A.wpa.gtk_len, A.wpa.rsc);     /* group */
@@ -975,7 +978,10 @@ static void pump(void)
         u32 len = wifi_frame_from_wmi(body, (u32)n, eth, sizeof(eth), &et);
         if (!len) return;
         if (et == 0x888E) {
-            if (T.security == WIFI_SEC_WPA2 && A.state == NET_ST_AUTH) on_eapol(eth, len);
+            /* also while up: group key rekeys (and PTK rekeys) arrive then; ignoring
+               them got us deauthenticated with 802.11 reason 16 (hardware run 23) */
+            if (T.security == WIFI_SEC_WPA2 && (A.state == NET_ST_AUTH || A.state == NET_ST_UP))
+                on_eapol(eth, len);
         } else if (A.state == NET_ST_UP && !A.rxlen) {
             memcpy(A.rxframe, eth, len);
             A.rxlen = len;
