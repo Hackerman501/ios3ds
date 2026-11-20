@@ -1211,6 +1211,16 @@ static int ar6k_init(const wifi_cfg_t *cfg, u8 mac[6])
             else
                 logp("[wifi] %s: not found (%d), no %s either: Wi-Fi off (docs/wifi.md section 3)\n",
                      cfg->fw, r, NWM_CODE_PATH);
+            /* what the .3dsx launcher said when it tried to copy the firmware */
+            static char st[160];
+            u32 sl = 0;
+            if (sd_load("0:/ios3ds/wififw-status.txt", st, sizeof(st) - 1, &sl) >= 0 && sl) {
+                st[sl] = 0;
+                logp("[wifi] launcher's last firmware copy: %s", st);
+            } else {
+                logp("[wifi] the launcher never tried to copy the firmware: start ios3ds once from the "
+                     "Homebrew Launcher (not Luma's chainloader), or run the GodMode9 script (README: Install)\n");
+            }
             return -1;
         }
         src = NWM_CODE_PATH;

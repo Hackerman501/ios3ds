@@ -22,6 +22,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <3ds.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -34,6 +35,7 @@
 #define BOOT "sdmc:/boot.firm"
 #define NWMCODE "sdmc:/ios3ds/nwm.code"
 #define NWMTMP  "sdmc:/ios3ds/nwm.code.tmp"
+#define FWSTATUS "sdmc:/ios3ds/wififw-status.txt"  /* last attempt, read into log.txt by the ARM9 */
 #define WIFIFW  "sdmc:/ios3ds/wifi-fw.bin"
 #define VERSION "ios3ds launcher 2"
 
@@ -148,6 +150,21 @@ static void frame(void)
 
 /* Returns true when nwm.code is on the card afterwards. Every failure prints
    one red line; nothing is left behind and the launch goes on (Wi-Fi off). */
+/* one line for the ARM9 to put into log.txt (issue #5: Wi-Fi greyed out, and
+   log.txt could not say why the launcher's copy did not happen) */
+static void fw_status(const char *fmt, ...)
+{
+    FILE *f = fopen(FWSTATUS, "w");
+    if (!f) return;
+    va_list ap;
+    va_start(ap, fmt);
+    fprintf(f, "%s: ", VERSION);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
 static bool fetch_nwm_code(void)
 {
     if (exists(NWMCODE) || exists(WIFIFW)) return true;
@@ -157,12 +174,15 @@ static bool fetch_nwm_code(void)
     nwmsrc_t s;
     Result ue = 0, r = src_open(&s, &ue);
     if (R_FAILED(r)) {
-        if (s.pxi)
+        if (s.pxi) {
             printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(FS %08lX, FSPXI %08lX): Wi-Fi off\x1b[0m\n\n",
                    (unsigned long)ue, (unsigned long)r);
-        else
+            fw_status("cannot open NWM .code (FS %08lX, FSPXI %08lX)", (unsigned long)ue, (unsigned long)r);
+        } else {
             printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(FS %08lX, no Luma3DS for FSPXI): Wi-Fi off\x1b[0m\n\n",
                    (unsigned long)ue);
+            fw_status("cannot open NWM .code (FS %08lX, no Luma3DS for FSPXI)", (unsigned long)ue);
+        }
         return false;
     }
     u64 sz64 = 0;
@@ -207,8 +227,10 @@ static bool fetch_nwm_code(void)
     if (why) {
         printf("\x1b[31mWi-Fi fw: %s (%08lX, %llu bytes):\nWi-Fi off\x1b[0m\n\n", why,
                (unsigned long)r, (unsigned long long)sz64);
+        fw_status("%s (%08lX, %llu bytes)", why, (unsigned long)r, (unsigned long long)sz64);
         return false;
     }
+    fw_status("copied NWM .code (%lu bytes, via %s)", (unsigned long)got, s.pxi ? "FSPXI" : "FS");
     printf("Wrote %s\n(%lu bytes). Keep it private.\n\n", NWMCODE + 5, (unsigned long)got);
     return true;
 }

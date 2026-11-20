@@ -1,0 +1,1221 @@
+ios3ds m1-0.2-15-gcc88384-20261119.2202  (M1 loader)
+ARM9: argc=2 cpsr=600000d3
+framebuffers: top 0x18300000/0x18400000 bottom 0x18346500/0x18446500
+CFG9_SDMMCCTL 0200 -> 0200
+mounting SD...
+SD mounted, logging to sd:/ios3ds/log.txt
+waiting for ARM11 (stage ready)...
+[a11] ios3ds m1-0.2-15-gcc88384-20261119.2202 ARM11 stub at 0x1ff90338
+[a11] VFP enabled, CPACR 00f00000
+ARM11 ready
+[boot] 1.410 s: SD mounted, ARM11 ready
+ARM11 core0 CP15 ID registers:
+ MIDR  410fb025  CTR   1d152152  TLBTR 00000800
+ MPIDR 00000000  PFR0  00000111  PFR1  00000001
+ DFR0  00000002  AFR0  00000000
+ MMFR0-3 01100103 10020302 01222000 00000000
+ ISAR0-2 00100011 12002111 11221011
+ ISAR3-5 01102131 00000141 00000000
+ SCTLR 00054078  ACTLR 0000000f  CPACR 00f00000  CPSR 600001d3
+ -> part b02 rev r0p5 (ARM11 MPCore)
+reading sd:/ios3ds/boot.cfg
+[boot] 1.680 s: boot.cfg read
+kernel 0:/ios3ds/kernel.bin @20001000 entry 20067050
+devtree 0:/ios3ds/devtree.bin @2081b000, boot_args @2081f000
+log ring @20850000+40010, topOfKernelData 20900000
+phys 20000000 virt 80000000 memSize 08000000
+cmdline: "rd=md0 debug=0x8 serial=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 amfi_unrestrict_task_for_pid=1"
+loading kernel...
+kernel: 8495104 bytes at 20001000
+devtree: 15668 bytes at 2081b000
+[boot] 5.405 s: kernel + devtree loaded
+shim: 22140 bytes at 20840000 (magic 4d494853)
+rootfs 0:/ios3ds/rootfs.hfs: 1024 MiB served as md0
+[boot] 6.598 s: rootfs opened (fast-seek map)
+loaded 0:/ios3ds/fakeio.bin: 131072 bytes at 1ffb0000
+loaded 0:/ios3ds/gpu.bin: 42896 bytes at 208b0000
+[boot] 7.695 s: load= files loaded
+entry word e3a01000 (expect e3a01000 'mov r1,#0')
+boot_args at 2081f000: dt va 8081b000 len 15668
+[wifi] no 0:/ios3ds/wifi.cfg: no preset network
+[wifi] 0:/ios3ds/wifi-fw.bin: not found (-4), no 0:/ios3ds/nwm.code either: Wi-Fi off (docs/wifi.md section 3)
+[audio] CODEC id 11 rev 36: DAC up, speaker, I2S1_CNT e820
+[mcu] version 13/41: RTC 2026-11-20 19:30:30 Sun (offset 0 s) = Unix 1795203030
+[mcu] battery 12% 3680 mV 20 C, volume slider 27/63, 3D slider 0, shell open, IRQ mask set
+[gpu] PICA200: gpu=1 gpu_mirror=1 (every 2. VBlank, spin 0 us) gpu_clk=1 gpu_diag=1 ca_gpu=1; mailbox at 20847f00
+[boot] 12.652 s: Wi-Fi, audio, MCU, GPU set up
+[boot] 20.983 s: countdown over
+jumping: ARM11 -> 20067050, r0=2081f000 (boot_args)
+ARM11 acknowledged, now in XNU
+[boot] 22.030 s: XNU started
+[monitor] XNU running - ARM9 stays here forwarding logs.
+[a11] SCU on, SMP mode: ACTLR 0000002f
+[a11] jumping to 20067050 r0=2081f000
+iBoot version: ios3ds-loader
+kern_return_t _initializeAppleMobileFileIntegrity(): unrestricted task_for_pid enabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): signature enforcement disabled by boot-arg
+kern_return_t _initializeAppleMobileFileIntegrity(): cs_enforcement disabled by boot-arg
+ios3ds-mcu: 3DS RTC present: not waiting for IORTC
+ios3ds-mcu: calendar from the 3DS RTC: 1795203030 (2026-11-20 19:30:30 RTC, offset 0 s)
+IOResources: not registry member at registerService()
+BSD root: md0, major 2, minor 0
+IOSurfaceRoot::installMemoryRegions()
+com.apple.AppleFSCompressionTypeZlib kmod start
+AppleS5L8720XIO::start: chip-revision: A0
+virtual bool AppleMobileFileIntegrity::start(IOService*): built Nov 16 2010 22:21:11
+AppleARMPL192VIC::start: _vicBaseAddress = 0xc38ab000
+L2TP domain init
+L2TP domain init complete
+PPTP domain init
+com.apple.AppleFSCompressionTypeZlib load succeeded
+AppleS5L8900XI2CController::start: i2c0 _i2cBaseAddress: 0xc38ad000
+AppleS5L8900XI2SController::start: i2s0 i2sBaseAddress: 0xc38ae000 i2sVersion: 0
+[monitor] XNU entry stub ran: L1[0x800] = 2004040e (TTBR region 20900000)
+AppleS5L8900XEdgeIC::start: _edgeicBaseAddress: 0xc38b5000
+AppleS5L8900XTimer::start: _timerBaseAddress: 0xc38b6000
+AppleARMPerformanceController::traceBufferCreate: _pcTraceBuffer: 0xca8ea000  bufferSize: 0x00004000
+AppleS5L8720XClockController::start: _ccBaseAddress: 0xc38bd000 _ccBusBaseAddress: 0xc38be000
+AppleS5L8720XClockController::start: pcVoltageStateCount: 2
+	Voltage State 0 : .vsPerformanceLimit: 2 .vsDeviceConstraint: e00f7fff fd7fef07
+	Voltage State 1 : .vsPerformanceLimit: 1 .vsDeviceConstraint: e01fffff ffffff07
+AppleS5L8720XClockController::start: pcPerformanceStateCount: 4
+	Performance State 0 : .psPerformanceDivider: 1 .psVoltageRequired: 1 .psDeviceConstraint: e01fffff ffffff07
+	Performance State 1 : .psPerformanceDivider: 2 .psVoltageRequired: 0 .psDeviceConstraint: e01fffff fafcff07
+	Performance State 2 : .psPerformanceDivider: 5 .psVoltageRequired: 0 .psDeviceConstraint: a01f7fff fafcff07
+	Performance State 3 : .psPerformanceDivider: 11 .psVoltageRequired: 0 .psDeviceConstraint: 80177fff fa7cef07
+AppleS5L8720XClockController: Dynamic Performance State Management Enabled with 2 voltage and 4 perfomance states
+AppleS5L8900XGPIOIC::start: gpioBaseAddress: 0xc38c5000  gpioicBaseAddress: 0xc38c6000
+AppleS5L8720XPowerController::start: _pcBaseAddress: 0xc38cd000
+AppleARMPL080DMAC::start: dmac0: _dmacBaseAddress: 0xc38ce000
+AppleM2CLCD, fMapper: 0
+AppleM2CLCD (0x80c8b000)
+AppleS5L8900XWatchDogTimer::start: _wdtBaseAddress: 0xc98dd000
+AppleARMWatchDogTimer installing handlePEHaltRestart handler
+ios3ds-mcu: accelerometer read reg 0x0f len 1
+virtual bool AppleM2CLCD::start_hardware(IOService*): Couldn't allocate AppleARMFunction for function-lcd_enable
+AppleARMPL080DMAC::_initDMAChannel: index: 5, bufPA: 0x20c56000, bufLA: 0xc98e6000
+AppleARMPL080DMAC::_initDMAChannel: index: 4, bufPA: 0x20c58000, bufLA: 0xca8ee000
+AppleARMPL080DMAC::_initDMAChannel: index: 3, bufPA: 0x20c5a000, bufLA: 0xca905000
+AppleS5L8900XSerial: Identified Serial Port on ARM Device=uart0 at 0x1ffb9000(0xca906000)
+IOSurface: buffer allocation size is zero
+[gpu] display mirror: off
+[monitor] iOS display is on: top screen now mirrors the CLCD framebuffer
+[monitor] screen mode: both (X = next)
+[monitor] LCDs show framebuffer set 0 on top, 0 on the bottom: the CPU copy writes only those
+AppleCS42L58Audio::start: 0x80c6eb00, audio0 _wmIICNub: 0x80c81680, _wmIISNub: 0x80b29f80
+ios3ds-audio: iic r dev=1680 reg=1 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=0 len=1 val=99
+ios3ds-audio: iic w dev=1680 reg=33 len=1 val=fd
+ios3ds-audio: iic w dev=1680 reg=32 len=1 val=27
+ios3ds-audio: iic w dev=1680 reg=0 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=1680 reg=4 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=4 len=1 val=20
+ios3ds-audio: iic r dev=1680 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=1680 reg=4 len=1 val=20
+ios3ds-audio: iic w dev=1680 reg=5 len=1 val=cb
+ios3ds-audio: iic r dev=1680 reg=7 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=7 len=1 val=c
+ios3ds-audio: iic r dev=1680 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=f len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=f len=1 val=90
+ios3ds-audio: iic r dev=1680 reg=b len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=b len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=c len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=c len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=1a len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=1b len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=1b len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=1d len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=1d len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=2 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=aa
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=aa
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=b len=1 val=3d
+ios3ds-audio: iic w dev=1680 reg=c len=1 val=3d
+ios3ds-audio: iic w dev=1680 reg=d len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=e len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=a len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=a len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=2 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=1680 reg=5 len=1 val=cb
+ios3ds-audio: iic w dev=1680 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=1680 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=1680 reg=2 len=1 val=c0
+ios3ds-audio: iic r dev=1680 reg=2 len=1 val=c0
+ios3ds-audio: iic w dev=1680 reg=2 len=1 val=c6
+ios3ds-audio: iic r dev=1680 reg=5 len=1 val=b
+ios3ds-audio: iic w dev=1680 reg=5 len=1 val=b
+ios3ds-audio: iic r dev=1680 reg=f len=1 val=90
+ios3ds-audio: iic w dev=1680 reg=f len=1 val=90
+ios3ds-audio: iic w dev=1680 reg=18 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=19 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+[mcu] battery 11%
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 8 copies in 30 s, 467.0 ms each (ARM9)
+[hb] t=30s quiet 6s | abs 306911 dec 75981 timer 25603 irq 26119 vbl 516 | md0 1073 req 31418 KiB 0 err
+[hb]  clock: arm11 watchdog +0 ms vs arm9 timer +0 ms (ratio 0/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+com.apple.launchd 1	com.apple.launchd 1	*** launchd[1] has started up. ***
+Bug: launchctl.c:3599 (24307):17: ioctl(s6, SIOCAIFADDR_IN6, &ifra6) != -1
+Bug: launchctl.c:3805 (24307):2: sysctl(nbmib, 2, &nb, &nbsz, NULL, 0) == 0
+Running fsck on the boot volume...
+GetMasterBlock: Error 16 opening /dev/md0
+/dev/md0 on / (hfs, local, noatime)
+launchctl: Couldn't stat("/etc/mach_init.d"): No such file or directory
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[wifid] waiting for the ARM9 network backend (state 10)
+AMFI: Invalid signature but permitting execution
+ios3ds-mcu: battery 11%, 3600 mV: IOPMPowerSource registered
+[mcud] MCU version 13/41: battery 11%, volume slider 27/63, shell open, RTC 1795203056
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[a80211] loaded into configd (pid 19)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+systemShutdown false
+[a80211] IOServiceFirstMatch for IO80211Interface (refcon 0x137790): deferred until the interface has a BSD name
+AMFI: Invalid signature but permitting execution
+[pica] bring-up: PDN_GPU_CNT 0x0001007f, GPUPROT 0x00000000, GX clock 0x00000000, GX stat 0x0c000000
+[gpu] display mirror: self-test
+[gpu-diag] as found: rev 00010002 clk 00000000 psc_vram 00000000 stat 0c000000 prio 1111ef00 00000112 unk58 00000400 unkD0 00000000
+[gpu-diag] as found: psc0 03060000 03068ca0 00000000 00000202 psc1 03068ca0 0306fd20 00000000 00000202
+[gpu-diag] as found: ppf in 1208001e out 00920028 od 0a406228 id 000000b0 fl 00000000 u14 00000000 cnt 00000000 irq 22020000
+[gpu-diag] as found: p3d irq ack 00000000 cmp ffffffff mask ffffffff autostop 00000000 draw_func0 00000000
+[gpu-diag] as found: counters ext r/w 0/0 vramA r/w 8052140/50432 vramB r/w 217338276/30638745 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 0/0 fill0/1 54000/43200 cpu-vram r/w 8053676/30591977
+[gpu-diag] as found: PSC fill VRAM  PA 185c0000: done after 1 ticks (ctrl 00000202, stat 08000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +256; word0 c0de0a11
+[gpu-diag] as found: PSC fill FCRAM PA 26460000: done after 1 ticks (ctrl 00000202, stat 08000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +0; word0 55aa55aa
+[pica] GX setup as libn3ds hardwareReset: clock 0x00000000 -> 0x00070100, psc_vram 0x00000000 -> 0x00000000, dma prio 0x1111ef00/0x00000112 -> 0x22221200/0x00000ff2
+[pica] arena 12288 KiB at VA 0xcb135000 = PA 0x25870000; driver ready (state 0)
+[gpu-diag] after setup: rev 00010002 clk 00070100 psc_vram 00000000 stat 00000000 prio 22221200 00000ff2 unk58 00000400 unkD0 00000000
+[gpu-diag] after setup: psc0 04c8c000 04c8c200 c0de0f0c 00000000 psc1 03068ca0 0306fd20 00000000 00000000
+[gpu-diag] after setup: ppf in 04b0e000 out 04b0e004 od 0a406228 id 000000b0 fl 00000008 u14 00000000 cnt 00000000 irq 22020000
+[gpu-diag] after setup: p3d irq ack 00000000 cmp 12345678 mask fffffff0 autostop 00000001 draw_func0 00000001
+[gpu-diag] after setup: counters ext r/w 2/2 vramA r/w 8052140/50432 vramB r/w 217363541/30640025 vtx 0 tex 0 z r/w 0/0 col r/w 0/0 ppf r/w 1/1 fill0/1 54512/43200 cpu-vram r/w 8054701/30593001
+[gpu-diag] after setup: PSC fill VRAM  PA 185c0000: done after 1 ticks (ctrl 00000202, stat 00000000); 1024/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +256; word0 c0de0a11
+[gpu-diag] after setup: PSC fill FCRAM PA 26460000: done after 2 ticks (ctrl 00000202, stat 00000000); 0/1024 words filled, 0 other; fill0 +256 ext-wr +0 vramB-wr +0; word0 55aa55aa
+[gpu-diag] PPF FCRAM->VRAM(tiled)->FCRAM: 4096/4096 words back; ppf r/w +2048/+2048; vram tile word1 8d60e26e (want 8d60e26e)
+[gpu-diag] solid quad -> VRAM: P3D done after 22 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] solid quad -> FCRAM: P3D done after 68 ticks (stat 80000000); 4096/4096 words right; vtx +114 tex +0 col-wr +1088 ext-wr +2176; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 21436587
+[gpu-diag] texture 64x64 1:1: P3D done after 24 ticks (stat 80000000); 4096/4096 words right; vtx +116 tex +1024 col-wr +1088 ext-wr +0; first wrong word ffffffff (index, or y<<16|x): 00000000, expected 00000000
+[gpu-diag] texture 48x40 (NPOT) 1:1: P3D done after 15 ticks (stat 80000000); 0/1920 words right; vtx +116 tex +256 col-wr +528 ext-wr +0; first wrong word 00000000 (index, or y<<16|x): 7ae7ce98, expected cbf42c98
+[gpu-diag] summary: fill VRAM ok->ok, fill FCRAM FAIL->FAIL (as found -> after setup); PPF ok; P3D solid VRAM ok, FCRAM ok; texture POT ok, NPOT FAIL
+[gpu] display mirror: LCD framebuffers top 0x18300000/0x18400000 bottom 0x18346500/0x18446500 (2 sets); upload 0x18480000, texture 0x25890000 (FCRAM, 512x512), targets 0x18516000/0x18573c00..0x185bec00
+[gpu] mirror self-test variant 0 (as modelled): 0 of 518400 bytes differ, guard intact; GPU 1346/1872/577 ticks (upload/draw/read-out)
+[gpu] display mirror: self-test passed (variant 0) in 152352 us: the PICA200 copies the screen now (every 2. VBlank)
+[gpu] display mirror ACTIVE: self-test variant 0, 152 ms
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[gl] pica: GPU up (self-check passed): arena 12288 KiB at PA 0x25870000 (11136 KiB free), PDN_GPU_CNT 0x1007f, PICA200
+[gl] pica: depth probe, GPU vs CPU rasterizer (pixels off by more than 24 of 9216): reversed (citro3d) 0 ok, standard 4608 FAIL, unscaled (run 15) 4608 FAIL: using reversed (citro3d)
+[gl] CA scene check: GPU vs CPU rasterizer: 0 of 9216 pixels differ by more than 24 (max 4)
+[gl] CA compositor: OpenGL ES on the PICA200 (GPU self-check and scene check passed)
+[gl] context 0x831200 uses the ios3ds PICA200
+[gl] context created (pid 20) from 0x34ff7438 0x346e08a0 0x346e07cc 0x346de624 0x346de4f4 0x346de3ac 0x346dd1e8 0x32da1680
+Iterator had no matching services
+Failed to open connection to MBX
+Failed to initialized MBX2D driver (1).
+Couldn't connect to migrator port (1102).
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+Couldn't open shared capabilities memory GSCapabilities (No such file or directory)
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[hwaes] securityd: software IOAESAccelerator
+[hwaes] securityd: software AppleKeyStore (key wrap)
+[mcud] connected to SpringBoard's HID event system
+[input] connected to SpringBoard's HID event system
+[input] mailbox up: touch ok, flipx=1 flipy=0 stretch=0
+[mcud] NoIdleSleepAssertion held (0x0, id 300)
+[mcud] volume slider 27/63 -> iOS volume 0.43
+[mcud] accelerometer off
+[mcud] seq 24: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[hb] t=60s quiet 3s | abs 601561 dec 142013 timer 53804 irq 56099 vbl 2295 | md0 3573 req 77204 KiB 0 err
+[hb]  clock: arm11 watchdog +29720 ms vs arm9 timer +29721 ms (ratio 999/1000)
+[hb]  pc u32ca8fc2t u32ca8fc2t u32dad0e4 u35e6f4b4t u32c9e81et u3590131c u35901320 k80068010
+[gpu] mirror: 292 frames in 30 s (9.7 fps); GPU per frame: upload 3001 us, draw 7973 us, read-out 3641 us; frame avg 14735 us (max 33429, incl. IRQ latency); ARM11 IRQ time 63 us/frame in 2422 steps; 0 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 30 copies in 30 s, 235.5 ms each (ARM9)
+[mcud] SpringBoard reports no DisplayBrightness: LCD backlight left as Luma set it
+[mcud] seq 61: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+ios3ds-mcu: LCD backlight as Luma left it: top 0x5f, bottom 0x5f
+[gl] first BindCoreSurface (pid 20) from 0x3470d548 0x3470d36c 0x3470c984 0x3478fefc 0x346ec6dc 0x346f32c4 0x3327586c 0x337cc88c
+[pica] present: GPU writes the caller's surface directly: user VA 0x00325000 = PA 0x18000000 (VRAM, 600 KiB)
+[gl] pica: GPU present check passed (320x480, identical to the CPU read-back within 2)
+[gl] first SwapNotification (pid 20) from 0x34ff7ef8 0x34719f34 0x3478fe48 0x346eddd8 0x346ec724 0x346f32c4 0x3327586c 0x337cc88c
+ios3ds-mcu: accelerometer powered on by AppleL[mcu] accelerometer on
+IS302DL (CTRL_REG1 0x47)
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[mcud] seq 125: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[input] down 183,195
+[input] up 182,193
+[input] down 238,294
+[input] up 33,283
+[input] down 94,279
+[input] up 201,293
+[input] down 101,303
+[input] up 198,308
+[input] down 79,256
+[input] up 294,263
+[mcud] seq 241: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 347: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[hb] t=90s quiet 1s | abs 1066145 dec 180638 timer 69092 irq 73178 vbl 4086 | md0 4216 req 86906 KiB 0 err
+[hb]  clock: arm11 watchdog +59660 ms vs arm9 timer +59664 ms (ratio 999/1000)
+[hb]  pc k80068010 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] mirror: 707 frames in 30 s (23.5 fps); GPU per frame: upload 8844 us, draw 3764 us, read-out 6396 us; frame avg 16257 us (max 33467, incl. IRQ latency); ARM11 IRQ time 51 us/frame in 5663 steps; 32 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 453: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 560: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 666: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 773: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 879: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] clocks after ~60 s: RTC +82 s, gettimeofday +82113 ms, mach_absolute_time +82111 ms (85996096 ticks, timebase 1000000000/1047311)
+[mcud] seq 986: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[hb] t=120s quiet 1s | abs 1170475 dec 203995 timer 76682 irq 82593 vbl 5911 | md0 4235 req 87202 KiB 0 err
+[hb]  clock: arm11 watchdog +90167 ms vs arm9 timer +90169 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] mirror: 610 frames in 30 s (20.3 fps); GPU per frame: upload 11764 us, draw 4955 us, read-out 11570 us; frame avg 21707 us (max 36267, incl. IRQ latency); ARM11 IRQ time 34 us/frame in 4328 steps; 32 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 1091: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 1199: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 1305: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 1412: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 1517: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] seq 1624: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[hb] t=150s quiet 0s | abs 1264395 dec 225325 timer 83657 irq 91338 vbl 7681 | md0 4235 req 87202 KiB 0 err
+[hb]  clock: arm11 watchdog +119752 ms vs arm9 timer +119752 ms (ratio 1000/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] down 67,320
+[input] up 69,323
+[gpu] mirror: 610 frames in 30 s (20.3 fps); GPU per frame: upload 2654 us, draw 2878 us, read-out 772 us; frame avg 21978 us (max 36267, incl. IRQ latency); ARM11 IRQ time 34 us/frame in 4325 steps; 32 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+ios3ds-mcu: accelerometer sample #1: 1 0 54 counts (|a| = 16579 MCU units)
+[mcud] SpringBoard device orientation 0 -> 6
+[mcud] seq 1731: battery 11% flags e2 volume 27 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+ios3ds-mcu: accelerometer sample #100: -2 11 53 counts (|a| = 16737 MCU units)
+[mcud] volume slider 29/63 -> iOS volume 0.46
+[mcud] volume slider 45/63 -> iOS volume 0.71
+[mcud] volume slider 47/63 -> iOS volume 0.75
+[mcud] volume slider 54/63 -> iOS volume 0.86
+[mcud] volume slider 61/63 -> iOS volume 0.97
+[mcud] volume slider 63/63 -> iOS volume 1.00
+[mcud] seq 1853: battery 11% flags e2 volume 63 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] volume slider 56/63 -> iOS volume 0.89
+[mcud] volume slider 52/63 -> iOS volume 0.83
+[mcud] volume slider 49/63 -> iOS volume 0.78
+[mcud] volume slider 43/63 -> iOS volume 0.68
+[mcud] volume slider 32/63 -> iOS volume 0.51
+[mcud] volume slider 25/63 -> iOS volume 0.40
+[mcud] volume slider 21/63 -> iOS volume 0.33
+[mcud] volume slider 13/63 -> iOS volume 0.21
+[mcud] volume slider 0/63 -> iOS volume 0.00
+[mcud] volume slider 10/63 -> iOS volume 0.16
+[mcud] volume slider 16/63 -> iOS volume 0.25
+[mcud] volume slider 21/63 -> iOS volume 0.33
+[mcud] volume slider 23/63 -> iOS volume 0.37
+[mcud] volume slider 27/63 -> iOS volume 0.43
+[mcud] volume slider 32/63 -> iOS volume 0.51
+[mcud] volume slider 35/63 -> iOS volume 0.56
+[mcud] volume slider 43/63 -> iOS volume 0.68
+[mcud] seq 2021: battery 11% flags e2 volume 43 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[mcud] volume slider 48/63 -> iOS volume 0.76
+[mcud] volume slider 55/63 -> iOS volume 0.87
+[mcud] volume slider 63/63 -> iOS volume 1.00
+[mcud] volume slider 55/63 -> iOS volume 0.87
+[mcud] volume slider 36/63 -> iOS volume 0.57
+[mcud] volume slider 20/63 -> iOS volume 0.32
+[mcud] volume slider 12/63 -> iOS volume 0.19
+[mcud] volume slider 0/63 -> iOS volume 0.00
+[mcud] seq 2168: battery 11% flags e2 volume 0 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[input] down 89,307
+[input] touch target com.apple.Preferences
+[input] up 71,165
+[gl] CA: 300 frames; per frame over the last 300: render thread CPU 18533 us, 1.4 command lists, 1.0 GPU presents, 0.0 CPU read-backs (2 KiB), 0.3 texture uploads (30 KiB); GPU memory: 7993 KiB held (103 textures, 6057 KiB), arena 3143 KiB free, 0 evicti
+[input] down 82,220
+[input] up 85,224
+[pica] arena full: 131072 bytes wanted, 318464 free in 125 blocks (1 times)
+[pica] arena full: 131072 bytes wanted, 320512 free in 124 blocks (2 times)
+[pica] arena full: 131072 bytes wanted, 320512 free in 124 blocks (3 times)
+[input] down 61,103
+[input] up 62,97
+[pica] arena full: 131072 bytes wanted, 333824 free in 144 blocks (4 times)
+[mcud] seq 2293: battery 11% flags e2 volume 0 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[hb] t=180s quiet 0s | abs 2068878 dec 253071 timer 94944 irq 104412 vbl 9468 | md0 4542 req 91591 KiB 0 err
+[hb]  clock: arm11 watchdog +149622 ms vs arm9 timer +149622 ms (ratio 1000/1000)
+[hb]  pc k80840344 u35e66902t k80840010 k800865a8t k80082394t k80068010 k801a5b26t u34713338
+[input] down 247,379
+[gpu] mirror: 724 frames in 30 s (24.1 fps); GPU per frame: upload 2265 us, draw 2317 us, read-out 2159 us; frame avg 16153 us (max 36267, incl. IRQ latency); ARM11 IRQ time 47 us/frame in 5477 steps; 112 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 61 of 512 sampled LCD pixels differ from the iOS framebuffer (first: bottom fb row 179 px 191: 6278a0 expected, ffffff seen; only meaningful on a still screen)
+[input] up 290,211
+[mcud] seq 2410: battery 11% flags e2 volume 0 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+ios3ds-mcu: accelerometer sample #1000: 1 0 55 counts (|a| = 16528 MCU units)
+[mcud] seq 2516: battery 11% flags e2 volume 0 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[input] down 70,43
+[input] up 67,45
+[mcud] seq 2628: battery 11% flags e2 volume 0 3D 0 irq 00000000 home 0 power 0/0 shell 0/0
+[input] key 40 down @7810
+[input] key 40 up @7810
+[pica] present: destination 0x0496d000 (+614400) not usable: not physically contiguous (PA 0x21557000 at +0x1000; L1 21459001 L2 2155783f, TTBR0 23b5b018 TTBCR 2 DACR 00000001 SCTLR 00c5787d)
+[gl] pica: writing a surface back on the GPU failed (destination is not one physically contiguous, GPU-reachable, user-writable range): reading it back through the CPU from now on
+[input] down 227,342
+[input] touch target SpringBoard
+[input] up 196,335
+[input] down 122,354
+[mcud] seq 2748: battery 11% flags e2 volume 0 3D 0 irq 0000000c home 1 power 0/0 shell 0/0
+[input] up 122,354
+[input] down 256,341
+[input] up 115,326
+[input] down 262,285
+[input] up 124,280
+[input] down 304,139
+[input] up 280,138
+[input] down 221,139
+[input] up 197,144
+[input] down 68,176
+[input] up 68,176
+[input] down 263,171
+[input] up 28,283
+[input] down 58,72
+[input] up 57,70
+AMFI: Invalid signature but permitting execution
+[mcu] battery 10%
+AMFI: Invalid signature but permitting execution
+[mcud] seq 2879: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 1 power 0/0 shell 0/0
+AMFI: Invalid signature but permitting execution
+AMFI: Invalid signature but permitting execution
+[hb] t=210s quiet 1s | abs 2673318 dec 280330 timer 105615 irq 116876 vbl 11261 | md0 4738 req 94486 KiB 0 err
+[hb]  clock: arm11 watchdog +179576 ms vs arm9 timer +179576 ms (ratio 1000/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+AMFI: Invalid signature but permitting execution
+[mcud] seq 2982: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 1 power 0/0 shell 0/0
+[gpu] mirror: 694 frames in 30 s (23.1 fps); GPU per frame: upload 7610 us, draw 4865 us, read-out 4237 us; frame avg 16531 us (max 36267, incl. IRQ latency); ARM11 IRQ time 47 us/frame in 5489 steps; 185 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[gl] CA: 600 frames; per frame over the last 300: render thread CPU 31166 us, 2.0 command lists, 0.7 GPU presents, 0.3 CPU read-backs (303 KiB), 1.0 texture uploads (64 KiB); GPU memory: 3853 KiB held (55 textures, 1917 KiB), arena 7283 KiB free, 101 evi
+[mcud] seq 3092: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 1 power 0/0 shell 0/0
+[mcud] seq 3203: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 1 power 0/0 shell 0/0
+[input] key 40 down @9193
+[input] key 40 up @9193
+[mcud] seq 3318: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 42,181
+[input] up 211,205
+[input] down 93,274
+[input] up 311,331
+[input] down 62,305
+[input] up 62,304
+[mcud] seq 3437: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 80,144
+[input] touch target com.apple.Preferences
+[input] up 79,142
+[input] down 66,146
+[input] up 70,139
+[input] down 53,145
+[input] up 55,145
+[input] down 55,150
+[hb] t=240s quiet 0s | abs 3077979 dec 311525 timer 119349 irq 132395 vbl 13046 | md0 5216 req 104155 KiB 0 err
+[hb]  clock: arm11 watchdog +209426 ms vs arm9 timer +209427 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] up 54,150
+[input] down 53,145
+[input] up 41,237
+[mcud] seq 3559: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[gpu] mirror: 700 frames in 30 s (23.3 fps); GPU per frame: upload 7989 us, draw 2914 us, read-out 5804 us; frame avg 16453 us (max 36267, incl. IRQ latency); ARM11 IRQ time 49 us/frame in 5382 steps; 277 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[input] down 72,152
+[input] up 73,151
+[mcud] seq 3669: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 3774: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 3881: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 3988: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 4094: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=270s quiet 3s | abs 3222897 dec 334503 timer 127177 irq 142056 vbl 14879 | md0 5222 req 104175 KiB 0 err
+[hb]  clock: arm11 watchdog +240046 ms vs arm9 timer +240046 ms (ratio 1000/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] down 60,277
+[input] up 37,69
+[mcud] seq 4204: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 82,295
+[input] up 121,376
+[gpu] mirror: 632 frames in 30 s (21.0 fps); GPU per frame: upload 7186 us, draw 2997 us, read-out 10089 us; frame avg 20764 us (max 36267, incl. IRQ latency); ARM11 IRQ time 37 us/frame in 4571 steps; 300 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 63 of 512 sampled LCD pixels differ from the iOS framebuffer (first: top fb row 355 px 149: ababab expected, ffffff seen; only meaningful on a still screen)
+[input] down 72,238
+[input] up 62,237
+[mcud] seq 4349: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 69,242
+[input] up 64,210
+[input] down 62,193
+[input] up 53,161
+[input] down 62,228
+[input] up 33,118
+[input] down 76,237
+[input] up 76,232
+[input] down 38,52
+[input] up 38,48
+[mcud] seq 4473: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 73,269
+[input] up 40,145
+[input] down 39,149
+[input] up 46,191
+[input] down 46,194
+[input] up 47,198
+[input] down 47,204
+[input] up 47,204
+[input] down 47,210
+[input] up 46,220
+[input] down 49,234
+[input] up 63,287
+[input] down 45,56
+[input] up 46,56
+[input] down 80,213
+[input] up 53,327
+[mcud] seq 4620: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 63,220
+[input] up 63,219
+[mcud] seq 4730: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=300s quiet 2s | abs 3689859 dec 354525 timer 136513 irq 153148 vbl 16635 | md0 5254 req 104323 KiB 0 err
+[hb]  clock: arm11 watchdog +269392 ms vs arm9 timer +269394 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k8003b196t k80068500 k800660d0 k80067b34 k80067b34 k80067b34
+[input] down 40,64
+[input] up 40,57
+[input] down 74,130
+[gl] CA: 900 frames; per frame over the last 300: render thread CPU 63132 us, 2.8 command lists, 0.0 GPU presents, 1.0 CPU read-backs (1052 KiB), 1.8 texture uploads (142 KiB); GPU memory: 6045 KiB held (52 textures, 4109 KiB), arena 5090 KiB free, 228 e
+[input] up 39,273
+[mcud] seq 4846: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 50,168
+[input] up 52,169
+[gpu] mirror: 696 frames in 30 s (23.2 fps); GPU per frame: upload 7752 us, draw 8959 us, read-out 4406 us; frame avg 16456 us (max 36267, incl. IRQ latency); ARM11 IRQ time 44 us/frame in 5134 steps; 399 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[input] down 57,159
+[input] up 59,155
+[input] down 59,163
+[input] up 60,166
+[input] down 63,170
+[input] up 66,164
+[input] down 67,97
+[input] up 69,99
+[mcud] seq 4967: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 33,55
+[input] up 32,56
+[input] down 34,47
+[input] up 31,47
+[input] down 34,45
+[input] up 35,45
+[input] down 89,153
+[input] up 89,325
+[mcud] seq 5103: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5209: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5316: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5423: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=330s quiet 0s | abs 4001869 dec 376134 timer 145355 irq 163824 vbl 18469 | md0 5270 req 104444 KiB 0 err
+[hb]  clock: arm11 watchdog +300057 ms vs arm9 timer +300061 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 5528: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[gpu] mirror: 647 frames in 30 s (21.5 fps); GPU per frame: upload 8802 us, draw 2423 us, read-out 5463 us; frame avg 20073 us (max 36267, incl. IRQ latency); ARM11 IRQ time 40 us/frame in 4739 steps; 430 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 5635: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5741: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5848: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 5954: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=360s quiet 3s | abs 4102187 dec 398298 timer 152810 irq 173044 vbl 20234 | md0 5277 req 104468 KiB 0 err
+[hb]  clock: arm11 watchdog +329545 ms vs arm9 timer +329552 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k8018bca0t k80067b34 k80067b34
+[mcud] seq 6061: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 6167: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[gpu] mirror: 616 frames in 30 s (20.5 fps); GPU per frame: upload 6434 us, draw 4978 us, read-out 9988 us; frame avg 21266 us (max 36267, incl. IRQ latency); ARM11 IRQ time 36 us/frame in 4458 steps; 430 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 6273: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 6379: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] clocks after ~300 s: RTC +344 s, gettimeofday +344057 ms, mach_absolute_time +344057 ms (360334441 ticks, timebase 1000000000/1047311)
+[mcud] seq 6486: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 6592: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=391s quiet 5s | abs 4203017 dec 420929 timer 160358 irq 182427 vbl 22069 | md0 5277 req 104468 KiB 0 err
+[hb]  clock: arm11 watchdog +360215 ms vs arm9 timer +360218 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 6699: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 6806: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[gpu] mirror: 615 frames in 30 s (20.5 fps); GPU per frame: upload 8036 us, draw 5053 us, read-out 4620 us; frame avg 22062 us (max 36267, incl. IRQ latency); ARM11 IRQ time 35 us/frame in 4427 steps; 430 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 6911: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 7018: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 7124: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 7231: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=421s quiet 4s | abs 4305709 dec 443542 timer 167975 irq 191878 vbl 23903 | md0 5277 req 104468 KiB 0 err
+[hb]  clock: arm11 watchdog +390884 ms vs arm9 timer +390886 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80068010
+[mcud] seq 7337: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[mcud] seq 7444: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[gpu] mirror: 614 frames in 30 s (20.4 fps); GPU per frame: upload 4795 us, draw 9982 us, read-out 10008 us; frame avg 21773 us (max 36267, incl. IRQ latency); ARM11 IRQ time 35 us/frame in 4438 steps; 431 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 7550: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 117,296
+[input] up 107,226
+[mcud] seq 7664: battery 10% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] key e9 down @20883
+[input] key e9 up @20883
+[input] key e9 down @20884
+[input] key e9 up @20884
+[input] key e9 down @20888
+[input] key e9 up @20888
+[input] key e9 down @20890
+[input] key e9 up @20890
+[input] key e9 down @20906
+[input] key e9 up @20906
+[input] key e9 down @20908
+[input] key e9 up @20908
+[input] key e9 down @20921
+[input] key e9 up @20921
+[input] key e9 down @20968
+[input] key e9 up @20968
+[input] key e9 down @20969
+[input] key e9 up @20969
+[input] key e9 down @20973
+[input] key e9 up @20973
+[mcu] battery 9%
+[input] key e9 down @20980
+[input] key e9 up @20980
+[mcud] seq 7781: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] key e9 down @20986
+[input] key e9 up @20986
+[input] key e9 down @20989
+[input] key e9 up @20989
+[input] key e9 down @20992
+[input] key e9 up @20992
+[input] key e9 down @20996
+[input] key e9 up @20996
+[input] key e9 down @20997
+[input] key e9 up @20997
+[input] key e9 down @21003
+[input] key e9 up @21003
+[input] key e9 down @21007
+[input] key e9 up @21007
+[input] key e9 down @21011
+[input] key e9 up @21011
+[input] key e9 down @21012
+[input] key e9 up @21012
+[input] key ea down @21045
+[input] key ea up @21045
+[input] key ea down @21053
+[input] key ea up @21053
+[input] key ea down @21059
+[input] key ea up @21059
+[input] key ea down @21074
+[input] key ea up @21074
+[mcud] seq 7906: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[hb] t=451s quiet 1s | abs 4507887 dec 464088 timer 175771 irq 201446 vbl 25675 | md0 5282 req 104488 KiB 0 err
+[hb]  clock: arm11 watchdog +420484 ms vs arm9 timer +420488 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] down 234,25
+[input] up 234,169
+[mcud] SpringBoard device orientation 6 -> 0
+[mcud] seq 8011: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 2 power 0/0 shell 0/0
+[input] down 139,28
+[input] up 153,169
+[input] down 247,28
+[input] up 251,133
+[mcud] SpringBoard device orientation 0 -> 6
+[input] key 40 down @21758
+[input] key 40 up @21758
+[input] key 40 down @21761
+[input] key 40 up @21761
+[gpu] mirror: 635 frames in 30 s (21.1 fps); GPU per frame: upload 7888 us, draw 2183 us, read-out 3879 us; frame avg 20240 us (max 37097, incl. IRQ latency); ARM11 IRQ time 39 us/frame in 4594 steps; 453 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 8128: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 4 power 0/0 shell 0/0
+[input] key 40 down @21899
+[input] key 40 up @21899
+[input] key 40 down @21914
+[input] key 40 up @21914
+[input] down 47,313
+[input] touch target SpringBoard
+[input] up 53,315
+[mcud] seq 8239: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 6 power 0/0 shell 0/0
+[mcud] SpringBoard device orientation 6 -> 0
+[input] down 77,376
+[input] touch target com.apple.Preferences
+[input] up 69,281
+[mcud] SpringBoard device orientation 0 -> 2
+[input] down 50,270
+[input] up 63,267
+[pica] arena full: 1048576 bytes wanted, 1443840 free in 115 blocks (256 times)
+[mcud] SpringBoard device orientation 2 -> 0
+[mcud] seq 8361: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 6 power 0/0 shell 0/0
+[input] down 81,380
+[input] up 81,324
+[input] down 63,263
+[input] up 62,263
+[input] down 38,225
+[input] up 36,223
+[mcud] seq 8499: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 6 power 0/0 shell 0/0
+[input] key 40 down @22658
+[input] key 40 up @22658
+[input] key 40 down @22661
+[input] key 40 up @22661
+[hb] t=481s quiet 3s | abs 4808002 dec 488146 timer 186097 irq 213584 vbl 27487 | md0 5459 req 106985 KiB 0 err
+[hb]  clock: arm11 watchdog +450774 ms vs arm9 timer +450776 ms (ratio 999/1000)
+[hb]  pc u368d127c u3037e5dc u33edacf0 u33e2f75c u33e35634 u33e352f8 k80063394 u35d14a28
+[mcud] SpringBoard device orientation 0 -> 6
+[mcud] seq 8615: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 8 power 0/0 shell 0/0
+[input] key 40 down @22962
+[input] key 40 up @22962
+[input] down 46,321
+[input] touch target SpringBoard
+[input] up 48,324
+[mcud] SpringBoard device orientation 6 -> 0
+[mcud] seq 8726: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 9 power 0/0 shell 0/0
+[gpu] mirror: 725 frames in 30 s (24.1 fps); GPU per frame: upload 1285 us, draw 2316 us, read-out 1402 us; frame avg 15849 us (max 37097, incl. IRQ latency); ARM11 IRQ time 52 us/frame in 5728 steps; 521 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] SpringBoard device orientation 0 -> 2
+[mcud] SpringBoard device orientation 2 -> 0
+[mcud] seq 8828: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 9 power 0/0 shell 0/0
+[input] down 68,344
+[input] touch target com.apple.Preferences
+[input] up 69,345
+[input] down 49,307
+[input] up 57,307
+[mcud] seq 8939: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 9 power 0/0 shell 0/0
+[input] down 60,136
+[input] up 62,131
+[mcud] SpringBoard device orientation 0 -> 2
+[input] down 60,176
+[input] up 59,176
+[mcud] SpringBoard device orientation 2 -> 0
+[mcud] SpringBoard device orientation 0 -> 2
+[mcud] SpringBoard device orientation 2 -> 0
+[mcud] seq 9046: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 10 power 0/0 shell 0/0
+[input] key 40 down @24004
+[input] key 40 up @24004
+[input] key 40 down @24169
+[input] key 40 up @24169
+[input] key 40 down @24180
+[input] key 40 up @24180
+[mcud] seq 9157: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 12 power 0/0 shell 0/0
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: tx start ch5 src=20ca5000 lli=0 ctl=87249800 cfg=8a81
+[audio] iOS output stream #1 started (CSND starts 1)
+[input] down 77,172
+[hb] t=511s quiet 0s | abs 5391087 dec 573564 timer 217427 irq 246716 vbl 29255 | md0 6610 req 116694 KiB 0 err
+[hb]  clock: arm11 watchdog +480323 ms vs arm9 timer +480331 ms (ratio 999/1000)
+[hb]  pc u35e6ac40 u35e69c74 u35e6df7at u010d1ec8 u35e69bd4 u35e6aa48 u35e6a888 u35e66b8c
+[input] touch target SpringBoard
+[input] up 80,178
+[input] key 40 down @24361
+[input] key 40 up @24361
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: tx stop words=43e85 peak=0 tc=9
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+[audio] stream stopped: 278149 words, peak 0, TC IRQs 9 (9 injected), bad addr 0
+[input] down 96,107
+[input] up 86,352
+[mcud] seq 9264: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 152,359
+[input] up 116,195
+[input] down 179,285
+[input] up 55,259
+[input] down 203,288
+[input] up 21,284
+[gl] CA: 1200 frames; per frame over the last 300: render thread CPU 69332 us, 4.3 command lists, 0.0 GPU presents, 1.1 CPU read-backs (1126 KiB), 3.2 texture uploads (230 KiB); GPU memory: 3463 KiB held (63 textures, 1511 KiB), arena 7672 KiB free, 477 
+[input] down 84,162
+[input] up 244,217
+[input] down 32,132
+[input] up 262,236
+[gpu] mirror: 804 frames in 30 s (26.8 fps); GPU per frame: upload 5204 us, draw 3891 us, read-out 7612 us; frame avg 11436 us (max 37097, incl. IRQ latency); ARM11 IRQ time 62 us/frame in 7813 steps; 600 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[input] down 22,138
+[input] up 217,203
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+[audio] iOS output stream #2 started (CSND starts 2)
+ios3ds-audio: tx start ch5 src=20ca5000 lli=20c56010 ctl=87249800 cfg=8a81
+[mcud] seq 9372: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 298,223
+[input] up 67,202
+ios3ds-audio: tx stop words=516d3 peak=0 tc=b
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+[audio] stream stopped: 333523 words, peak 0, TC IRQs 11 (11 injected), bad addr 0
+[input] down 217,28
+[input] up 240,180
+[input] down 115,33
+[input] up 113,124
+[mcud] seq 9474: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[mcud] seq 9574: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[mcud] seq 9680: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[mcud] seq 9787: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=542s quiet 0s | abs 5877497 dec 644123 timer 241579 irq 272844 vbl 31105 | md0 7461 req 124278 KiB 0 err
+[hb]  clock: arm11 watchdog +511245 ms vs arm9 timer +511247 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 9893: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[gpu] mirror: 698 frames in 30 s (23.2 fps); GPU per frame: upload 8970 us, draw 2599 us, read-out 5150 us; frame avg 16837 us (max 37097, incl. IRQ latency); ARM11 IRQ time 45 us/frame in 6026 steps; 614 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 9999: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[mcud] seq 10105: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 182,32
+[input] up 220,205
+[input] down 58,309
+[input] up 57,307
+[mcud] seq 10215: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[mcud] SpringBoard device orientation 0 -> 6
+[input] down 79,340
+[input] touch target com.apple.Preferences
+[input] up 88,343
+[pica] arena full: 1048576 bytes wanted, 2248704 free in 89 blocks (512 times)
+[mcud] seq 10337: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 86,274
+[input] up 38,108
+[input] down 83,286
+[input] up 30,125
+[input] down 34,161
+[hb] t=572s quiet 0s | abs 6143810 dec 665167 timer 250142 irq 283225 vbl 32923 | md0 7493 req 124443 KiB 0 err
+[hb]  clock: arm11 watchdog +541639 ms vs arm9 timer +541641 ms (ratio 999/1000)
+[hb]  pc u003d6be4 u346ee3a8 u346f3a6c u34712b34 u003d47e0 u3471180c u347102ec u32dabf14
+[input] up 86,341
+[mcud] seq 10475: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 92,307
+[input] up 90,309
+[input] down 67,308
+[input] up 68,305
+[input] down 35,45
+[input] up 35,49
+ios3ds-mcu: accelerometer sample #10000: 0 0 54 counts (|a| = 16486 MCU units)
+[input] down 38,56
+[input] up 38,54
+[mcud] seq 10615: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[gpu] mirror: 695 frames in 31 s (22.4 fps); GPU per frame: upload 5923 us, draw 5752 us, read-out 5033 us; frame avg 17312 us (max 37097, incl. IRQ latency); ARM11 IRQ time 44 us/frame in 5113 steps; 695 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[input] down 104,285
+[input] up 64,124
+[input] down 96,252
+[input] up 36,100
+[mcud] seq 10734: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 102,255
+[input] up 46,112
+[input] down 53,139
+[input] up 51,139
+[input] down 51,145
+[input] up 58,191
+[input] down 42,54
+[input] up 40,55
+[mcud] seq 10878: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 68,165
+[input] up 63,245
+[input] key 40 down @28455
+[input] key 40 up @28455
+[input] down 63,328
+[input] touch target SpringBoard
+[input] up 62,331
+[mcud] seq 10999: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=602s quiet 2s | abs 6669726 dec 684580 timer 260164 irq 295047 vbl 34723 | md0 7565 req 124983 KiB 0 err
+[hb]  clock: arm11 watchdog +571722 ms vs arm9 timer +571724 ms (ratio 999/1000)
+[hb]  pc k80067d40 k80840350 k808b005c u003d1a4c u34705da4 u003d2e88 u003d2e90 u003d2e80
+[input] key 30 down @28752
+[input] key 30 up @28752
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=6 len=1 val=20
+ios3ds-audio: amp step 13 -> CSND volume 8000
+ios3ds-audio: iic w dev=1500 reg=0 len=1 val=9b
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=6a
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=ff
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: tx start ch5 src=20ca5000 lli=20c56010 ctl=87249800 cfg=8a81
+[audio] iOS output stream #3 started (CSND starts 3)
+[audio] iOS volume: amp step 19 -> CSND volume 32768/32768
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 66 loops/s, ARM11 542 IRQs/s, 59 VBlanks/s)
+[input] screen off: polling at 10 Hz
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[input] key 30 down @28810
+[input] key 30 up @28810
+[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 752 busy skips, 0 timeouts)
+[power] iOS screen on again after 5 s off: ARM9 7730 loops/s (7717 in WFI), ARM11 317 IRQs/s (3 VBlank, 272 timer); screen on was 66 loops/s, 542 IRQs/s
+ios3ds-audio: iic w dev=1680 reg=1c len=1 val=80
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: amp off -> CSND volume 0
+ios3ds-audio: iic w dev=1500 reg=0 len=1 val=4
+ios3ds-audio: iii w dev=1680 reg=6 len=1 val=0
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=1a len=1 val=44
+ios3ds-audio: iic r dev=1680 reg=3 len=1 val=af
+ios3ds-audio: iic w dev=1680 reg=3 len=1 val=ff
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[audio] stream stopped: 781307 words, peak 22483, TC IRQs 25 (25 injected), bad addr 0
+[audio] iOS volume: muted (amp off) -> CSND volume 0
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[input] screen on: polling at 60 Hz
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[gl] CA: 1500 frames; per frame over the last 300: render thread CPU 65899 us, 3.2 command lists, 0.0 GPU presents, 1.0 CPU read-backs (1049 KiB), 2.2 texture uploads (162 KiB); GPU memory: 6983 KiB held (96 textures, 6071 KiB), arena 4153 KiB free, 641 
+[input] down 190,277
+[input] touch target com.apple.Preferences
+[input] up 46,277
+[input] down 68,413
+[gpu] mirror: 599 frames in 30 s (19.9 fps); GPU per frame: upload 4760 us, draw 3174 us, read-out 8338 us; frame avg 15965 us (max 37097, incl. IRQ latency); ARM11 IRQ time 48 us/frame in 4479 steps; 756 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 1 copies in 30 s, 262.5 ms each (ARM9)
+[input] up 286,440
+[input] down 80,428
+[input] up 274,424
+[mcud] seq 11210: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 67,429
+[input] up 258,404
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[input] down 50,427
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 58 loops/s, ARM11 398 IRQs/s, 59 VBlanks/s)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[input] screen off: polling at 10 Hz
+[input] key 30 down @29111
+[input] key 30 up @29111
+[power] iOS screen on again after 1 s off: ARM9 10001 loops/s (10001 in WFI), ARM11 174 IRQs/s (0 VBlank, 173 timer); screen on was 58 loops/s, 398 IRQs/s
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[input] up 53,427
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[input] screen on: polling at 60 Hz
+[input] down 62,431
+[input] up 262,423
+[input] down 81,431
+[input] up 272,427
+[input] down 70,424
+[input] up 277,407
+[input] down 225,440
+[mcud] seq 11315: battery 9% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] up 220,435
+[input] down 243,440
+[input] up 241,435
+[input] down 289,428
+[input] up 292,425
+[input] down 76,418
+[input] up 226,411
+[input] down 49,429
+[input] up 193,424
+[input] down 67,435
+[input] up 219,425
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 58 loops/s, ARM11 402 IRQs/s, 60 VBlanks/s)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[input] screen off: polling at 10 Hz
+[hb] t=632s quiet 7s | abs 7008645 dec 702500 timer 268839 irq 304972 vbl 35757 | md0 7659 req 126548 KiB 0 err
+[hb]  clock: arm11 watchdog +601202 ms vs arm9 timer +601206 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k801e903c k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcu] battery 8%
+[hb] t=642s quiet 17s | abs 7031333 dec 707051 timer 270393 irq 306526 vbl 35757 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +611202 ms vs arm9 timer +611207 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[input] key 30 down @29586
+[input] key 30 up @29586
+[power] iOS screen on again after 16 s off: ARM9 10082 loops/s (10081 in WFI), ARM11 153 IRQs/s (0 VBlank, 153 timer); screen on was 58 loops/s, 402 IRQs/s
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[input] screen on: polling at 60 Hz
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[gpu] mirror: 318 frames in 30 s (10.6 fps); GPU per frame: upload 4767 us, draw 2372 us, read-out 1666 us; frame avg 14869 us (max 37097, incl. IRQ latency); ARM11 IRQ time 51 us/frame in 2342 steps; 776 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 11560: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[gl] CA: 1800 frames; per frame over the last 300: render thread CPU 39366 us, 1.0 command lists, 0.0 GPU presents, 1.0 CPU read-backs (604 KiB), 0.0 texture uploads (0 KiB); GPU memory: 4673 KiB held (73 textures, 3761 KiB), arena 6463 KiB free, 641 evi
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 58 loops/s, ARM11 375 IRQs/s, 59 VBlanks/s)
+[input] screen off: polling at 10 Hz
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[hb] t=660s quiet 10s | abs 7201030 dec 716452 timer 274449 irq 311074 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +629202 ms vs arm9 timer +629201 ms (ratio 1000/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80063008 u35e671dct
+[hb] t=670s quiet 20s | abs 7222919 dec 720833 timer 275946 irq 312571 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +639202 ms vs arm9 timer +639207 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 11631: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[gpu] mirror: 167 frames in 30 s (5.5 fps); GPU per frame: upload 3004 us, draw 2897 us, read-out 10808 us; frame avg 15552 us (max 37097, incl. IRQ latency); ARM11 IRQ time 47 us/frame in 1239 steps; 778 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[hb] t=681s quiet 10s | abs 7246668 dec 725641 timer 277585 irq 314210 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +650202 ms vs arm9 timer +650202 ms (ratio 1000/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 11651: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=694s quiet 10s | abs 7274689 dec 731315 timer 279515 irq 316140 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +663201 ms vs arm9 timer +663205 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k8000e1dat u35e6f3bct k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[hb] t=704s quiet 20s | abs 7296175 dec 735641 timer 281000 irq 317625 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +673201 ms vs arm9 timer +673206 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80068010
+[mcud] seq 11689: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=719s quiet 10s | abs 7328311 dec 742109 timer 283221 irq 319846 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +688203 ms vs arm9 timer +688205 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[hb] t=729s quiet 20s | abs 7349868 dec 746460 timer 284703 irq 321328 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +698201 ms vs arm9 timer +698207 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 11727: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=745s quiet 10s | abs 7385133 dec 753517 timer 287095 irq 323720 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +714201 ms vs arm9 timer +714205 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[hb] t=755s quiet 20s | abs 7406679 dec 757872 timer 288579 irq 325204 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +724201 ms vs arm9 timer +724206 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[hb] t=765s quiet 30s | abs 7428114 dec 762229 timer 290056 irq 326681 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +734201 ms vs arm9 timer +734207 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[mcud] seq 11785: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=783s quiet 10s | abs 7467046 dec 770095 timer 292715 irq 329340 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +752200 ms vs arm9 timer +752203 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[hb] t=793s quiet 20s | abs 7488734 dec 774469 timer 294197 irq 330822 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +762200 ms vs arm9 timer +762205 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k80067b34
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[mcud] seq 11823: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[hb] t=809s quiet 10s | abs 7523158 dec 781388 timer 296582 irq 333207 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +778200 ms vs arm9 timer +778207 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80067b34 k801e9280 k80067b34 k80067b34
+[hb] t=819s quiet 20s | abs 7544375 dec 785693 timer 298078 irq 334703 vbl 36249 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +788200 ms vs arm9 timer +788204 ms (ratio 999/1000)
+[hb]  pc k80067b34 k80067b34 k80067b34 k80067b34 k80068010 k80068010 k80067b34 k80067b34
+[gpu] spot check (CPU copy): 0 of 512 sampled LCD pixels differ from the iOS framebuffer
+[input] key 30 down @31586
+[input] key 30 up @31586
+[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 778 busy skips, 0 timeouts)
+[power] iOS screen on again after 175 s off: ARM9 10200 loops/s (10200 in WFI), ARM11 148 IRQs/s (0 VBlank, 148 timer); screen on was 58 loops/s, 375 IRQs/s
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[input] screen on: polling at 60 Hz
+[input] down 62,429
+[input] up 125,419
+[input] down 56,419
+[input] up 214,421
+[input] down 54,432
+[input] up 132,434
+[input] down 48,412
+[input] up 164,420
+[input] down 31,410
+[input] up 147,413
+[mcud] seq 11984: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 64,401
+[input] up 234,432
+[input] down 37,415
+[input] up 251,430
+[input] down 42,420
+[input] up 243,431
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 56 loops/s, ARM11 389 IRQs/s, 59 VBlanks/s)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[input] screen off: polling at 10 Hz
+[input] key 30 down @31864
+[input] key 30 up @31864
+[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 787 busy skips, 0 timeouts)
+[power] iOS screen on again after 1 s off: ARM9 8850 loops/s (8850 in WFI), ARM11 193 IRQs/s (9 VBlank, 184 timer); screen on was 56 loops/s, 389 IRQs/s
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[input] screen on: polling at 60 Hz
+[monitor] screen mode: bottom (X = next)
+[mcud] seq 12092: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[monitor] screen mode: top (X = next)
+[monitor] screen mode: both (X = next)
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 48 loops/s, ARM11 369 IRQs/s, 59 VBlanks/s)
+[input] screen off: polling at 10 Hz
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[input] key 30 down @32130
+[input] key 30 up @32130
+[power] iOS screen on again after 2 s off: ARM9 10169 loops/s (10169 in WFI), ARM11 153 IRQs/s (0 VBlank, 153 timer); screen on was 48 loops/s, 369 IRQs/s
+[gpu] screen copy: ARM9 CPU again (GPU frames stopped: state ACTIVE, 790 busy skips, 0 timeouts)
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[input] screen on: polling at 60 Hz
+ios3ds-mcu: accelerometer read reg 0x21 len 1
+[gpu] screen copy: PICA200 (ARM9 CPU copy paused)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[mcud] seq 12192: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[monitor] screen mode: bottom (X = next)
+[gl] CA: 2100 frames; per frame over the last 300: render thread CPU 39532 us, 1.0 command lists, 0.0 GPU presents, 1.0 CPU read-backs (606 KiB), 0.0 texture uploads (2 KiB); GPU memory: 4673 KiB held (73 textures, 3761 KiB), arena 6463 KiB free, 641 evi
+[input] down 50,426
+[input] up 230,439
+[hb] t=849s quiet 0s | abs 7948323 dec 802511 timer 306289 irq 344181 vbl 37516 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +819183 ms vs arm9 timer +819184 ms (ratio 999/1000)
+[hb]  pc u003d2e78 u003d2e90 u003d2e90 u003d2e80 k80067d40 k80067d3c k808b0088 k808b0088
+[input] down 54,429
+[input] up 219,436
+[mcud] seq 12301: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 13 power 0/0 shell 0/0
+[input] down 50,424
+[input] up 52,422
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 38 loops/s, ARM11 371 IRQs/s, 59 VBlanks/s)
+[gpu] mirror: 585 frames in 30 s (19.5 fps); GPU per frame: upload 6376 us, draw 2172 us, read-out 4195 us; frame avg 14718 us (max 37097, incl. IRQ latency); ARM11 IRQ time 46 us/frame in 4190 steps; 796 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 256 sampled LCD pixels differ from the iOS framebuffer
+[monitor] CPU screen copy: 4 copies in 30 s, 161.1 ms each (ARM9)
+[input] screen off: polling at 10 Hz
+[input] key 30 down @32406
+[input] key 30 up @32406
+[power] iOS screen on again after 1 s off: ARM9 4459 loops/s (4459 in WFI), ARM11 173 IRQs/s (1 VBlank, 171 timer); screen on was 38 loops/s, 371 IRQs/s
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[input] screen on: polling at 60 Hz
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[input] key 40 down @32438
+[input] key 40 up @32438
+[input] key 40 down @32513
+[input] key 40 up @32513
+[mcud] seq 12403: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 14 power 0/0 shell 0/0
+[input] key 40 down @32546
+[input] key 40 up @32546
+[input] key e9 down @32575
+[input] key e9 up @32575
+[input] key ea down @32651
+[input] key ea up @32651
+[monitor] screen mode: top (X = next)
+[monitor] screen mode: both (X = next)
+[mcud] seq 12514: battery 8% flags e2 volume 0 3D 0 irq 0000000c home 14 power 0/0 shell 0/0
+[monitor] screen mode: bottom (X = next)
+[input] down 64,408
+[input] up 214,436
+[gl] CA: 2400 frames; per frame over the last 300: render thread CPU 38832 us, 1.0 command lists, 0.0 GPU presents, 1.0 CPU read-backs (602 KiB), 0.0 texture uploads (0 KiB); GPU memory: 4673 KiB held (73 textures, 3761 KiB), arena 6463 KiB free, 641 evi
+[a80211] display blanked (SpringBoard) -> com.apple.iokit.hid.displayStatus
+ios3ds-mcu: accelerometer powered off by AppleLIS302DL (CTRL_REG1 0x07)
+[power] iOS screen off: copies paused, touch idle, ARM9 sleeps between polls (screen on: 45 loops/s, ARM11 371 IRQs/s, 59 VBlanks/s)
+[mcud] iOS brightness 0.50 x factor 0.00 -> LCD backlight 0/1000
+[input] screen off: polling at 10 Hz
+[input] key 30 down @32941
+[input] key 30 up @32941
+[power] iOS screen on again after 3 s off: ARM9 8824 loops/s (8824 in WFI), ARM11 155 IRQs/s (0 VBlank, 154 timer); screen on was 45 loops/s, 371 IRQs/s
+[mcu] battery 7%
+ios3ds-mcu: accelerometer powered on by AppleLIS302DL (CTRL_REG1 0x47)
+[a80211] display on (SpringBoard) -> com.apple.iokit.hid.displayStatus
+[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000
+[input] screen on: polling at 60 Hz
+[mcu] POWER held: iOS power-off slider
+[input] key 30 down @33065
+[mcud] seq 12724: battery 7% flags e2 volume 0 3D 0 irq 0000000f home 14 power 1/1 shell 0/0
+[hb] t=879s quiet 0s | abs 8430315 dec 820047 timer 315023 irq 354464 vbl 39065 | md0 7662 req 126557 KiB 0 err
+[hb]  clock: arm11 watchdog +849163 ms vs arm9 timer +849163 ms (ratio 1000/1000)
+[hb]  pc u003d2e90 u003d2e80 u003d2e90 u003d2e90 u003d2e88 k80068010 u003d2e90 u003d2e90
+[mcu] POWER hold released
+[input] key 30 up @33192
+[input] down 65,94
+[gpu] mirror: 627 frames in 30 s (20.9 fps); GPU per frame: upload 8420 us, draw 5956 us, read-out 5808 us; frame avg 14986 us (max 37097, incl. IRQ latency); ARM11 IRQ time 46 us/frame in 4567 steps; 819 busy skips, 0 timeouts
+[gpu] spot check (GPU copy): 0 of 256 sampled LCD pixels differ from the iOS framebuffer
+[input] up 191,58
+[input] down 35,84
+[input] up 205,46
+[input] down 66,90
+[mcud] seq 12835: battery 7% flags e2 volume 0 3D 0 irq 0000000f home 14 power 1/1 shell 0/0
+[input] up 245,75
+[input] down 68,87
+[input] up 245,56
+[input] down 53,76
+[input] up 149,67
+[input] down 83,411
+[input] up 80,410
+[input] down 90,436
+[input] up 91,437
+[input] down 116,422
+
