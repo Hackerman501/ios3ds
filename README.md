@@ -32,7 +32,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Cydia | pre-installed |
 | ✅ | Screen rotation (accelerometer) | |
 | ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
-| ⚠️ | Cameras (Camera.app, back and front) | live picture from both cameras since build m1-0.3.0-43 (about 12 fps); the preview still repeats a 1-2 s loop, the picture sometimes shifts sideways, and taking a photo doesn't work yet: being fixed |
+| ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
@@ -182,7 +182,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 - **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
 - **Tweaks (Cydia Substrate):** Substrate is pre-installed and held at its version; don't remove or "upgrade" it in Cydia. Tweaks load into SpringBoard and apps, not into system daemons (injecting into launchd hangs iOS 4.2.1 on the 3DS, so ios3ds blocks it and repairs `/etc/launchd.conf` at boot).
 - **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
-- **Cameras:** data arrives on hardware (run 29), but the preview misbehaves (one wiggling frame); being narrowed down with frame dumps (build 44). No video recording and no 3D photos.
+- **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
 - **No hardware for:** Bluetooth (the 3DS has none), the 3D screen, IR, NFC.
 - **Updates reset iOS:** installing a new version rebuilds the iOS disk, so settings, saved Wi-Fi networks and installed Cydia packages start fresh.
 - **Leaving iOS** means holding POWER (a hard power-off); there is no clean shutdown back to the 3DS yet.

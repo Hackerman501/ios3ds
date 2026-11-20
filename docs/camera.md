@@ -270,7 +270,7 @@ CAM1 `4600`, then data in variant 0.
 (SEQ_STATE 3, parallel output on, awake), yet neither block ever sees sync or
 data in any variant; CFG11 bit 1 does not stick; CAM_CNT bit 4 sticks on CAM0
 but not on CAM1. Now: variants with the DSi's CAM_CNT init bits (8-10) and a
-**boot self-test** (`diag=1`, before XNU): every sensor x every block set-up
+**boot self-test** (`cam_test=1` in boot.cfg, before XNU; until build 60 it ran with `diag=1`): every sensor x every block set-up
 (and two sensor-side variants), one `[cam-test]` line each, `<-- DATA` where
 anything arrives.
 

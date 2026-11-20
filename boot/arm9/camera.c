@@ -337,7 +337,7 @@ static void dump_frames(void)
 
 
 
-/* Boot self-test (boot.cfg diag=1; before XNU, the shim is not running yet):
+/* Boot self-test (boot.cfg cam_test=1; before XNU, the shim is not running yet):
    for each sensor, bring it up and try every CAM block set-up variant on
    both blocks, 200 ms each, reading CAM_STAT's fill/overrun (the ARM9 can
    read the registers, only the FIFO window is ARM11-only). Then two sensor
@@ -380,7 +380,7 @@ static void selftest(void)
     static const u8 order[3] = { CAM_OUTER, CAM_INNER, 2 };
     char what[40];
     u32 hits = 0;
-    log_ok("[cam-test] boot self-test (diag=1): each sensor x CAM set-up, both blocks, 200 ms each\n");
+    log_ok("[cam-test] boot self-test (cam_test=1): each sensor x CAM set-up, both blocks, 200 ms each\n");
     for (u32 k = 0; k < 3; k++) {
         const camdev_t *c = &cams[order[k]];
         u32 err;

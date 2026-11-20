@@ -136,6 +136,7 @@ typedef struct {
     int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
     u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
     u32 camera;          /* 0 = never touch the cameras (docs/camera.md) */
+    u32 cam_test;        /* 1 = camera self-test matrix before XNU (~6 s; docs/camera.md section 7) */
     u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
     u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
     u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
@@ -207,7 +208,7 @@ static int parse_bootcfg(char *txt)
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
-        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera },
+        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
         { "n3ds_ram", &cfg.n3ds_ram },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
@@ -1063,7 +1064,7 @@ void a9_main(int argc, char **argv)
     mcu_set_led(cfg.notify_led != 0);
     audio_set_mic(cfg.mic != 0);
     audio_set_hp_route(cfg.hp_route != 0);
-    camera_init(cfg.shim_pa, cfg.camera != 0, cfg.diag != 0);   /* docs/camera.md */
+    camera_init(cfg.shim_pa, cfg.camera != 0, cfg.cam_test != 0);   /* docs/camera.md */
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
