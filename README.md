@@ -23,31 +23,31 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | | Feature | Notes |
 |:-:|---|---|
 | ✅ | Boot to the home screen, built-in apps | about a minute from power-on |
-| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls); slide to unlock and popups over apps work since build m1-0.3.0-27 |
+| ✅ | Touchscreen, HOME, POWER, START/SELECT, L/R | see [Controls](#controls); slide to unlock and popups over apps work |
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically; stays connected (the router's group key renewal is answered since build m1-0.3.0-27) |
+| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically by the launcher (or the GodMode9 script); stays connected through the router's key renewals |
+| ✅ | Safari | loads pages; big pages can fail with "Cannot allocate memory" (a retry usually works), being worked on |
 | ✅ | Cydia | pre-installed |
-| ✅ | Screen rotation (accelerometer) | portrait came up upside down: fixed for the next build |
-| ✅ | D-pad page swipes | turned 90° to match the upright iOS screen |
-| ⚠️ | Cameras | real sensor data now flows (run 29: ~12 fps into Camera.app, 0 overruns), but the preview shows one wiggling frame; build 44 adds frame dumps to localize the fault |
-| ✅ | Circle pad scrolling | in the direction of the upright iOS screen |
+| ✅ | Screen rotation (accelerometer) | |
+| ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
+| ⚠️ | Cameras (Camera.app, back and front) | live picture from both cameras since build m1-0.3.0-43 (about 12 fps); the preview still repeats a 1-2 s loop, the picture sometimes shifts sideways, and taking a photo doesn't work yet: being fixed |
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
-| 🧪 | Cydia Substrate (tweaks) | SpringBoard and unsandboxed apps; see [docs/cydia.md](docs/cydia.md) |
+| 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
-| ❌ | 3D screen, IR, NFC, video recording | Currently unplanned |
+| ❌ | 3D screen, IR, NFC, video recording | currently unplanned |
 
-✅ works on a real 3DS · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
+✅ works on a real 3DS · ⚠️ works on a real 3DS with known problems · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
 ### Compatibility
 
 | Console | Status |
 |---|---|
 | **Old 3DS** | ✅ supported, the main test console |
-| **Old 3DS XL** | ✅ supported (same hardware as the Old 3DS) |
+| **Old 3DS XL** | ✅ boots to the home screen ([#7](https://github.com/devilAPI/ios3ds/issues/7); release 0.3.0 could panic in the accelerometer driver right after boot, fixed in `main`) |
 | **Old 2DS** | ✅ supported (same hardware as the Old 3DS) |
 | **New 2DS XL** | ✅ boots to the home screen with sound, power button, battery and Wi-Fi ([#1](https://github.com/devilAPI/ios3ds/issues/1), [#5](https://github.com/devilAPI/ios3ds/issues/5)) |
 | New 3DS, New 3DS XL | untested; expected to behave like the New 2DS XL. On New models ios3ds runs the CPU at 804 MHz; the extra CPU cores and RAM are not used |
