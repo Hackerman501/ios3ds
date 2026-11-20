@@ -75,7 +75,7 @@ static void reboot(void)
  * first (costs nothing), then FSPXI over the "PxiFS0" session borrowed with
  * Luma3DS's svcControlService (SVC 0xB0), as Checkpoint archive.cpp does.
  * Both are opened FS_OPEN_READ only; the archive cannot be written anyway. */
-static const u32 nwm_arch[4] = { (u32)NWM_TID, (u32)(NWM_TID >> 32), MEDIATYPE_NAND, 0 };
+static u32 nwm_arch[4];                /* {title id low, high, MEDIATYPE_NAND, 0}: set per title */
 static const u32 nwm_file[5] = { 0, 0, 1, 0x646F632E /* ".cod" */, 0x00000065 /* "e\0\0\0" */ };
 static const u32 nwm_file2[5] = { 0, 0, 2, 0x646F632E, 0x00000065 };
 /* Luma3DS's loader (sysmodules/loader/source/loader.c): archive 0x2345678E
@@ -84,7 +84,7 @@ static const u32 nwm_file2[5] = { 0, 0, 2, 0x646F632E, 0x00000065 };
    Hardware (issue #5, New 2DS XL): the 0x2345678A layout above gave
    E0E046BE (FS InvalidPath) from both FS and FSPXI. */
 #define ARCHIVE_SAVEDATA_AND_CONTENT2_ID 0x2345678E
-static const u32 nwm_arch2[4] = { (u32)NWM_TID, (u32)(NWM_TID >> 32), MEDIATYPE_NAND, 0 };
+#define nwm_arch2 nwm_arch              /* FS_ProgramInfo has the same 16-byte layout */
 static const u32 nwm_file3[3] = { 1, 0x646F632E, 0x00000065 };
 
 typedef struct { u32 archive; const void *ap; u32 al; const void *fp; u32 fl; const char *name; } nwmpath_t;
@@ -189,9 +189,11 @@ static void frame(void)
    one red line; nothing is left behind and the launch goes on (Wi-Fi off). */
 /* one line for the ARM9 to put into log.txt (issue #5: Wi-Fi greyed out, and
    log.txt could not say why the launcher's copy did not happen) */
+static const char *job_status_path;     /* status file of the job running now */
+
 static void fw_status(const char *fmt, ...)
 {
-    FILE *f = fopen(FWSTATUS, "w");
+    FILE *f = fopen(job_status_path ? job_status_path : FWSTATUS, "w");
     if (!f) return;
     va_list ap;
     va_start(ap, fmt);
@@ -202,22 +204,56 @@ static void fw_status(const char *fmt, ...)
     fclose(f);
 }
 
-static bool fetch_nwm_code(void)
+/* A system title whose ExeFS .code the launcher copies to the SD card, read-only:
+   NWM (the Wi-Fi firmware source, read by the ARM9 at every boot) and the CAMERA
+   sysmodule (its camera start-up sequence is not documented anywhere;
+   docs/camera.md). */
+typedef struct {
+    const char *what;           /* on-screen name */
+    u64 tid[2];                 /* tried in order (0 = none) */
+    const char *dst, *tmp, *status, *alt;   /* alt: skip if this file exists too */
+    u32 min, max;
+} codejob_t;
+
+static const codejob_t job_nwm = {
+    "Wi-Fi firmware (NWM .code)", { NWM_TID, 0 }, NWMCODE, NWMTMP, FWSTATUS, WIFIFW, NWM_MIN, NWM_MAX,
+};
+static const codejob_t job_cam_old = {
+    "camera module (CAMERA .code)", { 0x0004013000001602ULL, 0 },
+    "sdmc:/ios3ds/cam.code", "sdmc:/ios3ds/cam.code.tmp", "sdmc:/ios3ds/camcode-status.txt", NULL,
+    16u << 10, 4u << 20,
+};
+static const codejob_t job_cam_new = {   /* New 3DS: its own CAMERA variant first */
+    "camera module (CAMERA .code)", { 0x0004013020001602ULL, 0x0004013000001602ULL },
+    "sdmc:/ios3ds/cam.code", "sdmc:/ios3ds/cam.code.tmp", "sdmc:/ios3ds/camcode-status.txt", NULL,
+    16u << 10, 4u << 20,
+};
+
+/* Returns true when the file is on the card afterwards. Every failure prints
+   one red line and leaves nothing behind. */
+static bool fetch_code(const codejob_t *j)
 {
-    if (exists(NWMCODE) || exists(WIFIFW)) return true;
-    printf("Wi-Fi firmware: reading NWM .code\nfrom this console (read-only)...\n");
+    if (exists(j->dst) || (j->alt && exists(j->alt))) return true;
+    job_status_path = j->status;
+    printf("%s: reading it\nfrom this console (read-only)...\n", j->what);
     frame();
 
     nwmsrc_t s;
-    Result ue = 0, r = src_open(&s, &ue);
+    Result ue = 0, r = -1;
+    u64 tid = 0;
+    char all[320] = "";
+    for (int t = 0; t < 2 && j->tid[t]; t++) {
+        tid = j->tid[t];
+        nwm_arch[0] = (u32)tid; nwm_arch[1] = (u32)(tid >> 32); nwm_arch[2] = MEDIATYPE_NAND; nwm_arch[3] = 0;
+        r = src_open(&s, &ue);
+        size_t n = strlen(all);
+        snprintf(all + n, sizeof(all) - n, "%s%08lx%08lx: %s", n ? " | " : "",
+                 (unsigned long)(tid >> 32), (unsigned long)tid, nwm_tried);
+        if (R_SUCCEEDED(r)) break;
+    }
     if (R_FAILED(r)) {
-        if (s.pxi) {
-            printf("\x1b[31mWi-Fi fw: cannot open NWM .code:\n%s\nWi-Fi off\x1b[0m\n\n", nwm_tried);
-            fw_status("cannot open NWM .code: %s", nwm_tried);
-        } else {
-            printf("\x1b[31mWi-Fi fw: cannot open NWM .code\n(no Luma3DS for FSPXI):\n%s\nWi-Fi off\x1b[0m\n\n", nwm_tried);
-            fw_status("cannot open NWM .code (no Luma3DS for FSPXI): %s", nwm_tried);
-        }
+        printf("\x1b[31m%s: cannot open it:\n%s\x1b[0m\n\n", j->what, all);
+        fw_status("cannot open %s: %s", j->what, all);
         return false;
     }
     u64 sz64 = 0;
@@ -225,7 +261,7 @@ static bool fetch_nwm_code(void)
     const char *why = NULL;
     u32 got = 0;
     if (R_FAILED(r = src_size(&s, &sz64))) why = "size query failed";
-    else if (sz64 < NWM_MIN || sz64 > NWM_MAX) why = "unexpected size";
+    else if (sz64 < j->min || sz64 > j->max) why = "unexpected size";
     else if (!(buf = memalign(0x1000, (u32)sz64))) why = "out of memory";
     else {
         u32 sz = (u32)sz64;
@@ -245,28 +281,29 @@ static bool fetch_nwm_code(void)
     src_close(&s);
 
     if (!why) {
-        FILE *f = fopen(NWMTMP, "wb");
-        if (!f) why = "cannot create " NWMTMP;
+        FILE *f = fopen(j->tmp, "wb");
+        if (!f) why = "cannot create the file";
         else {
             bool ok = fwrite(buf, 1, got, f) == got;
             ok = fclose(f) == 0 && ok;
             if (!ok) why = "SD write failed";
-            else if (rename(NWMTMP, NWMCODE) != 0) why = "rename failed";
+            else if (rename(j->tmp, j->dst) != 0) why = "rename failed";
         }
-        if (why) remove(NWMTMP);
+        if (why) remove(j->tmp);
     }
     if (buf) {
         memset(buf, 0, (u32)sz64);              /* Nintendo's code stays only on the card */
         free(buf);
     }
     if (why) {
-        printf("\x1b[31mWi-Fi fw: %s (%08lX, %llu bytes):\nWi-Fi off\x1b[0m\n\n", why,
+        printf("\x1b[31m%s: %s (%08lX, %llu bytes)\x1b[0m\n\n", j->what, why,
                (unsigned long)r, (unsigned long long)sz64);
-        fw_status("%s (%08lX, %llu bytes)", why, (unsigned long)r, (unsigned long long)sz64);
+        fw_status("%s: %s (%08lX, %llu bytes)", j->what, why, (unsigned long)r, (unsigned long long)sz64);
         return false;
     }
-    fw_status("copied NWM .code (%lu bytes, via %s; %s)", (unsigned long)got, s.pxi ? "FSPXI" : "FS", nwm_tried);
-    printf("Wrote %s\n(%lu bytes). Keep it private.\n\n", NWMCODE + 5, (unsigned long)got);
+    fw_status("copied %s from %08lx%08lx (%lu bytes, via %s; %s)", j->what, (unsigned long)(tid >> 32),
+              (unsigned long)tid, (unsigned long)got, s.pxi ? "FSPXI" : "FS", nwm_tried);
+    printf("Wrote %s\n(%lu bytes). Keep it private.\n\n", j->dst + 5, (unsigned long)got);
     return true;
 }
 
@@ -312,7 +349,10 @@ int main(void)
         printf("Missing %s\n\nCopy build/sd/ from the ios3ds build\n"
                "to the SD card first.\n\nSTART: exit\n", !have_self ? SELF : BOOT);
     } else {
-        fetch_nwm_code();
+        fetch_code(&job_nwm);
+        bool n3ds = false;
+        APT_CheckNew3DS(&n3ds);
+        fetch_code(n3ds ? &job_cam_new : &job_cam_old);
         printf("Boots iOS (ios3ds) on this console.\n\n"
                "The 3DS reboots into ios3ds. Luma stays\n"
                "your boot.firm afterwards: ios3ds puts it\n"
