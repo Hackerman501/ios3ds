@@ -54,7 +54,7 @@ SOURCES = [
     "kernel/dtgen.py", "kernel/patcher.py", "kernel/patches*.json",
     "tools/ios3ds-audio/dt_audio.py", "tools/ios3ds-mcu/dt_mcu.py",
     "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
-    "scripts/cydia.py", "scripts/certs.py", "scripts/music.py", "rootfs/recipe.json", "rootfs/cydia.json",
+    "scripts/cydia.py", "scripts/certs.py", "scripts/music.py", "scripts/carryover.py", "rootfs/recipe.json", "rootfs/cydia.json",
     "rootfs/files/*", "rootfs/certs/roots.pem", "rootfs/certs/roots-ec.pem",
     "README.md", "LICENSE", "docs/INSTALL.md",
 ]
