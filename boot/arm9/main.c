@@ -1071,6 +1071,8 @@ void a9_main(int argc, char **argv)
     }
     stamp("Wi-Fi, audio, MCU, GPU set up");
     n3ds_setup();                   /* model, 804 MHz, L2, timer calibration (docs/n3ds.md) */
+    if (cfg.shim[0] && cfg.shim_pa)     /* SELECT+START word: outside shim.bin, whatever RAM held */
+        *(vu32 *)(cfg.shim_pa + SHIM_PANIC_REQ) = 0;
     exthid_init(cfg.n3ds_hid != 0 && (n3ds_res & N3RES_NEW), cfg.diag != 0, T9_HZ);
     stamp("New 3DS check");
     if (!cfg.jump) {

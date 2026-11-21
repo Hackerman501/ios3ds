@@ -29,6 +29,7 @@
     .arm
     .section .text, "ax"
 
+    .equ SHIM_PANIC_REQ, 0x6500         @ boot/common/ios3ds.h: SELECT+START request, written by the ARM9 only
     .equ SHIM_SIZE,     0x10000         @ ring header follows the shim region
     .equ RING_SIZE_OFF, 4
     .equ RING_HEAD_OFF, 8
@@ -104,7 +105,7 @@ st_l1_old:      .word 0             @ +0x5C L1 entry found at PRIV_VA before we 
 irq_save0:      .word 0             @ +0x60 
 irq_save1:      .word 0             @ +0x64 
 irq_save2:      .word 0             @ +0x68 
-st_panic_req:   .word 0             @ +0x6C ARM9 sets 1: panic (dumps all thread backtraces)
+st_panic_req:   .word 0             @ +0x6C unused (the SELECT+START request moved to +0x6500)
 cfg_vic0_pa:    .word 0             @ +0x70 fake VIC0 page PA (patched in by mkboot)
 cfg_clcd_pa:    .word 0             @ +0x74 fake CLCD page PA (patched in by mkboot)
     .global cfg_clcd_pa                 @ (kernel/shim/pica.c: the GPU mirror reads the CLCD page too)
@@ -509,7 +510,19 @@ shim_get_decrementer:
 
 @ void set_decrementer(u32 ticks /* r0 */, cpu_data *r3) - normal kernel context
 shim_set_decrementer:
-    ldr r2, st_panic_req
+    @ SELECT+START: the ARM9 writes 1 to its own line at shim+0x6500 (it
+    @ was +0x6C, in the line of irq_save0-2 and st_vblanks: the ARM11 kept
+    @ that line dirty and its write-back put the 0 back over the ARM9's 1, so
+    @ the request was lost: New 2DS XL run 1). Only the ARM9 writes this
+    @ line; drop our copy (New 3DS L2 first) and read RAM.
+    push {r0, r1, r3, lr}
+    ldr r0, =(_shim_base + SHIM_PANIC_REQ)
+    mov r1, #4
+    bl shim_l2_inv_kva
+    ldr r2, =(_shim_base + SHIM_PANIC_REQ)
+    mcr p15, 0, r2, c7, c6, 1
+    ldr r2, [r2]
+    pop {r0, r1, r3, lr}
     cmp r2, #0
     bne shim_user_panic
     push {r0, r3, r4, lr}
@@ -604,8 +617,11 @@ st_l2_inv:  .word 0                 @ shim_l2_inv calls that reached the L2C (de
     .global st_l2_inv
 
 shim_user_panic:
+    ldr r1, =(_shim_base + SHIM_PANIC_REQ)
     mov r2, #0
-    str r2, st_panic_req
+    str r2, [r1]
+    mcr p15, 0, r1, c7, c14, 1      @ back to RAM: the line must not stay dirty here
+    mcr p15, 0, r2, c7, c10, 4
     adr r0, panic_msg
     ldr r12, =0x80015c7d            @ _panic (Thumb)
     blx r12

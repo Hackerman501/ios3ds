@@ -60,7 +60,7 @@ If the ARM9 doesn't take part, the stub uses the ratio from the clock mode. The 
 ### Why it is off by default
 1. **The L2 is an outer cache, and XNU doesn't know it exists.** The S5L8720 has none, so XNU's cache maintenance stops at L1. XNU maps RAM as TEX=000 C=1 B=1, outer and inner write-back, no write-allocate: the kernel's 16 MiB supersections are built at kernelcache file offset 0x660a0. With the L2 on, every agent that is not the ARM11 CPU sees stale RAM unless someone cleans or invalidates the L2 for it. Those agents are the ARM9 (all mailboxes), the GPU (arena, mirror, present), and CSND and the cameras through the shim.
 2. **QEMU models no caches.** It can show that the maintenance calls happen, but not that they are enough.
-3. Some reads of ARM9-written memory have no invalidate at all, because L1 eviction was good enough. `st_panic_req` (SELECT+START) is one; a 2 MiB L2 holds such lines far longer.
+3. Reads of ARM9-written memory need an invalidate of both levels. The SELECT+START word had none, and shared its line with words the ARM11 writes, so it never worked reliably (re-log 77); it now has its own line at shim+0x6500, invalidated in the L2 and L1 before every read.
 
 ### What `n3ds_l2=1` does
 The stub enables the L2C-310 at 0x17E10000 before XNU starts, in a mode that avoids the worst case:
@@ -84,7 +84,7 @@ That leaves one direction: RAM the ARM9 or the GPU wrote, read by the ARM11. Eve
 | PRESENT into a user surface | L2 inv of the surface's PA before the GPU writes | `kernel/shim/pica.c` |
 | log ring, IRQ samples, probe snapshot, mailbox writes, PCM ring, command lists | ARM11 → ARM9 only: write-through covers them | `entry.S`, etc. |
 | page-table walks | TTBR0/1 = base \| 0x18 (outer WB), so walks go through the L2 and see L1 cleans | kernelcache 0x66bc0 |
-| `st_panic_req` (SELECT+START) | **none**: may react late or not at all with L2 on | `entry.S` |
+| SELECT+START word (shim+0x6500, its own line) | `shim_l2_inv_kva` + L1 invalidate before each read | `entry.S` (`shim_set_decrementer`) |
 | `/vram`, fake S5L pages (AXI WRAM), IO | device or uncached mappings: L2 not involved | |
 
 Still unverified on hardware:

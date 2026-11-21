@@ -21,7 +21,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 |---|---|
 | 0x20001000 | kernelcache, flat image with patches applied (8.1 MB) |
 | after the kernel | device tree, then boot_args |
-| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x7E00 camera mailbox ([camera.md](camera.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
+| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x6500 SELECT+START request (one line, written by the ARM9 only), +0x7E00 camera mailbox ([camera.md](camera.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
 | 0x20850000 | XNU log ring (256 KB) |
 | 0x208A0000 | network mailbox (docs/wifi.md) |
 | 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
