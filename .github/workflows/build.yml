@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/toolchain
-          key: ios-toolchain-${{ runner.os }}-ubuntu-24.04-${{ hashFiles('scripts/build-ios-toolchain.sh') }}
+          key: ios-toolchain-${{ runner.os }}-ubuntu-24.04-${{ hashFiles('scripts/build-ios-toolchain.sh', 'scripts/ios-sdk-symbols.json') }}
       - name: Build the toolchain (cctools/ld64, ldid, compiler-rt; stub SDK from scripts/ios-sdk-symbols.json)
         run: |
           scripts/build-ios-toolchain.sh

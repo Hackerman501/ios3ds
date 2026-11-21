@@ -258,6 +258,7 @@
     "_pthread_mutex_lock",
     "_pthread_mutex_unlock",
     "_puts",
+    "_read",
     "_realloc",
     "_recv",
     "_send",
