@@ -29,7 +29,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
 | ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically by the launcher (or the GodMode9 script); stays connected through the router's key renewals |
 | ✅ | Safari | loads pages; big pages can fail with "Cannot allocate memory" (a retry usually works), being worked on |
-| ✅ | Cydia | pre-installed |
+| ✅ | Cydia | pre-installed, on the first home screen page |
 | ✅ | Screen rotation (accelerometer) | |
 | ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
 | ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos |
