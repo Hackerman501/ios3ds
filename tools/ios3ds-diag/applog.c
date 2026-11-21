@@ -25,6 +25,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <dlfcn.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -400,7 +401,6 @@ static void * gps_timer = NULL;
 static int gps_hooks_installed = 0;
 static int gps_logging = 0;
 
-#include <stdarg.h>
 static void gps_log(const char *fmt, ...)
 {
     if (!gps_logging) return;

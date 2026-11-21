@@ -1,5 +1,5 @@
 /*
- * ios3ds-gpstest: a tiny CLLocationManager client for QEMU (re-log 81).
+ * ios3ds-gpstest: a tiny CLLocationManager client for QEMU (re-log 83).
  *
  * It is launched by com.ios3ds.gpstest.plist through
  * "ios3ds-diag -g ios3ds_gps", so it only runs when boot.cfg has a gps= key.
