@@ -42,6 +42,9 @@ kern_return_t mach_port_type(mach_port_t task, mach_port_t name, unsigned *type)
 kern_return_t mach_port_deallocate(mach_port_t task, mach_port_t name);
 int sysctl(int *name, unsigned namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 int sysctlnametomib(const char *name, int *mibp, size_t *sizep);
+int sync(void);
+int reboot(int howto);
+#define RB_HALT 0x08            /* Darwin sys/reboot.h: halt after the BSD shutdown path */
 #define MACH_PORT_TYPE_DEAD_NAME 0x100000u
 
 /* ---- IOKit HID event SPI (IOKit.framework, 4.2.1 armv6) -------------
@@ -533,6 +536,8 @@ int main(int argc, char **argv)
     int mib[8], mcumib[8], i;
     size_t mculen = 8;
     int have_mcu = 0, screen_off = 0;
+    uint32_t last_power_holds = 0;
+    int mcu_seen = 0, poweroff_started = 0;
     size_t miblen = 8, len;
     inmbox_t box;
     insample_t state;
@@ -639,6 +644,29 @@ int main(int argc, char **argv)
                 int off = mb.ps_on && mb.screen_off;
                 if (off != screen_off && opt_debug) say("[input] screen %s: polling at %d Hz", off ? "off" : "on", off ? 10 : 60);
                 screen_off = off;
+                /* The MCU's POWER-held IRQ arrives while the key is still down
+                   (3 s in QEMU, before the console's ~10 s hard cut). The ARM9
+                   counts those events in mcubox.power_holds; use the count to
+                   start iOS's own clean shutdown instead of waiting for the
+                   user to drag "slide to power off". reboot(RB_HALT) is the
+                   same call launchd makes after its shutdown handlers have
+                   unmounted the file systems, so md0 ends up clean. Adopt the
+                   first value (a POWER press held through boot is not a
+                   shutdown request). */
+                if (!poweroff_started) {
+                    if (!mcu_seen) {
+                        last_power_holds = mb.power_holds;
+                        mcu_seen = 1;
+                    } else if (mb.power_holds != last_power_holds) {
+                        last_power_holds = mb.power_holds;
+                        poweroff_started = 1;
+                        say("[input] POWER held on the 3DS (count %u): sync + clean shutdown",
+                            (unsigned)mb.power_holds);
+                        sync();
+                        reboot(RB_HALT);
+                        say("[input] reboot(RB_HALT) returned; leaving shutdown to the slider");
+                    }
+                }
             }
         }
         {

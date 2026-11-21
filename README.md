@@ -140,7 +140,8 @@ Alternatively, hold **START** while powering on and pick `ios3ds` in Luma's chai
 | **X** | screen layout: iOS on top + touch copy below → iOS on the bottom only → iOS on top only |
 | **C-stick** (New 3DS) | like the D-pad: flick ← → = previous / next page, ↑ ↓ = scroll by about a page |
 | **ZL / ZR** (New 3DS) | scroll to the top / screenshot |
-| **POWER** (hold ~10 s) | leave iOS: the 3DS switches off; the next power-on is your normal Luma + HOME Menu |
+| **POWER** (hold ~3 s) | clean shutdown: iOS unmounts its disk and the 3DS powers off (same path as "slide to power off") |
+| **POWER** (hold ~10 s) | hardware power cut if iOS is stuck; the next power-on is your normal Luma + HOME Menu |
 | SELECT + START (hold) | debugging only: crash iOS on purpose and write a report to the log |
 
 ---
@@ -200,7 +201,7 @@ rebooting; details and limits: [docs/location.md](docs/location.md).
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
 - **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically by the installer; installed Cydia packages and the Music library are not (reinstall packages after updating). Use `--fresh` (installer) to start with a clean disk.
 - **No hardware for:** Bluetooth (the 3DS has none), GPS, the 3D screen, IR, NFC. A user-set fake location works in CoreLocation apps ([docs/location.md](docs/location.md)).
-- **Leaving iOS** means holding POWER (a hard power-off); there is no clean shutdown back to the 3DS yet.
+- **Leaving iOS:** a short POWER press locks/unlocks; holding it for about 3 s now starts iOS's own clean shutdown (the same path as "slide to power off") and switches the 3DS off through the MCU. Holding it for ~10 s still forces a hard power cut if iOS is stuck. Apple's boot-time `fsck` cannot check the root disk (`/dev/md0` is already mounted, `EBUSY`); the ARM9 instead logs at boot whether `rootfs.hfs` was cleanly unmounted and sets that flag after a clean shutdown ([docs/mcu.md](docs/mcu.md) §12). A hard cut can still damage files: back up your card.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 
 ---

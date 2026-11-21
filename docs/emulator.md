@@ -23,7 +23,7 @@ on the console.
 | SD | TMIO host at 0x10006000 (the command, status, FIFO32 and auto-CMD12 subset that Normmatt's driver uses) on top of QEMU's real SD card model (`-drive if=sd`) |
 | Screens | PDC0/PDC1 framebuffer registers; formats 0–4, rotated storage; a 400×480 display (top screen above bottom). `screendump` gives PNGs. |
 | Buttons | HID at 0x10146000. Keyboard: A=a, B=s, X=x, Y=y, L=q, R=w, START=Enter, SELECT=Backspace, plus the arrow keys |
-| MCU (I2C bus 2, 0x4A) | IRQs, RTC from the host clock, battery, sliders, accelerometer, power off (QEMU exits). Keys: HOME=h, POWER=p ("held" after 3 s), volume slider -/=, shell c, turn the console [ / ]. QOM properties on `/machine` for tests: `mcu-battery`, `mcu-charging`, `mcu-volume`, `mcu-shell-open`, `mcu-orient`, `lcd-backlight` (read only). [mcu.md](mcu.md) §6 |
+| MCU (I2C bus 2, 0x4A) | IRQs, RTC from the host clock, battery, sliders, accelerometer, power off (QEMU exits). Keys: HOME=h, POWER=p ("held" after 3 s, which starts iOS's clean shutdown through `ios3ds-input`), volume slider -/=, shell c, turn the console [ / ]. QOM properties on `/machine` for tests: `mcu-battery`, `mcu-charging`, `mcu-volume`, `mcu-shell-open`, `mcu-orient`, `lcd-backlight` (read only). [mcu.md](mcu.md) §6, §12 |
 | Gyroscope (I2C bus 3, 0xD0) | ITG-3200 registers (WHO_AM_I, PWR_MGM sleep, GYRO_XOUT..ZOUT at 14.375 LSB per deg/s). QOM: `gyro-x`, `gyro-y`, `gyro-z` (millidegrees/s about the console's axes), `gyro-awake`, `gyro-reads` (read only). [mcu.md](mcu.md) §11 |
 | Cameras | Three MT9V113 sensors on I2C (0x10161000: 0x7A inner, 0x78 outer right; 0x10144000: 0x78 outer left; they answer only with CFG11_CAMERA_CNT bit 0), CAM0/CAM1 at 0x10120000/0x10121000, FIFO windows 0x10320000/0x10321000 (pop on address change, 0x500 units, overrun), a moving test pattern at 15 fps on the virtual clock (`ctr_cam.c`). Use `--icount 2`: with plain timing every frame overruns. `IOS3DS_CAM_LOG=1` logs register writes and transfers. [camera.md](camera.md) §5 |
 | LCD backlight | 0x10202240 / 0x10202A40; once written, the emulated screens are dimmed by it (and blacked out when the MCU switches a backlight off) |
@@ -105,6 +105,15 @@ makes Safari resolve a name, `--www DIR --urls a.html,b.html` serves saved
 pages, `--mem-size 0x06000000` gives XNU less RAM, `--new3ds` the New 3DS
 model with 256 MiB. Load errors are logged as `[applog] MobileSafari load
 error (…): domain code userInfo` (re-log 75).
+
+### Checking the root disk after a shutdown
+
+`python3 scripts/hfs_clean.py --sd build/sd.img` reads the HFS+ clean-unmount
+flag of `ios3ds/rootfs.hfs` from the SD image (exit 0 clean, 1 dirty, 2 no
+header). A killed QEMU leaves the flag clear; a clean shutdown from the slider
+or a long POWER press leaves it set, and the same image boots again
+([mcu.md](mcu.md) §12). Each test needs a fresh `build/sd.img`:
+`rm -f build/sd.img && make sdimg`.
 
 ### Scripted debugging: `emu/gdb/`
 The Arm gdb 14.2 has no Python and the host gdb has no ARM target, so the

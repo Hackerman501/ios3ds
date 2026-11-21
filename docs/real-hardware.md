@@ -10,7 +10,7 @@
 | Modifying FIRM0/FIRM1, boot9strap, Luma | **never** | Nothing writes to NAND (see above). ios3ds is just a payload file on SD that Luma chainloads into RAM. |
 | Persistent chip state (MCU, PMIC, CODEC) | none written | No I2C/MCU writes anywhere. The touch driver configures CODEC registers over SPI; those reset at power-off. |
 | SD card damage | possible, limited | The ARM9 writes only `sd:/ios3ds/log.txt`, `log_prev.txt` and `rootfs.hfs` (iOS's disk image), through FatFs. A power loss during a write can at worst corrupt that FAT volume, as with any homebrew. Mitigation: back up the SD card (or use a spare card). |
-| Hang / black screen | recoverable | Hold POWER for ~10 s to force the console off. ios3ds runs entirely from RAM, so the next normal boot is your usual Luma + HOME Menu. |
+| Hang / black screen | recoverable | Hold POWER for ~3 s to start a clean shutdown (if iOS still responds), or ~10 s to force the console off. ios3ds runs entirely from RAM, so the next normal boot is your usual Luma + HOME Menu. A hard cut can leave the HFS+ root image unclean; see §3. |
 | Battery / heat | low | Same as any long-running homebrew: no clock or voltage changes. |
 
 There is no software path back into NAND. The worst realistic outcome is a corrupted SD card, which you restore from your backup.
@@ -39,7 +39,7 @@ Every stage writes to the screen and to `sd:/ios3ds/log.txt`. The previous run i
 | 3: SpringBoard | – | Home screen on the top screen (turn the console 90° clockwise) | `[smp]` thread dumps in the log (boot.cfg `diag=1`, [boot-perf.md](boot-perf.md) §3); SELECT+START for a panic dump |
 | 4: input | START = Home, SELECT = lock, L/R = volume, touch on the bottom screen | Spotlight opens on Home; touches move or tap | Log lines `[input] …` and `tsc_ok` |
 
-To get back: hold POWER ~10 s, then power on normally.
+To get back: hold POWER ~3 s for a clean shutdown (iOS unmounts `rootfs.hfs`, then the MCU switches the console off), or ~10 s if iOS is stuck. Power on normally afterwards; the log's `[blk] rootfs.hfs:` line says whether the image was cleanly unmounted at the last boot.
 
 ## 4. Launching from the Homebrew Launcher (`.3dsx`)
 
@@ -64,7 +64,7 @@ boot9strap then boots ios3ds directly. Our FIRM header sets boot9strap's screen-
 - After the swap, ios3ds boots and restores Luma.
 - If anything is left over, the launcher sees `ios3ds/luma.firm` on its next start and offers **Y: restore Luma**.
 
-**To return to the HOME Menu:** hold POWER ~10 s, then power on; that boots Luma as usual.
+**To return to the HOME Menu:** hold POWER ~3 s for a clean shutdown, then power on; that boots Luma as usual. The ~10 s hardware cut remains as a last resort when iOS is unresponsive.
 
 **Tested:**
 - QEMU: the monitor restores a simulated swap (`launcher swap: restored, next boot is Luma`); iOS still boots with long-filename support enabled in FatFs.

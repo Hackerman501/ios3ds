@@ -22,6 +22,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "mcu.h"
+#include "blksrv.h"
 #include "i2c.h"
 #include "log.h"
 #include "util.h"
@@ -328,6 +329,11 @@ void mcu_poll(u32 now)
                  (int)total, w == n ? "ok" : "write failed");
         }
         if ((p == MCU_PWR_OFF || p == MCU_PWR_REBOOT) && !off_req) {
+            /* PEHaltRestart runs after iOS unmounted its file systems. XNU
+               normally sets the HFS+ clean flag itself; do it here too so a
+               clean shutdown always leaves the image marked clean, even if
+               Apple's unmount path skipped the volume header. */
+            blksrv_mark_clean();
             off_req = p;        /* let the monitor loop drain XNU's last lines first */
             off_at = now + ms_ticks(300);
         }

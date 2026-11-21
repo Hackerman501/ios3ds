@@ -2,6 +2,8 @@
 #pragma once
 #include "ios3ds.h"
 int blksrv_open(const char *path, u32 *sectors);
+/* Set the HFS+ clean-unmount flag after a clean iOS shutdown (see blksrv.c). */
+bool blksrv_mark_clean(void);
 bool blksrv_poll(void);
 void blksrv_stats(u32 *nserved, u32 *nerr);
 u32 blksrv_sectors(void);

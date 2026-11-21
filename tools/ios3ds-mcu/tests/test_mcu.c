@@ -28,6 +28,8 @@ void log_color(u32 color, const char *fmt, ...)
 }
 void log_flush(void) {}
 int sd_write_small(const char *path, const char *buf, u32 len) { (void)path; (void)buf; return (int)len; }
+static int clean_marks;
+bool blksrv_mark_clean(void) { clean_marks++; return true; }
 
 /* ---- fake MCU ------------------------------------------------------------ */
 static u8 regs[256];
@@ -94,6 +96,7 @@ static void fake_reset(void)
     irq = 0xFFFFFFFFu;          /* stale events from before the boot */
     dead = 0;
     writes_0x20 = -1;
+    clean_marks = 0;
 }
 
 static void test_rtc_math(void)
@@ -200,10 +203,11 @@ int main(void)
     CHECK(regs[0x40] == 1 && b->acc_samples > 0 && b->acc[0] == -0x4000, "accelerometer on, x %d", b->acc[0]);
     CHECK(b->ack_seq == b->req_seq, "request acknowledged");
 
-    /* iOS shut down: power off through reg 0x20 */
+    /* iOS shut down: mark the HFS+ volume clean, then power off through reg 0x20 */
     b->req_power = MCU_PWR_OFF;
     b->req_seq = b->req_seq + 1;
     run(100);
+    CHECK(clean_marks == 1, "rootfs clean flag set on the halt request (%d)", clean_marks);
     CHECK(writes_0x20 == -1, "power off waits for the log to drain");
     run(300);
     CHECK(writes_0x20 == 1, "power off write %d", writes_0x20);

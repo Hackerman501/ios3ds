@@ -14,7 +14,7 @@ assumptions it checks.
 | Brightness | LCD backlight PWM 0x10202240 / 0x10202A40 (ARM11) | SpringBoard's `DisplayBrightness` × `DisplayBrightnessFactor` → ios3ds-mcud → sysctl → shim | see §6 |
 | Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | Apple's AppleLIS302DL driver on an emulated LIS302DL (shim I2C register file) → SpringBoard orientation, UIAccelerometer | see §6.2 |
 | Gyroscope | ITG-3270 class chip on I2C bus 3 (not the MCU) | Apple's AppleLIS331DLH driver on a new `gyro` DT node, two vtable words patched → IOHID gyro events → CoreMotion (`CMMotionManager` gyro / deviceMotion) | see §11 |
-| iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9 | see §6 |
+| iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9; a long POWER press calls `reboot(RB_HALT)` from `ios3ds-input` | see §6, §12 |
 
 ## 1. Data path
 
@@ -71,14 +71,18 @@ mailbox (+0x6200..+0x63FF) and the free space below the GPU mirror mailbox
   or wake). The MCU's "held" IRQ → POWER down for 6 s, long enough for the
   input daemon's 0.8 s hold detection plus SpringBoard's 2.5 s timer with a
   lagging run loop → the "slide to power off" sheet (a late release is
-  ignored once the sheet is up).
+  ignored once the sheet is up). It also bumps `power_holds` in the mailbox:
+  `ios3ds-input` sees the new count and starts iOS's own clean shutdown with
+  `sync(); reboot(RB_HALT)` (§12), so there is no need to drag the slider. The
+  3DS's own ~10 s cut stays as the last resort.
 - **Shell:** close → POWER tap unless iOS' screen is already off; open →
   HOME tap if it is off. "Off" = the shim's last backlight level is 0
   (`backlight == 1`), so it follows iOS' own screen state. In both cases the
   two LCD backlights are also switched through MCU reg 0x22 (0x14 off,
   0x28 on), so the screens follow the shell even if iOS ignored the press.
-- **Power off:** on `req_power`, wait 300 ms (the monitor loop drains the
-  kernel's last log lines), sync the log, write reg 0x20 = 1.
+- **Power off:** on `req_power`, make sure the HFS+ clean-unmount flag is set
+  (§12), wait 300 ms (the monitor loop drains the kernel's last log lines),
+  sync the log, write reg 0x20 = 1.
 - **boot.cfg:** `mcu=0` disables all of it; `rtc_offset=N` is added to the
   RTC to get UTC (the 3DS RTC usually runs on local time: e.g. `-3600` for
   CET). iOS' own time zone (Settings → General → Date & Time) is separate.
@@ -183,7 +187,8 @@ committed: the screenshots show Apple's UI).
 | Battery | `ios3ds-mcu: battery 100%, charger, 4200 mV: IOPMPowerSource registered`; full battery with bolt → `qom-set mcu-charging off`, `mcu-battery 50` → half battery without bolt; `mcu-battery 15` → SpringBoard's "Low Battery, 20% of battery remaining" alert |
 | HOME | key `h` → `[input] key 40 down/up` → Spotlight (Home on page 1) |
 | POWER | `p` tap → `key 30` (lock); `p` held 5 s → `[mcu] POWER held: iOS power-off slider` → "slide to power off" sheet |
-| Shutdown | sliding the sheet → `launchd: System: About to call: reboot(RB_HALT).` → `[mcu] iOS shut down: log synced, powering off through the MCU` → the QEMU model's reg 0x20 write ends QEMU (§6.1) |
+| Shutdown | sliding the sheet → `launchd: System: About to call: reboot(RB_HALT).` → `[mcu] iOS shut down: log synced, powering off through the MCU` → the QEMU model's reg 0x20 write ends QEMU (§6.1); `rootfs.hfs` ends with the HFS+ clean flag set (§12) |
+| Long POWER press | `p` held 4 s → `[mcu] POWER held: iOS power-off slider`, `[input] POWER held on the 3DS (count 1): sync + clean shutdown` → `[mcu] iOS shut down: log synced, powering off through the MCU`; QEMU exits, rootfs clean (§12) |
 | Shell | `c` → `[mcu] shell closed: locking iOS (POWER tap); LCD backlights off` (both screens black); `c` → `[mcu] shell opened; LCD backlights on` |
 | Volume | `=` twice → `[mcud] volume slider 40/63 -> iOS volume 0.63`, `48/63 -> 0.76` |
 | Brightness | `[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000`, `ios3ds-mcu: LCD backlight as Luma left it: top 0x5f, bottom 0x5f`, `qom-get lcd-backlight` = 79 (0x4F); the screenshots are dimmed accordingly |
@@ -538,3 +543,66 @@ ios3ds-mcu: gyro off
   HID unit is deg/s (re-log §64). Without `gyro-interrupt-calibration` it
   also logged `CLDeviceMotion::startSensorFusion … Could not get gyro dt`;
   with the property that line is gone.
+
+## 12. Leaving iOS cleanly: POWER hold, HFS+ flag, and the fsck limitation
+
+**Short press / slider.** A POWER tap locks or wakes iOS. The "slide to power
+off" sheet (POWER held 2.5 s on an iPod) still goes through all of Apple's
+shutdown handlers: `launchd: System: About to call: reboot(RB_HALT).` →
+`PEHaltRestart` → our shim → ARM9 → MCU reg 0x20. The file systems have been
+unmounted by then, so HFS+ writes its volume header with the
+*kHFSVolumeUnmountedMask* bit set. QEMU with the user's exact recipe
+(`python3 emu/session.py key backspace 4`, then `python3 emu/session.py drag
+30 60 300 60 1.2`) ends in `[mcu] iOS shut down: log synced, powering off
+through the MCU`, and the next boot of the **same** image reaches SpringBoard.
+
+**Long press.** `boot/arm9/mcu.c` bumps `mcubox.power_holds` on every MCU
+"held" IRQ (bit 1 of regs 0x10–0x13). `ios3ds-input` already reads this
+mailbox to find out whether the screen is off; when the count changes it now
+does `sync(); reboot(RB_HALT)` (Darwin's RB_HALT = 0x08) and stops sending HID
+events. That is the same system call launchd makes, so the BSD shutdown path
+unmounts md0 and the 3DS powers off through the same shim/MCU route. In QEMU,
+holding `p` for 4 s from the home screen logs
+`[mcu] POWER held: iOS power-off slider`,
+`[input] POWER held on the 3DS (count 1): sync + clean shutdown`, then
+`[mcu] iOS shut down: log synced, powering off through the MCU`; the image is
+clean afterwards. The 3DS's own ~10 s hardware cut is untouched and still
+works when iOS is hung (in that case the clean flag cannot be written).
+
+**The clean-unmount flag** is the 32-bit big-endian attributes word at byte
+1028 of `rootfs.hfs` (volume header at 1024): bit 8 (0x0100) is set on a clean
+unmount, clear while mounted and after a hard cut. `boot/arm9/blksrv.c` reads
+it when it opens the image (before XNU mounts md0) and logs
+
+```
+[blk] rootfs.hfs: cleanly unmounted (attributes 0x80000100)
+```
+
+or, after a killed QEMU,
+
+```
+[blk] rootfs.hfs: NOT cleanly unmounted (attributes 0x80000000, bit 8 clear): the last iOS run
+was cut short. ...
+```
+
+On a clean halt (`req_power` from `PEHaltRestart`, after the unmount) the
+ARM9 sets the bit itself if XNU has not done so already. Host check:
+`python3 scripts/hfs_clean.py --sd build/sd.img` (exit 0 clean, 1 dirty, 2 no
+header). A QEMU image killed mid-run reads 0x80000000; a slider or long-press
+shutdown reads 0x80000100.
+
+**Apple's boot-time fsck cannot be made to run here.** Every boot logs
+`Running fsck on the boot volume...` followed by
+`GetMasterBlock: Error 16 opening /dev/md0` (EBUSY): launchd opens the *same*
+device XNU has already mounted as root, so the check is refused. Adding `ro`
+to the boot-args does not help (the mount still opens md0). Mounting the root
+read-only from the start and remounting it read-write after fsck would need
+changes to Apple's launchd/mount path; we do not patch that. The volume is
+not journaled, so a hard cut can still damage files: back up the SD card,
+prefer the clean shutdown, and treat the `[blk] ... NOT cleanly unmounted`
+line as a prompt to check the image. The ARM9 deliberately does **not** set
+the flag on a dirty image at boot — that would hide the damage. A cut during
+heavy boot-time writes can corrupt directory entries badly enough that
+launchd still stalls (`Bug: launchctl.c:3849 … lstat(de->d_name) != -1`); our
+boot-time log is the warning, but only a real `fsck_hfs` (or reinstalling the
+image) can repair that.

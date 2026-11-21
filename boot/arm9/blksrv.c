@@ -13,6 +13,49 @@ static DWORD clmt[32768];   /* 128 KiB: a 1 GiB image copied onto a busy card ca
 static bool open_ok;
 static u32 served, errors, sectors_moved;
 
+/* HFS+ volume header at byte 1024: 'H+' or 'HX', version, then the 32-bit
+   big-endian attributes. Bit 8 (kHFSVolumeUnmountedMask, 0x0100) is set by a
+   clean unmount and cleared at mount. Our image is not journaled and Apple's
+   launchctl fsck cannot open /dev/md0 while it is mounted (EBUSY, re-log 86),
+   so this bit is the only durable record of the last shutdown. Read it when
+   the image is opened (before XNU mounts md0) and set it again when iOS asks
+   us to halt: PEHaltRestart runs after the file systems were unmounted. */
+#define HFS_VH_OFF      1024u
+#define HFS_VH_ATTR     4u
+#define HFS_UNMOUNTED   0x0100u
+static bool vh_ok;
+static u32 vh_attrs;
+
+static void vh_read(void)
+{
+    u8 b[8];
+    UINT n = 0;
+    FRESULT r = f_lseek(&f, HFS_VH_OFF);
+    if (r == FR_OK) r = f_read(&f, b, sizeof b, &n);
+    vh_ok = r == FR_OK && n == sizeof b && b[0] == 'H' && (b[1] == '+' || b[1] == 'X');
+    if (vh_ok) vh_attrs = (u32)b[4] << 24 | (u32)b[5] << 16 | (u32)b[6] << 8 | b[7];
+}
+
+bool blksrv_mark_clean(void)
+{
+    if (!open_ok || !vh_ok) return false;
+    if (vh_attrs & HFS_UNMOUNTED) return true;         /* XNU already wrote it */
+    u32 clean = vh_attrs | HFS_UNMOUNTED;
+    u8 b[4] = { (u8)(clean >> 24), (u8)(clean >> 16), (u8)(clean >> 8), (u8)clean };
+    UINT n = 0;
+    FRESULT r = f_lseek(&f, HFS_VH_OFF + HFS_VH_ATTR);
+    if (r == FR_OK) r = f_write(&f, b, sizeof b, &n);
+    if (r == FR_OK && n != sizeof b) r = FR_DENIED;
+    if (r == FR_OK) r = f_sync(&f);
+    if (r == FR_OK) {
+        vh_attrs |= HFS_UNMOUNTED;
+        log_ok("[blk] rootfs.hfs: marked cleanly unmounted after iOS shutdown\n");
+    } else {
+        log_err("[blk] rootfs.hfs: could not set the clean flag (FRESULT %d)\n", (int)r);
+    }
+    return r == FR_OK;
+}
+
 /* md0 profile (boot.cfg ioprof=1/2, docs/boot-perf.md): 1 = one [io] line per
    second with md0 activity, 2 = also one [blk] line per request */
 static u32 prof_level, prof_hz;
@@ -80,6 +123,18 @@ int blksrv_open(const char *path, u32 *sectors)
     memset((void *)m, 0, sizeof(*m));
     FRESULT r = f_open(&f, path, FA_READ | FA_WRITE);
     if (r != FR_OK) return -(int)r;
+    vh_ok = false;
+    vh_attrs = 0;
+    vh_read();
+    if (!vh_ok)
+        log_warn("rootfs %s: no HFS+ volume header at byte %u: cannot check the clean-unmount flag\n",
+                 path, HFS_VH_OFF);
+    else if (!(vh_attrs & HFS_UNMOUNTED))
+        log_warn("[blk] rootfs.hfs: NOT cleanly unmounted (attributes 0x%08x, bit 8 clear): the last iOS run "
+                 "was cut short. Apple's fsck cannot check md0 while it is mounted (EBUSY), so the volume "
+                 "was mounted as-is; back up the image if files look wrong\n", vh_attrs);
+    else
+        log_ok("[blk] rootfs.hfs: cleanly unmounted (attributes 0x%08x)\n", vh_attrs);
     f.cltbl = clmt;
     clmt[0] = ARRAY_SIZE(clmt);
     r = f_lseek(&f, CREATE_LINKMAP);
