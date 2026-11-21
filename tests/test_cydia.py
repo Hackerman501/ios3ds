@@ -146,6 +146,30 @@ class Manifest(unittest.TestCase):
         self.assertIn('"rootfs/cydia.json"', rel)
         self.assertNotIn(".deb", rel)                         # never shipped
 
+    def test_icon_state(self):
+        """Cydia on the first home screen page, Apple's layout otherwise unchanged (re-log 77)"""
+        with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
+            recipe = json.load(f)
+        st = recipe["cydia_plist_write"]["/private/var/mobile/Library/SpringBoard/IconState.plist"]
+        plistlib.dumps(st)                                    # serialisable as written
+        pages = st["iconLists"]
+        self.assertIn("com.saurik.Cydia", pages[0])
+        self.assertTrue(all(len(p) <= 16 for p in pages))     # 4x4 grid on the iPod's screen
+        self.assertLessEqual(len(st["buttonBar"]), 4)
+        ids = list(st["buttonBar"])
+        folders = []
+        for p in pages:
+            for e in p:
+                if isinstance(e, dict):
+                    folders.append(e)
+                    ids += [i for fp in e["iconLists"] for i in fp]
+                else:
+                    ids.append(e)
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual([(f["displayName"], f["iconLists"]) for f in folders],
+                         [("Utilities", [["com.apple.mobiletimer", "com.apple.calculator", "com.apple.VoiceMemos"]])])
+        self.assertEqual(len(ids), 21)          # the 20 stock icons of 4.2.1 on the iPod2,1 + Cydia
+
     def test_switch(self):
         with mock.patch.dict(os.environ, {"IOS3DS_CYDIA": "0"}):
             self.assertFalse(cydia.enabled({"cydia": "rootfs/cydia.json"}))

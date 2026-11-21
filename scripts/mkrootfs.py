@@ -167,6 +167,25 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "add", tmp, path)
             if verbose:
                 print("[mkrootfs] %s: set %s" % (path, ", ".join(keys)))
+        for path, obj in (recipe.get("cydia_plist_write", {}) if cydia_set else {}).items():
+            # plists that only make sense with Cydia in the image (SpringBoard's
+            # icon layout with Cydia on page 1, re-log 77); new folders and the
+            # file inherit their parent's owner (501 under /var/mobile)
+            import plistlib
+            parent = ""
+            for part in path.strip("/").split("/")[:-1]:
+                parent += "/" + part
+                if not exists(out, parent):
+                    hfs(out, "mkdir", parent)
+            tmp = os.path.join(td, "w.plist")
+            with open(tmp, "wb") as f:
+                plistlib.dump(obj, f, fmt=plistlib.FMT_XML)
+            if exists(out, path):
+                hfs(out, "rm", path)
+            hfs(out, "add", tmp, path)
+            hfs(out, "chmod", "0644", path)
+            if verbose:
+                print("[mkrootfs] wrote %s (Cydia in the image)" % path)
         if cydia_set:
             # Cydia Substrate next to our interposers (after the plists above exist)
             cydia_mod.substrate_setup(out, hfs, hfs_cat, recipe, cydia_set, verbose)
