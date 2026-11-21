@@ -32,7 +32,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Cydia | pre-installed, on the first home screen page |
 | ✅ | Screen rotation (accelerometer) | |
 | ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
-| ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos |
+| ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos | Confirmed on an Old 3DS and a New 2DS XL.
 | 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
@@ -49,7 +49,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | **Old 3DS** | ✅ supported, the main test console |
 | **Old 3DS XL** | ✅ boots to the home screen ([#7](https://github.com/devilAPI/ios3ds/issues/7); release 0.3.0 could panic in the accelerometer driver right after boot, fixed in `main`) |
 | **Old 2DS** | ✅ supported (same hardware as the Old 3DS) |
-| **New 2DS XL** | ✅ boots to the home screen with sound, power button, battery and Wi-Fi ([#1](https://github.com/devilAPI/ios3ds/issues/1), [#5](https://github.com/devilAPI/ios3ds/issues/5)) |
+| **New 2DS XL** | ✅ boots to the home screen with sound, power button, battery, Wi-Fi and cameras ([#1](https://github.com/devilAPI/ios3ds/issues/1), [#5](https://github.com/devilAPI/ios3ds/issues/5)) |
 | New 3DS, New 3DS XL | untested; expected to behave like the New 2DS XL. On New models ios3ds runs the CPU at 804 MHz; the extra CPU cores and RAM are not used |
 
 All models need Luma3DS (boot9strap). Reports for any model are welcome in the [issues](https://github.com/devilAPI/ios3ds/issues).
