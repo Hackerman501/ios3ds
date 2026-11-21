@@ -33,7 +33,9 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Screen rotation (accelerometer) | |
 | ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
 | ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos. Confirmed on an Old 3DS and a New 2DS XL |
-| 🧪 | Headphone jack, microphone | iOS switches to headphones when plugged in |
+| 🧪 | Microphone | recording works in the emulator; Voice Memos records Apple Lossless (playback fixed after 0.4.0, 🧪) |
+| ⚠️ | Headphone jack | iOS switches to headphones when plugged in, but 0.4.0 was silent in them; CODEC fix after 0.4.0 not yet confirmed, see [docs/audio.md](docs/audio.md) §4 |
+| 🧪 | Music app: a test song and your own songs | `install.py --music DIR` (or files in `SD/ios3ds/music/`): .mp3, .m4a (AAC/ALAC), .wav, .aif; [docs/audio.md](docs/audio.md) §10 |
 | 🧪 | Gyroscope (CoreMotion) | |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
 | 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |

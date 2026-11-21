@@ -17,3 +17,8 @@ void audio_set_mic(bool enabled);
 /* boot.cfg hp_route=0: iOS is never told about the headphone jack and stays on
    its speaker route (the CODEC still switches the analogue output) */
 void audio_set_hp_route(bool enabled);
+
+/* boot.cfg hp_codec (call before audio_init): 1 (default) = libn3ds' headphone
+   filters at init, the headphone driver re-powered on every plug-in, the Old
+   3DS de-pop line driven low; 0 = only switch the CODEC's output select (0.4.0) */
+void audio_set_hp_codec(u32 mode);

@@ -133,7 +133,8 @@ def fwprep(ipsw, staging, keys, force):
         die("extracting the IPSW failed (see the [fwprep] lines above)")
 
 
-def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, tlsfix=True):
+def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, tlsfix=True,
+               music=None, test_song=True):
     import mksd
     args = mksd.parser().parse_args([])
     args.staging = staging
@@ -147,6 +148,8 @@ def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, t
     args.cydia_cache = cydia_cache
     args.no_tlsfix = not tlsfix
     args.sandbox_open = False
+    args.music = music
+    args.no_test_song = not test_song
     mksd.build_tree(args)
 
 
@@ -203,6 +206,10 @@ def main():
                     help="don't download and pre-install Cydia (docs/cydia.md)")
     ap.add_argument("--no-tlsfix", action="store_true",
                     help="leave out TLSFix, the TLS 1.2/1.3 tweak (docs/certificates.md)")
+    ap.add_argument("--music", metavar="DIR",
+                    help="your audio files (.mp3/.m4a/.wav/.aif) for the Music app (default: SD/ios3ds/music "
+                         "if that folder exists; docs/audio.md section 10)")
+    ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out of the Music app")
     ap.add_argument("--prebuilt", default=os.path.join(ROOT, "prebuilt"), help=argparse.SUPPRESS)
     ap.add_argument("--check", action="store_true",
                     help="only check this release and the tools on this PC, then exit")
@@ -224,6 +231,7 @@ def main():
         import mkrootfs  # noqa: F401
         import cydia  # noqa: F401
         import certs  # noqa: F401  (needs sqlite3)
+        import music  # noqa: F401  (Music app library, needs sqlite3)
         import fwprep as _fwprep_check # noqa: F401
         say("OK: everything needed is here")
         return
@@ -257,8 +265,15 @@ def main():
 
     step(3, "Patching the kernel, building the iOS disk image (a few minutes)")
     tree = os.path.join(work, "sd")
+    music = a.music
+    if not music and os.path.isdir(os.path.join(sd, "ios3ds", "music")):
+        music = os.path.join(sd, "ios3ds", "music")
+        say("   music for the Music app from %s" % music)
+    if music and not os.path.isdir(music):
+        die("no such folder: %s" % music)
     build_tree(staging, tree, a.prebuilt, hfs, cydia=not a.no_cydia,
-               cydia_cache=os.path.join(work, "cydia"), tlsfix=not a.no_tlsfix)
+               cydia_cache=os.path.join(work, "cydia"), tlsfix=not a.no_tlsfix,
+               music=music, test_song=not a.no_test_song)
 
     step(4, "Writing the SD card files to %s" % sd)
     os.makedirs(os.path.dirname(sd), exist_ok=True)

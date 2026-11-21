@@ -61,7 +61,8 @@ def build_tree(args):
                      patches=not args.no_patches, prebuilt=args.prebuilt,
                      hfsplus=args.hfsplus, rootfs_add=args.rootfs_add,
                      cydia=not args.no_cydia, cydia_cache=args.cydia_cache,
-                     tlsfix=not args.no_tlsfix, sandbox_open=args.sandbox_open)
+                     tlsfix=not args.no_tlsfix, sandbox_open=args.sandbox_open,
+                     music=args.music, test_song=not args.no_test_song)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
     return tree
@@ -110,6 +111,9 @@ def parser():
                     help="relax the sandbox so TLSFix reaches Safari/App Store apps (opt-in; "
                          "Safari OOMs on 128 MB, docs/cydia.md)")
     ap.add_argument("--cydia-cache", help="where to keep the Cydia .debs (default build/cydia)")
+    ap.add_argument("--music", help="folder with your audio files (.mp3/.m4a/.wav/.aif) for the Music app "
+                    "(docs/audio.md section 10)")
+    ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out of the Music app")
     return ap
 
 

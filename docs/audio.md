@@ -1,6 +1,6 @@
 # Audio: iOS 4.2.1 sound out of the 3DS speaker
 
-Status: **output plays in QEMU, bit-exact; microphone recording works in QEMU (section 7); neither verified on hardware yet**. On the 3DS
+Status: **speaker output and recording confirmed on hardware (run 32); headphones switch iOS's route on hardware but stayed silent in 0.4.0 (CODEC side reworked, section 4, unconfirmed); Voice Memos playback fixed (section 9); songs in the Music app (section 10)**. On the 3DS
 (runs 8-11) every sound failed with `AppleEmbeddedAudioDevice: could not start
 DMA: device is not ready`: the I2S controller waits for a GPIO edge nobody
 raises (section 3, re-log section 32). With that fixed, an AudioQueue tone goes
@@ -165,9 +165,33 @@ changes (`[audio] ...` in `sd:/ios3ds/log.txt`). It also polls the headphone
 jack (GPIO2 bit 0, debounced over 32 polls), repeats the init's
 `CDC_REG_HEADSET_SEL` routing when it changes (only if the CODEC answered at
 init) and tells iOS through the shim (`boot.cfg hp_route=1`, the default):
-`[audio] headphones plugged in: CODEC output -> headphones, iOS route ->
-headphones (CODEC headset detect XX)`, then `[audio] iOS route -> ...` and
+`[audio] headphones plugged in: CODEC output -> headphones (driver re-powered), iOS route ->
+headphones (CODEC jack status XX)`, then `[audio] iOS route -> ...` and
 `[audio] iOS headphone volume: CS42L58 XX (N dB) -> CSND volume ...`.
+**Hardware run 32 (0.4.0):** all of that happened (jack detected, iOS on its
+headphone route, volume mapped: CS42L58 6a = -22 dB -> CSND 2068/32768, stream
+peak 8583), yet nothing came out of the headphones: the missing piece is on the
+3DS CODEC's analogue side. 0.4.0 only flipped `CDC_REG_HEADSET_SEL` (page 100
+reg 0x45: 0x20 speaker, 0x30 headphones; GBATEK calls 0x30 "speaker off") and
+logged page 100 reg 0x43, which is the detection *control* register we write
+(0x91 both ways), not a status. Compared with libn3ds `CODEC_init`/`soundInit`
+(the sequence open_agb_firm uses) three things were missing, now done with
+`boot.cfg hp_codec=1` (default; `hp_codec=0` = the 0.4.0 behaviour):
+the headphone filter coefficients (page 11: 2 x pass-through biquad + 10 Hz
+high-pass per I2S line, hw_cal.c defaults; written before the DACs power up,
+i.e. while the coefficient RAM is unlocked, page 100 reg 0x76); the Old 3DS
+de-pop line (GPIO3 bit 0, libn3ds `GPIO_CTR_DEPOP`: output, low after the
+drivers are up; nothing drove it, and after a boot without Horizon it is an
+input; only when the MCU says system model 0 = Old 3DS, since the New 3DS uses
+the pin for the C-stick IRQ; `[audio] de-pop (Old 3DS): GPIO3 bit 0 was ...`);
+and on every plug-in the headphone driver is powered down and up again
+(page 101 reg 0x0b 0 -> 0x3c/0x1c, unmute reg 0x0c, analog volume 0x16/0x17, 38 ms),
+because at boot it was powered while the output was on the speaker. For the
+next log, `[audio] CODEC at boot|headphones|speaker: ...` reads back every
+register on the path (page 100 0x2c = the CODEC's own jack status, 0x45,
+0x25/0x26 status, 0x76; page 101 0x0a/0x0b/0x0c/0x16/0x17/0x11; page 0
+0x3f-0x42 DAC path/volume; page 1 0x1f/0x24/0x25/0x28/0x29 = the TSC2117 (DSi)
+headphone driver registers; GPIO2/GPIO3), at boot and on the first 8 jack changes.
 Fail-safe for what hardware has not confirmed (GPIO2 bit 0 = jack, 1 =
 plugged): if the bit reads "plugged" at boot, iOS stays on the speaker route
 until it has read "unplugged" once (one `[audio] jack: ...` warning); more
@@ -298,6 +322,15 @@ test feeds a counter through the RX emulation and checks every delivered frame
 
 ## 8. Open points / next steps
 
+0. Hardware, headphones (section 4, re-log 80): with `hp_codec=1` plug in
+   while music plays. Wanted: sound in the headphones, `[audio] de-pop (Old 3DS):
+   GPIO3 bit 0 was input 1 -> output 0` (or `output 0`: then de-pop was not
+   it), and the `[audio] CODEC headphones: ...` line next to `CODEC speaker`:
+   100:2c should change with the plug, 101:0b should read back 3c/1c, 100:45 30.
+   Still silent: compare the 1:24/1:25 (TSC2117 "analog volume to HPL/HPR",
+   bit 7 = routed) and 1:1f (driver power) readbacks with GBATEK's DSi values
+   (0x9e/0x9e/0xd4); `hp_codec=0` gives the 0.4.0 path back.
+
 1. Hardware (boot.cfg `diag=1`, docs/boot-perf.md §3): listen for the boot tone (`tone: #1 ...` in the log, the shim's
    `ios3ds-audio: tx start` and the ARM9 `[audio] iOS output stream #1
    started`). If the stream starts but nothing is heard: confirm CSND is heard
@@ -319,3 +352,71 @@ test feeds a counter through the RX emulation and checks every delivered frame
    - how often the 1 ms service misses the 2.7 ms FIFO (`[audio] mic off` reports overruns). If it is often, a CDMA program could drain it instead.
    - The iOS input gain compensation assumes the same +23.65 dB for other categories (Voice Memos uses RecordAudio); check the level there.
 5. iOS's headphone route is driven (re-log 58): route switch both ways, the headphone volume HUD, separate speaker/headphone volumes, `OldDeviceUnavailable` on unplug (what makes the iPod app pause). The headset remote/mic (`mikey`) is not.
+
+## 9. Voice Memos (re-log 80)
+
+Hardware run 32: recording worked (`Finished writing .../Recordings/....mov`),
+then `Remaking completed with status: AVRemakerNotification_Failure ... OSStatus
+error -50` and the memo showed "loading" forever. Same in QEMU.
+
+- The recorded `.mov` is **iLBC, 8 kHz mono** (`stsd` entry `ilbc`), not the
+  mic rate: the 11,901 Hz of the 3DS MIC block never reaches iOS, the shim
+  resamples it to the I2S frame rate (section 7) and the `.mov` track runs at 44,100.
+- Voice Memos picks the codec in `-[RCAudioInputDevice _createCaptureController]`
+  (VoiceMemos 0x1e5b4): `VMDebugLosslessRecording` -> `'lpcm'`, else
+  `GSSystemHasCapability(kGSEncodeAACCapability)` ? `'aac '` : `'alac'`.
+  N72AP.plist has `encode-aac`, but the iPod2,1's only AAC encoder is
+  `ACAACEncoder_IOA2` (`AudioCodecHWCodecLookup`, the S5L8720 audio hardware's,
+  which ios3ds does not emulate); software encoders in AudioCodecs are ALAC,
+  IMA4, AMR, iLBC only. Celestial falls back to iLBC, and the `.mov` -> `.m4a`
+  pass-through remake (`AVRemakerMode_PassThrough`) fails with -50 because
+  `.m4a` cannot hold iLBC.
+- **Fix:** `rootfs/recipe.json` sets `encode-aac` = false in N72AP.plist's
+  capabilities. Voice Memos records Apple Lossless (software
+  `ACAppleLosslessEncoder`), which the remake passes into `.m4a` and the
+  software `ACAppleLosslessDecoder` plays. About 280 kbit/s (2 MB a minute).
+- **QEMU** (`--icount 2`, `IOS3DS_MIC=sine:440:3000`): `Remaking completed with
+  status: AVRemakerNotification_Complete`; the memo (`.m4a`, ALAC 44,100 Hz
+  mono) decodes on the host to the 440 Hz sine at peak 3024; tapping it in the
+  list plays it (`[csnd]` non-silent frames).
+
+## 10. Songs in the Music app (re-log 80)
+
+Built at install/build time by `scripts/music.py` (called from
+`mkrootfs.py`): `scripts/install.py IPSW SD --music DIR` (default
+`SD/ios3ds/music/` if that folder exists) or `scripts/mksd.py --music DIR`.
+Every `.mp3`, `.m4a` (AAC/ALAC), `.m4b`, `.wav`, `.aif` in DIR (recursive) is
+added; titles/artists/albums/genre/track/length come from `ffprobe` when the
+computer has it, else the file name. `--no-test-song` leaves out the test song.
+
+- **Test song:** "ios3ds Test Song" (artist ios3ds, album ios3ds Test Tones),
+  a 39 s melody composed for this and synthesised by `music.py` (sine voices
+  with envelopes, 92 bpm), written as Apple Lossless `.m4a` with uncompressed
+  ("escape") ALAC frames (`ALACEncoder.cpp` format, decodes with any ALAC
+  decoder; 6.8 MB). No third-party audio.
+- **Library format:** iOS 4.2.1 has no `MediaLibrary.sqlitedb` (that is iOS 5);
+  MusicLibrary-720.20 reads `iTunes_Control/iTunes/iTunes Library.itlp/`
+  `{Library,Locations,Dynamic,Extras,Genius}.itdb`, the sqlite files iTunes 9/10
+  writes at sync (paths in MusicLibrary's strings). The rootfs has no template
+  and the device never creates a library on its own: `_MLSDBLoadAndInitSharedInstances`
+  runs `/usr/local/bin/ddbtosql` (absent on retail builds) to convert an
+  `iTunesDB`, and only `itdbprepserver`/the iPod app may write
+  (`MLProcessHasDatabaseWritePermissions`). So `music.py` writes what iTunes
+  writes, schema "user_version 8" (`db_schema_upgrade_info` = 8, 19 in
+  Extras.itdb; `/System/Library/Lockdown/SQLMusicLibraryPostProcessCommands.plist`
+  has command set 8), following libgpod's `itdb_sqlite.c` (LGPL): items,
+  albums, artists, genres, the hidden master playlist, locations relative to
+  base location 1 = `iTunes_Control/Music` (`F00/XXXX0001.mp3`), item_stats.
+  The device does the rest on the Music app's first start: `itdbprepserver`
+  runs the post-processing (`iTunesCommandsExecuted` 141, `triggersVersion` 5,
+  `sort_map`, `item_artist`/`album_artist`, `DBTemp/`).
+- **Signed checksum:** iTunes adds `Locations.itdb.cbk` (SHA-1 per block plus a
+  device-keyed signature); for a process that may write, `MLSSqliteVFSOpen`
+  asks `_AOU243378_7_1` (MusicLibrary 0x3008530c) for the `.cbk` path of a
+  managed file and verifies it. A dyld-cache patch makes that function return
+  nil (`mov r0,#0; bx lr`), so the files open as plain sqlite.
+- **Codecs on the device:** software decoders exist for MP3 (`ACMP3Decoder`),
+  AAC-LC (`ACMP4AACLowComplexityDecoder`) and ALAC; HE-AAC, AC-3 and Audible
+  have only `_IOA2` (S5L8720 hardware) decoders, so such files will not play.
+- **QEMU:** see re-log 80 for the run (library loaded, post-processing
+  completed, songs listed and played).

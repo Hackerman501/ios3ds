@@ -60,12 +60,14 @@ def local_path(local, rootfs_add=None):
 
 
 def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add=None,
-          cydia=True, cydia_cache=None, tlsfix=True):
+          cydia=True, cydia_cache=None, tlsfix=True, music=None, test_song=True):
     """hfsplus: path of xpwn's hfsplus tool (default build/tools/hfsplus, built on
     demand); rootfs_add: directory standing in for build/rootfs-add/ (release zip);
     cydia: False leaves Cydia out even if the recipe has it (docs/cydia.md);
     cydia_cache: where the downloaded debs are kept (default build/cydia);
-    tlsfix: False leaves TLSFix (and only it) out of the Cydia set."""
+    tlsfix: False leaves TLSFix (and only it) out of the Cydia set;
+    music: folder of the user's audio files for the Music app, test_song: False
+    leaves out the generated test song (scripts/music.py, docs/audio.md section 10)."""
     global HFS
     if hfsplus:
         HFS = hfsplus
@@ -220,6 +222,9 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "chmod", next((fp["mode"] for fp in fps if "mode" in fp), "0644"), path)
         for path, mode in recipe.get("chmod", {}).items():
             hfs(out, "chmod", mode, path)
+    if music or test_song:
+        import music as music_mod
+        music_mod.apply(out, hfs, music, test_song, verbose)
     if recipe.get("disable_daemons"):
         hfs(out, "mkdir", LD_OFF, check=False)
         n = 0
@@ -240,8 +245,11 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds", "rootfs.hfs"))
     ap.add_argument("--no-cydia", action="store_true", help="leave Cydia out (docs/cydia.md)")
     ap.add_argument("--no-tlsfix", action="store_true", help="leave TLSFix out (docs/certificates.md)")
+    ap.add_argument("--music", help="folder with audio files for the Music app (docs/audio.md section 10)")
+    ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out")
     a = ap.parse_args()
-    build(a.staging, a.out, cydia=not a.no_cydia, tlsfix=not a.no_tlsfix)
+    build(a.staging, a.out, cydia=not a.no_cydia, tlsfix=not a.no_tlsfix, music=a.music,
+          test_song=not a.no_test_song)
 
 
 if __name__ == "__main__":

@@ -23,12 +23,17 @@
 #include "audio.h"
 #include "tsc.h"
 #include "log.h"
+#include "i2c.h"
 #include "../../kernel/shim/audio.h"
 
 extern void waitcycles(u32 n);
 static void ms(u32 n) { while (n--) waitcycles(33500); }     /* ~1 ms at 134 MHz */
 
 #define GPIO2_DAT   (*(vu8 *)0x10147010u)   /* bit 0: headphones plugged (libn3ds gpio.h GPIO_2_0) */
+#define GPIO3_DAT   (*(vu16 *)0x10147020u)  /* bit 0: Old 3DS de-pop circuit (libn3ds GPIO_CTR_DEPOP), */
+#define GPIO3_DIR   (*(vu16 *)0x10147022u)  /*   New 3DS: C-stick IRQ input (exthid.c) */
+#define MCU_BUS     1                       /* I2C2: MCU reg 0x7F byte 9 = system model (libn3ds mcu.c) */
+#define MCU_DEV     0x4A
 
 /* (page, reg) of libn3ds CDC_REG_* */
 #define P0   0
@@ -47,6 +52,44 @@ static bool wait_clear(u8 page, u8 reg, u8 mask, u32 tries)  /* until (~reg & ma
 static bool codec_ok;   /* audio_init found the CODEC: jack polling may write its registers */
 static u8 jack;         /* headphone state the CODEC is routed for */
 static bool hp_route = true;    /* boot.cfg hp_route: tell iOS about the jack (kernel/shim/audio.c hp_service) */
+static u32 hp_codec = 1;        /* boot.cfg hp_codec (audio.h) */
+static u8 hp_drv;               /* CODEC page 101 reg 11 value (headphone driver power, by CODEC revision) */
+
+/* libn3ds hw_cal.c default headphone filters (filterHp32 = I2S1, filterHp47 = I2S2):
+   two pass-through biquads and a first-order 10 Hz high-pass, (b0 b1 b2 a1 a2) */
+static const int16_t hp_filt32[15] = { 32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0, 32736, -16368, 0, 16352, 0 };
+static const int16_t hp_filt47[15] = { 32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0, 32745, -16372, 0, 16361, 0 };
+
+static void cdc_coeffs(u8 page, u8 reg, const int16_t *c, u32 n)   /* big-endian, as the CODEC wants them */
+{
+    for (u32 i = 0; i < n; i++) {
+        cdc_write(page, (u8)(reg + 2 * i), (u8)((u16)c[i] >> 8));
+        cdc_write(page, (u8)(reg + 2 * i + 1), (u8)c[i]);
+    }
+}
+
+/* The CODEC registers that decide what reaches the headphone socket, read back
+   for the log (GBATEK "3DS TSC, Register Summary"; libn3ds codec.c):
+   100:2c bits 0-1 headphone connect status (the CODEC's own view), 100:43
+   headset detection, 100:45 output select (0x20 speaker, 0x30 headphones),
+   100:25/26 DAC/driver status, 100:76 DAC power; 101:0a DAC routing, 101:0b
+   headphone driver power, 101:0c headphone driver gain/unmute, 101:16/17
+   headphone analog volume L/R, 101:11 speaker driver; 0:3f/40 DAC data path and
+   mute, 0:41/42 DAC volume (slider or register); 1:1f/24/25/28/29 = the TSC2117
+   (DSi) headphone driver/route registers; GPIO2 bit 0 jack, GPIO3 bit 0 de-pop. */
+static void hp_dump(const char *why)
+{
+    if (!codec_ok || cdc_bus_dead()) return;
+    log_ok("[audio] CODEC %s: 100:2c=%02x 43=%02x 45=%02x 25=%02x 26=%02x 76=%02x | 101:0a=%02x 0b=%02x 0c=%02x "
+           "16=%02x 17=%02x 11=%02x | 0:3f=%02x 40=%02x 41=%02x 42=%02x | 1:1f=%02x 24=%02x 25=%02x 28=%02x 29=%02x"
+           " | GPIO2 %02x GPIO3 %04x dir %04x\n", why,
+           cdc_read8(P100, 0x2c), cdc_read8(P100, 0x43), cdc_read8(P100, 0x45), cdc_read8(P100, 0x25),
+           cdc_read8(P100, 0x26), cdc_read8(P100, 0x76), cdc_read8(P101, 0x0a), cdc_read8(P101, 0x0b),
+           cdc_read8(P101, 0x0c), cdc_read8(P101, 0x16), cdc_read8(P101, 0x17), cdc_read8(P101, 0x11),
+           cdc_read8(P0, 0x3f), cdc_read8(P0, 0x40), cdc_read8(P0, 0x41), cdc_read8(P0, 0x42),
+           cdc_read8(1, 0x1f), cdc_read8(1, 0x24), cdc_read8(1, 0x25), cdc_read8(1, 0x28), cdc_read8(1, 0x29),
+           GPIO2_DAT, GPIO3_DAT, GPIO3_DIR);
+}
 
 /* speaker or headphones, as libn3ds soundInit selects them (CDC_REG_HEADSET_SEL) */
 static void route(u8 hp)
@@ -54,7 +97,43 @@ static void route(u8 hp)
     cdc_mask(P100, 69, (u8)(hp << 4 | 0x20), 0x30);
     cdc_mask(P100, 67, 0, 0x80);
     cdc_mask(P100, 67, 0x80, 0x80);
+    if (hp && hp_codec && hp_drv) {
+        /* headphone driver power cycle + unmute + analog volume (the soundInit
+           writes; at boot the output was on the speaker, hardware run 32 heard
+           nothing in the headphones with HEADSET_SEL alone) */
+        cdc_write(P101, 11, 0);
+        ms(1);
+        cdc_write(P101, 11, hp_drv);
+        cdc_write(P101, 12, (0 << 3) | 4);
+        cdc_write(P101, 22, 0);
+        cdc_write(P101, 23, 0);
+        ms(38);
+    }
     jack = hp;
+}
+
+/* Old 3DS de-pop circuit (libn3ds soundInit: GPIO3 bit 0 output, high while the
+   drivers power up, low after). Nothing here drove it; after a boot without
+   Horizon it can be an input reading high. Only on the Old 3DS (MCU system
+   model 0): on the New 3DS the same pin is the C-stick IRQ. */
+static void depop_off(void)
+{
+    u8 info[10];
+    if (!hp_codec) return;
+    if (!i2c_read(MCU_BUS, MCU_DEV, 0x7F, info, sizeof info)) {
+        log_warn("[audio] de-pop: MCU model unreadable, GPIO3 bit 0 left alone (data %04x dir %04x)\n",
+                 GPIO3_DAT, GPIO3_DIR);
+        return;
+    }
+    if (info[9] != 0) {
+        log_ok("[audio] de-pop: system model %u (not an Old 3DS): GPIO3 bit 0 left alone\n", info[9]);
+        return;
+    }
+    u16 d = GPIO3_DAT, dir = GPIO3_DIR;
+    GPIO3_DAT = (u16)(d & ~1u);
+    GPIO3_DIR = (u16)(dir | 1u);
+    log_ok("[audio] de-pop (Old 3DS): GPIO3 bit 0 was %s %u -> output 0\n", (dir & 1) ? "output" : "input",
+           (unsigned)(d & 1));
 }
 
 bool audio_init(void)
@@ -94,6 +173,14 @@ bool audio_init(void)
     *(vu16 *)I2S2_CNT_PA = (u16)AUD_I2S2_CNT;
 
     cdc_mask(P101, 17, 0x10, 0x1C);             /* speaker driver power-up time */
+    if (hp_codec) {
+        /* headphone filters (soundInit writes them, with the coefficient RAM
+           unlocked = before the DACs are powered) */
+        cdc_coeffs(11, 2, hp_filt32, 15);
+        cdc_coeffs(11, 66, hp_filt32, 15);
+        cdc_coeffs(11, 32, hp_filt47, 15);
+        cdc_coeffs(11, 96, hp_filt47, 15);
+    }
     cdc_write(P100, 122, 0);                    /* I2S1 volume */
     cdc_write(P100, 120, 0);                    /* I2S2 volume */
 
@@ -107,7 +194,8 @@ bool audio_init(void)
     cdc_mask(P100, 119, 0, 0x0C);               /* unmute I2S2 DAC */
 
     /* headphone driver (gain 0 dB, analog volume 0 dB: hw_cal.c defaults) */
-    cdc_write(P101, 11, ((id & 0xF) <= 1 && ((rev & 0x70) >> 4) <= 2) ? 0x3C : 0x1C);
+    hp_drv = ((id & 0xF) <= 1 && ((rev & 0x70) >> 4) <= 2) ? 0x3C : 0x1C;
+    cdc_write(P101, 11, hp_drv);
     cdc_write(P101, 12, (0 << 3) | 4);
     cdc_write(P101, 22, 0);
     cdc_write(P101, 23, 0);
@@ -131,8 +219,9 @@ bool audio_init(void)
     cdc_write(1, 47, 43);                       /* mic PGA */
 
     codec_ok = true;
-    log_ok("[audio] CODEC id %02x rev %02x: DAC %s, %s, I2S1_CNT %04x\n", id, rev,
-           dac ? "up" : "not confirmed", hp ? "headphones" : "speaker", *(vu16 *)I2S1_CNT_PA);
+    log_ok("[audio] CODEC id %02x rev %02x: DAC %s, %s, I2S1_CNT %04x, hp_codec %u\n", id, rev,
+           dac ? "up" : "not confirmed", hp ? "headphones" : "speaker", *(vu16 *)I2S1_CNT_PA, (unsigned)hp_codec);
+    hp_dump("at boot");
     return true;
 }
 
@@ -202,10 +291,15 @@ static void jack_poll(void)
     }
     ios_jack = hp && jack_armed && !jack_flaps;
     if (jack_flaps) return;                     /* logged once above */
-    log_ok("[audio] headphones %s: CODEC output -> %s, iOS route -> %s (CODEC headset detect %02x)\n",
+    log_ok("[audio] headphones %s: CODEC output -> %s%s, iOS route -> %s (CODEC jack status %02x)\n",
            hp ? "plugged in" : "unplugged", hp ? "headphones" : "speaker",
+           hp && hp_codec ? " (driver re-powered)" : "",
            !hp_route ? "speaker (hp_route=0)" : ios_jack ? "headphones" : "speaker",
-           codec_ok && !cdc_bus_dead() ? cdc_read8(P100, 67) : 0xFF);
+           codec_ok && !cdc_bus_dead() ? cdc_read8(P100, 0x2c) : 0xFF);
+    {
+        static u32 dumps;
+        if (dumps++ < 8) hp_dump(hp ? "headphones" : "speaker");
+    }
 }
 
 /* ---- microphone -------------------------------------------------------------
@@ -217,6 +311,7 @@ static struct { bool enabled, adc; u32 state; } mic = { .enabled = true, .state 
 
 void audio_set_mic(bool enabled) { mic.enabled = enabled; }
 void audio_set_hp_route(bool enabled) { hp_route = enabled; }
+void audio_set_hp_codec(u32 mode) { hp_codec = mode; }
 
 static void mic_poll(volatile aud_stat_t *st)
 {
@@ -266,7 +361,12 @@ void audio_poll(u32 shim_pa)
     static volatile aud_blk_t *b;
     static bool searched;
     static u32 starts, stops, csnd, step = ~0u, hp_state, hp_vol = AUD_HPVOL_NONE;
+    static bool depop_done;
 
+    if (!depop_done) {                          /* monitor loop: the MCU is up by now */
+        depop_done = true;
+        if (codec_ok) depop_off();
+    }
     jack_poll();
     if (!shim_pa) return;
     if (!searched) {                            /* aud_blk_t lives in the shim's .data */

@@ -138,6 +138,7 @@ typedef struct {
     u32 camera;          /* 0 = never touch the cameras (docs/camera.md) */
     u32 cam_test;        /* 1 = camera self-test matrix before XNU (~6 s; docs/camera.md section 7) */
     u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
+    u32 hp_codec;        /* 0 = CODEC headphone path as in 0.4.0 (audio.h audio_set_hp_codec) */
     u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
     u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
     u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
@@ -189,6 +190,7 @@ static int parse_bootcfg(char *txt)
     cfg.mic = 1;
     cfg.camera = 1;
     cfg.hp_route = 1;
+    cfg.hp_codec = 1;
     cfg.n3ds_clock = 1;
     cfg.n3ds_hid = 1;
     cfg.n3ds_ram = 1;
@@ -208,7 +210,7 @@ static int parse_bootcfg(char *txt)
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
-        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
+        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "hp_codec", &cfg.hp_codec }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
         { "n3ds_ram", &cfg.n3ds_ram },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
@@ -1046,6 +1048,7 @@ void a9_main(int argc, char **argv)
         wifi_init(ok ? pa : 0, ok ? len : 0);
     }
 
+    audio_set_hp_codec(cfg.hp_codec);
     audio_init();                   /* CODEC sound path, before XNU (docs/audio.md) */
     {   /* time set in iOS Settings, saved by mcu.c, wins over boot.cfg rtc_offset */
         char t[24];

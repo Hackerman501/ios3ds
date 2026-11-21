@@ -333,6 +333,13 @@
    "orig": "12200000",
    "new": "52200000",
    "why": "CoreMotion CLPlatformInfo::getProviders (0x33224b18): sensor bit mask per hw.model; N72 (iPod2,1, shared with N45/N18) has 0x2012, the same word with bit 6 (gyro, CLIoHidManager::isEventTypeAvailable(20)) is N81's 0x2052. Without it CMMotionManager.gyroAvailable / deviceMotionAvailable stay NO whatever IOKit offers. Literal at 0x33224dd4 (docs/mcu.md section 11, re-log 64)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x8530c",
+   "orig": "f0402de90c708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "MusicLibrary _AOU243378_7_1 (0x3008530c, called by MLSSqliteVFSOpen): returns '<db>.cbk' for a library file iTunes signs (Locations.itdb) when the process may write the library (itdbprepserver, the iPod app), and the VFS then checks the file against that signed checksum file. ios3ds builds the library itself (scripts/music.py) and cannot sign it: return nil (mov r0,#0; bx lr), so every library file opens as a plain sqlite file (docs/audio.md section 10, re-log 77)"
   }
  ],
  "_plist_merge": "like plist_set, but nested dictionaries are merged key by key instead of replaced",
@@ -340,8 +347,10 @@
   "/System/Library/CoreServices/SpringBoard.app/N72AP.plist": {
    "capabilities": {
     "still-camera": true,
-    "front-facing-camera": true
+    "front-facing-camera": true,
+    "encode-aac": false
    }
   }
- }
+ },
+ "_encode_aac": "encode-aac=false (plist_merge): the iPod2,1's only AAC encoder is ACAACEncoder_IOA2, the S5L8720 audio hardware's, which ios3ds does not have. With encode-aac Voice Memos asks Celestial for 'aac ', gets an iLBC 8 kHz .mov instead and its .mov -> .m4a pass-through remake fails with -50 (playback 'loading' forever); without it Voice Memos records Apple Lossless ('alac', software ACAppleLosslessEncoder), which .m4a holds (docs/audio.md section 9, re-log 77)"
 }

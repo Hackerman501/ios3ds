@@ -175,9 +175,9 @@ def use_prebuilt_shim(outdir, prebuilt):
 
 def build(staging, outdir, cmdline=None, patches=True, verbose=True,
           prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None,
-          tlsfix=True, sandbox_open=False):
+          tlsfix=True, sandbox_open=False, music=None, test_song=True):
     """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
-    hfsplus / rootfs_add / cydia / cydia_cache / tlsfix: passed on to mkrootfs.build;
+    hfsplus / rootfs_add / cydia / cydia_cache / tlsfix / music / test_song: passed on to mkrootfs.build;
     sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md)."""
     import dtgen
     import patcher
@@ -193,7 +193,7 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         import mkrootfs
         mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose,
                        hfsplus=hfsplus, rootfs_add=rootfs_add, cydia=cydia,
-                       cydia_cache=cydia_cache, tlsfix=tlsfix)
+                       cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song)
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
     shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
     # the DT size doesn't depend on the layout values, so two passes converge
@@ -307,6 +307,10 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "# hp_route=0: iOS is never told about the headphone jack and stays on its speaker route",
         "# (the CODEC still switches speaker/headphones itself; docs/audio.md)",
         "hp_route=1",
+        "# hp_codec=0: headphone output as in 0.4.0 (only the CODEC's output select switches);",
+        "# 1 = also libn3ds' headphone filters, the headphone driver re-powered on plug-in and",
+        "# the Old 3DS de-pop line driven low (docs/audio.md section 4)",
+        "hp_codec=1",
         "# camera=0: the kernel never touches the 3DS cameras; iOS's camera device reports",
         "# none and Camera.app shows no picture (docs/camera.md)",
         "camera=1",
