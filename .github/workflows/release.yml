@@ -50,7 +50,7 @@ jobs:
         run: |
           zip="dist/ios3ds-$VERSION.zip"
           test -f "$zip"
-          sha256sum "$zip" | tee "$zip.sha256"
+          (cd dist && sha256sum "ios3ds-$VERSION.zip") | tee "$zip.sha256"   # bare file name: sha256sum -c works after download
           cat > notes.md <<EOF
           Stock iOS 4.2.1 on the Nintendo 3DS. **How to install: [README → Install](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/README.md#install)**
 
