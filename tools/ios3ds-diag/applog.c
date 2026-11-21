@@ -220,6 +220,24 @@ static void modal_tick(void *timer, void *info)
     if (sb_call(sb_call(p_getClass("SBAlertItemsController"), "sharedInstance"), "hasVisibleAlert")) m |= 2;
     id app = sb_call(p_getClass("UIApplication"), "sharedApplication");
     if (sb_call(app, "topMostAlert")) m |= 4;
+    /* The power-off slider (and the lock screen) is an SBAlert in an
+       SBAlertWindow, which topMostAlert does not see. An app stays frontmost
+       while one of these windows covers it, so its touches must go to
+       SpringBoard. Hardware run 27: the slider over Camera got nothing. */
+    if (!(m & 4) && p_className) {
+        id ws = sb_call(app, "windows");
+        unsigned n = (ws && sb_responds(ws, "count")) ? (unsigned)(uintptr_t)p_msgSend(ws, p_sel("count")) : 0;
+        if (n > 32) n = 32;
+        for (unsigned i = 0; i < n && sb_responds(ws, "objectAtIndex:"); i++) {
+            id w = p_msgSend(ws, p_sel("objectAtIndex:"), i);
+            const char *cn = w ? p_className(w) : 0;
+            if (cn && !strcmp(cn, "SBAlertWindow") &&
+                !((uintptr_t)p_msgSend(w, p_sel("isHidden")) & 0xff)) {   /* BOOL in r0 */
+                m |= 4;
+                break;
+            }
+        }
+    }
     if (m != modal_last) {
         modal_last = m;
         p_notify_set_state(modal_token, (uint64_t)m);
@@ -234,6 +252,7 @@ static void modal_start(void)
     p_getClass = (id (*)(const char *))dlsym(objc, "objc_getClass");
     p_sel = (SEL (*)(const char *))dlsym(objc, "sel_registerName");
     p_msgSend = (id (*)(id, SEL, ...))dlsym(objc, "objc_msgSend");
+    p_className = (const char *(*)(id))dlsym(objc, "object_getClassName");
     uint32_t (*reg)(const char *, int *) = (uint32_t (*)(const char *, int *))dlsym(RTLD_DEFAULT, "notify_register_check");
     p_notify_set_state = (uint32_t (*)(int, uint64_t))dlsym(RTLD_DEFAULT, "notify_set_state");
     void *(*mk)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *) =

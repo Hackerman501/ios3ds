@@ -342,11 +342,14 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
         /* SpringBoard's lock screen or an alert over the app: the touch is
            SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
         if (!modal && sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
-        if (strcmp(id, app)) {
+        /* Log every touch while modal: when SpringBoard covers the app its
+           frontmost identifier can stay empty (QEMU), so a change-of-id test
+           alone would hide the switch to the system event port. */
+        if (modal || strcmp(id, app)) {
             strncpy(app, id, sizeof app - 1);
             app_port = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
             if (opt_debug) say("[input] touch target %s%s", id[0] ? id : "SpringBoard",
-                               modal ? (modal & 1 ? " (lock screen)" : " (alert)") : "");
+                               modal & 6 ? " (alert)" : modal & 1 ? " (lock screen)" : "");
         }
     }
     if (app_port && gs_send_event) gs_send_event(&e.rec, app_port);
