@@ -70,6 +70,10 @@ ios3ds-<version>/
 | `rootfs/certs/roots.pem`, `roots-ec.pem` | yes | public CA certificates (Mozilla's list) |
 | `build/toolchain/cache/` (dyld cache), full stub dylibs | **never** | Apple-derived; only exist on machines with the IPSW, never on CI or in the zip |
 
+## Installer behaviour on update
+
+When the installer runs into a folder that already has `ios3ds/rootfs.hfs`, it rebuilds the iOS disk and then carries the user's data over from the old image via `scripts/carryover.py` (Wi-Fi networks and passwords, settings, photos, voice memos, preferences, SpringBoard layout). Installed Cydia packages are deliberately not carried over. `--fresh` skips the carry-over; `--backup-old` keeps a `rootfs.hfs.bak` copy of the previous disk. `IOS3DS_FRESH=1` / `IOS3DS_BACKUP=1` do the same for the `make sd` / `make sdimg` path.
+
 ## Verification done for the first version
 
 - Installer from an unpacked zip (with `--staging build/staging`, because no IPSW was on the test machine; the `fwprep` step is unchanged from `make fwprep`) vs. `make sd` from the same commit:
