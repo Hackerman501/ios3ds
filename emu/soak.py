@@ -214,14 +214,24 @@ def main():
                 time.sleep(c["lock_seconds"])
                 key("ret")
                 time.sleep(3)
-                drag(40, 420, 300, 420, 0.8)
-                settled("c%03d_unlock" % i)     # the icons fly in after an unlock
+                # The first slide after a wake can be swallowed while the
+                # input daemon is still polling at 10 Hz (re-log 75/78): the
+                # screen stays black not because iOS hung, but because the
+                # gesture never reached SpringBoard. Retry a missed slide
+                # before measuring the unlock screen.
+                for attempt in range(3):
+                    drag(40, 420, 300, 420, 0.8)
+                    settled("c%03d_unlock" % i)  # the icons fly in after an unlock
+                    u0 = shot("c%03d_unlock" % i).convert("L")
+                    if ImageStat.Stat(u0).mean[0] > 5:
+                        break
+                c["unlock_attempts"] = attempt + 1
                 # iOS fades the screen in after an unlock (and the emulated
                 # backlight dims it): compare at the reference's brightness so
                 # only content differences count (re-log 63)
                 # blur: the GPU and the ARM9 CPU screen copy scale slightly
                 # differently (after a wake either may be showing)
-                u = shot("c%03d_unlock" % i).convert("L").filter(ImageFilter.GaussianBlur(2))
+                u = u0.filter(ImageFilter.GaussianBlur(2))
                 ref = home_ref.convert("L").filter(ImageFilter.GaussianBlur(2))
                 mu, mr = ImageStat.Stat(u).mean[0], ImageStat.Stat(ref).mean[0]
                 if mu > 5:
