@@ -72,7 +72,11 @@ ios3ds-<version>/
 
 ## Installer behaviour on update
 
-When the installer runs into a folder that already has `ios3ds/rootfs.hfs`, it rebuilds the iOS disk and then carries the user's data over from the old image via `scripts/carryover.py` (Wi-Fi networks and passwords, settings, photos, voice memos, preferences, SpringBoard layout). Installed Cydia packages are deliberately not carried over. `--fresh` skips the carry-over; `--backup-old` keeps a `rootfs.hfs.bak` copy of the previous disk. `IOS3DS_FRESH=1` / `IOS3DS_BACKUP=1` do the same for the `make sd` / `make sdimg` path.
+When the installer runs into a folder that already has `ios3ds/rootfs.hfs`, it rebuilds the iOS disk and then carries the user's data over from **that card's** old image via `scripts/carryover.py` (Wi-Fi networks and passwords, settings, photos, voice memos, preferences, SpringBoard layout). `--fresh` skips the carry-over; `--backup-old` keeps a `rootfs.hfs.bak` copy of the previous disk. The developer path (`make sd` / `make sdimg`) never carries from the previous build output — that would carry stale SpringBoard defaults into QEMU images and between builds. Pass `make sd CARRY_FROM=/path/to/old/rootfs.hfs` (or set `IOS3DS_CARRY_FROM`) to opt in with an explicit old image; `IOS3DS_FRESH=1` still disables it. `install.py` ignores `CARRY_FROM`.
+
+Not carried: installed Cydia packages (dpkg state would desync from the new system), `Library/Caches` (MobileInstallation's app list cache would be stale), `Library/Logs`, `*.sqlite-journal` / `*.lock` leftovers, and `/private/var/mobile/Media/iTunes_Control`: the Music library is rebuilt on every install by `scripts/music.py` from `SD/ios3ds/music` (and the test song), so the new library must win. Owners and modes come from the new image's parent directories, as in `mkrootfs.py` (hfsplus has no `chown`): `/private/var/mobile/…` stays 501:501, Keychains and SystemConfiguration stay root. Every carried entry is verified against the old image's mode/uid/gid/size.
+
+Before copying, the old data's total size is compared with `hfsplus ls`'s free-space count. If it does not fit, or any entry fails to copy or verify, `carry_over()` returns `nothing`/`partial` (otherwise `carried`), keeps the card's old image as `sd:/ios3ds/rootfs.hfs.bak` and prints a warning with that path. The result also carries a `reason` and the `backup` path for callers.
 
 ## Verification done for the first version
 
