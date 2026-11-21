@@ -55,7 +55,8 @@ static void say(const char *what, id str)
     char line[512];
     int l = snprintf(line, sizeof(line), "[applog] %s alert %s \"%s\"\n", getprogname(), what, c ? c : "");
     if (l > (int)sizeof(line) - 1) l = sizeof(line) - 1;
-    write(2, line, l);
+    if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;   /* snprintf returns the untruncated length */
+    if (l > 0) write(2, line, l);
 }
 
 /* one trampoline per hooked method (a subclass may call its superclass' one) */
@@ -88,7 +89,8 @@ static id hook_appear(id self, SEL cmd, int animated)
     char line[160];
     int l = snprintf(line, sizeof(line), "[applog] %s appeared: %s\n", getprogname(),
                      p_className ? p_className(self) : "?");
-    write(2, line, l);
+    if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;   /* snprintf returns the untruncated length */
+    if (l > 0) write(2, line, l);
     if (c) {
         size_t n = strlen(c);
         write(2, c, n > 16384 ? 16384 : n);
@@ -304,7 +306,8 @@ static void warm_tick(void *timer, void *info)
         int l = snprintf(line, sizeof(line), "[sbwarm] linen, icon overlay and %u of %u ghostly icons ready "
                          "(%d ms on the main thread, done %d s after the first step)\n",
                          warm_done, warm_n, (int)(warm_busy * 1000), (int)(t - warm_t0));
-        write(2, line, l);
+        if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;   /* snprintf returns the untruncated length */
+        if (l > 0) write(2, line, l);
         if (warm_icons)
             sb_call(warm_icons, "release");
         warm_icons = 0;
@@ -398,6 +401,7 @@ __attribute__((constructor)) static void applog_init(void)
                          ? ", Substrate loaded" : "",
                      dlopen("/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib", RTLD_LAZY | 0x10)
                          ? ", TLSFix loaded" : "");
-    write(2, line, l);
+    if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;   /* snprintf returns the untruncated length */
+    if (l > 0) write(2, line, l);
     hook_alerts();
 }
