@@ -1111,3 +1111,47 @@ Design: docs/audio.md §4 (headphones), §9 (Voice Memos), §10 (Music). Hardwar
 - **Ownership:** xpwn's hfsplus has no `chown` command (its usage lists `ls|cat|mv|mkdir|add|rm|chmod|extract|extractall|rmall|addall|debug`; its source is in the shared `build/xpwn` symlink, not this repo). Like `scripts/mkrootfs.py`, `add`/`mkdir` inherit owner and group from the parent directory, so carried files keep 501:501 under `/private/var/mobile` and root under Keychains/SystemConfiguration. A post-copy pass compares mode/uid/gid/size against the old image for every entry, so a wrong owner becomes a `partial` result instead of silent data loss; a host test builds images with 501-owned parents to check it.
 - **Speed:** one `ls` per directory in the old image is cached and reused for the size check, the copy and the verification; directories are created once (no `exists` check per file). `tests/bench_carryover.py` (1000 small files plus 50 x 300 KiB in `Media/DCIM`): `carried` in **32.4 s**, well under the two-minute budget, so no further process batching was needed.
 - **Validation:** `make test` green after the rebase onto main (63 Python tests, incl. the carry-over cases and the `make sd` opt-in check, plus the pica/gl/wifi/input host tests). End-to-end `install.py --staging build/staging --no-cydia --no-tlsfix` into a temporary folder used as a card: an old 16 MiB `rootfs.hfs` with a 501:501 plist, a 64:0 keychain file, a root-owned SystemConfiguration plist, a photo, a stale cache and an old `iTunes_Control/old.itdb` produced `carry-over result: carried`; the new card has the four user files with their old contents, modes and owners, no stale cache/old library, and a freshly built 1-song Music library. No `.bak` was created. With a deliberately root-owned keychain file (a parent owner change the hfsplus CLI cannot repair) the same path returned `partial`, kept `sd:/ios3ds/rootfs.hfs.bak` and printed the warning — no silent loss. A fresh `rm -f build/sd.img && make sdimg` (no `CARRY_FROM`) has no carried IconState and `python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** (boot 140 s, 5 cycles, 0 panics/stalls/md0 errors/crashes).
+## 83. Fake GPS location: boot key, runtime tool, app-side CoreLocation hooks (2026-11-21)
+Design: docs/location.md. No daemon is injected: `locationd` is disabled in the
+recipe and Substrate's launchd injection hangs 4.2.1 (re-log 71/73). We already
+insert `ios3ds-applog.dylib` into SpringBoard and every app (including sandboxed
+MobileSafari, which can read `/usr/lib` but not `/Library`), so the hooks live
+there.
+- **Path of the key:** `boot.cfg gps=52.5200,13.4050` → `boot/arm9/main.c`'s
+  `cfg.gps` (`parse_bootcfg`) → `ba->CommandLine` boot-arg `ios3ds_gps=...` →
+  `sysctlbyname("kern.bootargs")` in applog's constructor. The tool writes an
+  XML plist under `/var/mobile/Library/Preferences/com.ios3ds.location.plist`
+  and posts `com.ios3ds.location.changed`; the dylib's Darwin observer reloads
+  it. `gps_parse` (shared by tool, dylib and host test) validates -90..90 /
+  -180..180 / acc > 0, default 50 m; the plist wins over the boot key, so
+  `ios3ds-gps off` stays off until the disk is rebuilt.
+- **Hooks:** `+locationServicesEnabled` → 1, `+authorizationStatus` → 3,
+  `-location` → a fresh `CLLocation` (now timestamp, configured horizontal and
+  vertical accuracy, course/speed -1), `startUpdatingLocation` → register a
+  manager in a *non-retaining* CFArray, `stopUpdatingLocation` → unregister.
+  A 1 Hz `CFRunLoopTimer` calls `locationManager:didUpdateToLocation:fromLocation:`
+  on each registered delegate. Without a configured location no hook is
+  installed; the Darwin observer is the only always-on addition (needed for
+  runtime `set` from an off state).
+- **Three QEMU traps found and fixed:**
+  1. `CLLocationCoordinate2D` is 16 bytes: calling `-[CLLocation coordinate]`
+     through a plain `objc_msgSend` function-pointer cast crashes (status 11 in
+     a guarded probe child). `objc_msgSend_stret` is required. The initializer
+     with the struct as an *argument* works with the ordinary cast.
+  2. `CFPreferencesCopyAppValue` kept returning the boot value after
+     `notify_post()` — the domain is cached per process on 4.2.1. The dylib now
+     reads the plist files directly; the tool also writes a copy to
+     `/private/var/tmp/com.ios3ds.location.plist` for sandboxed apps.
+  3. A plain C client has no main run loop: neither the 1 Hz timer nor the
+     Darwin notification fired until the test tool called
+     `CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, 0)` each second.
+- **QEMU evidence** (`emu/session.py start --icount 2`, image with
+  `gps=52.5200,13.4050` and `ios3ds_gpslog=1` in `cmdline`; the test job is
+  gated by `ios3ds-diag -g ios3ds_gps`):
+  `[gpstest] services=1 authorization=3`, then one `[gpstest] delegate: 52.520000,13.405000 acc 50.0 m`
+  and one `[gpstest] location: ...` per tick; at tick 6
+  `location set to 40.712800, -74.006000 (accuracy 20.0 m)`,
+  `[gps] Darwin notification received`, `[gps] ios3ds-gpstest: on 40.712800,-74.006000 acc 20.0 m`,
+  and the following delegate/location lines carry 40.7128,-74.006 / 20 m.
+- **Host tests:** `make test` includes `tools/ios3ds-gps` (bounds, non-finite,
+  whitespace, malformed values). Soak result: see below.

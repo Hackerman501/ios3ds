@@ -37,6 +37,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ⚠️ | Headphone jack | iOS switches to headphones when plugged in, but 0.4.0 was silent in them; CODEC fix after 0.4.0 not yet confirmed, see [docs/audio.md](docs/audio.md) §4 |
 | 🧪 | Music app: a test song and your own songs | `install.py --music DIR` (or files in `SD/ios3ds/music/`): .mp3, .m4a (AAC/ALAC), .wav, .aif; [docs/audio.md](docs/audio.md) §10 |
 | 🧪 | Gyroscope (CoreMotion) | |
+| 🧪 | Fake GPS location (CoreLocation) | set with `boot.cfg` `gps=` or `/usr/bin/ios3ds-gps` from a terminal; 1 Hz updates in apps, including Safari, see [docs/location.md](docs/location.md) |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
 | 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
@@ -174,7 +175,16 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `ca_gpu=0` | draw the iOS interface in software (slower) |
   | `screen=0/1/2` | start in screen layout top / both / bottom |
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
+  | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |
   | `diag=1` | extra diagnostics in the log |
+
+### Fake GPS location
+
+The iPod has no GPS, so Maps and geolocation in Safari get no fix by default.
+Add `gps=LAT,LON` (optionally `,ACC`) to `boot.cfg`, or run
+`ios3ds-gps set LAT LON [ACC]` / `ios3ds-gps show` / `ios3ds-gps off` in a Cydia
+terminal or over SSH. That sets a 1 Hz CoreLocation fix in apps without
+rebooting; details and limits: [docs/location.md](docs/location.md).
 
 - **Re-running the installer** replaces `boot.cfg`; the old one is kept as `boot.cfg.old`. The installer refuses a card with a leftover `ios3ds/luma.firm`: start ios3ds once, or restore Luma first.
 - **What is kept on an update:** re-running the installer (the user's card) carries Wi-Fi networks and passwords, settings, photos, voice memos, preferences and the SpringBoard layout from the previous `sd:/ios3ds/rootfs.hfs`. Use `--fresh` to start clean, `--backup-old` to keep an extra copy of the old disk. Developer builds are different: `make sd` / `make sdimg` never carry data from the last build (QEMU images stay reproducible); opt in with `make sd CARRY_FROM=/path/to/old/rootfs.hfs`. Caches, logs, transient `*.sqlite-journal`/`*.lock` files, installed Cydia packages and the Music library (`Media/iTunes_Control`, rebuilt from `ios3ds/music` and the test song) are not carried. If anything fails, the old image is kept as `sd:/ios3ds/rootfs.hfs.bak` and a warning is printed.
@@ -188,8 +198,8 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 - **Tweaks (Cydia Substrate):** Substrate is pre-installed and held at its version; don't remove or "upgrade" it in Cydia. Tweaks load into SpringBoard and apps, not into system daemons (injecting into launchd hangs iOS 4.2.1 on the 3DS, so ios3ds blocks it and repairs `/etc/launchd.conf` at boot).
 - **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
-- **No hardware for:** Bluetooth (the 3DS has none), the 3D screen, IR, NFC.
 - **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically by the installer; installed Cydia packages and the Music library are not (reinstall packages after updating). Use `--fresh` (installer) to start with a clean disk.
+- **No hardware for:** Bluetooth (the 3DS has none), GPS, the 3D screen, IR, NFC. A user-set fake location works in CoreLocation apps ([docs/location.md](docs/location.md)).
 - **Leaving iOS** means holding POWER (a hard power-off); there is no clean shutdown back to the 3DS yet.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 
@@ -250,6 +260,7 @@ Optional:
 | [camera.md](docs/camera.md) | cameras in Camera.app |
 | [input-design.md](docs/input-design.md) | touch, buttons, circle pad |
 | [cydia.md](docs/cydia.md) | the pre-installed Cydia |
+| [location.md](docs/location.md) | fake GPS location: boot key, runtime tool, CoreLocation hooks |
 | [re-log.md](docs/re-log.md) | the reverse-engineering log, step by step |
 | [hwlogs/](docs/hwlogs/README.md) | logs from real hardware runs |
 

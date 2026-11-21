@@ -41,7 +41,7 @@ endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 
-USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-wifi/a80211 tools/ios3ds-keychain tools/ios3ds-audio/tone tools/ios3ds-mcu/daemon tools/ios3ds-mcu/gyrotest tools/ios3ds-camera/vcd
+USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-wifi/a80211 tools/ios3ds-keychain tools/ios3ds-audio/tone tools/ios3ds-mcu/daemon tools/ios3ds-mcu/gyrotest tools/ios3ds-camera/vcd tools/ios3ds-gps
 
 .PHONY: all help toolchain fwprep firm shim launcher userland hfsplus sd sdimg qemu emu kscan test release clean
 
@@ -95,6 +95,7 @@ test:
 	$(MAKE) -C tools/ios3ds-pica test
 	$(MAKE) -C tools/ios3ds-gl host-test
 	$(MAKE) -C tools/ios3ds-wifi test
+	$(MAKE) -C tools/ios3ds-gps test
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_cpad tools/ios3ds-input/tests/test_cpad.c && $(BUILD)/test_cpad
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_n3ds tools/ios3ds-input/tests/test_n3ds.c && $(BUILD)/test_n3ds
 

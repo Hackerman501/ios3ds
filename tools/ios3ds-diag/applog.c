@@ -32,6 +32,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "gps.h"
+
 int sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 extern const char *getprogname(void);
 int unsetenv(const char *name);
@@ -378,6 +380,384 @@ static void load_substrate(void)
     if (!dlopen(ms, RTLD_LAZY | RTLD_GLOBAL)) setenv("DYLD_INSERT_LIBRARIES", old, 1);
 }
 
+/* ---- fake GPS (CoreLocation hooks, docs/location.md) ------------------
+ *
+ * iOS 4.2.1 has no location simulation API for third parties, locationd is
+ * disabled on ios3ds (recipe.json) and injecting anything into a daemon can
+ * hang the boot (docs/cydia.md). So all the work happens in the app: this
+ * dylib is already inserted into SpringBoard and every app (libgmalloc link),
+ * including sandboxed MobileSafari, which can read /usr/lib. When a location
+ * is configured we hook CLLocationManager's class and instance methods, keep
+ * a list of managers that asked for updates and call their delegate every
+ * second from the main run loop. Without a gps= boot-arg and without the
+ * preferences plist none of this is installed.
+ */
+static int gps_enabled = 0;
+static double gps_lat = 0, gps_lon = 0, gps_acc = 50.0;
+static void *gps_cfh = NULL;
+static void * gps_managers = NULL;
+static void * gps_timer = NULL;
+static int gps_hooks_installed = 0;
+static int gps_logging = 0;
+
+#include <stdarg.h>
+static void gps_log(const char *fmt, ...)
+{
+    if (!gps_logging) return;
+    char line[256];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (n > 0) write(2, line, (size_t)n < sizeof(line) - 1 ? (size_t)n : sizeof(line) - 1);
+}
+
+/* CoreFoundation function pointers */
+static void *(*gps_CFStringCreateWithCString)(void *, const char *, unsigned) = NULL;
+static void *(*gps_CFArrayCreateMutable)(void *, long, const void *) = NULL;
+static long (*gps_CFArrayGetCount)(void *) = NULL;
+static const void *(*gps_CFArrayGetValueAtIndex)(void *, long) = NULL;
+static void (*gps_CFArrayAppendValue)(void *, const void *) = NULL;
+static void (*gps_CFArrayRemoveValueAtIndex)(void *, long) = NULL;
+static void *(*gps_CFRunLoopTimerCreate)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *) = NULL;
+static void *(*gps_CFRunLoopGetMain)(void) = NULL;
+static void (*gps_CFRunLoopAddTimer)(void *, void *, void *) = NULL;
+static void **gps_kCFRunLoopCommonModes = NULL;
+static double (*gps_CFAbsoluteTimeGetCurrent)(void) = NULL;
+static void *(*gps_CFNotificationCenterGetDarwinNotifyCenter)(void) = NULL;
+static void (*gps_CFNotificationCenterAddObserver)(void *, void *, void (*)(void *, void *, void *, const void *, void *), void *, const void *, int) = NULL;
+
+static void *gps_cf(void)
+{
+    if (!gps_cfh)
+        gps_cfh = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    return gps_cfh;
+}
+
+static void *gps_cfstr(const char *c)
+{
+    if (!gps_CFStringCreateWithCString) {
+        void *h = gps_cf();
+        if (h) gps_CFStringCreateWithCString = dlsym(h, "CFStringCreateWithCString");
+    }
+    if (!gps_CFStringCreateWithCString) return NULL;
+    return gps_CFStringCreateWithCString(NULL, c, 0x08000100);
+}
+
+static void gps_load_cf(void)
+{
+    void *h = gps_cf();
+    if (!h) return;
+    if (!gps_CFArrayCreateMutable) gps_CFArrayCreateMutable = dlsym(h, "CFArrayCreateMutable");
+    if (!gps_CFArrayGetCount) gps_CFArrayGetCount = dlsym(h, "CFArrayGetCount");
+    if (!gps_CFArrayGetValueAtIndex) gps_CFArrayGetValueAtIndex = dlsym(h, "CFArrayGetValueAtIndex");
+    if (!gps_CFArrayAppendValue) gps_CFArrayAppendValue = dlsym(h, "CFArrayAppendValue");
+    if (!gps_CFArrayRemoveValueAtIndex) gps_CFArrayRemoveValueAtIndex = dlsym(h, "CFArrayRemoveValueAtIndex");
+    if (!gps_CFRunLoopTimerCreate) gps_CFRunLoopTimerCreate = dlsym(h, "CFRunLoopTimerCreate");
+    if (!gps_CFRunLoopGetMain) gps_CFRunLoopGetMain = dlsym(h, "CFRunLoopGetMain");
+    if (!gps_CFRunLoopAddTimer) gps_CFRunLoopAddTimer = dlsym(h, "CFRunLoopAddTimer");
+    if (!gps_kCFRunLoopCommonModes) gps_kCFRunLoopCommonModes = dlsym(h, "kCFRunLoopCommonModes");
+    if (!gps_CFAbsoluteTimeGetCurrent) gps_CFAbsoluteTimeGetCurrent = dlsym(h, "CFAbsoluteTimeGetCurrent");
+    if (!gps_CFNotificationCenterGetDarwinNotifyCenter) gps_CFNotificationCenterGetDarwinNotifyCenter = dlsym(h, "CFNotificationCenterGetDarwinNotifyCenter");
+    if (!gps_CFNotificationCenterAddObserver) gps_CFNotificationCenterAddObserver = dlsym(h, "CFNotificationCenterAddObserver");
+}
+
+static id gps_make_location(void)
+{
+    if (!gps_enabled) return NULL;
+    void *objc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW);
+    if (!objc) return NULL;
+    if (!p_getClass) p_getClass = (id (*)(const char *))dlsym(objc, "objc_getClass");
+    if (!p_sel) p_sel = (SEL (*)(const char *))dlsym(objc, "sel_registerName");
+    if (!p_msgSend) p_msgSend = (id (*)(id, SEL, ...))dlsym(objc, "objc_msgSend");
+    if (!p_getClass || !p_sel || !p_msgSend) return NULL;
+
+    dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_NOW | RTLD_GLOBAL);
+    id locCls = p_getClass("CLLocation");
+    if (!locCls) return NULL;
+    id nsDate = p_getClass("NSDate");
+    if (!nsDate) return NULL;
+
+    SEL allocSel = p_sel("alloc");
+    SEL initSel = p_sel("initWithCoordinate:altitude:horizontalAccuracy:verticalAccuracy:course:speed:timestamp:");
+    id obj = p_msgSend(locCls, allocSel);
+    typedef struct { double latitude; double longitude; } Coord;
+    Coord coord = { gps_lat, gps_lon };
+    /* -date would autorelease; there is no run-loop pool inside a timer
+       callback, so make our own date and release it after the init. */
+    id date = p_msgSend(p_msgSend(nsDate, p_sel("alloc")), p_sel("init"));
+    id loc = ((id (*)(id, SEL, Coord, double, double, double, double, double, id))p_msgSend)(
+        obj, initSel, coord, 0.0, gps_acc, gps_acc, -1.0, -1.0, date);
+    p_msgSend(date, p_sel("release"));
+    if (!loc) p_msgSend(obj, p_sel("release"));
+    return loc;
+}
+
+static void gps_register_manager(id m)
+{
+    gps_load_cf();
+    if (!gps_managers) {
+        if (!gps_CFArrayCreateMutable) return;
+        /* weak pointers: retaining a manager here would keep every app's
+           CLLocationManager alive after stopUpdatingLocation. */
+        struct callbacks {
+            long version;
+            const void *(*retain)(const void *);
+            void (*release)(const void *);
+            const void *(*copyDescription)(const void *);
+            unsigned char (*equal)(const void *, const void *);
+        } cb = { 0, NULL, NULL, NULL, NULL };
+        gps_managers = gps_CFArrayCreateMutable(NULL, 0, (const void *)&cb);
+    }
+    if (!gps_managers) return;
+    long n = gps_CFArrayGetCount(gps_managers);
+    for (long i = 0; i < n; i++) {
+        if (gps_CFArrayGetValueAtIndex(gps_managers, i) == (const void *)m)
+            return;
+    }
+    gps_CFArrayAppendValue(gps_managers, (const void *)m);
+}
+
+static void gps_unregister_manager(id m)
+{
+    if (!gps_managers || !gps_CFArrayGetCount) return;
+    long n = gps_CFArrayGetCount(gps_managers);
+    for (long i = n - 1; i >= 0; i--) {
+        if (gps_CFArrayGetValueAtIndex(gps_managers, i) == (const void *)m) {
+            if (gps_CFArrayRemoveValueAtIndex) gps_CFArrayRemoveValueAtIndex(gps_managers, i);
+        }
+    }
+}
+
+static void gps_timer_cb(void *timer, void *info)
+{
+    (void)timer; (void)info;
+    if (!gps_enabled || !gps_managers) return;
+    if (!p_msgSend || !p_sel) return;
+    id loc = gps_make_location();
+    if (!loc) return;
+    long n = gps_CFArrayGetCount(gps_managers);
+    for (long i = n - 1; i >= 0; i--) {
+        id mgr = (id)gps_CFArrayGetValueAtIndex(gps_managers, i);
+        id delegate = p_msgSend(mgr, p_sel("delegate"));
+        if (!delegate) continue;
+        SEL cb = p_sel("locationManager:didUpdateToLocation:fromLocation:");
+        char r = (char)(uintptr_t)p_msgSend(delegate, p_sel("respondsToSelector:"), cb);
+        if (r) {
+            ((void (*)(id, SEL, id, id, id))p_msgSend)(delegate, cb, mgr, loc, NULL);
+        }
+    }
+    p_msgSend(loc, p_sel("release"));
+}
+
+static void gps_start_timer(void)
+{
+    gps_load_cf();
+    if (gps_timer) return;
+    if (!gps_CFRunLoopTimerCreate || !gps_CFAbsoluteTimeGetCurrent || !gps_CFRunLoopGetMain || !gps_CFRunLoopAddTimer || !gps_kCFRunLoopCommonModes)
+        return;
+    gps_timer = gps_CFRunLoopTimerCreate(NULL, gps_CFAbsoluteTimeGetCurrent() + 1.0, 1.0, 0, 0, gps_timer_cb, NULL);
+    if (gps_timer)
+        gps_CFRunLoopAddTimer(gps_CFRunLoopGetMain(), gps_timer, *gps_kCFRunLoopCommonModes);
+}
+
+static IMP gps_orig_locationServicesEnabled = NULL;
+static IMP gps_orig_authorizationStatus = NULL;
+static IMP gps_orig_location = NULL;
+static IMP gps_orig_startUpdating = NULL;
+static IMP gps_orig_stopUpdating = NULL;
+
+static char gps_hook_locationServicesEnabled(id self, SEL cmd)
+{
+    if (gps_enabled) return 1;
+    if (gps_orig_locationServicesEnabled)
+        return ((char (*)(id, SEL))gps_orig_locationServicesEnabled)(self, cmd);
+    return 0;
+}
+
+static int gps_hook_authorizationStatus(id self, SEL cmd)
+{
+    if (gps_enabled) return 3;
+    if (gps_orig_authorizationStatus)
+        return ((int (*)(id, SEL))gps_orig_authorizationStatus)(self, cmd);
+    return 0;
+}
+
+static id gps_hook_location(id self, SEL cmd)
+{
+    if (gps_enabled) {
+        id loc = gps_make_location();
+        return p_msgSend(loc, p_sel("autorelease"));
+    }
+    if (gps_orig_location)
+        return ((id (*)(id, SEL))gps_orig_location)(self, cmd);
+    return NULL;
+}
+
+static void gps_hook_startUpdating(id self, SEL cmd)
+{
+    /* when we supply the location the real service (locationd, disabled on
+       ios3ds) is not needed; when off, behave exactly like stock iOS */
+    if (gps_enabled) {
+        gps_register_manager(self);
+        return;
+    }
+    if (gps_orig_startUpdating)
+        ((void (*)(id, SEL))gps_orig_startUpdating)(self, cmd);
+}
+
+static void gps_hook_stopUpdating(id self, SEL cmd)
+{
+    gps_unregister_manager(self);
+    if (gps_orig_stopUpdating)
+        ((void (*)(id, SEL))gps_orig_stopUpdating)(self, cmd);
+}
+
+static void gps_install_hooks(void)
+{
+    if (gps_hooks_installed) return;
+    void *objc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW);
+    if (!objc) return;
+    if (!p_getClass) p_getClass = (id (*)(const char *))dlsym(objc, "objc_getClass");
+    if (!p_sel) p_sel = (SEL (*)(const char *))dlsym(objc, "sel_registerName");
+    if (!p_msgSend) p_msgSend = (id (*)(id, SEL, ...))dlsym(objc, "objc_msgSend");
+    if (!p_getClass || !p_sel || !p_msgSend) return;
+
+    dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_NOW | RTLD_GLOBAL);
+    id cls = p_getClass("CLLocationManager");
+    if (!cls) return;
+
+    Method (*p_class_getClassMethod)(id, SEL) = dlsym(RTLD_DEFAULT, "class_getClassMethod");
+    Method (*p_class_getInstanceMethod)(id, SEL) = dlsym(RTLD_DEFAULT, "class_getInstanceMethod");
+    IMP (*p_method_setImplementation)(Method, IMP) = dlsym(RTLD_DEFAULT, "method_setImplementation");
+    if (!p_class_getClassMethod || !p_class_getInstanceMethod || !p_method_setImplementation) return;
+
+    Method m;
+    m = p_class_getClassMethod(cls, p_sel("locationServicesEnabled"));
+    if (m) gps_orig_locationServicesEnabled = p_method_setImplementation(m, (IMP)gps_hook_locationServicesEnabled);
+    m = p_class_getClassMethod(cls, p_sel("authorizationStatus"));
+    if (m) gps_orig_authorizationStatus = p_method_setImplementation(m, (IMP)gps_hook_authorizationStatus);
+    m = p_class_getInstanceMethod(cls, p_sel("location"));
+    if (m) gps_orig_location = p_method_setImplementation(m, (IMP)gps_hook_location);
+    m = p_class_getInstanceMethod(cls, p_sel("startUpdatingLocation"));
+    if (m) gps_orig_startUpdating = p_method_setImplementation(m, (IMP)gps_hook_startUpdating);
+    m = p_class_getInstanceMethod(cls, p_sel("stopUpdatingLocation"));
+    if (m) gps_orig_stopUpdating = p_method_setImplementation(m, (IMP)gps_hook_stopUpdating);
+
+    gps_hooks_installed = 1;
+}
+
+/* Read the preferences file directly instead of through CFPreferences:
+   on 4.2.1 a CFPreferences domain caches its values in the process, so a
+   notify_post from ios3ds-gps did not change what running apps saw. The
+   command-line tool writes the same plist to the Preferences folder and to
+   /private/var/tmp (the latter is readable by sandboxed apps). */
+static int gps_plist_number(const char *buf, const char *key, double *out)
+{
+    char pat[64];
+    snprintf(pat, sizeof(pat), "<key>%s</key>", key);
+    const char *p = strstr(buf, pat);
+    if (!p) return 0;
+    p = strstr(p, "<real>");
+    return p && sscanf(p, "<real>%lf</real>", out) == 1;
+}
+
+static int gps_read_domain(void)
+{
+    static const char *paths[] = {
+        "/private/var/tmp/com.ios3ds.location.plist",
+        "/var/mobile/Library/Preferences/com.ios3ds.location.plist",
+    };
+    for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        FILE *f = fopen(paths[i], "r");
+        if (!f) continue;
+        char buf[4096];
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = 0;
+        fclose(f);
+        const char *en = strstr(buf, "<key>Enabled</key>");
+        if (!en) continue;
+        if (!strstr(en, "<true/>")) {
+            gps_enabled = 0;
+            return 1;
+        }
+        double la, lo, ac;
+        if (!gps_plist_number(buf, "Latitude", &la) ||
+            !gps_plist_number(buf, "Longitude", &lo) ||
+            !gps_plist_number(buf, "Accuracy", &ac))
+            continue;
+        char s[128];
+        snprintf(s, sizeof(s), "%.17g,%.17g,%.17g", la, lo, ac);
+        if (gps_parse(s, &gps_lat, &gps_lon, &gps_acc) != 0) continue;
+        gps_enabled = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static void gps_reload_config(void)
+{
+    gps_load_cf();
+
+    /* boot-args are read once: they carry both the boot-arg location and the
+       optional ios3ds_gpslog=1 switch for the [gps] console lines */
+    char ba[512];
+    size_t n = sizeof(ba) - 1;
+    int have_ba = sysctlbyname("kern.bootargs", ba, &n, NULL, 0) == 0;
+    if (have_ba) ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
+    gps_logging = have_ba && strstr(ba, "ios3ds_gpslog=1") != NULL;
+    if (!gps_read_domain()) {
+        /* fall back to boot arg */
+        if (have_ba) {
+            char *p = strstr(ba, "ios3ds_gps=");
+            if (p) {
+                char buf[128];
+                int i = 0;
+                p += 11;
+                while (*p && *p != ' ' && i < (int)sizeof(buf) - 1)
+                    buf[i++] = *p++;
+                buf[i] = 0;
+                double la, lo, ac;
+                if (gps_parse(buf, &la, &lo, &ac) == 0) {
+                    gps_lat = la;
+                    gps_lon = lo;
+                    gps_acc = ac;
+                    gps_enabled = 1;
+                } else {
+                    gps_enabled = 0;
+                }
+            } else {
+                gps_enabled = 0;
+            }
+        } else {
+            gps_enabled = 0;
+        }
+    }
+
+    gps_log("[gps] %s: %s %.6f,%.6f acc %.1f m\n", getprogname(),
+            gps_enabled ? "on" : "off", gps_lat, gps_lon, gps_acc);
+    if (gps_enabled) {
+        gps_install_hooks();
+        gps_start_timer();
+    }
+}
+
+static void gps_notify_cb(void *center, void *observer, void *name, const void *object, void *userInfo)
+{
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    gps_log("[gps] Darwin notification received\n");
+    gps_reload_config();
+}
+
+static void gps_register_notify(void)
+{
+    gps_load_cf();
+    if (!gps_CFNotificationCenterGetDarwinNotifyCenter || !gps_CFNotificationCenterAddObserver) return;
+    void *ctr = gps_CFNotificationCenterGetDarwinNotifyCenter();
+    if (!ctr) return;
+    gps_CFNotificationCenterAddObserver(ctr, NULL, gps_notify_cb, gps_cfstr("com.ios3ds.location.changed"), NULL, 1);
+}
+
 __attribute__((constructor)) static void applog_init(void)
 {
     if (!strcmp(getprogname(), "SpringBoard")) {
@@ -385,6 +765,8 @@ __attribute__((constructor)) static void applog_init(void)
         warm_start();
     }
     load_substrate();
+    gps_register_notify();
+    gps_reload_config();
     char ba[512];
     size_t n = sizeof(ba) - 1;
     if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) != 0) return;

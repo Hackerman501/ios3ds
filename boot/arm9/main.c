@@ -139,6 +139,7 @@ typedef struct {
     u32 cam_test;        /* 1 = camera self-test matrix before XNU (~6 s; docs/camera.md section 7) */
     u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
     u32 hp_codec;        /* 0 = CODEC headphone path as in 0.4.0 (audio.h audio_set_hp_codec) */
+    char gps[128];       /* boot.cfg gps=LAT,LON[,ACC]; passed to iOS as ios3ds_gps= */
     u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
     u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
     u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
@@ -258,6 +259,9 @@ static int parse_bootcfg(char *txt)
                     known = true;
                 } else if (!strncmp(key, "shim", 5)) {
                     strlcpy_(cfg.shim, val, sizeof(cfg.shim));
+                    known = true;
+                } else if (!strncmp(key, "gps", 4)) {
+                    strlcpy_(cfg.gps, val, sizeof(cfg.gps));
                     known = true;
                 } else if (!strncmp(key, "rtc_offset", 11)) {
                     cfg.rtc_offset = *val == '-' ? -(int32_t)parse_u32(val + 1, NULL)
@@ -1027,6 +1031,14 @@ void a9_main(int argc, char **argv)
        look for this boot-arg in kern.bootargs and exit at once without it */
     if (cfg.diag && strlen(ba->CommandLine) + 14 < sizeof(ba->CommandLine))
         strlcpy_(ba->CommandLine + strlen(ba->CommandLine), " ios3ds_diag=1", 15);
+    /* gps=LAT,LON[,ACC] -> boot-arg ios3ds_gps=... for CoreLocation hooks */
+    if (cfg.gps[0]) {
+        char gpstmp[160];
+        snprintf(gpstmp, sizeof(gpstmp), " ios3ds_gps=%s", cfg.gps);
+        if (strlen(ba->CommandLine) + strlen(gpstmp) < sizeof(ba->CommandLine))
+            strlcpy_(ba->CommandLine + strlen(ba->CommandLine), gpstmp,
+                     sizeof(ba->CommandLine) - strlen(ba->CommandLine));
+    }
     log_ok("boot_args at %08x: dt va %08x len %u\n", cfg.bootargs_pa, ba->deviceTreeP, dsize);
 
     /* XNU log ring (filled by the M2 console hook) */

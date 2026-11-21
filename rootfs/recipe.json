@@ -143,6 +143,9 @@
   "build/rootfs-add/usr/libexec/ios3ds-mcud": "/usr/libexec/ios3ds-mcud",
   "tools/ios3ds-mcu/daemon/com.ios3ds.mcud.plist": "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist",
   "build/rootfs-add/usr/lib/ios3ds-applog.dylib": "/usr/lib/ios3ds-applog.dylib",
+  "build/rootfs-add/usr/bin/ios3ds-gps": "/usr/bin/ios3ds-gps",
+  "build/rootfs-add/usr/libexec/ios3ds-gpstest": "/usr/libexec/ios3ds-gpstest",
+  "tools/ios3ds-gps/com.ios3ds.gpstest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gpstest.plist",
   "build/rootfs-add/System/Library/MediaCapture/vcd.mediacapture": "/System/Library/MediaCapture/vcd.mediacapture",
   "rootfs/files/camera/AVCapture.plist": "/System/Library/PrivateFrameworks/Celestial.framework/N72/AVCapture.plist",
   "rootfs/files/camera/com.apple.coremedia.plist": "/private/var/mobile/Library/Preferences/com.apple.coremedia.plist"
@@ -170,6 +173,9 @@
   "/usr/libexec/ios3ds-mcud": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.mcud.plist": "0644",
   "/usr/lib/ios3ds-applog.dylib": "0755",
+  "/usr/bin/ios3ds-gps": "0755",
+  "/usr/libexec/ios3ds-gpstest": "0755",
+  "/System/Library/LaunchDaemons/com.ios3ds.gpstest.plist": "0644",
   "/System/Library/MediaCapture/vcd.mediacapture": "0755"
  },
  "file_patches": [

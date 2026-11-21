@@ -12,9 +12,9 @@ $(OUT): diag.c ent.plist
 	IOS_CC_ENTITLEMENTS=$(CURDIR)/ent.plist $(CC) -Os -Wall -Wextra diag.c -o $@
 
 # app NSLog -> /dev/console with diag=1 (applog.c, re-log 62)
-$(LOG): applog.c
+$(LOG): applog.c ../ios3ds-gps/gps.c ../ios3ds-gps/gps.h
 	mkdir -p $(dir $@)
-	$(CC) -Os -Wall -Wextra -dynamiclib -install_name /usr/lib/ios3ds-applog.dylib applog.c -o $@
+	$(CC) -Os -Wall -Wextra -I../ios3ds-gps -dynamiclib -install_name /usr/lib/ios3ds-applog.dylib applog.c ../ios3ds-gps/gps.c -o $@
 
 clean:
 	rm -f $(OUT) $(LOG)
