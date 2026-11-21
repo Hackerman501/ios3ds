@@ -33,6 +33,11 @@ endif
 ifneq ($(filter 1 yes on,$(SANDBOX)),)
 MKSD_FLAGS += --sandbox-open
 endif
+# CARRY_FROM=/path/to/old/rootfs.hfs: carry user data from an explicit old image
+# (developer path; install.py carries from the card by default)
+ifneq ($(CARRY_FROM),)
+MKSD_FLAGS += --carry-from $(CARRY_FROM)
+endif
 BUILD   ?= build
 STAGING := $(BUILD)/staging
 

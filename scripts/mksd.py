@@ -34,6 +34,26 @@ def run(cmd, **kw):
 
 def build_tree(args):
     tree = args.out
+    fresh = os.environ.get("IOS3DS_FRESH", "").lower() in ("1", "true", "yes", "on") or \
+            os.environ.get("FRESH", "").lower() in ("1", "true", "yes", "on")
+    carry_from = getattr(args, "carry_from", None)
+    if not carry_from:
+        carry_from = os.environ.get("IOS3DS_CARRY_FROM") or os.environ.get("CARRY_FROM")
+    if carry_from:
+        carry_from = os.path.abspath(carry_from)
+        if not os.path.isfile(carry_from):
+            sys.exit("[mksd] CARRY_FROM image not found: %s" % carry_from)
+    saved_from = None
+    if carry_from:
+        # allow CARRY_FROM=build/sd/ios3ds/rootfs.hfs (the previous build):
+        # move it out of the tree that is about to be replaced, no extra copy
+        tree_abs = os.path.abspath(tree)
+        if carry_from.startswith(tree_abs + os.sep):
+            saved_from = tree_abs + ".carry-src.hfs"
+            if os.path.exists(saved_from):
+                os.remove(saved_from)
+            shutil.move(carry_from, saved_from)
+            carry_from = saved_from
     if os.path.isdir(tree):
         shutil.rmtree(tree)
     os.makedirs(os.path.join(tree, "luma", "payloads"))
@@ -63,8 +83,26 @@ def build_tree(args):
                      cydia=not args.no_cydia, cydia_cache=args.cydia_cache,
                      tlsfix=not args.no_tlsfix, sandbox_open=args.sandbox_open,
                      music=args.music, test_song=not args.no_test_song)
+        new_img = os.path.join(tree, "ios3ds", "rootfs.hfs")
+        if carry_from and os.path.isfile(carry_from) and os.path.isfile(new_img) and not fresh:
+            sys.path.insert(0, os.path.join(ROOT, "scripts"))
+            import carryover  # noqa: E402
+            hfs = args.hfsplus
+            if not hfs:
+                hfs = os.path.join(ROOT, "build", "tools", "hfsplus")
+            try:
+                result = carryover.carry_over(carry_from, new_img, hfs, backup=False, verbose=True)
+                print("[mksd] carry-over result: %s" % result)
+            except Exception as e:
+                print("[mksd] warn: carry-over failed: %s" % e)
+        elif carry_from:
+            print("[mksd] no new rootfs; skipping carry-over from %s" % carry_from)
     else:
         print("[mksd] no staged kernel (or --no-kernel): SD gets the payload only")
+    if saved_from:
+        for extra in (saved_from, saved_from + ".bak"):
+            if os.path.exists(extra):
+                os.remove(extra)
     return tree
 
 
@@ -114,6 +152,7 @@ def parser():
     ap.add_argument("--music", help="folder with your audio files (.mp3/.m4a/.wav/.aif) for the Music app "
                     "(docs/audio.md section 10)")
     ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out of the Music app")
+    ap.add_argument("--carry-from", help="old rootfs.hfs to carry user data from (default: IOS3DS_CARRY_FROM env; none = no carry-over)")
     return ap
 
 

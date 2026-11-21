@@ -102,7 +102,7 @@ It takes a few minutes and needs about 4 GB of free space on the PC while it wor
 
 Without an SD card path, the files go to `ios3ds-sd/`. Copy what is **inside** that folder to the root of the card.
 
-> **Updating:** re-running the installer on a card that already has ios3ds replaces the iOS disk but carries your > data (Wi-Fi networks, settings, photos, voice memos, preferences) over from the previous `rootfs.hfs`. > Installed Cydia packages are not carried over. Add `--fresh` to discard everything and start clean; > `--backup-old` keeps a `rootfs.hfs.bak` copy of the previous disk.
+> **Updating:** re-running the installer on a card that already has ios3ds replaces the iOS disk but carries your data (Wi-Fi networks and passwords, settings, photos, voice memos, preferences, SpringBoard layout) over from the previous `rootfs.hfs`. Installed Cydia packages and the Music library are not carried over. Add `--fresh` to discard everything and start clean; `--backup-old` keeps a `rootfs.hfs.bak` copy of the previous disk. If the data does not fit or any file fails to copy, the previous disk is kept as `sd:/ios3ds/rootfs.hfs.bak` automatically and you get a warning.
 
 ### 3. Start it
 
@@ -177,7 +177,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `diag=1` | extra diagnostics in the log |
 
 - **Re-running the installer** replaces `boot.cfg`; the old one is kept as `boot.cfg.old`. The installer refuses a card with a leftover `ios3ds/luma.firm`: start ios3ds once, or restore Luma first.
-- **What is kept on an update:** re-running the installer or `make sd` rebuilds the iOS disk but carries your data over from the previous `sd:/ios3ds/rootfs.hfs` (Wi-Fi networks and passwords, settings, photos, voice memos, preferences, SpringBoard layout). Installed Cydia packages are not carried over. To start completely fresh, use `--fresh` (installer) or `IOS3DS_FRESH=1 make sd` (and `IOS3DS_FRESH=1 make sdimg` for QEMU). A backup of the previous disk is kept with `--backup-old` (installer) or `IOS3DS_BACKUP=1`.
+- **What is kept on an update:** re-running the installer (the user's card) carries Wi-Fi networks and passwords, settings, photos, voice memos, preferences and the SpringBoard layout from the previous `sd:/ios3ds/rootfs.hfs`. Use `--fresh` to start clean, `--backup-old` to keep an extra copy of the old disk. Developer builds are different: `make sd` / `make sdimg` never carry data from the last build (QEMU images stay reproducible); opt in with `make sd CARRY_FROM=/path/to/old/rootfs.hfs`. Caches, logs, transient `*.sqlite-journal`/`*.lock` files, installed Cydia packages and the Music library (`Media/iTunes_Control`, rebuilt from `ios3ds/music` and the test song) are not carried. If anything fails, the old image is kept as `sd:/ios3ds/rootfs.hfs.bak` and a warning is printed.
 - **Uninstall:** delete `ios3ds/`, `3ds/ios3ds.3dsx` and `luma/payloads/ios3ds.firm` from the card.
 
 ### Limitations
@@ -189,7 +189,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 - **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
 - **No hardware for:** Bluetooth (the 3DS has none), the 3D screen, IR, NFC.
-- **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically; installed Cydia packages are not (reinstall them after updating). Use `--fresh` (installer) or `IOS3DS_FRESH=1` (`make sd`) to start with a clean disk.
+- **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically by the installer; installed Cydia packages and the Music library are not (reinstall packages after updating). Use `--fresh` (installer) to start with a clean disk.
 - **Leaving iOS** means holding POWER (a hard power-off); there is no clean shutdown back to the 3DS yet.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 

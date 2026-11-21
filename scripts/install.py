@@ -150,6 +150,9 @@ def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, t
     args.sandbox_open = False
     args.music = music
     args.no_test_song = not test_song
+    # the installer carries from the user's card (see main), never from
+    # CARRY_FROM/IOS3DS_CARRY_FROM, which is only for developer 'make sd' builds
+    args.carry_from = None
     mksd.build_tree(args)
 
 
@@ -210,6 +213,12 @@ def main():
                     help="your audio files (.mp3/.m4a/.wav/.aif) for the Music app (default: SD/ios3ds/music "
                          "if that folder exists; docs/audio.md section 10)")
     ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out of the Music app")
+    ap.add_argument("--fresh", action="store_true",
+                    help="start with a fresh iOS disk: don't carry user data over from an "
+                         "existing sd:/ios3ds/rootfs.hfs (also: IOS3DS_FRESH=1)")
+    ap.add_argument("--backup-old", action="store_true",
+                    help="keep an extra backup copy (rootfs.hfs.bak) of the previous iOS disk; "
+                         "a backup is also kept automatically if the carry-over fails")
     ap.add_argument("--prebuilt", default=os.path.join(ROOT, "prebuilt"), help=argparse.SUPPRESS)
     ap.add_argument("--check", action="store_true",
                     help="only check this release and the tools on this PC, then exit")
@@ -274,6 +283,29 @@ def main():
     build_tree(staging, tree, a.prebuilt, hfs, cydia=not a.no_cydia,
                cydia_cache=os.path.join(work, "cydia"), tlsfix=not a.no_tlsfix,
                music=music, test_song=not a.no_test_song)
+
+    # carry user data over from a rootfs.hfs already on the card, if any
+    fresh = a.fresh or os.environ.get("IOS3DS_FRESH", "").lower() in ("1", "true", "yes", "on") \
+            or os.environ.get("FRESH", "").lower() in ("1", "true", "yes", "on")
+    old_img = os.path.join(sd, "ios3ds", "rootfs.hfs")
+    new_img = os.path.join(tree, "ios3ds", "rootfs.hfs")
+    if not fresh and os.path.exists(old_img) and os.path.exists(new_img):
+        say("\nCarrying your data over from the previous iOS disk")
+        sys.path.insert(0, SCRIPTS)
+        import carryover
+        try:
+            result = carryover.carry_over(old_img, new_img, hfs, backup=a.backup_old, verbose=True)
+            say("   carry-over result: %s" % result)
+            if result.status != "carried" and not result.backup:
+                # carry_over() keeps a backup itself on any failure; this is
+                # the last resort if even that could not be done
+                carryover.keep_backup(old_img, result.reason or result.status)
+        except Exception as e:
+            say("   warn: carry-over failed, continuing with a fresh disk: %s" % e)
+            carryover.keep_backup(old_img, "failed")
+    else:
+        if fresh:
+            say("\n(--fresh: starting with a new iOS disk)")
 
     step(4, "Writing the SD card files to %s" % sd)
     os.makedirs(os.path.dirname(sd), exist_ok=True)
