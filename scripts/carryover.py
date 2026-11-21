@@ -7,10 +7,28 @@ Only reads the old image; the new image is modified.  Paths carried:
   /private/var/preferences/SystemConfiguration   (saved Wi-Fi networks)
   /private/var/Keychains                        (keychain: Wi-Fi passwords, ...)
 
-/private/var/lib/dpkg and installed Cydia package files are deliberately NOT
-carried: an update can change the Cydia/Substrate/base system and the dpkg
-database plus package files would then desync from the new image (broken
-packages, stale scripts).  Reinstall packages from Cydia after updating.
+Never carried:
+  /private/var/lib/dpkg and installed Cydia package files: an update can change
+    Cydia/Substrate/the base system, so carrying the dpkg database plus package
+    files would desync from the new image (broken packages, stale scripts).
+    Reinstall packages from Cydia after updating.
+  /private/var/mobile/Library/Caches: MobileInstallation's app list cache would
+    be stale after an update.
+  /private/var/mobile/Library/Logs: old crash and system logs are not useful on
+    a new build and can be large.
+  /private/var/mobile/Media/iTunes_Control: the Music library is rebuilt from
+    SD/ios3ds/music (and the generated test song) by scripts/music.py on every
+    install; the new library must win over the old one.
+  any *.sqlite-journal / *.lock leftovers: transient files, not user data.
+
+Ownership: xpwn's hfsplus has no chown command, and its source is not in this
+repository (it lives in build/xpwn, shared by other worktrees).  Like
+scripts/mkrootfs.py, we rely on hfsplus add/mkdir inheriting the owner, group
+and folder mode from the parent directory: the new image already has
+/private/var/mobile at 501:501 (mobile) and /private/var/{Keychains,preferences}
+at root, so carried files get the owners of the old image.  Every copied entry
+is checked against the old image's mode/uid/gid/size afterwards; a mismatch is
+reported as a partial carry-over so the installer can keep the old image.
 
 Usage:
   python3 scripts/carryover.py OLD.hfs NEW.hfs [--hfsplus TOOL] [--backup]
@@ -30,6 +48,27 @@ CARRY_PATHS = [
     "/private/var/Keychains",
 ]
 
+# subtrees that must never overwrite a freshly built one
+EXCLUDED_DIRS = {
+    "/private/var/mobile/Library/Caches",
+    "/private/var/mobile/Library/Logs",
+    "/private/var/mobile/Media/iTunes_Control",
+}
+
+# transient file-name suffixes that must never be carried
+SKIP_SUFFIXES = (".sqlite-journal", ".lock")
+
+
+class CarryResult(str):
+    """A status string ("carried"/"partial"/"nothing") with failure details."""
+
+    def __new__(cls, status, reason="", backup=None):
+        obj = str.__new__(cls, status)
+        obj.status = status
+        obj.reason = reason
+        obj.backup = backup
+        return obj
+
 
 def _run(hfs, img, *args):
     return subprocess.run([hfs, img] + list(args), capture_output=True, text=True)
@@ -42,8 +81,12 @@ def _is_fresh_env():
     return False
 
 
+def _warn(msg):
+    sys.stderr.write("warn: %s\n" % msg)
+
+
 def ls_entries(hfs, img, path):
-    """Return list of (mode_str, uid, gid, size, name) or None if missing."""
+    """Return (mode, uid, gid, size, name) tuples for a directory; None if absent."""
     r = _run(hfs, img, "ls", path)
     out = (r.stdout or "") + (r.stderr or "")
     if "No such file or directory" in out:
@@ -54,10 +97,7 @@ def ls_entries(hfs, img, path):
         if not m:
             continue
         name = m.group(5).strip()
-        if not name or name.endswith(":"):
-            continue
-        # skip the "Total filesystem size" footer
-        if name.startswith("Total filesystem"):
+        if not name or name.endswith(":") or name.startswith("Total filesystem"):
             continue
         entries.append((m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4)), name))
     return entries
@@ -68,49 +108,99 @@ def exists_path(hfs, img, path):
 
 
 def path_mode(hfs, img, path):
+    """Mode of path as printed by hfsplus ls (including the file-type bits)."""
     path = path.rstrip("/")
-    if path == "":
+    if not path:
         path = "/"
-    parent = os.path.dirname(path)
-    if parent == "":
-        parent = "/"
+    parent = os.path.dirname(path) or "/"
     name = os.path.basename(path)
-    if name == "":
+    if not name:
         return None
-    ents = ls_entries(hfs, img, parent)
-    if not ents:
-        return None
-    for mode, uid, gid, size, ename in ents:
+    for mode, uid, gid, size, ename in ls_entries(hfs, img, parent) or []:
         if ename == name:
             return mode
     return None
 
 
-def _ensure_parents(hfs, img, path):
+def free_space(hfs, img):
+    """Parse the free-byte count from the 'hfsplus IMG ls /' footer."""
+    r = _run(hfs, img, "ls", "/")
+    m = re.search(r"free:\s*(\d+)", (r.stdout or "") + (r.stderr or ""))
+    return int(m.group(1)) if m else 0
+
+
+def _skip_name(name):
+    return any(name.endswith(s) for s in SKIP_SUFFIXES)
+
+
+def _child(parent, name):
+    return parent.rstrip("/") + "/" + name
+
+
+def scan_tree(hfs, img, path, tree):
+    """Snapshot one directory (recursively) into tree[path] = [entries].
+
+    One 'ls' per directory, reused for the size check, the copy and the
+    verification pass.  Returns False if the directory could not be listed.
+    """
+    entries = ls_entries(hfs, img, path)
+    if entries is None:
+        return False
+    kept = []
+    ok = True
+    for mode, uid, gid, size, name in entries:
+        if _skip_name(name):
+            continue
+        child = _child(path, name)
+        if child in EXCLUDED_DIRS:
+            continue
+        if stat.S_ISDIR(int(mode, 8)):
+            if not scan_tree(hfs, img, child, tree):
+                _warn("cannot list %s in the old image" % child)
+                ok = False
+                continue
+        kept.append((mode, uid, gid, size, name))
+    tree[path] = kept
+    return ok
+
+
+def _tree_size(tree):
+    total = 0
+    for entries in tree.values():
+        for mode, uid, gid, size, name in entries:
+            if not stat.S_ISDIR(int(mode, 8)):
+                total += size
+    return total
+
+
+def _ensure_dir(hfs, img, path, created):
+    """Ensure directory path exists (create if missing), tracking creations."""
+    if path in created:
+        return
     parts = path.strip("/").split("/")
     cur = ""
-    for part in parts[:-1]:
+    for part in parts:
         cur += "/" + part
-        if not exists_path(hfs, img, cur):
-            _run(hfs, img, "mkdir", cur)
+        if cur not in created:
+            _run(hfs, img, "mkdir", cur)  # "already exists" is fine
+            created.add(cur)
 
 
-def _copy_file(hfs, old_img, new_img, old_path, new_path, mode):
+def _copy_file(hfs, old_img, new_img, old_path, new_path, mode, created):
+    _ensure_dir(hfs, new_img, os.path.dirname(new_path), created)
     fd, tmp = tempfile.mkstemp(prefix="ios3ds-carry-")
     os.close(fd)
     os.remove(tmp)
     try:
         r = subprocess.run([hfs, old_img, "extract", old_path, tmp],
                            capture_output=True, text=True)
-        if r.returncode:
-            sys.stderr.write("warn: extract %s failed: %s\n" % (old_path, (r.stderr or r.stdout).strip()))
+        if r.returncode or not os.path.exists(tmp):
+            _warn("extract %s failed: %s" % (old_path, (r.stderr or r.stdout).strip()))
             return False
-        if exists_path(hfs, new_img, new_path):
-            _run(hfs, new_img, "rm", new_path)
-        _ensure_parents(hfs, new_img, new_path)
+        _run(hfs, new_img, "rm", new_path)  # ignore "no such file"
         r = _run(hfs, new_img, "add", tmp, new_path)
         if r.returncode:
-            sys.stderr.write("warn: add %s failed: %s\n" % (new_path, (r.stderr or r.stdout).strip()))
+            _warn("add %s failed: %s" % (new_path, (r.stderr or r.stdout).strip()))
             return False
         if mode:
             _run(hfs, new_img, "chmod", mode, new_path)
@@ -122,91 +212,167 @@ def _copy_file(hfs, old_img, new_img, old_path, new_path, mode):
             pass
 
 
-def _copy_symlink(hfs, old_img, new_img, old_path, new_path, mode):
+def _copy_symlink(hfs, old_img, new_img, old_path, new_path, mode, created):
+    _ensure_dir(hfs, new_img, os.path.dirname(new_path), created)
     r = subprocess.run([hfs, old_img, "cat", old_path], capture_output=True)
     if r.returncode:
-        sys.stderr.write("warn: cat %s failed\n" % old_path)
+        _warn("cat %s failed" % old_path)
         return False
     target = r.stdout.decode("utf-8", "surrogateescape")
-    # drop a single trailing NUL if present
     if target.endswith("\x00"):
         target = target[:-1]
-    if exists_path(hfs, new_img, new_path):
-        _run(hfs, new_img, "rm", new_path)
-    _ensure_parents(hfs, new_img, new_path)
+    _run(hfs, new_img, "rm", new_path)
     rr = _run(hfs, new_img, "symlink", new_path, target)
     if rr.returncode:
-        sys.stderr.write("warn: symlink %s failed: %s\n" % (new_path, (rr.stderr or rr.stdout).strip()))
+        _warn("symlink %s failed: %s" % (new_path, (rr.stderr or rr.stdout).strip()))
         return False
     if mode:
         _run(hfs, new_img, "chmod", mode, new_path)
     return True
 
 
-def copy_dir(hfs, old_img, new_img, old_path, new_path, mode=None, depth=0):
-    """Recursively copy old_path -> new_path. Returns True on success."""
-    entries = ls_entries(hfs, old_img, old_path)
+def copy_dir(hfs, old_img, new_img, old_path, new_path, mode=None, tree=None,
+             created=None, depth=0):
+    """Copy a snapshotted directory into the new image. Returns (ok, bytes)."""
+    if created is None:
+        created = set()
+    entries = tree[old_path] if tree is not None else ls_entries(hfs, old_img, old_path)
     if entries is None:
-        return False
-    if not exists_path(hfs, new_img, new_path):
-        _ensure_parents(hfs, new_img, new_path)
-        _run(hfs, new_img, "mkdir", new_path)
+        return False, 0
+    _ensure_dir(hfs, new_img, new_path, created)
     if mode:
         _run(hfs, new_img, "chmod", mode, new_path)
-    ok = True
+    ok, total = True, 0
     for emode, uid, gid, size, name in entries:
-        old_child = old_path.rstrip("/") + "/" + name
-        new_child = new_path.rstrip("/") + "/" + name
+        old_child, new_child = _child(old_path, name), _child(new_path, name)
         m = int(emode, 8)
         if stat.S_ISDIR(m):
-            if not copy_dir(hfs, old_img, new_img, old_child, new_child, emode, depth + 1):
-                ok = False
+            cok, nbytes = copy_dir(hfs, old_img, new_img, old_child, new_child,
+                                   emode, tree, created, depth + 1)
+            ok = ok and cok
+            total += nbytes
         elif stat.S_ISLNK(m):
-            if not _copy_symlink(hfs, old_img, new_img, old_child, new_child, emode):
-                ok = False
+            ok = _copy_symlink(hfs, old_img, new_img, old_child, new_child, emode, created) and ok
         else:
-            if not _copy_file(hfs, old_img, new_img, old_child, new_child, emode):
+            if _copy_file(hfs, old_img, new_img, old_child, new_child, emode, created):
+                total += size
+            else:
                 ok = False
-    return ok
+    return ok, total
+
+
+def verify_tree(hfs, new_img, tree):
+    """Check every copied entry: it must exist with the old mode, uid, gid, size."""
+    errors = []
+    for path, entries in tree.items():
+        present = {name: (mode, uid, gid, size)
+                   for mode, uid, gid, size, name in (ls_entries(hfs, new_img, path) or [])}
+        for mode, uid, gid, size, name in entries:
+            got = present.get(name)
+            if got is None:
+                errors.append("missing after copy: %s" % _child(path, name))
+                continue
+            want = (mode, uid, gid)
+            if not stat.S_ISDIR(int(mode, 8)):
+                want += (size,)
+            if got[:len(want)] != want:
+                errors.append("owner/mode/size changed: %s (%s -> %s)" %
+                              (_child(path, name), "/".join(map(str, want)), "/".join(map(str, got))))
+    return errors
+
+
+def _copy_backup(old_img, bak):
+    try:
+        shutil.copy2(old_img, bak)
+        return True
+    except Exception as e:
+        _warn("could not keep the previous iOS disk at %s: %s" % (bak, e))
+        return False
+
+
+def keep_backup(old_img, reason, already=False):
+    """Keep the old image on the card; return its backup path (or None)."""
+    bak = old_img + ".bak"
+    if already or _copy_backup(old_img, bak):
+        msg = "carry-over %s; kept the previous iOS disk at %s" % (reason, bak)
+        _warn(msg)
+        return bak
+    return None
 
 
 def carry_over(old_img, new_img, hfs, backup=False, verbose=True):
-    """Carry user data from old_img into new_img. Returns True if any data carried."""
+    """Carry user data from old_img into new_img.
+
+    Returns a CarryResult (a str) with status "carried", "partial" or "nothing",
+    a reason, and the path of the automatic backup if one was made.  A backup is
+    made whenever the data cannot be carried completely, so an update never
+    silently loses the old image.
+    """
     if _is_fresh_env():
         if verbose:
             print("[carryover] IOS3DS_FRESH set: skipping carry-over")
-        return False
+        return CarryResult("nothing", "fresh")
     if not os.path.exists(old_img):
         if verbose:
             print("[carryover] no previous rootfs.hfs at %s: nothing to carry" % old_img)
-        return False
+        return CarryResult("nothing", "no old image")
     if not os.path.exists(new_img):
         if verbose:
             print("[carryover] new image missing: %s" % new_img)
-        return False
+        return CarryResult("nothing", "no new image")
+
+    bak_done = False
     if backup:
-        bak = old_img + ".bak"
-        try:
-            if not os.path.exists(bak):
-                shutil.copy2(old_img, bak)
-                if verbose:
-                    print("[carryover] backed up old image to %s" % bak)
-        except Exception as e:
-            sys.stderr.write("warn: backup failed: %s\n" % e)
-    carried = False
+        bak_done = _copy_backup(old_img, old_img + ".bak")
+        if bak_done and verbose:
+            print("[carryover] backed up old image to %s" % (old_img + ".bak"))
+
+    # one ls per directory in the old image: size check, copy and verification
+    # all use the same snapshot (also avoids an 'ls' of each parent per file)
+    tree = {}
     for p in CARRY_PATHS:
-        if not exists_path(hfs, old_img, p):
-            continue
+        if exists_path(hfs, old_img, p):
+            scan_tree(hfs, old_img, p, tree)
+    if not tree:
         if verbose:
-            print("[carryover] carrying %s" % p)
-        mode = path_mode(hfs, old_img, p)
-        if copy_dir(hfs, old_img, new_img, p, p, mode):
-            carried = True
-        else:
-            sys.stderr.write("warn: problems carrying %s (continuing)\n" % p)
+            print("[carryover] nothing to carry")
+        return CarryResult("nothing", "no user data", bak_done and old_img + ".bak" or None)
+
+    total = _tree_size(tree)
+    free = free_space(hfs, new_img)
+    if not free or total > free:
+        _warn("carried data (%d bytes) does not fit in new image free space (%d bytes)" %
+              (total, free))
+        bak = keep_backup(old_img, "data does not fit", already=bak_done)
+        if verbose:
+            print("[carryover] nothing carried (does not fit)")
+        return CarryResult("nothing", "does not fit", bak)
+
+    created = set()
+    try:
+        for p in CARRY_PATHS:
+            if p not in tree:
+                continue
+            if verbose:
+                print("[carryover] carrying %s" % p)
+            mode = path_mode(hfs, old_img, p)
+            copy_dir(hfs, old_img, new_img, p, p, mode, tree, created)
+        errors = verify_tree(hfs, new_img, tree)
+    except Exception as e:
+        errors = ["carry-over exception: %s" % e]
+
+    if errors:
+        for msg in errors[:20]:
+            _warn(msg)
+        if len(errors) > 20:
+            _warn("... and %d more" % (len(errors) - 20))
+        bak = keep_backup(old_img, "was partial", already=bak_done)
+        if verbose:
+            print("[carryover] partial")
+        return CarryResult("partial", "; ".join(errors[:3]), bak)
     if verbose:
-        print("[carryover] %s" % ("done" if carried else "nothing carried"))
-    return carried
+        print("[carryover] done")
+    return CarryResult("carried", "", bak_done and old_img + ".bak" or None)
 
 
 def main():
@@ -221,17 +387,14 @@ def main():
         hfs = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "build", "tools", "hfsplus")
     if not os.path.exists(hfs):
-        # try PATH
-        import shutil as _sh
-        hfs = _sh.which("hfsplus") or hfs
-    if not os.path.exists(args.old):
-        die = lambda m: (sys.stderr.write(m + "\n"), sys.exit(1))
-        die("old image not found: %s" % args.old)
-    if not os.path.exists(args.new):
-        sys.stderr.write("new image not found: %s\n" % args.new)
-        sys.exit(1)
+        hfs = shutil.which("hfsplus") or hfs
+    for path in (args.old, args.new):
+        if not os.path.exists(path):
+            sys.stderr.write("image not found: %s\n" % path)
+            sys.exit(1)
     try:
-        carry_over(args.old, args.new, hfs, backup=args.backup, verbose=True)
+        result = carry_over(args.old, args.new, hfs, backup=args.backup, verbose=True)
+        print("[carryover] result: %s" % result)
     except Exception as e:
         sys.stderr.write("ERROR: carry-over failed: %s\n" % e)
         sys.exit(1)
