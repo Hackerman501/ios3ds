@@ -220,7 +220,7 @@ still carry an armv6 (or generic ARM) slice.
 
 - Build: the hook adds 4-8 s to `mkrootfs` (978 files, ~1460 `hfsplus` calls);
   32 debs + 6 virtual packages in `status`.
-- Boot to SpringBoard as before; the Cydia icon is on page 2.
+- Boot to SpringBoard as before; the Cydia icon is on the first home screen page (re-log 77).
 - Cydia launches straight into its UI: no "Preparing Filesystem", no reboot
   request. Installed shows the 32 packages; on first launch Cydia writes its default
   sources.
