@@ -454,6 +454,56 @@ static void test_rsn_parse(void)
     CHECK(wpa2_rsn_parse(notrsn, sizeof notrsn, &r) == RSN_MODE_OTHER);
 }
 
+/* The IE view handed to iOS's WiFiManager (Ask-to-Join popup and Settings):
+   mixed-mode networks must look like WPA2-PSK, SAE-only must stay as it is. */
+static void test_rsn_view(void)
+{
+    rsn_info_t r;
+    static const u8 mixed[] = { 0x30, 0x1a, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+                                0x02, 0x00, 0x00, 0x0F, 0xAC, 0x02, 0x00, 0x0F, 0xAC, 0x08, 0x80, 0x00, 0x00, 0x00 };
+    static const u8 wpa2[] = { 0x30, 0x14, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+                               0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02, 0x00, 0x00 };
+    u8 b[64];
+    memset(b, 0xEE, sizeof b);
+    memcpy(b, wpa2, sizeof wpa2);
+    CHECK(wlan_ie_wpa2_view(b, sizeof wpa2) == sizeof wpa2);
+    CHECK(!memcmp(b, wpa2, sizeof wpa2));           /* plain WPA2 untouched */
+
+    memcpy(b, mixed, sizeof mixed);
+    CHECK(wlan_ie_wpa2_view(b, sizeof mixed) == sizeof mixed - 4);
+    CHECK(b[1] == 22 && b[14] == 1 && !b[15] && !b[20] && !b[21]);  /* one AKM, MFPC cleared */
+    CHECK(wpa2_rsn_parse(b, sizeof mixed - 4, &r) == RSN_MODE_WPA2 && r.psk && !r.sae && !r.mfpc);
+
+    /* SAE listed first, group cipher TKIP, another IE after the RSN element */
+    static const u8 mixed2[] = { 0x30, 0x20, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02, 0x02, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+                                 0x00, 0x0F, 0xAC, 0x02, 0x02, 0x00, 0x00, 0x0F, 0xAC, 0x08, 0x00, 0x0F, 0xAC, 0x02,
+                                 0x80, 0x00, 0x00, 0x00, 0x00, 0x0F, 0xAC, 0x06 };
+    static const u8 tail[] = { 0xDD, 0x03, 1, 2, 3 };
+    memcpy(b, mixed2, sizeof mixed2);
+    memcpy(b + sizeof mixed2, tail, sizeof tail);
+    uint32_t n = wlan_ie_wpa2_view(b, sizeof mixed2 + sizeof tail);
+    CHECK(n == sizeof mixed2 + sizeof tail - 4);
+    CHECK(!memcmp(b + n - sizeof tail, tail, sizeof tail));
+    CHECK(wpa2_rsn_parse(b, n - sizeof tail, &r) == RSN_MODE_WPA2 && r.psk && !r.sae && !r.mfpc && r.group == 2);
+
+    static const u8 wpa3[] = { 0x30, 0x14, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+                               0x01, 0x00, 0x00, 0x0F, 0xAC, 0x08, 0xc0, 0x00 };
+    memcpy(b, wpa3, sizeof wpa3);
+    CHECK(wlan_ie_wpa2_view(b, sizeof wpa3) == sizeof wpa3);
+    CHECK(!memcmp(b, wpa3, sizeof wpa3));           /* SAE-only stays unsupported */
+
+    /* SSID + rates + DS channel (an open network): nothing to rewrite */
+    static const u8 open[] = { 0, 3, 'a', 'b', 'c', 1, 2, 0x82, 0x84, 3, 1, 6 };
+    memcpy(b, open, sizeof open);
+    CHECK(wlan_ie_wpa2_view(b, sizeof open) == sizeof open);
+    CHECK(!memcmp(b, open, sizeof open));
+
+    /* a truncated RSN IE is never read past the buffer */
+    memcpy(b, mixed, 10);
+    CHECK(wlan_ie_wpa2_view(b, 10) == 10);
+    CHECK(!memcmp(b, mixed, 10));
+}
+
 int main(void)
 {
     test_ring();
@@ -463,6 +513,7 @@ int main(void)
     test_crypto();
     test_handshake();
     test_rsn_parse();
+    test_rsn_view();
     printf("%s: %d checks, %d failed\n", fails ? "FAIL" : "ok", checks, fails);
     return fails != 0;
 }

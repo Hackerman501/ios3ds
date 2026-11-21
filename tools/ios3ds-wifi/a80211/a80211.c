@@ -298,7 +298,13 @@ static void fill_result(uint8_t *r, uint32_t cap, const wlan_bss_t *b)
     uint16_t n = b->ie_len;
     if (cap < 0x8C || !ie) n = 0;
     if (n > ie_cap) n = ie_cap;
-    if (n) memcpy(ie, b->ie, n);
+    /* WiFiManager on iOS 4 cannot handle the SAE AKM in a WPA2+WPA3 RSN IE;
+       show it a WPA2-only view. The ARM9 still sees the original IE and
+       joins it as WPA2-PSK (docs/wifi.md). */
+    if (n) {
+        memcpy(ie, b->ie, n);
+        n = (uint16_t)wlan_ie_wpa2_view(ie, n);
+    }
     *(uint16_t *)(r + 0x86) = n;
 }
 
@@ -466,6 +472,9 @@ static int a80211_set(struct apple80211req *r)
             say("[a80211] associate: key type %u / %u bytes not supported (WEP?)", cipher, klen);
             return fail(EOPNOTSUPP_D);
         }
+        say("[a80211] associate \"%.*s\": req_len %u, ssid_len %u, key_len %u, cipher %u, auth %u/%u, word44 %u",
+            (int)sl, (const char *)d + 0x10, r->req_len, sl, klen, cipher,
+            *(uint16_t *)(d + 6), *(uint16_t *)(d + 8), *(uint32_t *)(d + 0x44));
         assoc_ssid_len = (uint8_t)sl;
         memcpy(assoc_ssid, d + 0x10, sl);
         assoc_result = 0;

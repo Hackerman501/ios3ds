@@ -711,3 +711,51 @@ Besides section 6's list (SDIO, BMI, firmware, WMI, 4-way):
   shows "iPod" there. Unrelated to Wi-Fi.
 - Turning Wi-Fi off in Settings disassociates but leaves the chip powered.
 - Scan table: 16 networks, 76 bytes of IEs each.
+
+### 10.8 The two join paths: Settings and "Ask to Join Networks"
+
+Both paths end in the same Apple80211 ASSOCIATE request. Once iOS has accepted
+a network, our dylib logs its fields (the new diagnostic line keeps the PMK
+out of the log):
+
+```
+[a80211] associate "ios3ds-qemu": req_len 384, ssid_len 11, key_len 32, cipher 6, auth 1/8, word44 0
+[a80211] associate "ios3ds-qemu" (WPA2-PSK, PMK from WiFiManager, auth 1/8)
+[wifi] iOS: join "ios3ds-qemu" (WPA2), in the scan list
+[wifi] "ios3ds-qemu" is a WPA2 + WPA3 network: joining with WPA2-PSK
+[wifi] link up: ios3ds-qemu, AP 0e:a9:11:c0:ff:ee
+[wifid] en0 configured by configd
+```
+
+`key_len 32, cipher 6` is `APPLE80211_CIPHER_PMK` (WiFiManager computed
+PBKDF2 itself), `auth 1/8` is the scan record's open-system/WPA2 pair. The
+popup (SpringBoard's `Select a Wi-Fi Network` alert, raised when Mail or
+Safari needs the network and no known one is in range) sends exactly the same
+fields. Section 66's fix in the ARM9 driver (`wpa2_rsn_parse`,
+`CONNECT_PROFILE_MATCH_DONE`) therefore applies to both paths.
+
+**The difference is before the request:** WiFiManager classifies a network
+from the scan record's IEs. A WPA2+WPA3 ("transition mode") RSN IE lists AKM
+PSK (2) *and* SAE (8) and sets MFPC; iOS 4.2's parser has no SAE, so it refuses
+the network before it issues ASSOCIATE. In QEMU (mixed AP, before this fix)
+Settings showed `Attepting Apple80211AssociateAsync` / `Attempting to join
+WPA network` / `Failed to associate with ios3ds-qemu: -100`, with no SET 20 at
+all; the popup uses the same scan record to decide which networks it may
+offer. With plain WPA2 or an open network nothing is rejected.
+
+**Fix:** `wlan_ie_wpa2_view()` in `boot/common/wifi_proto.h` is applied to the
+copy of each scan result iOS receives (`fill_result()` in
+`tools/ios3ds-wifi/a80211/a80211.c`, GET 11 and GET 201). It keeps the PSK AKM,
+drops SAE/PSK-SHA256 AKMs, clears MFPC/MFPR and shortens the RSN element,
+including any IEs after it. The ARM9's own scan table is **not** changed: it
+still sees the real mixed IE, logs the fallback and sets the CONNECT flags
+that make the firmware associate. Pure-WPA3 (SAE-only / MFPR) IEs are left
+alone, so they stay unsupported and the ARM9 prints its one-line refusal
+(section 66). Plain WPA2 and open IEs are byte-for-byte unchanged.
+
+Host tests (`make -C tools/ios3ds-wifi test`, also in `make test`) cover the
+rewrite: mixed with PSK first or second, a following vendor IE, plain WPA2,
+SAE-only, open IEs, and a truncated RSN IE. `emu/wifi_popup_test.py` joins the
+mixed AP in QEMU through Settings, forgets it, and joins it again from the
+SpringBoard alert; `--case wpa2` runs the same flow against a plain WPA2 AP.
+Results: re-log 84.

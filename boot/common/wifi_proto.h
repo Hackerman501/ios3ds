@@ -279,6 +279,64 @@ typedef struct {
     wlan_bss_t    bss[WLAN_SCAN_MAX];   /* ARM9 */
 } wlanmbox_t;
 
+/* iOS 4.2's WiFiManager cannot join a WPA2 + WPA3 ("transition mode") BSS:
+   its parser sees the SAE AKM (00-0F-AC:8) in the RSN IE and refuses the
+   network before it ever sends Apple80211's ASSOCIATE ioctl (QEMU: -100 in
+   Settings). The Ask-to-Join popup uses the same scan record to decide which
+   networks it may offer. Our ARM9 supplicant joins those APs
+   as WPA2-PSK (docs/wifi.md), so present a WPA2-only view of the IE to iOS:
+   keep the PSK AKM, clear the MFPC/MFPR capability bits and drop the other
+   AKMs (SAE, PSK-SHA256). The scan table the ARM9 uses for the actual join
+   stays untouched, including its mixed-mode classification and CONNECT flags.
+   Pure SAE networks are left alone: they stay unsupported.
+   Returns the new length of `ies`; never writes past `len`. */
+static inline uint32_t wlan_ie_wpa2_view(uint8_t *ies, uint32_t len)
+{
+    uint32_t pos = 0;
+    while (pos + 2 <= len) {
+        uint32_t l = ies[pos + 1];
+        if (pos + 2 + l > len) break;
+        if (ies[pos] == 0x30 && l >= 8) {           /* RSN: version, group, pairwise count */
+            uint32_t end = pos + 2 + l;
+            uint32_t p = pos + 10;                  /* after version, group cipher, pair count */
+            uint32_t pairs = (uint32_t)ies[p - 2] | (uint32_t)ies[p - 1] << 8;
+            p += 4 * pairs;
+            if (p + 2 > end) break;
+            uint32_t akms = (uint32_t)ies[p] | (uint32_t)ies[p + 1] << 8;
+            uint32_t akm_off = p + 2;
+            if (!akms || 4 * akms > end - akm_off) break;
+            uint32_t keep = 4 * akms;               /* offset of the PSK suite, or none */
+            for (uint32_t i = 0; i < akms; i++) {
+                const uint8_t *s = ies + akm_off + 4 * i;
+                if (s[0] == 0x00 && s[1] == 0x0F && s[2] == 0xAC && s[3] == 0x02) {
+                    keep = 4 * i;
+                    break;
+                }
+            }
+            if (keep == 4 * akms) break;            /* no WPA2-PSK AKM: WPA3-only / enterprise */
+            /* All shifts are downwards, so a forward byte copy is enough
+               (no libc dependency: this header is shared with the ARM9). */
+            for (uint32_t i = 0; i < 4; i++) ies[akm_off + i] = ies[akm_off + keep + i];
+            uint32_t drop = 4 * (akms - 1);
+            /* move caps, PMKIDs, the group management cipher and any further
+               IEs down over the removed AKM suites */
+            for (uint32_t i = 0, n = len - (akm_off + 4 * akms); i < n; i++)
+                ies[akm_off + 4 + i] = ies[akm_off + 4 * akms + i];
+            ies[p] = 1; ies[p + 1] = 0;            /* one AKM suite: PSK */
+            if (akm_off + 6 <= end - drop) {
+                uint16_t caps = (uint16_t)ies[akm_off + 4] | (uint16_t)ies[akm_off + 5] << 8;
+                caps &= ~0x00C0u;                   /* MFPC (0x80) / MFPR (0x40), low byte */
+                ies[akm_off + 4] = (uint8_t)caps;
+                ies[akm_off + 5] = (uint8_t)(caps >> 8);
+            }
+            ies[pos + 1] = (uint8_t)(l - drop);
+            return len - drop;
+        }
+        pos += 2 + l;
+    }
+    return len;
+}
+
 _Static_assert(sizeof(wlan_bss_t) == 128, "wlan_bss_t layout");
 _Static_assert(sizeof(wlan_status_t) == 96, "wlan_status_t layout");
 _Static_assert(sizeof(wlan_cmd_t) == 96, "wlan_cmd_t layout");
