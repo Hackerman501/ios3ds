@@ -320,6 +320,33 @@ uint32_t pica_drv_fill(pica_drv_t *d, const uint32_t a[8])
     return st;
 }
 
+uint32_t pica_drv_copy_page(pica_drv_t *d, uint32_t src_pa, uint32_t dst_va,
+                            uint32_t dst_pa, uint32_t bytes)
+{
+    uint8_t *src, *dst;
+    uint32_t k;
+    if (d->state != PICA_OK)
+        return d->state;
+    if (!bytes || bytes > PICA_PAGE_SIZE || (bytes & 3) || (dst_va & (PICA_PAGE_SIZE - 1)) ||
+        !d->p->map_pa || !in_arena(d, src_pa, bytes) || src_pa - d->pa < PICA_DRV_CMD_SIZE)
+        return PICA_ERR_RANGE;
+    src = d->va + (src_pa - d->pa);
+    if (d->p->from_gpu)
+        d->p->from_gpu(src, bytes);     /* the GPU wrote it: drop our copies */
+    dst = d->p->map_pa(dst_pa, bytes);
+    if (!dst)
+        return PICA_ERR_RANGE;
+    /* the caller's lines for this page may hold stale (dirty) data: write them
+       back and drop them, then copy through the kernel's mapping */
+    if (d->p->cache_user)
+        d->p->cache_user(dst_va, bytes);
+    for (k = 0; k < bytes / 4; k++)
+        ((uint32_t *)dst)[k] = ((const uint32_t *)src)[k];
+    if (d->p->to_gpu)
+        d->p->to_gpu(dst, bytes);       /* the CPU wrote it: write the lines back */
+    return PICA_OK;
+}
+
 uint32_t pica_drv_transfer(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa,
                            uint32_t dst_dim, uint32_t flags)
 {

@@ -240,7 +240,7 @@ extern const Backend pica_backend;      /* pica_be.c, built with -DGL_PICA */
 int pica_backend_init(void);            /* 1 = the GPU is usable */
 int pica_ca_gate(void);
 typedef struct {
-    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents;
+    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents, bounces;
     unsigned arena_kb, tex_kb, ntex, evictions, arena_free_kb, gpu_on;
 } PicaStats;
 void pica_backend_stats2(PicaStats *s);

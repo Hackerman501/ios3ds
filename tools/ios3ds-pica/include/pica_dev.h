@@ -26,6 +26,9 @@ typedef struct pica_dev {
     /* display transfer from the arena straight into the caller's memory dst
        (bytes long), PICA_OP_PRESENT: no copy through the CPU */
     uint32_t (*present)(uint32_t src_pa, uint32_t dim, void *dst, uint32_t bytes, uint32_t flags);
+    /* copy an arena block into the caller's memory page by page, for a
+       destination PRESENT refused as not physically contiguous (PICA_OP_SCATTER) */
+    uint32_t (*scatter)(uint32_t src_pa, void *dst, uint32_t bytes);
 } pica_dev_t;
 
 const pica_dev_t *pica_dev_ios(void);

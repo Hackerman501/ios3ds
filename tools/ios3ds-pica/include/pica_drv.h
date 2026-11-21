@@ -23,6 +23,12 @@ typedef struct pica_plat {
     void (*udelay)(uint32_t us);
     int (*alive)(uint32_t owner);                   /* is this client (pid) still there? */
     void (*log)(const char *fmt, ...);
+    /* PICA_OP_SCATTER: a CPU mapping of a physical range outside the arena
+       (the kernel's linear map of FCRAM), and clean+invalidate of the
+       caller's own cache lines for a page before it is overwritten through
+       that mapping. Optional (map_pa is required for pica_drv_copy_pages). */
+    void *(*map_pa)(uint32_t pa, uint32_t len);
+    void (*cache_user)(uint32_t va, uint32_t len);
 } pica_plat_t;
 
 #define PICA_DRV_BLOCKS   224                       /* issue 1 (New 2DS XL): 160 filled up with CA textures */
@@ -62,3 +68,11 @@ uint32_t pica_drv_transfer_out(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim,
                                uint32_t dst_dim, uint32_t flags);
 uint32_t pica_drv_transfer(pica_drv_t *d, uint32_t src_pa, uint32_t src_dim, uint32_t dst_pa,
                            uint32_t dst_dim, uint32_t flags);
+/* Copy an arena block into one of the caller's pages (PICA_OP_SCATTER): the
+   source must be a normal arena block, dst_va is page aligned and dst_pa is
+   that page's physical address. The page is mapped with map_pa, the caller's
+   lines for it are dropped with cache_user, and the CPU's copy is written
+   back with to_gpu. */
+#define PICA_PAGE_SIZE 0x1000u
+uint32_t pica_drv_copy_page(pica_drv_t *d, uint32_t src_pa, uint32_t dst_va,
+                            uint32_t dst_pa, uint32_t bytes);

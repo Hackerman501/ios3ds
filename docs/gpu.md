@@ -258,6 +258,9 @@ work (blending, texture sampling, transforms) moves to the GPU.
 
 `IOS3DS_GL_TRACE=1` (set for SpringBoard) logs the first GL error of every
 call site as `[gl] trace: GL error 0x… at engine+0x…` (look it up with `nm`).
+`IOS3DS_CA_LOG_FRAMES=N` changes the `[gl] CA:` line's interval from 300 CA
+swaps to N (test hook, e.g. to see the cost before and after a scattered
+surface in a short QEMU run).
 
 ### Switching it on, and falling back
 
@@ -345,14 +348,23 @@ through the CPU:
    process; success logs `GPU present check passed` once. Host test: a third
    gltest run with presents that swap R and B (`IOS3DS_HOST_PRESENT=swap`)
    must hit the check and still PASS.
-6. **Fallback.** If `PRESENT` fails once (refusal, older shim, GPU error) the
-   engine logs it, stops presenting for the rest of the process and uses the
-   read-back as before; from then on one read-back staging buffer stays
-   allocated instead of 1 MiB being taken from the arena (and textures being
-   evicted for it) on every frame (re-log 75). Presenting only the refused
-   surface through the CPU and the VRAM display through the GPU was tried and
-   left a stale home screen in the QEMU soak (re-log 75).
-   `IOS3DS_GL_NO_PRESENT=1` forces the read-back;
+6. **Scattered surfaces and the fallback.** The shim refuses a destination
+   that is not one physically contiguous range (`PICA_ERR_NOT_CONTIG`); CA
+   makes such a 320x480 surface when an app returns to the home screen. For
+   that surface (only) the engine keeps the swizzle pass and runs the same
+   PPF transfer into a linear arena buffer, then asks the shim
+   (`PICA_OP_SCATTER`) to copy the buffer **page by page** into the scattered
+   pages. The shim walks the caller's page tables again (each page must be
+   user-writable and in FCRAM), maps it through XNU's linear map, cleans and
+   invalidates the caller's lines for that page, copies 4 KiB with the CPU
+   (no pixel work) and writes the new lines back. Every other surface keeps
+   its direct `PRESENT` (re-log 78/79). Any other `PRESENT` failure still
+   stops presenting for the rest of the process, with the CPU read-back;
+   then one read-back staging buffer stays allocated (re-log 75).
+   `IOS3DS_HOST_PRESENT=0` (host shim) and `IOS3DS_GL_SCATTER=1` (PRESENT's
+   test flag, refused for FCRAM destinations by the real shim too, so the
+   QEMU display in VRAM keeps its direct present) force the scattered path
+   in tests; `IOS3DS_GL_NO_PRESENT=1` forces the read-back;
    `IOS3DS_GL_PRESENT_ALL=1` presents every eligible target (host test).
 
 **XNU's modified-bit emulation.** The first attempt was refused: `not

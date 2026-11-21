@@ -92,6 +92,8 @@ static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t byt
     uint32_t pa, st;
     if (e && *e == '0')                         /* IOS3DS_HOST_PRESENT=0: refuse, =swap: R and B swapped */
         return PICA_ERR_NOT_CONTIG;
+    if (flags & PICA_PRESENT_TEST_SCATTER)       /* IOS3DS_GL_SCATTER=1 from pica_be.c */
+        return PICA_ERR_NOT_CONTIG;
     if ((st = pica_drv_alloc(&drv, 2, bytes, 0, &pa)) != PICA_OK)
         return st;
     st = pica_drv_transfer(&drv, src_pa, dim, pa, dim, flags);
@@ -106,10 +108,25 @@ static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t byt
     return st;
 }
 
+/* the host has no physical addresses for the caller's memory: copy it page
+   by page, as the shim's PICA_OP_SCATTER does through the kernel's mapping */
+static uint32_t d_scatter(uint32_t src_pa, void *dst, uint32_t bytes)
+{
+    uint8_t *src = h_mem(NULL, src_pa, bytes, 0);
+    uint32_t off;
+    if (!src || !bytes)
+        return PICA_ERR_RANGE;
+    for (off = 0; off < bytes; off += PICA_PAGE_SIZE) {
+        uint32_t len = bytes - off < PICA_PAGE_SIZE ? bytes - off : PICA_PAGE_SIZE;
+        memcpy((uint8_t *)dst + off, src + off, len);
+    }
+    return PICA_OK;
+}
+
 const pica_dev_t *pica_dev_host(void)
 {
     static const pica_dev_t dev = { "PICA200 software model (host)", d_info, d_alloc, d_free, d_write, d_read,
-                                    d_submit, d_fill, d_transfer, d_config, d_present };
+                                    d_submit, d_fill, d_transfer, d_config, d_present, d_scatter };
     return &dev;
 }
 

@@ -40,6 +40,14 @@ host-test: $(HOSTDIR)/gltest
 	$(HOSTDIR)/gltest $(HOSTDIR)/gltest.ppm
 	@echo "--- again, every target written back by the GPU itself (the IOSurface present path)"
 	IOS3DS_GL_PRESENT_ALL=1 $(HOSTDIR)/gltest
+	@echo "--- again, every destination refused as not contiguous: the arena copy must pass the present check"
+	IOS3DS_GL_PRESENT_ALL=1 IOS3DS_HOST_PRESENT=0 $(HOSTDIR)/gltest > $(HOSTDIR)/bounce.log 2>&1; \
+	    st=$$?; cat $(HOSTDIR)/bounce.log; test $$st = 0 && grep -q "through an arena copy" $(HOSTDIR)/bounce.log && \
+	    grep -q "present check passed" $(HOSTDIR)/bounce.log && ! grep -q "from now on" $(HOSTDIR)/bounce.log
+	@echo "--- again, forced by the shim's PRESENT test flag (IOS3DS_GL_SCATTER=1)"
+	IOS3DS_GL_SCATTER=1 IOS3DS_GL_PRESENT_ALL=1 $(HOSTDIR)/gltest > $(HOSTDIR)/flag.log 2>&1; \
+	    st=$$?; cat $(HOSTDIR)/flag.log; test $$st = 0 && grep -q "through an arena copy" $(HOSTDIR)/flag.log && \
+	    grep -q "present check passed" $(HOSTDIR)/flag.log && ! grep -q "from now on" $(HOSTDIR)/flag.log
 	@echo "--- again, with presents that swap R and B (a wrong swizzle on hardware): the check must catch it"
 	IOS3DS_GL_PRESENT_ALL=1 IOS3DS_HOST_PRESENT=swap $(HOSTDIR)/gltest > $(HOSTDIR)/swap.log 2>&1; \
 	    st=$$?; cat $(HOSTDIR)/swap.log; test $$st = 0 && grep -q "present check FAILED" $(HOSTDIR)/swap.log

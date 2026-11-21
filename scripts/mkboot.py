@@ -104,12 +104,14 @@ def build_shim(outdir):
         for s in srcs:
             o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
             # main shim part: -Os (it must end below +0x5F00; CI's newer gcc
-            # overflowed it at -O2); the GPU part (*pica*) keeps -O2
-            # GPU part and camera: -O2 for the hot paths; the PICA diagnostics at
-            # -Os (the GPU part must end below 0x808B8000, and devkitARM's gcc
-            # emits more code than the Arm GNU toolchain)
+            # overflowed it at -O2). GPU part: -O2 only for the hot paths
+            # (pica.c's request/page-table path and pica_mirror.c's IRQ frame);
+            # the driver core, camera data side and PICA diagnostics at -Os.
+            # The GPU part must end below 0x808B8000, and CI's devkitARM emits
+            # ~600 bytes more than the Arm GNU toolchain here. -Os on the
+            # cold-ish objects leaves ~1.6 KiB of headroom with this gcc.
             b = os.path.basename(s)
-            opt = ["-O2"] if ("pica" in b or "cam" in b) and "diag" not in b else []
+            opt = ["-O2"] if b in ("pica.c", "pica_mirror.c") else []
             subprocess.run([gcc] + flags + opt + ["-c", s, "-o", o], check=True)
             objs.append(o)
         subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +

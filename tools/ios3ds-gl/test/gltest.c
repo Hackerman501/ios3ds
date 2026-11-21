@@ -560,7 +560,7 @@ static void rect_texture_check(const char *backend)
    still draw in its own colour, the back end evicts and re-uploads, and the
    GPU stays on. */
 typedef struct {                        /* engine.h PicaStats */
-    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents;
+    unsigned lists, draws, readbacks, readback_kb, uploads, upload_kb, presents, bounces;
     unsigned arena_kb, tex_kb, ntex, evictions, arena_free_kb, gpu_on;
 } PicaStats;
 extern void pica_backend_stats2(PicaStats *s);

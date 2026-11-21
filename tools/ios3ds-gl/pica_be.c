@@ -50,6 +50,8 @@ typedef struct PTarget {
     RT rt;                              /* where to write it back */
     unsigned used;
     uint32_t swz_pa;                    /* != 0: written back by the GPU itself (present_target) */
+    uint32_t bnc_pa;                    /* scattered surface: linear arena copy the shim copies out */
+    int bounce;                         /* the shim refused PRESENT: not one contiguous range */
 } PTarget;
 
 typedef struct PDepth {
@@ -91,7 +93,7 @@ static struct {
     size_t scratch_words;
     unsigned tick, warned;
     unsigned lists, draws;
-    unsigned readbacks, readback_kb, uploads, upload_kb, presents;
+    unsigned readbacks, readback_kb, uploads, upload_kb, presents, bounces;
     int present_checked;
     int no_present;                     /* the shim refused PRESENT once: read back from now on */
     uint32_t rb_pa, rb_bytes;           /* read-back staging kept while no_present (every frame needs it) */
@@ -458,6 +460,16 @@ static void flush_list(void)
         gpu_fail("running a command list", st);
 }
 
+/* IOS3DS_GL_SCATTER=1: ask the shim to refuse FCRAM presents so the
+   PICA_OP_SCATTER path runs (test hook; VRAM keeps its direct present). */
+static int force_scatter(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("IOS3DS_GL_SCATTER") != NULL;
+    return on;
+}
+
 /*
  * Write a surface target back without the CPU: one more GPU pass turns the
  * colour buffer (sampled as a power-of-two texture, 1:1, nearest) into a
@@ -478,7 +490,8 @@ static int present_target(PTarget *t)
     pica_vtx_layout_t l;
     float clip[16];
     Vtx q[6];
-    uint32_t bytes, dim = (uint32_t)t->h << 16 | (uint32_t)t->w, st, *list = scratch(2048);
+    uint32_t bytes, dim = (uint32_t)t->h << 16 | (uint32_t)t->w, st, *list = scratch(2048), flags;
+    uint32_t sbytes = (uint32_t)t->w * t->h * 4;
     int i;
     if (!list)
         return -1;
@@ -569,13 +582,34 @@ static int present_target(PTarget *t)
     }
     /* the transfer stores the first stored row (GL top) first: right for
        flipped surfaces (row 0 = GL top); for the others flip it */
-    st = P.dev->present(t->swz_pa, dim, t->rt.color, (uint32_t)t->w * t->h * 4,
-                        PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8) | (t->rt.flip ? 0 : PPF_FLIP_V));
+    flags = PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGBA8) | (t->rt.flip ? 0 : PPF_FLIP_V) |
+            (force_scatter() ? PICA_PRESENT_TEST_SCATTER : 0);
+    st = t->bounce ? PICA_ERR_NOT_CONTIG : P.dev->present(t->swz_pa, dim, t->rt.color, sbytes, flags);
+    if (st == PICA_ERR_NOT_CONTIG) {
+        /* A surface in scattered pages (CA's second 320x480 surface after an
+           app returns to the home screen; hardware runs 21/25/29, New 2DS XL
+           run 1): the same transfer into a linear arena buffer, then
+           PICA_OP_SCATTER copies it page by page into the caller's pages
+           with their cache lines maintained. Bytes are already in the
+           surface's order: no CPU pixel work, and every other surface keeps
+           its direct present. */
+        if (!t->bounce)
+            gl_log("pica: surface %p (%dx%d) is not physically contiguous: the GPU writes it through an arena "
+                   "copy", (void *)t->rt.color, t->w, t->h);
+        t->bounce = 1;
+        if (!t->bnc_pa && !arena_alloc(sbytes, &t->bnc_pa))
+            return -1;                  /* no room this frame: the caller reads it back */
+        st = P.dev->transfer(t->swz_pa, dim, t->bnc_pa, dim, flags);
+        if (st == PICA_OK)
+            st = P.dev->scatter(t->bnc_pa, t->rt.color, sbytes);
+        if (st == PICA_OK) {
+            P.bounces++;
+            P.presents++;
+            return 0;
+        }
+    }
     if (st != PICA_OK) {
-        /* For the whole process, not just this surface: in QEMU's soak (re-log
-           75) presenting the VRAM display while a scattered snapshot surface
-           was read back left a stale home screen (a tap after a page swipe
-           did nothing); with every surface read back it passes. */
+        /* any other refusal or GPU error: read back, for the whole process */
         gl_log("pica: writing surface %p (%dx%d) back on the GPU failed (%s): reading surfaces back through the "
                "CPU from now on", (void *)t->rt.color, t->w, t->h, pica_strerror(st));
         P.no_present = 1;
@@ -744,6 +778,7 @@ static void drop_target(PTarget *t)
     }
     arena_release(t->color_pa, (uint32_t)t->pw * t->ph * 4);
     arena_release(t->swz_pa, (uint32_t)t->w * t->h * 4);
+    arena_release(t->bnc_pa, (uint32_t)t->w * t->h * 4);
     memset(t, 0, sizeof *t);
 }
 
@@ -1492,6 +1527,7 @@ void pica_backend_stats2(PicaStats *s)
     s->uploads = P.uploads;
     s->upload_kb = P.upload_kb;
     s->presents = P.presents;
+    s->bounces = P.bounces;
     s->arena_kb = P.arena_bytes >> 10;
     s->tex_kb = P.tex_bytes >> 10;
     s->ntex = P.ntex;

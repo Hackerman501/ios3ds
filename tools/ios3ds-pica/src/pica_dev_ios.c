@@ -97,10 +97,16 @@ static uint32_t d_present(uint32_t src_pa, uint32_t dim, void *dst, uint32_t byt
     return call(&r);
 }
 
+static uint32_t d_scatter(uint32_t src_pa, void *dst, uint32_t bytes)
+{
+    pica_req_t r = { PICA_OP_SCATTER, 0, { src_pa, (uint32_t)(uintptr_t)dst, bytes } };
+    return call(&r);
+}
+
 const pica_dev_t *pica_dev_ios(void)
 {
     static const pica_dev_t dev = { "PICA200", d_info, d_alloc, d_free, d_write, d_read, d_submit, d_fill, d_transfer,
-                                    d_config, d_present };
+                                    d_config, d_present, d_scatter };
     return &dev;
 }
 

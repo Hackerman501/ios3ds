@@ -34,7 +34,13 @@
 
 #define PICA_SYSCTL_NAME   "ios3ds_gpu"
 #define PICA_SYSCTL_LEAF   "ios3ds_gpu"
-#define PICA_PROTO_VERSION 3
+#define PICA_PROTO_VERSION 4
+
+/* PRESENT flags bit 31: test hook (IOS3DS_GL_SCATTER=1 in the GL engine).
+   The shim refuses FCRAM destinations with PICA_ERR_NOT_CONTIG so the
+   PICA_OP_SCATTER path runs deterministically in QEMU; VRAM presents (the
+   main display) are left alone. Never set by normal rendering. */
+#define PICA_PRESENT_TEST_SCATTER (1u << 31)
 
 enum {
     PICA_OP_INFO = 0,   /* -> a[] = pica_info_t (powers the GPU up and creates the arena on first use) */
@@ -53,6 +59,12 @@ enum {
                            a0 src pa, a1 src h<<16|w, a2 user destination, a3 bytes, a4 flags (out linear).
                            The destination must be user-writable in the caller, physically contiguous,
                            in FCRAM or VRAM; else PICA_ERR_NOT_CONTIG / PICA_ERR_FAULT */
+    PICA_OP_SCATTER,    /* copy an arena block into the caller's own memory page by page, for a
+                           destination that is not physically contiguous (PICA_OP_PRESENT refused
+                           it): a0 src pa, a1 user destination (page aligned), a2 bytes. The shim
+                           walks the caller's page tables and copies each page through the kernel's
+                           linear map with the caller's cache lines maintained. Every page must be
+                           user-writable and in FCRAM or VRAM; else PICA_ERR_FAULT / PICA_ERR_NOT_CONTIG */
 };
 
 #define PICA_CFG_CA_GPU 1u      /* boot.cfg gpu=1 and ca_gpu=1: CoreAnimation may composite on the GPU */

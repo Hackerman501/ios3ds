@@ -152,6 +152,23 @@ static void p_wr(uint32_t off, uint32_t v) { *(vu32 *)(GX_VA + off) = v; }
 static int p_copyin(pica_uptr_t src, void *dst, uint32_t len) { return k_copyin((uint32_t)src, dst, len); }
 static int p_copyout(const void *src, pica_uptr_t dst, uint32_t len) { return k_copyout(src, (uint32_t)dst, len); }
 
+/* PICA_OP_SCATTER: a CPU mapping of FCRAM for the page copy (XNU's linear
+   map; VRAM has none, so a scattered VRAM destination is refused), and drop
+   the caller's own lines for a page before it is overwritten. */
+static void *p_map_pa(uint32_t pa, uint32_t len)
+{
+    if (pa < 0x20000000u || pa + len > 0x20000000u + FCRAM_N3DS_SIZE)
+        return 0;
+    return (void *)(pa + 0x60000000u);
+}
+static void p_cache_user(uint32_t va, uint32_t len)
+{
+    uint32_t a = va & ~31u, end = va + len;
+    for (; a < end; a += 32)
+        __asm__ volatile("mcr p15, 0, %0, c7, c14, 1" :: "r"(a) : "memory");
+    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+}
+
 /* The arena is ordinary cached kernel memory and the GPU reads and writes
    DRAM directly: write dirty lines back before it reads, drop our copies
    after it wrote. Every block is a multiple of 128 bytes, so no cache line
@@ -197,6 +214,7 @@ static void bringup(void)
     bringup_state = 1;
     plat.rd = p_rd; plat.wr = p_wr; plat.copyin = p_copyin; plat.copyout = p_copyout;
     plat.to_gpu = p_to_gpu; plat.from_gpu = p_from_gpu; plat.udelay = p_udelay; plat.alive = p_alive;
+    plat.map_pa = p_map_pa; plat.cache_user = p_cache_user;
     plat.log = k_printf;
     drv.p = &plat;
     drv.state = PICA_ERR_GPU_OFF;
@@ -316,11 +334,12 @@ static int uva_to_pa(uint32_t va, uint32_t *pa)
 static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t bytes, uint32_t flags)
 {
     static int said_ok, said_bad;
-    uint32_t pa0 = 0, pa, off, a;
+    uint32_t pa0 = 0, pa = 0, off;
     int r = 0;
     if (!bytes || (va & 7) || bytes != (dim & 0xFFFF) * (dim >> 16) * 4 ||
         (flags & (PPF_TEXCOPY | PPF_OUT_TILED | PPF_CROP)) || ((flags >> 12) & 7) != PICA_FB_RGBA8)
         return PICA_ERR_RANGE;
+    /* every page must be mapped user-writable, and one physical run */
     for (off = 0; off < bytes; off = (((va + off) | 0xFFFu) + 1) - va) {
         if ((r = uva_to_pa(va + off, &pa)) != 0)
             break;
@@ -334,6 +353,8 @@ static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t byt
     if (!r && !((pa0 >= 0x20000000u && pa0 + bytes <= 0x28000000u) ||
                 (pa0 >= PICA_VRAM_PA && pa0 + bytes <= PICA_VRAM_PA + PICA_VRAM_SIZE)))
         r = -4;
+    if (!r && (flags & PICA_PRESENT_TEST_SCATTER) && pa0 >= 0x20000000u && pa0 < 0x28000000u)
+        r = -3;                     /* test hook: FCRAM destination through PICA_OP_SCATTER */
     if (r) {
         if (!said_bad++) {
             uint32_t ttbr0, ttbcr, dacr, sctlr;
@@ -351,14 +372,39 @@ static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t byt
     /* the CPU may hold dirty lines of the destination (CA or the engine wrote
        it before): write them back and drop them, or they could later be
        evicted over the GPU's picture. We run in the caller: its VAs work. */
-    for (a = va & ~31u; a < va + bytes; a += 32)
-        __asm__ volatile("mcr p15, 0, %0, c7, c14, 1" :: "r"(a) : "memory");
-    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+    p_cache_user(va, bytes);
     shim_l2_inv(pa0, bytes);            /* New 3DS L2: the caller reads the GPU's picture later */
     if (!said_ok++)
         k_printf("[pica] present: GPU writes the caller's surface directly: user VA 0x%08x = PA 0x%08x (%s, %u KiB)\n",
                  va, pa0, pa0 >= 0x20000000u ? "FCRAM" : "VRAM", bytes >> 10);
     return pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+}
+
+/* PICA_OP_SCATTER: the destination PRESENT refused as not one contiguous run
+   (CA's second 320x480 surface after an app returns to the home screen, in
+   hardware runs 21/25/29 and the New 2DS XL's run 1). The engine has already
+   run the same PPF transfer into a linear arena buffer; this copies it into
+   the caller's scattered pages, page by page through XNU's linear map, with
+   the caller's own lines dropped first and the CPU's copy written back.
+   Only pages the caller may write, in FCRAM, are touched. */
+static uint32_t scatter(uint32_t src_pa, uint32_t va, uint32_t bytes)
+{
+    uint32_t off, pa, len, st;
+    int r;
+    if (!bytes || (va & (PICA_PAGE_SIZE - 1)) || (bytes & 3))
+        return PICA_ERR_RANGE;
+    for (off = 0; off < bytes; off += len) {
+        len = bytes - off < PICA_PAGE_SIZE ? bytes - off : PICA_PAGE_SIZE;
+        if ((r = uva_to_pa(va + off, &pa)) != 0)
+            return r == -1 || r == -2 ? PICA_ERR_FAULT : PICA_ERR_NOT_CONTIG;
+        if (pa < 0x20000000u || pa + len > 0x20000000u + FCRAM_N3DS_SIZE)
+            return PICA_ERR_NOT_CONTIG;
+        st = pica_drv_copy_page(&drv, src_pa + off, va + off, pa, len);
+        if (st != PICA_OK)
+            return st;
+        shim_l2_inv(pa, len);               /* New 3DS L2: write-through, safe to drop */
+    }
+    return PICA_OK;
 }
 
 static void run(pica_req_t *r, uint32_t pid)
@@ -380,6 +426,7 @@ static void run(pica_req_t *r, uint32_t pid)
     case PICA_OP_FILL:     r->status = pica_drv_fill(&drv, a); break;
     case PICA_OP_TRANSFER: r->status = pica_drv_transfer(&drv, a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_PRESENT:  r->status = present(a[0], a[1], a[2], a[3], a[4]); break;
+    case PICA_OP_SCATTER:  r->status = scatter(a[0], a[1], a[2]); break;
     case PICA_OP_CONFIG:
         a[0] = gm_valid() && GM->gpu_enable && GM->ca_gpu ? PICA_CFG_CA_GPU : 0;
         r->status = PICA_OK;

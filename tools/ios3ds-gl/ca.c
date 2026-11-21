@@ -268,33 +268,51 @@ static uint64_t thread_cpu_us(void)
 static uint64_t thread_cpu_us(void) { return 0; }
 #endif
 
-/* every CA swap (iface.c SwapNotification); a line every 300 frames */
+/* every CA swap (iface.c SwapNotification); a line every 300 frames.
+   IOS3DS_CA_LOG_FRAMES=N (test hook): use N instead, e.g. to see the cost
+   before and after a scattered surface within a short QEMU run. */
+static unsigned ca_period(void)
+{
+    static int period = -1;
+    if (period < 0) {
+        const char *e = getenv("IOS3DS_CA_LOG_FRAMES");
+        int n = e ? atoi(e) : 300;
+        period = n >= 2 && n <= 100000 ? n : 300;
+    }
+    return (unsigned)period;
+}
+
 void ca_frame(void)
 {
     static uint64_t cpu0, frames;
     static PicaStats s0;
     PicaStats s;
-    uint64_t cpu;
+    uint64_t cpu, dcpu;
+    unsigned period;
     if (!getenv("IOS3DS_CA"))
         return;
+    period = ca_period();
     cpu = thread_cpu_us();
     if (!frames++) {
         cpu0 = cpu;
         pica_backend_stats2(&s0);
         return;
     }
-    if (frames % 300 != 1)
+    if (frames % (period + 1) != 1)
         return;
     pica_backend_stats2(&s);
-    gl_log("CA: %llu frames; per frame over the last 300: render thread CPU %llu us, %u.%u command lists, "
-           "%u.%u GPU presents, %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB); "
+    /* a new render thread starts its CPU clock at 0: never subtract backwards */
+    dcpu = cpu >= cpu0 ? cpu - cpu0 : 0;
+    gl_log("CA: %llu frames; per frame over the last %u: render thread CPU %llu us, %u.%u command lists, "
+           "%u.%u GPU presents (%u.%u via an arena copy), %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB); "
            "GPU memory: %u KiB held (%u textures, %u KiB), arena %u KiB free, %u evictions%s",
-           (unsigned long long)frames - 1,
-           (unsigned long long)((cpu - cpu0) / 300), (s.lists - s0.lists) / 300, (s.lists - s0.lists) * 10 / 300 % 10,
-           (s.presents - s0.presents) / 300, (s.presents - s0.presents) * 10 / 300 % 10,
-           (s.readbacks - s0.readbacks) / 300, (s.readbacks - s0.readbacks) * 10 / 300 % 10,
-           (s.readback_kb - s0.readback_kb) / 300, (s.uploads - s0.uploads) / 300,
-           (s.uploads - s0.uploads) * 10 / 300 % 10, (s.upload_kb - s0.upload_kb) / 300, s.arena_kb, s.ntex,
+           (unsigned long long)frames - 1, period,
+           (unsigned long long)(dcpu / period), (s.lists - s0.lists) / period, (s.lists - s0.lists) * 10 / period % 10,
+           (s.presents - s0.presents) / period, (s.presents - s0.presents) * 10 / period % 10,
+           (s.bounces - s0.bounces) / period, (s.bounces - s0.bounces) * 10 / period % 10,
+           (s.readbacks - s0.readbacks) / period, (s.readbacks - s0.readbacks) * 10 / period % 10,
+           (s.readback_kb - s0.readback_kb) / period, (s.uploads - s0.uploads) / period,
+           (s.uploads - s0.uploads) * 10 / period % 10, (s.upload_kb - s0.upload_kb) / period, s.arena_kb, s.ntex,
            s.tex_kb, s.arena_free_kb, s.evictions, s.gpu_on ? "" : " (GPU off: CPU rasterizer)");
     cpu0 = cpu;
     s0 = s;

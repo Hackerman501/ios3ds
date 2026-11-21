@@ -75,6 +75,7 @@ list. A top-level node goes straight to the OID tree, and works.
 | `TRANSFER` | PPF display transfer |
 | `CONFIG` | boot.cfg switches for userland (`ca_gpu`), no bring-up |
 | `PRESENT` | PPF display transfer from an arena buffer straight into a *user* buffer, after a page-table walk proves the caller may write it (§15) |
+| `SCATTER` | for a destination refused as `PICA_ERR_NOT_CONTIG`: copy an arena buffer page by page into the caller's pages through XNU's linear map, with the same walk and cache maintenance per page (§15) |
 
 One request runs at a time (a flag taken with interrupts masked; waiters
 `IOSleep`). The same flag keeps GL requests and the display mirror's frames
@@ -743,6 +744,20 @@ are not validated either (§2), so this is not a new class of hole.
 In QEMU the display IOSurface turned out to be AppleM2CLCD's framebuffer at PA
 0x18000000 (VRAM, contiguous, 600 KiB). On hardware the same `[pica] present:`
 line answers it; any failure falls back to the read-back.
+
+When the walk finds several physical runs, `PRESENT` refuses with
+`PICA_ERR_NOT_CONTIG` (CA's second 320x480 surface after an app returns to the
+home screen, hardware runs 21/25/29 and the New 2DS XL's run 1). The engine
+then runs the same PPF transfer into a linear arena buffer and calls
+`PICA_OP_SCATTER`: the shim repeats the walk for each 4 KiB page, requires
+user write access and FCRAM (VRAM has no linear map), drops the caller's
+lines for that page, copies it through `pa + 0x60000000` (XNU's linear map)
+and cleans the new lines. No pixel is touched and only that one surface takes
+the detour; other refusals and GPU errors still switch the whole process to
+the CPU read-back. Protocol version 4 adds this op, plus a test flag
+(`PICA_PRESENT_TEST_SCATTER`, bit 31 of PRESENT's flags): the shim then
+refuses FCRAM destinations, so `IOS3DS_GL_SCATTER=1` drives the detour in
+QEMU without disturbing the VRAM display's direct present.
 
 ## 16. Hardware run 15: depth, the arena, NPOT repeat
 

@@ -91,16 +91,21 @@ def main():
         return img
 
     def settled(name, first=4.0, limit=30.0):
-        """screenshot once two shots 2 s apart (after `first` s) are the same"""
+        """screenshot once two shots 2 s apart (after `first` s) are the same
+        and lit: a still-black screen (backlight fading in after an unlock)
+        would otherwise pass here and fail the unlock comparison"""
         t_start = time.time()
         time.sleep(first)
         prev = shot(name)
+        bright = ImageStat.Stat(prev.convert("L")).mean[0]
         while time.time() - t_start < limit:
             time.sleep(2)
             img = shot(name)
-            if ImageStat.Stat(ImageChops.difference(img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
+            b = ImageStat.Stat(img.convert("L")).mean[0]
+            if b > 10 and bright > 10 and ImageStat.Stat(ImageChops.difference(
+                    img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
                 return img, time.time() - t_start
-            prev = img
+            prev, bright = img, b
         return prev, time.time() - t_start
 
     def tap(x, y, hold=0.15):
@@ -112,6 +117,10 @@ def main():
     def drag(x0, y0, x1, y1, secs=0.4):
         dx, dy = viewer.ios_to_display(x0 / 320.0, y0 / 480.0)
         q.pointer(dx, dy, True)
+        # hold the start a moment: with --icount (sleep=off) an idle guest's
+        # clock jumps ahead, and a 0.4 s wall-clock swipe was first sampled
+        # 50 points in (re-log 77: "down 88,240" for a swipe from 40)
+        time.sleep(0.15)
         for i in range(1, 11):
             time.sleep(secs / 10)
             f = i / 10.0
@@ -192,7 +201,11 @@ def main():
                 drag(280, 240, 40, 240)
                 time.sleep(3)
                 drag(40, 240, 280, 240)
-                time.sleep(4)
+                # until the page has stopped moving: a tap on a scrolling page
+                # only stops it, and with the CA frames presented on the GPU
+                # QEMU's PICA200 model makes a scroll take longer than 4 s of
+                # wall time (re-log 77)
+                settled("c%03d_swipe" % i)
             if i % 5 == 4:                      # lock, wake, slide to unlock
                 key("backspace")
                 # every 10th cycle a long lock: iOS used to put the whole

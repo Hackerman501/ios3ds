@@ -899,6 +899,73 @@ static void test_alloc(void)
     printf("alloc: 150 targets placed in a 3/4 full arena, %u KiB of textures evicted for them\n", kb);
 }
 
+/* PICA_OP_SCATTER's page copy: an arena block into destination pages that
+   are not physically contiguous (CA's second 320x480 surface after an app
+   returns to the home screen), each through its own mapping, with the
+   caller's lines dropped first and the CPU's copy written back. */
+static uint8_t t_sys[3 * PICA_PAGE_SIZE + 64];
+static uint32_t t_cache_calls, t_clean_calls;
+static void *t_map_pa(uint32_t pa, uint32_t len)
+{
+    (void)len;
+    if (pa == 0x30000000u) return t_sys;
+    if (pa == 0x30004000u) return t_sys + PICA_PAGE_SIZE;
+    if (pa == 0x30011000u) return t_sys + 2 * PICA_PAGE_SIZE;   /* the next page is 0x30012000 */
+    return NULL;
+}
+static void t_cache_user(uint32_t va, uint32_t len) { (void)va; (void)len; t_cache_calls++; }
+static void t_to_gpu(void *p, uint32_t len) { (void)p; (void)len; t_clean_calls++; }
+static void t_from_gpu(void *p, uint32_t len) { (void)p; (void)len; }
+
+static void test_scatter(void)
+{
+    static pica_drv_t d;
+    static pica_plat_t plat;
+    static uint8_t arena[PICA_DRV_CMD_SIZE + 3 * PICA_PAGE_SIZE + 256];
+    static const uint32_t pages[3] = { 0x30000000u, 0x30004000u, 0x30011000u };
+    uint32_t pa, i, n = 3 * PICA_PAGE_SIZE / 4;
+    memset(&plat, 0, sizeof plat);
+    plat.map_pa = t_map_pa;
+    plat.cache_user = t_cache_user;
+    plat.to_gpu = t_to_gpu;
+    plat.from_gpu = t_from_gpu;
+    memset(&d, 0, sizeof d);
+    d.p = &plat;
+    d.va = arena;
+    d.pa = 0x24000000u;
+    d.size = sizeof arena;
+    d.state = PICA_OK;
+    d.block[0].size = PICA_DRV_CMD_SIZE;
+    d.nblocks = 1;
+    CHECK_EQ(pica_drv_alloc(&d, 0, 3 * PICA_PAGE_SIZE, 0, &pa), PICA_OK);
+    for (i = 0; i < n; i++)
+        ((uint32_t *)(arena + (pa - d.pa)))[i] = 0x11110000u + i;
+    memset(t_sys, 0xA5, sizeof t_sys);
+    t_cache_calls = t_clean_calls = 0;
+    for (i = 0; i < 3; i++)
+        CHECK_EQ(pica_drv_copy_page(&d, pa + i * PICA_PAGE_SIZE, 0x10000000u + i * PICA_PAGE_SIZE,
+                                    pages[i], PICA_PAGE_SIZE), PICA_OK);
+    for (i = 0; i < n; i++)
+        CHECK_EQ(((uint32_t *)t_sys)[i], 0x11110000u + i);
+    CHECK_EQ(t_cache_calls, 3);                 /* one page each: clean+invalidate, then write back */
+    CHECK_EQ(t_clean_calls, 3);
+    /* only the requested bytes: 64 leaves the rest of the page alone */
+    memset(t_sys, 0xA5, sizeof t_sys);
+    CHECK_EQ(pica_drv_copy_page(&d, pa, 0x10000000u, pages[0], PICA_PAGE_SIZE), PICA_OK);
+    CHECK_EQ(pica_drv_copy_page(&d, pa + PICA_PAGE_SIZE, 0x10001000u, pages[1], 64), PICA_OK);
+    CHECK_EQ(((uint32_t *)t_sys)[PICA_PAGE_SIZE / 4 - 1], 0x11110000u + PICA_PAGE_SIZE / 4 - 1);
+    CHECK_EQ(((uint32_t *)t_sys)[PICA_PAGE_SIZE / 4 + 15], 0x11110000u + PICA_PAGE_SIZE / 4 + 15);
+    CHECK_EQ(((uint32_t *)t_sys)[PICA_PAGE_SIZE / 4 + 16], 0xA5A5A5A5u);
+    /* a page with no mapping, an unaligned destination, a source outside the
+       arena (or in the command staging) and zero bytes are refused */
+    CHECK_EQ(pica_drv_copy_page(&d, pa, 0x10000000u, 0x40000000u, PICA_PAGE_SIZE), PICA_ERR_RANGE);
+    CHECK_EQ(pica_drv_copy_page(&d, pa, 0x10000001u, pages[0], PICA_PAGE_SIZE), PICA_ERR_RANGE);
+    CHECK_EQ(pica_drv_copy_page(&d, d.pa, 0x10000000u, pages[0], PICA_PAGE_SIZE), PICA_ERR_RANGE);
+    CHECK_EQ(pica_drv_copy_page(&d, pa, 0x10000000u, pages[0], 0), PICA_ERR_RANGE);
+    CHECK_EQ(pica_drv_free(&d, 0, pa), PICA_OK);
+    printf("scatter: 3 scattered pages copied, cache maintained, bad page and range refused\n");
+}
+
 int main(int argc, char **argv)
 {
     test_cmd();
@@ -908,6 +975,7 @@ int main(int argc, char **argv)
     test_ff();
     test_sim();
     test_alloc();
+    test_scatter();
     (void)argc; (void)argv;
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
