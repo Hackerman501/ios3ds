@@ -669,12 +669,14 @@ static int gps_read_domain(void)
         "/var/mobile/Library/Preferences/com.ios3ds.location.plist",
     };
     for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
-        FILE *f = fopen(paths[i], "r");
-        if (!f) continue;
+        /* fopen/fread are not exported by the iOS 4.2 stub SDK; use POSIX I/O. */
+        int fd = open(paths[i], O_RDONLY);
+        if (fd < 0) continue;
         char buf[4096];
-        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n < 0) continue;
         buf[n] = 0;
-        fclose(f);
         const char *en = strstr(buf, "<key>Enabled</key>");
         if (!en) continue;
         if (!strstr(en, "<true/>")) {
