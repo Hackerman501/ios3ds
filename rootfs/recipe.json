@@ -41,6 +41,46 @@
  "cydia": "rootfs/cydia.json",
  "_tlsfix": "TLSFix 1.3 (MIT, github.com/ObscureMosquito/TLSFix, fork of nfzerox/TLSFix): Cydia Substrate tweak that runs iOS's TLS through OpenSSL 1.1.1 (TLS 1.2/1.3), verified against the trust store below; part of the Cydia set (rootfs/cydia.json, group tlsfix); false = leave it out",
  "tlsfix": true,
+ "_cydia_plist_write": "plists written only when Cydia is in the image (scripts/mkrootfs.py, after the Cydia install). IconState.plist: the home screen layout SpringBoard writes on the first boot of a 4.2.1 iPod2,1 rootfs (read back from the image, Utilities folder included) with Cydia moved from page 2 to the first free slot of page 1; without this file SpringBoard puts Cydia alone on page 2 (re-log 77)",
+ "cydia_plist_write": {
+  "/private/var/mobile/Library/SpringBoard/IconState.plist": {
+   "buttonBar": [
+    "com.apple.mobileipod-AudioPlayer",
+    "com.apple.mobilemail",
+    "com.apple.mobilesafari",
+    "com.apple.mobileipod-VideoPlayer"
+   ],
+   "iconLists": [
+    [
+     "com.apple.gamecenter",
+     "com.apple.mobilecal",
+     "com.apple.mobileslideshow",
+     "com.apple.MobileAddressBook",
+     "com.apple.youtube",
+     "com.apple.stocks",
+     "com.apple.Maps",
+     "com.apple.weather",
+     "com.apple.mobilenotes",
+     {
+      "iconLists": [
+       [
+        "com.apple.mobiletimer",
+        "com.apple.calculator",
+        "com.apple.VoiceMemos"
+       ]
+      ],
+      "displayName": "Utilities",
+      "defaultDisplayName": "Utilities"
+     },
+     "com.apple.MobileStore",
+     "com.apple.AppStore",
+     "com.apple.Preferences",
+     "com.apple.camera",
+     "com.saurik.Cydia"
+    ]
+   ]
+  }
+ },
  "_trust_store": "current root certificates (RSA roots of Mozilla's bundle) as user anchors in securityd's trust store, which every SecTrust evaluation (Safari, Cydia, NSURLConnection) consults; scripts/certs.py, docs/certificates.md",
  "trust_store": {
   "pem": "rootfs/certs/roots.pem",

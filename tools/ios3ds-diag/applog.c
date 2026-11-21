@@ -12,8 +12,8 @@
  * points stdout and stderr at /dev/console, and logs every alert's title and
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
  * popup), and MobileSafari's page-load errors with domain, code and userInfo.
- * Otherwise only the load errors (MobileSafari, re-log 75) and SpringBoard's
- * modal state (below) are on.
+ * Otherwise only the load errors (MobileSafari, re-log 75), SpringBoard's
+ * modal state and SpringBoard's cache warm-up (below) are on.
  *
  * Cydia Substrate (docs/cydia.md): every executable inside a .app bundle
  * (SpringBoard, which inserts us through its launchd plist, and every app, which
@@ -202,7 +202,7 @@ static uint32_t (*p_notify_set_state)(int, uint64_t);
 
 static int sb_responds(id o, const char *name)
 {
-    return o && p_msgSend(o, p_sel("respondsToSelector:"), p_sel(name)) != 0;
+    return o && ((uintptr_t)p_msgSend(o, p_sel("respondsToSelector:"), p_sel(name)) & 0xff) != 0;   /* BOOL */
 }
 
 static id sb_call(id o, const char *name)
@@ -248,6 +248,97 @@ static void modal_start(void)
     if (t) add(main_rl(), t, *common);
 }
 
+/*
+ * SpringBoard warm-up (re-log 77). The first time a folder opens on a freshly
+ * installed rootfs, SpringBoard stalls for ~2 s of emulated time (QEMU
+ * --icount 2; several seconds on the console) before anything moves:
+ *   - Folders' prepareToGhostCurrentPageIconsForRequester: asks every icon of
+ *     the page for its "ghostly" (dimmed) image, -[SBIcon getIconImage:4];
+ *     lsd renders each one (LICreateGhostlyVersion, ~25 ms of CPU per icon in
+ *     QEMU, ~0.5 s for a page) and stores it in Caches/com.apple.IconsCache;
+ *   - +[SBLinenView _generateLinenStripsIfNeeded] renders the folder's linen
+ *     into Caches/com.apple.SpringBoard.folderSwitcherLinen.* (~0.15 s);
+ *   - the first touch of an icon builds +[SBIcon homeScreenIconOverlayImage].
+ * The two caches survive reboots, so after that only the first open per boot
+ * pays for loading them. This does the same work in the background, one item
+ * per main-runloop timer tick (0.5 s apart, from 30 s after SpringBoard
+ * starts), so the first folder open finds everything ready. Boot-arg
+ * ios3ds_sbwarm=0 turns it off.
+ */
+static int warm_step;
+static id warm_icons;           /* retained NSArray of SBIconModel's leaf icons */
+static unsigned warm_n, warm_done;
+static double warm_t0, warm_busy;
+static double (*p_now)(void);
+static void (*p_invalidate)(void *);
+
+static void warm_tick(void *timer, void *info)
+{
+    (void)info;
+    double t = p_now();
+    id ctl = sb_call(p_getClass("SBIconController"), "sharedInstance");
+    id model = sb_call(p_getClass("SBIconModel"), "sharedInstance");
+    if (!ctl || !model || ((uintptr_t)sb_call(ctl, "isEditing") & 0xff))   /* BOOL in r0 */
+        return;                                         /* not up yet / user is busy */
+    if (!warm_t0)
+        warm_t0 = t;
+    if (warm_step == 0) {
+        sb_call(p_getClass("SBLinenView"), "_generateLinenStripsIfNeeded");
+    } else if (warm_step == 1) {
+        sb_call(p_getClass("SBIcon"), "homeScreenIconOverlayImage");
+        sb_call(p_getClass("SBFolderIcon"), "homeScreenIconOverlayImage");
+    } else if (warm_step == 2) {
+        id set = sb_call(model, "leafIcons");
+        id arr = sb_responds(set, "allObjects") ? sb_call(set, "allObjects") : set;
+        warm_icons = arr && sb_responds(arr, "objectAtIndex:") ? sb_call(arr, "retain") : 0;
+        warm_n = warm_icons ? (unsigned)(uintptr_t)sb_call(warm_icons, "count") : 0;
+    } else if ((unsigned)warm_step - 3 < warm_n) {
+        id icon = p_msgSend(warm_icons, p_sel("objectAtIndex:"), (unsigned)warm_step - 3);
+        /* the image -[SBIcon prepareGhostlyImage] asks for (format 4) */
+        if (sb_responds(icon, "getIconImage:") && !((uintptr_t)sb_call(icon, "isGhostly") & 0xff)) {
+            p_msgSend(icon, p_sel("getIconImage:"), 4);
+            warm_done++;
+        }
+    } else {
+        char line[160];
+        int l = snprintf(line, sizeof(line), "[sbwarm] linen, icon overlay and %u of %u ghostly icons ready "
+                         "(%d ms on the main thread, done %d s after the first step)\n",
+                         warm_done, warm_n, (int)(warm_busy * 1000), (int)(t - warm_t0));
+        write(2, line, l);
+        if (warm_icons)
+            sb_call(warm_icons, "release");
+        warm_icons = 0;
+        p_invalidate(timer);
+        return;
+    }
+    warm_step++;
+    warm_busy += p_now() - t;
+}
+
+static void warm_start(void)
+{
+    char ba[512];
+    size_t n = sizeof(ba) - 1;
+    if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) == 0) {
+        ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
+        if (strstr(ba, "ios3ds_sbwarm=0")) return;
+    }
+    void *cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    if (!cf || !p_getClass || !p_sel || !p_msgSend) return;
+    void *(*mk)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *) =
+        (void *(*)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *))
+            dlsym(cf, "CFRunLoopTimerCreate");
+    p_now = (double (*)(void))dlsym(cf, "CFAbsoluteTimeGetCurrent");
+    p_invalidate = (void (*)(void *))dlsym(cf, "CFRunLoopTimerInvalidate");
+    void *(*main_rl)(void) = (void *(*)(void))dlsym(cf, "CFRunLoopGetMain");
+    void (*add)(void *, void *, void *) = (void (*)(void *, void *, void *))dlsym(cf, "CFRunLoopAddTimer");
+    void **defmode = (void **)dlsym(cf, "kCFRunLoopDefaultMode");
+    if (!mk || !p_now || !p_invalidate || !main_rl || !add || !defmode) return;
+    /* default mode only: no steps while a scroll/drag tracks touches */
+    void *t = mk(NULL, p_now() + 30.0, 0.5, 0, 0, warm_tick, NULL);
+    if (t) add(main_rl(), t, *defmode);
+}
+
 static void load_substrate(void)
 {
     static const char ms[] = "/Library/MobileSubstrate/MobileSubstrate.dylib";
@@ -267,7 +358,10 @@ static void load_substrate(void)
 
 __attribute__((constructor)) static void applog_init(void)
 {
-    if (!strcmp(getprogname(), "SpringBoard")) modal_start();
+    if (!strcmp(getprogname(), "SpringBoard")) {
+        modal_start();
+        warm_start();
+    }
     load_substrate();
     char ba[512];
     size_t n = sizeof(ba) - 1;
