@@ -32,7 +32,7 @@ TARGETS = GRID + DOCK
 
 # log patterns: (name, regex, is_failure)
 CHECKS = [
-    ("kernel panic", r"panic\(cpu", True),
+    ("kernel panic", r"panic\(cpu|Debugger message: Fatal Exception|undefined kernel instruction", True),
     ("ARM11 stall dump", r"\[probe\] ARM11 stalled", True),
     ("md0 I/O error", r"\[blk\] .* failed", True),
     ("log write error", r"\[log\] write error", True),

@@ -44,7 +44,7 @@ APPS = {
 }
 
 CHECKS = [
-    ("kernel panic", r"panic\(cpu", True),
+    ("kernel panic", r"panic\(cpu|Debugger message: Fatal Exception|undefined kernel instruction", True),
     ("ARM11 stall dump", r"\[probe\] ARM11 stalled", True),
     ("md0 I/O error", r"\[blk\] .* failed", True),
     ("log write error", r"\[log\] write error", True),
@@ -293,17 +293,26 @@ def main():
                 break
 
         # 3. camera start/stop cycles (Camera.app at a known home-screen slot)
+        # Camera.app is slow to reach Celestial under --icount 2: wait for the
+        # ARM9's own "camera streaming" line instead of a fixed 10 s.
         if not a.no_camera:
             cam = {"started": 0, "stopped": 0, "lit": []}
             for i in range(a.camera_cycles):
                 tap(*APPS["camera"])
-                time.sleep(max(10.0, a.settle))
+                text = ""
+                for _ in range(18):             # up to 90 s of wall time
+                    time.sleep(5)
+                    text = read_sd_text(a.sd, "/ios3ds/log.txt")
+                    if re.search(r"\[cam\] .*camera streaming", text):
+                        break
+                time.sleep(5)
+                text = read_sd_text(a.sd, "/ios3ds/log.txt")
                 img = shot("cam%03d" % i)
                 cam["lit"].append(round(ImageStat.Stat(img.convert("L")).mean[0], 1))
-                text = read_sd_text(a.sd, "/ios3ds/log.txt")
                 cam["started"] = max(cam["started"], len(re.findall(r"\[cam\] .*camera streaming", text)))
                 key("ret")
-                settled("cam_home_%03d" % i)
+                ensure_home("cam_home_%03d" % i)
+                text = read_sd_text(a.sd, "/ios3ds/log.txt")
                 cam["stopped"] = max(cam["stopped"], len(re.findall(r"\[cam\] .*cameras off", text)))
                 log("camera cycle %d: preview %.0f, starts %d, stops %d" %
                     (i, cam["lit"][-1], cam["started"], cam["stopped"]))
@@ -320,11 +329,19 @@ def main():
                 qset("headphones", False)
                 time.sleep(3)
                 text = read_sd_text(a.sd, "/ios3ds/log.txt")
+                qt = open(os.path.join(a.out, "qemu.txt"), errors="replace").read()
                 jack.append({"in": len(re.findall(r"\[audio\] headphones plugged in", text)),
                              "out": len(re.findall(r"\[audio\] headphones unplugged", text)),
-                             "route": len(re.findall(r"\[audio\] iOS route ->", text))})
-                log("jack cycle %d: in %d out %d ios routes %d" % (i, jack[-1]["in"], jack[-1]["out"],
-                                                                  jack[-1]["route"]))
+                             "route": len(re.findall(r"\[audio\] iOS route ->", text)),
+                             # QEMU's CODEC is not modelled far enough for the
+                             # ARM9 jack poll (it logs "DAC not confirmed"), so
+                             # the model's own jack lines are the QEMU evidence
+                             # that the QOM property reached the GPIO.
+                             "model_in": len(re.findall(r"\[jack\] headphones plugged in", qt)),
+                             "model_out": len(re.findall(r"\[jack\] headphones unplugged", qt))})
+                log("jack cycle %d: model in %d out %d; guest in %d out %d ios routes %d" %
+                    (i, jack[-1]["model_in"], jack[-1]["model_out"], jack[-1]["in"],
+                     jack[-1]["out"], jack[-1]["route"]))
             results["jack"] = jack
             key("ret")
             settled("home_after_jack")
@@ -354,6 +371,11 @@ def main():
                 u = settled("unlock_%d" % i)
                 if ImageStat.Stat(u.convert("L")).mean[0] > 5:
                     break
+            # unlocking returns to whatever was frontmost; go Home so the
+            # comparison is against the home screen (and Home is checked too)
+            key("ret")
+            time.sleep(2)
+            u = settled("unlock_home_%d" % i)
             d = ImageStat.Stat(ImageChops.difference(u.convert("L"), ref)).mean[0]
             unlocks.append({"attempts": attempt + 1, "diff": round(d, 2)})
             log("lock round %d: %d unlock attempt(s), diff %.1f" % (i, attempt + 1, d))

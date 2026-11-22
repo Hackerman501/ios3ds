@@ -67,5 +67,6 @@ the image needs a fresh `build/sd.img`; a killed QEMU can corrupt it.
 | Microphone | same, Voice Memos record | `[audio] mic on`, `[audio] mic off: … FIFO overruns`, `ios3ds-audio: mic:` |
 | Cameras | same, Camera.app back/front for ~10 s each | `[cam] … streaming`, `0 FIFO overruns`, `drain gap max`, `[cam] monitor … max FIFO fill`, `CAM*.RAW` + `analyze_dump.py` |
 | Gyroscope | `diag=1`, run `ios3ds-gyrotest` | `[gyro]` chip line, `[gyrotest]` rates per axis |
+| SpringBoard restart | `sd:/ios3ds/log.txt` after a respring, a SpringBoard crash or `launchctl stop com.apple.SpringBoard` | two `[input] connected to SpringBoard` lines with `[input] SpringBoard went away; restarting` between them, and `[mcud] SpringBoard's HID event port went away; reconnecting` followed by a second `[mcud] connected`; brightness (`[mcud] iOS brightness …`) and orientation lines continue afterwards |
 | GPU present / scatter | normal use, or `IOS3DS_GL_SCATTER=1` in SpringBoard's environment | `[pica] present: … not physically contiguous`, `[gl] pica: surface … through an arena copy`, no `reading surfaces back through the CPU` |
 | SD load | normal use; `[hb]` every 10 s | `[hb] … md0 … 0 err` |
