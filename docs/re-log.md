@@ -1431,5 +1431,14 @@ register-level source is unverified on hardware.**
   now holds keys 0.4 s (below the input daemon's 0.8 s long-press threshold),
   waits up to 45 s for the screen to settle, retries Home before giving up,
   wakes with two Home presses and retries the slide-to-unlock gesture. Those
-  are harness timing fixes, not changes to the pass criteria. Fresh-image
-  soak results for this branch are recorded in the final report.
+  are harness timing fixes, not changes to the pass criteria.
+- **Soaks unfinished.** The image build was repeatedly killed on this host
+  while five or more other workers were building images and running QEMU
+  soaks (load average 18–45, ~2 GiB swap used). The last attempt
+  `cd ~/Documents/GitHub/ios3ds-wt/als && make sdimg MKSD_FLAGS='--no-cydia --no-tlsfix'`
+  ended with `make: *** [Makefile:79: sdimg] Killed`; an earlier attempt
+  ended with `OSError: [Errno 39] Directory not empty: 'ios3ds'` from
+  `shutil.rmtree` in `scripts/mksd.py` when another build touched the tree.
+  An earlier fresh image (built before a host reboot) was enough for the
+  light-level evidence above, but no 5-cycle soak completed after the reboot;
+  both soaks still need to be run on a quiet host.
