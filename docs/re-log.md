@@ -1508,7 +1508,8 @@ paths below are exercised in QEMU.
   No 3D mode or barrier, no anaglyph: the ordinary top-screen copy runs.
   `emu/run.py`/`emu/soak.py`/`emu/viewer.py` accept `IOS3DS_QEMU` (and soak
   has `--qemu`, `--slider3d`) so this worktree builds and uses its own
-  `build/qemu-local`, never the shared `build/qemu` symlink.
+  private QEMU (`build/qemu-hy4`, binary copied to `build/qemu-local/b/`),
+  never the shared `build/qemu` symlink.
 - **Tests**: `tools/ios3ds-pica/tests/test_stereo_copy.c` (new) maps the CLCD,
   LCD and framebuffer pages at their physical addresses and runs the real
   `boot/arm9/display.c`: flag off is byte-for-byte the old copy with no
