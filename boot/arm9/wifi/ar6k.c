@@ -129,6 +129,8 @@ static struct {
     u32 cred_sz, cred_pool;
     u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
     u32 credit_refund;              /* credits returned after a failed mailbox write */
+    u32 defer_drop;                 /* packets that could not be queued at all */
+    u32 defer_full;                 /* waits stopped with the deferred ring full */
     u32 eapol_busy;                 /* EAPOL replies queued for lack of credits */
     u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
@@ -353,8 +355,8 @@ static int bmi_chunk(u32 cmd, u32 addr, const u8 *p, u32 n)
    report instead. The initial distribution follows ath6kl: every endpoint gets
    enough for one maximum-sized message, the rest goes to the data endpoint. */
 static int mbox_recv(u32 *type);
-static void pump_msg(u32 type, int n);
-static void defer_msg(u32 type, const u8 *body, int n);
+static int pump_msg(u32 type, int n);
+static int defer_msg(u32 type, const u8 *body, int n);
 
 static u32 credit_need(u32 padded)
 {
@@ -383,7 +385,7 @@ static void credit_init(u32 n, u32 sz)
     A.cred_sz = sz ? sz : 1664;
     A.cred_pool = n;
     A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
-    A.credit_refund = A.eapol_busy = 0;
+    A.credit_refund = A.defer_drop = A.defer_full = A.eapol_busy = 0;
     A.credit_log = 0;
     credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
 }
@@ -403,26 +405,37 @@ static void credit_report(const u8 *t, u32 n)
 }
 
 /* A credit wait must not re-enter the WMI/HTC state machine (we may already
-   be inside its handler). Keep whole packets in a small queue and run them
-   after the current step, from pump() below. Credit records are already
-   applied by mbox_recv() when it strips the trailer. */
-#define DEFER_MAX 4
+   be inside its handler). Keep whole packets in a queue and run them after
+   the current step, from pump() below. Credit records are already applied by
+   mbox_recv() when it strips the trailer. A full ring is not an excuse to
+   drop a packet: the caller stops draining and leaves it in the hardware
+   mailbox for the next pump(). 16 x 1664 bytes is ~26 KiB of ARM9 RAM. */
+#define DEFER_MAX 16u
 static struct { u8 type; u16 len; u8 body[0x680]; } D[DEFER_MAX];
 static u8 d_head, d_count;
 
-static void defer_msg(u32 type, const u8 *body, int n)
+/* 0 = queued, <0 = the packet stays in the mailbox (and is counted). */
+static int defer_msg(u32 type, const u8 *body, int n)
 {
-    if (n <= 0 || (u32)n > sizeof(D[0].body) || d_count >= DEFER_MAX) return;
+    if (n <= 0 || (u32)n > sizeof(D[0].body) || d_count >= DEFER_MAX) {
+        A.defer_drop++;
+        if (A.credit_log < 16) {
+            A.credit_log++;
+            DIAG("htc: deferred ring full (%u packets), leaving the mailbox packet pending", DEFER_MAX);
+        }
+        return SDIO_ERR_BUSY;
+    }
     u8 i = (u8)((d_head + d_count) % DEFER_MAX);
     D[i].type = (u8)type;
     D[i].len = (u16)n;
     memcpy(D[i].body, body, (u32)n);
     d_count++;
+    return 0;
 }
 
-static void pump_msg(u32 type, int n)
+static int pump_msg(u32 type, int n)
 {
-    defer_msg(type, pkt + 6, n);
+    return defer_msg(type, pkt + 6, n);
 }
 
 /* One monitor step may spend at most ~20 ms here (20 x the 1 ms wait below):
@@ -432,14 +445,24 @@ static void pump_msg(u32 type, int n)
 #define CREDIT_WAIT_POLLS 20u
 static int credit_wait(u32 ep, u32 need)
 {
-    for (u32 i = 0; i < CREDIT_WAIT_POLLS && A.ep_credits[ep] < need; i++) {
+    /* Check the ring BEFORE reading: a packet already read from the hardware
+       mailbox cannot be put back. A full ring means the next pump() sees it. */
+    for (u32 i = 0; i < CREDIT_WAIT_POLLS && A.ep_credits[ep] < need && d_count < DEFER_MAX; i++) {
         u32 type;
         int n = mbox_recv(&type);
-        if (n > 0) pump_msg(type, n);
-        else if (n < 0) return n;
+        if (n > 0) {
+            if (pump_msg(type, n) < 0) break;    /* oversized: leave it in the mailbox */
+        } else if (n < 0) return n;
         else waitcycles(3350);
     }
     if (A.ep_credits[ep] < need) {
+        if (d_count >= DEFER_MAX) {
+            A.defer_full++;
+            if (A.credit_log < 16) {
+                A.credit_log++;
+                DIAG("htc: deferred ring full (%u packets): leaving the mailbox for pump()", DEFER_MAX);
+            }
+        }
         A.credit_busy++;
         if (A.credit_log < 16)
             DIAG("htc: tx waits for credits on endpoint %u (%u < %u)", ep, A.ep_credits[ep], need);

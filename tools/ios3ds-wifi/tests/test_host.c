@@ -885,6 +885,40 @@ static void test_ar6k_write_credits(void)
     CHECK(mock_w8_calls > 0);
 }
 
+static void test_ar6k_defer_ring(void)
+{
+    const u8 body[4] = { 9, 8, 7, 6 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;                       /* 0xFE below is an unknown packet type */
+    A.ep_data = 2;
+    d_head = d_count = 0;
+    mock_reset();
+    host_wait_cycles = 0;
+
+    for (u32 i = 0; i < DEFER_MAX; i++)
+        CHECK(defer_msg(0xFE, body, sizeof(body)) == 0);
+    CHECK(d_count == DEFER_MAX && A.defer_drop == 0);
+    CHECK(defer_msg(0xFE, body, sizeof(body)) == SDIO_ERR_BUSY);
+    CHECK(d_count == DEFER_MAX && A.defer_drop == 1);
+
+    /* credit_wait stops draining on overflow: the extra frames stay in the
+       hardware mailbox instead of being silently dropped */
+    d_head = d_count = 0;
+    A.defer_drop = 0;
+    for (u32 i = 0; i < DEFER_MAX + 5; i++)
+        mock_mailbox_frame(0xFE, body, sizeof(body), NULL, 0);
+    CHECK(credit_wait(2, 1) == SDIO_ERR_BUSY);
+    CHECK(d_count == DEFER_MAX && A.defer_full == 1 && A.defer_drop == 0);
+    CHECK(mock_rx_frames == 5 && host_wait_cycles == 0);
+
+    /* pump() runs every deferred packet once, including the last one */
+    u32 before = A.defer_drop;
+    pump();
+    CHECK(d_count == 0 && A.defer_drop == before);
+}
+
 int main(void)
 {
     test_ring();
@@ -893,6 +927,7 @@ int main(void)
     test_htc_credits();
     test_ar6k_credits();
     test_ar6k_write_credits();
+    test_ar6k_defer_ring();
     test_cfg();
     test_crypto();
     test_handshake();
