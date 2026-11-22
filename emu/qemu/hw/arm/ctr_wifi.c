@@ -432,6 +432,9 @@ static void htc_queue(CtrWifiState *s, int ep, const uint8_t *body, uint32_t len
             trailer[2 + 2 * n] = e;
             trailer[3 + 2 * n] = s->owed[e];
             returned += s->owed[e];
+            /* the report gives the buffers back to the host; the model and
+               the driver must count the same pool from here on */
+            s->credits[e] = MIN(255, s->credits[e] + s->owed[e]);
             s->owed[e] = 0;
             n++;
         }
