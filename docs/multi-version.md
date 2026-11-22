@@ -442,4 +442,18 @@ We could not obtain a PASS while the host was this loaded; this is a host
 contention problem, not a change in the generated 4.2.1 boot files (§5.1).
 The reports are in `build/emu-soak-final{,2,3}/report.md` (not committed).
 
+**[V]** The exact required sequence
+(`rm -f build/sd.img && make sdimg && python3 emu/soak.py --cycles 5 --icount 2`)
+was retried four further times with fresh images. `emu/soak.py` was also fixed
+to re-acquire a lit home-screen reference when the first 180 s of screenshots
+are black (a normal host never hits this). Boot still took 425–554 s and every
+run printed `**Result: FAIL**` on "not home after Home" only — the screenshots
+caught page animations or mis-tapped icons while other worktrees' QEMU/ninja
+jobs kept the 12-core host at load 30–40. All eight failure checks (panic,
+stall, md0, log, crash, heartbeat, watchdog, GPU) stayed at 0. An experiment
+that pressed Home before each tap made the icon hits *worse* and was reverted.
+This is a harness/host-timing limitation, not a 4.2.1 payload change (§5.1);
+a PASS was not obtainable on this host. Logs: `build/resume-soak{,2,3,4}.log`
+and `build/emu/soak/report.md` (not committed).
+
 Main `docs/re-log.md` continues at §85 with the same story.

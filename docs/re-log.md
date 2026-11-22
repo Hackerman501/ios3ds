@@ -1334,3 +1334,9 @@ records the concrete steps and blockers of stages 2–3.
   (black/stale screenshots, boot 435–965 s); zero panics, md0 errors, crashes
   or hangs. No PASS could be obtained while other workers saturated the CPU.
   The 4.2.1 kernel/devtree/fakeio/shim/gpu/boot.cfg hashes were unchanged.
+- **Soak harness:** four more exact-command runs with fresh images (boot 425–554 s,
+  host load 30–40) still printed FAIL only on "not home after Home": black
+  references and mid-page-animation screenshots, zero panics/stalls/md0/crash/
+  hang events. `emu/soak.py` now re-acquires a lit reference after a dark boot;
+  a pre-tap Home recenter was tried and reverted because it made icon hits
+  worse. No PASS was obtainable under this host load; see docs/multi-version.md §5.4.
