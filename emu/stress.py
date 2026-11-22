@@ -118,6 +118,9 @@ def main():
     ap.add_argument("--diag", action="store_true", help="set boot.cfg diag=1 (gltest probe, gyrotest, [smp])")
     ap.add_argument("--no-mem", action="store_true", help="do not add ios3ds_mem=1 (the [mem] report)")
     ap.add_argument("--no-camera", action="store_true")
+    ap.add_argument("--app-drag", action="store_true",
+                    help="also drag inside the opened app (reproduces a QEMU-only kernel panic in the "
+                         "app-targeted GSEvent path; see docs/driver-status.md)")
     ap.add_argument("--rotate", default="1", help="qom mcu-orient poses to cycle, e.g. 1,3,0; empty = off")
     a = ap.parse_args()
     if a.new3ds:
@@ -261,9 +264,12 @@ def main():
             home = settled("c%03d_home" % i)
             c["home_diff"] = round(ImageStat.Stat(ImageChops.difference(home.convert("L"), ref)).mean[0], 2)
             if c["home_diff"] > 12:
-                # Home landed on Spotlight or an alert: recover like soak.py
+                # Home landed on Spotlight, an alert, or the lock screen after
+                # iOS' auto-lock on a long --icount 2 cycle: recover.
                 for step, act in (("second Home", lambda: key("ret")),
                                   ("Dismiss", lambda: tap(160, 333)),
+                                  ("Home + unlock", lambda: (key("ret"), time.sleep(2),
+                                                             drag(40, 420, 300, 420, 0.8))),
                                   ("Dismiss + Home", lambda: (tap(160, 333), time.sleep(3), key("ret")))):
                     act()
                     time.sleep(5)

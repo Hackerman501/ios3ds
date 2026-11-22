@@ -200,6 +200,12 @@ def main():
                 c["recovered_with"] = "stuck"
                 for step, act in (("second Home", lambda: key("ret")),
                                   ("Dismiss", lambda: tap(160, 333)),
+                                  # On a slow --icount 2 host a cycle can take
+                                  # longer than iOS' auto-lock: Home wakes the
+                                  # lock screen, the slide returns to the app
+                                  # or the home screen.
+                                  ("Home + unlock", lambda: (key("ret"), time.sleep(2),
+                                                             drag(40, 420, 300, 420, 0.8))),
                                   ("Dismiss + Home", lambda: (tap(160, 333), time.sleep(3), key("ret")))):
                     act()
                     time.sleep(6)
