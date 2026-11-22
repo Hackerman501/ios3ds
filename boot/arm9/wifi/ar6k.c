@@ -832,7 +832,10 @@ static void on_bssinfo(const u8 *d, u32 n)
     A.channel = (u16)(d[0] | d[1] << 8);
     memcpy(A.bssid, d + 6, 6);
     A.wpa1_ap = (u8)(wpa1 && !rsn);                       /* mixed WPA+WPA2: use RSN */
-    if (A.wpa1_ap) group = CRYPT_TKIP;                    /* WPA v1 is TKIP pairwise */
+    if (A.wpa1_ap) {
+        group = CRYPT_TKIP;                               /* WPA v1 is TKIP pairwise */
+        DIAG("scan: WPA v1 vendor IE, TKIP pairwise");
+    }
     A.group_crypt = (u8)group;
 }
 
