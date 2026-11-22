@@ -582,20 +582,23 @@ int wpa2_rsn_parse(const u8 *ie, u32 n, rsn_info_t *r)
 }
 
 /* MIC over the whole EAPOL frame with the MIC field taken as zero.
-   WPA2: HMAC-SHA1 truncated to 16; WPA v1: HMAC-MD5 (802.11i/D10). */
-static void eapol_mic(const wpa2_t *w, const u8 *f, u32 len, u8 mic[16])
+   WPA2: HMAC-SHA1 truncated to 16; WPA v1: HMAC-MD5 (802.11i/D10).
+   Never leave mic[] uninitialised: a rejected frame must be rejected by the
+   caller, not compared against whatever happened to be on the stack. */
+static int eapol_mic(const wpa2_t *w, const u8 *f, u32 len, u8 mic[16])
 {
     static const u8 zero[16];
     hmac_ctx k;
     sha1_ctx c;
     u8 d[20];
+    if (len < EK_MIC + 16) return WPA2_ERR_SHORT;
     if (w->wpa1) {
         u8 copy[512];
-        if (len > sizeof(copy)) return;
+        if (len > sizeof(copy)) return WPA2_ERR_LONG;
         memcpy(copy, f, len);
         memset(copy + EK_MIC, 0, 16);
         hmac_md5(w->kck, copy, len, NULL, 0, mic);
-        return;
+        return 0;
     }
     hmac_sha1_key(&k, w->kck, 16);
     c = k.in;
@@ -607,6 +610,7 @@ static void eapol_mic(const wpa2_t *w, const u8 *f, u32 len, u8 mic[16])
     sha1_update(&c, d, 20);
     sha1_final(&c, d);
     memcpy(mic, d, 16);
+    return 0;
 }
 
 static int build_reply(wpa2_t *w, const u8 *req, u32 info, const u8 *nonce,
@@ -630,7 +634,8 @@ static int build_reply(wpa2_t *w, const u8 *req, u32 info, const u8 *nonce,
     out[EK_DATALEN] = (u8)(dlen >> 8);
     out[EK_DATALEN + 1] = (u8)dlen;
     if (dlen) memcpy(out + EK_DATA, data, dlen);
-    eapol_mic(w, out, total, out + EK_MIC);
+    int r = eapol_mic(w, out, total, out + EK_MIC);
+    if (r) return r;
     *outlen = total;
     return 0;
 }
@@ -701,7 +706,8 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
 
     /* everything else is MIC-protected with our KCK */
     if (!w->have_ptk || !(info & KI_MIC)) return WPA2_ERR_STATE;
-    eapol_mic(w, f, len, mic);
+    int r = eapol_mic(w, f, len, mic);
+    if (r) return r;
     u8 bad = 0;
     for (int i = 0; i < 16; i++) bad |= mic[i] ^ f[EK_MIC + i];
     if (bad) return WPA2_ERR_MIC;
@@ -728,7 +734,7 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
         if (aes_key_unwrap(w->kek, f + EK_DATA, dlen, kd) != 0) return WPA2_ERR_KEYDATA;
         kdlen = dlen - 8;
     }
-    int r = find_gtk(w, kd, kdlen);
+    r = find_gtk(w, kd, kdlen);
     if (r) return r;
     memcpy(w->rsc, f + EK_RSC, 8);
     memcpy(w->replay, f + EK_REPLAY, 8);

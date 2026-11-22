@@ -919,6 +919,26 @@ static void test_ar6k_defer_ring(void)
     CHECK(d_count == 0 && A.defer_drop == before);
 }
 
+static void test_wpa2_long_frame(void)
+{
+    wpa2_t w;
+    u8 f[1024], out[1024], keydata[512];
+    u32 olen = 123;
+    const u8 pmk[32] = { 1 };
+    memset(keydata, 0, sizeof(keydata));
+
+    /* WPA v1 MICs use a 512-byte copy; anything longer must be rejected
+       before the caller compares mic[] with the frame. */
+    memset(&w, 0, sizeof(w));
+    w.wpa1 = 1;
+    w.have_ptk = 1;
+    memcpy(w.kck, pmk, 16);
+    u32 n = wpa1_frame(f, 0x0188, 1, NULL, NULL, keydata, 450, 0);  /* pairwise|MIC|ACK */
+    CHECK(n == EK_DATA + 450);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_ERR_LONG);
+    CHECK(olen == 0 && !w.have_replay && !w.done);
+}
+
 int main(void)
 {
     test_ring();
@@ -934,6 +954,7 @@ int main(void)
     test_wpa1_crypto();
     test_wpa1_parse();
     test_wpa1_handshake();
+    test_wpa2_long_frame();
     test_rsn_parse();
     test_rsn_view();
     printf("%s: %d checks, %d failed\n", fails ? "FAIL" : "ok", checks, fails);

@@ -49,6 +49,7 @@ enum {
     WPA2_ERR_SHORT = -1, WPA2_ERR_TYPE = -2, WPA2_ERR_REPLAY = -3, WPA2_ERR_MIC = -4,
     WPA2_ERR_STATE = -5, WPA2_ERR_KEYDATA = -6, WPA2_ERR_NOGTK = -7, WPA2_ERR_SPACE = -8,
     WPA2_ERR_NONCE = -9,
+    WPA2_ERR_LONG = -10,            /* EAPOL frame longer than the MIC scratch buffer */
 };
 
 typedef struct {
