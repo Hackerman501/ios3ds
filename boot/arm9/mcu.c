@@ -61,6 +61,7 @@ static u32 fails_in_row;
 /* timers (ARM9 ticks) */
 static u32 t_irq, t_slider, t_batt, t_rtc, t_acc, t_als;
 static bool als_want;                 /* New models, boot.cfg auto_brightness */
+static bool als_paused;               /* a camera client has the cameras: hold the last luma */
 static uint8_t als_last;              /* last luminance published to the mailbox */
 
 /* button state presented to the input mailbox */
@@ -216,12 +217,14 @@ void mcu_set_als(bool on)
 {
     if (!box) return;
     als_want = on && box->state == MCU_ST_OK;
+    als_paused = false;
     camera_als_enable(als_want);
     if (on && !als_want) return;
     box->als_state = als_want ? 1 : 0;
     if (!als_want) {
         box->valid &= ~(uint32_t)MCUV_ALS;
         box->als_luma = 0;
+        als_last = 0;
     }
     logp("[mcu] auto-brightness %s (New model; inner camera AE luminance)\n",
          als_want ? "on" : "off");
@@ -232,6 +235,25 @@ static void als_sample(u32 now)
     if (!als_want || box->state != MCU_ST_OK) return;
     if (t_als && (int)(now - t_als) < 0) return;
     t_als = now + ms_ticks(500);
+    /* Camera.app (or any other camera client) owns the sensors while it
+       streams. Leave the last luma in the mailbox and tell mcud to hold its
+       factor; no I2C reads and no camera set-up happen until the stop. */
+    if (camera_als_busy()) {
+        if (!als_paused) {
+            als_paused = true;
+            box->als_state = 2;
+            logp("[mcu] ambient light paused (camera in use); holding luma %u/255\n",
+                 (unsigned)box->als_luma);
+            bump();
+        }
+        return;
+    }
+    if (als_paused) {
+        als_paused = false;
+        box->als_state = 1;
+        logp("[mcu] ambient light resumed after camera use\n");
+        bump();
+    }
     u8 luma;
     if (!camera_als_sample(&luma)) return;
     int first = !(box->valid & MCUV_ALS);

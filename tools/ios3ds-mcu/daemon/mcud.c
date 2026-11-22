@@ -210,7 +210,8 @@ static int als_pref(void)
 }
 
 static als_smooth_t als;
-static int als_on = -1, als_pref_last = -1;
+static float als_factor = 1.0f;       /* kept between loops: the shim is written on every slider change */
+static int als_on = -1, als_pref_last = -1, als_paused_logged;
 static uint8_t als_luma_last;
 static float als_factor_last = -1;
 
@@ -351,17 +352,25 @@ int main(int argc, char **argv)
            default) it is on. Smoothing/hysteresis are in als_curve.h. */
         if ((loops % 50) == 0) als_pref_last = als_pref();
         int pref_on = als_pref_last < 0 ? 1 : als_pref_last;
-        int want_als = !opt_noals && pref_on && box.als_state == 1 && (box.valid & MCUV_ALS) != 0;
+        /* als_state 2: a camera client owns the sensors; the ARM9 holds the
+           last luma and we hold the factor we already applied (no jump). */
+        int want_als = !opt_noals && pref_on && box.als_state != 0 && (box.valid & MCUV_ALS) != 0;
         if (want_als != als_on) {
             say("[mcud] auto-brightness %s (SBEnableALS %s, ambient luma %u/255)",
                 want_als ? "on" : "off", als_pref_last < 0 ? "absent" : als_pref_last ? "1" : "0",
                 (unsigned)box.als_luma);
             als_on = want_als;
             als.valid = 0;                      /* snap to the current light level */
-            als_factor_last = -1;
+            als_factor = want_als ? als_lux_to_factor(als_luma_to_lux(box.als_luma)) : 1.0f;
+            als_factor_last = als_factor;
         }
-        float als_factor = 1.0f;
-        if (als_on && (loops % 5) == 0 && bright >= 0.0f) {
+        int paused = als_on && box.als_state == 2;
+        if (paused != als_paused_logged) {
+            say("[mcud] auto-brightness %s (camera in use; holding factor %.2f)",
+                paused ? "paused" : "resumed", (double)als_factor);
+            als_paused_logged = paused;
+        }
+        if (als_on && !paused && (loops % 5) == 0 && bright >= 0.0f) {
             als_factor = als_smooth(&als, box.als_luma, scr_off ? 250u : 100u);
             if (fabsf(als_factor - als_factor_last) > 0.004f ||
                 (box.als_luma != als_luma_last && fabsf(als_factor - als_factor_last) > 0.001f)) {

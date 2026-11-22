@@ -33,10 +33,11 @@ bool blksrv_mark_clean(void) { clean_marks++; return true; }
 
 /* the real camera driver is not linked into this host test: the ambient light
    source is a fake I2C camera, like the fake MCU below */
-static bool als_ok, als_want;
+static bool als_ok, als_want, als_busy;
 static u8 als_luma;
 void camera_als_enable(bool on) { als_want = on; if (!on) als_ok = false; }
-bool camera_als_sample(u8 *luma) { if (!als_want || !als_ok) return false; *luma = als_luma; return true; }
+bool camera_als_busy(void) { return als_busy; }
+bool camera_als_sample(u8 *luma) { if (!als_want || !als_ok || als_busy) return false; *luma = als_luma; return true; }
 
 /* ---- fake MCU ------------------------------------------------------------ */
 static u8 regs[256];
@@ -234,6 +235,18 @@ int main(void)
     als_luma = 40;
     run(300);
     CHECK(b->als_luma == 40, "ALS follows the light level: %u", b->als_luma);
+
+    /* Camera.app: hold the last luma, no new samples, then resume */
+    als_busy = true;
+    als_luma = 200;
+    run(1500);
+    CHECK(b->als_luma == 40 && b->als_state == 2 && (b->valid & MCUV_ALS),
+          "ALS paused for Camera.app: luma %u state %u", b->als_luma, b->als_state);
+    als_busy = false;
+    run(600);
+    CHECK(b->als_luma == 200 && b->als_state == 1, "ALS resumed: luma %u state %u",
+          b->als_luma, b->als_state);
+
     mcu_set_als(false);
     run(300);
     CHECK(!(b->valid & MCUV_ALS) && b->als_state == 0, "ALS kill switch");

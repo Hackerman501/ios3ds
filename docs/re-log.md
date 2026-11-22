@@ -1371,17 +1371,33 @@ register-level source is unverified on hardware.**
   AE luma byte is the value QTM turns into lux, and that this works the same
   way on a New 2DS XL. Nothing was measured on a console.
 - **Path.** `camera_als_sample()` (`boot/arm9/camera.c`) brings the inner
-  sensor up once (PLL + AE + sequencer refresh) and reads var 0x2218 at 2 Hz;
-  it reuses the live AE when Camera.app has the inner camera open and waits
-  out outer-camera sessions. `mcu_set_als()` (`boot/arm9/mcu.c`) is armed by
-  `main.c` **only** after `n3ds_setup()` says New; `auto_brightness=0`
-  prevents even that call. The byte lands in line 5 of `mcubox_t` (which had
-  20 spare bytes; all existing line offsets and the 256-byte size stay put),
-  alongside a state bit `MCUV_ALS`. ios3ds-mcud reads SpringBoard's
+  sensor up once (PLL + AE + sequencer refresh) and reads var 0x2218 at 2 Hz.
+  It never touches *any* camera while a client streams (inner, outer left or
+  outer right): `mcu.c` then sets `als_state=2` and publishes no new luma,
+  mcud holds its last factor, and both resume when the client stops (the
+  shared AE set-up is redone if Camera.app had the inner sensor). This follows
+  3dbrew's note that QTM refuses head tracking while another process uses a
+  camera. `mcu_set_als()` (`boot/arm9/mcu.c`) is armed by `main.c` **only**
+  after `n3ds_setup()` says New; `auto_brightness=0` prevents even that call
+  and `camera=0` disables the whole camera driver. The byte lands in line 5 of
+  `mcubox_t` (which had 20 spare bytes; all existing line offsets and the
+  256-byte size stay put), alongside `MCUV_ALS`. ios3ds-mcud reads SpringBoard's
   `SBEnableALS` preference (absent on an iPod2,1 → on), converts luma → lux →
   multiplier with hysteresis/slew (`boot/common/als_curve.h`) and multiplies
   `DisplayBrightness × DisplayBrightnessFactor` before sending the backlight
-  through `kern.ios3ds_mcuctl`. The shim and the PWM registers are unchanged.
+  through `kern.ios3ds_mcuctl`. The factor is kept across daemon loops: the
+  shim is also written on a slider change, so a local factor would cause a
+  brief jump to full brightness between two light samples. The shim and the
+  PWM registers are unchanged.
+- **Cost / LED.** The inner camera has to stay awake: a standby sensor has no
+  fresh AE result. Only the two-register read is duty-cycled (2 Hz, no CAM
+  FIFO or PICA work, no new ARM9 wakeups); re-running `apt_init()` every few
+  seconds would write ~80 registers, wait for PLL/AE and yield stale luma.
+  There is no documented standalone lux sensor (3dbrew's MCU table device 3
+  and I2C device 16), so this is the only ARM9-readable source. 3dbrew lists
+  an MCU "Camera LED state" register 0x2B, which we never write; whether the
+  LED is tied to camera power needs a console. Hardware current draw is
+  unmeasured (docs/mcu.md §12.2.1).
 - **Curve tests** (`tests/test_als.c`, added to `make test`): 765 checks —
   monotonic luma→lux anchors, bounded monotonic multiplier, first-sample
   snap, slew limit, one-frame flicker ignored, sustained change followed, no

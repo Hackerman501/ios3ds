@@ -109,7 +109,7 @@ typedef struct {
     uint32_t screen_off;    /* 1 while the ARM9 sees iOS' screen off (power saving active) */
     /* line 5, ARM9: ambient light for auto-brightness (New models only) */
     uint8_t  als_luma;      /* inner camera AE_LAST_LUMA (0x2218), 0..255 */
-    uint8_t  als_state;     /* 0 = no sensor / disabled, 1 = samples live (MCUV_ALS set) */
+    uint8_t  als_state;     /* 0 = no sensor / disabled, 1 = live, 2 = paused while a camera client streams */
     uint8_t  _r5[18];
     uint32_t _r6[16];       /* lines 6-7: spare */
 } mcubox_t;

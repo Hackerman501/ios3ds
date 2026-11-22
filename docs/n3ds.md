@@ -195,10 +195,16 @@ curve and hardware checklist: [mcu.md](mcu.md) section 12 and re-log §85.
   argument in mcud's launchd job. Nintendo says Auto-Brightness is
   unavailable on New 2DS XL; our code still tries it there (the first
   hardware log will show whether the reading varies).
-- **Cost:** the inner camera stays awake while the feature is on (~2 Hz
-  register reads; no picture data crosses the CAM FIFO), like QTM's own face
-  tracking. Camera.app can keep using the sensor; an outer-camera session
-  keeps the last value until it ends.
+- **Cost:** the sensor has to stay awake for its AE statistic to be fresh;
+  only two I2C register reads happen every 500 ms (no picture data crosses the
+  CAM FIFO, no extra ARM9 wakeups), like QTM's own face tracking. A hardware
+  current measurement is still needed; see [mcu.md](mcu.md) §12.2.1 for why
+  duty-cycling the sensor is worse than duty-cycling the reads. We never write
+  the MCU's camera-LED register 0x2B, so the LED is not deliberately lit.
+- **Camera clients:** all camera sampling pauses while Camera.app (or any
+  other client) streams, then resumes with a fresh AE set-up after it stops;
+  the backlight holds its last factor during the pause. `camera=0` disables
+  the ambient path as well as the cameras.
 - **QEMU:** `ambient-light` (uint32, lux, read/write) on `/machine` sets the
   inner camera's AE value; `-M nintendo3ds,new3ds=on` also gates it on the
   model. With `auto_brightness=1`, changing it from 5 to 800 to 80 lux moved

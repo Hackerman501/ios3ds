@@ -666,10 +666,44 @@ what Horizon's lux value is derived from, and where the camera sits on a New
   the multiplier around the user's brightness goes 0.45 (dark) → 1.0 (bright).
   A new target needs two agreeing samples and a 0.03 dead band; the applied
   factor slews at most 0.15/s. No flicker from one-frame changes.
-- **Camera co-existence:** when Camera.app uses the inner camera its AE is
-  already running and we read it; while an outer camera streams, the shared
-  CAM0 bus is left alone and the last value is kept. The sensor stays awake
-  while auto-brightness is on (extra power draw, like QTM's face tracking).
+- **Camera co-existence:** the ARM9 checks `camera_als_busy()` before every
+  sample. While any camera client streams (inner, outer left or outer right),
+  no camera register is touched: `als_state` becomes 2 and the last luma is
+  held, so mcud holds its factor instead of jumping; when the client stops,
+  `als_state` goes back to 1. If Camera.app used the inner camera, the stop
+  puts it in standby, so the next ambient sample runs the AE set-up again. If
+  auto-brightness is switched off during a session, the sensor is put in
+  standby when that session ends. This mirrors QTM, which refuses head
+  tracking whenever another process uses a camera (3dbrew "QTM Services").
+- **`camera=0`:** with the cameras disabled in boot.cfg `camera_init()` marks
+  the whole driver disabled, so `camera_als_sample()` refuses to run and the
+  light path stays inactive even on New models. This is intentional: the
+  setting is a kill switch for the camera hardware, not just Camera.app.
+
+#### 12.2.1 Does the inner camera have to stay awake? What it costs
+
+Yes, for a usable reading. The AE statistic is produced by the sensor's own
+microcontroller while it images the scene; a standby sensor has no fresh
+`AE_LAST_LUMA`. We therefore bring the inner camera up once (PLL, AE window,
+sequencer refresh) and leave it awake while `auto_brightness=1`, the same way
+Horizon's QTM face tracking keeps it running. The *reads* are brief: two I2C
+register accesses (write index 0x098C, read data 0x0990) every 500 ms, no
+CAM FIFO transfers, no PICA work and no interrupt. Power-cycling the sensor
+between samples is a false economy: `apt_init()` writes around 80 registers
+and waits for wake/PLL/sequencer events (up to 500 ms per wait) and AE needs
+settling time, so waking it every few seconds would cost more peak current
+and deliver stale luma. The 500 ms read rate is already far slower than a
+camera preview (≈12 fps). The screen-off path still polls at 4 Hz in mcud,
+but no extra wakeups are added to the ARM9: the sample piggybacks on its
+existing monitor loop.
+
+No milliwatt figure is claimed: that needs a current measurement on a console.
+**Camera activity LED:** 3dbrew's MCU register table has a dedicated "Camera
+LED state" at register 0x2B, driven by Horizon's camera services. Our driver
+never writes 0x2B, so it does not deliberately turn the LED on; whether the
+LED is also wired to camera power is unverified without a console. The
+notification LED (§10) is likewise untouched by this feature. The QEMU model
+cannot answer either question.
 - **New 2DS XL:** Nintendo does not offer auto-brightness there and libctru
   says QTM's camera lux is fixed at 400.0. Our code treats every New model
   alike; a hardware run on a 2DS XL must show whether its inner camera gives a

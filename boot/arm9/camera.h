@@ -8,4 +8,5 @@ void camera_poll(void);                       /* monitor loop: serve the shim's 
    running and read its measured luminance (Aptina MCU var 0x2218). Returns
    false when no sensor answers (then auto-brightness stays inactive). */
 void camera_als_enable(bool on);
+bool camera_als_busy(void);      /* a camera client streams: pause ambient sampling */
 bool camera_als_sample(uint8_t *luma);
