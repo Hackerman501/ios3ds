@@ -209,5 +209,5 @@ curve and hardware checklist: [mcu.md](mcu.md) section 12 and re-log §85.
   inner camera's AE value; `-M nintendo3ds,new3ds=on` also gates it on the
   model. With `auto_brightness=1`, changing it from 5 to 800 to 80 lux moved
   `lcd-backlight` 52 → 78 → 65 at 0.50 user brightness; with the switch off
-  (or on an Old model) it stayed at 79. The curve host tests pass; the
-  fresh-image 5-cycle soaks are unfinished on this branch (see re-log §85).
+  (or on an Old model) it stayed at 79. The curve host tests pass, as do both
+  fresh-image 5-cycle soaks (with and without `--new3ds`, see re-log §85).

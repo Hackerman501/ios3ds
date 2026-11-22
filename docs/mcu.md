@@ -740,6 +740,12 @@ or `[mcu] ambient light` line at all (only mcud's single `auto-brightness off`
 line) and the backlight stays at **79**. `make test` (including the 765-check
 curve test) passes.
 
+A later re-run under a heavy host load set `ambient-light` before SpringBoard
+had published `DisplayBrightness`: the ARM9 still logged the luma changes
+(160 → 78 → 218 → 154), but `lcd-backlight` stayed at Luma's 0x5F default
+because mcud had no user brightness to scale yet. Take the QOM backlight
+readings after the `[mcud] iOS brightness ...` line.
+
 First hardware run must show:
 1. `[mcu] auto-brightness on (New model; ...)`, `[cam] inner camera awake for
    ambient light (AE luma var 2218)` and a varying `[mcu] ambient light: ...

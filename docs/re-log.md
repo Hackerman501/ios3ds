@@ -1432,13 +1432,13 @@ register-level source is unverified on hardware.**
   waits up to 45 s for the screen to settle, retries Home before giving up,
   wakes with two Home presses and retries the slide-to-unlock gesture. Those
   are harness timing fixes, not changes to the pass criteria.
-- **Soaks unfinished.** The image build was repeatedly killed on this host
-  while five or more other workers were building images and running QEMU
-  soaks (load average 18–45, ~2 GiB swap used). The last attempt
-  `cd ~/Documents/GitHub/ios3ds-wt/als && make sdimg MKSD_FLAGS='--no-cydia --no-tlsfix'`
-  ended with `make: *** [Makefile:79: sdimg] Killed`; an earlier attempt
-  ended with `OSError: [Errno 39] Directory not empty: 'ios3ds'` from
-  `shutil.rmtree` in `scripts/mksd.py` when another build touched the tree.
-  An earlier fresh image (built before a host reboot) was enough for the
-  light-level evidence above, but no 5-cycle soak completed after the reboot;
-  both soaks still need to be run on a quiet host.
+- **Soaks (2026-11-22, final): PASS, with a private QEMU build in
+  `/tmp/opencode/qemu-als-src/b/qemu-system-arm` and `IOS3DS_QEMU` pointing at
+  it (the shared `build/qemu` was left untouched).** Each run got its own
+  fresh `build/sd.img` (`make sdimg CYDIA=0 TLSFIX=0`) and
+  `python3 emu/soak.py --cycles 5 --icount 2`, the second with `--new3ds`;
+  both printed `Result: PASS` (5 cycles, no "not home after Home", no
+  lock-round failures, 0 panics / stalls / md0 / log-write / crash / hang
+  failures). Earlier attempts on the overloaded host were killed during the
+  image build (`make: *** [Makefile:79: sdimg] Killed`) and were recorded as
+  unfinished in the interim; these final runs complete them.
