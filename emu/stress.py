@@ -52,8 +52,9 @@ CHECKS = [
     ("process crash (signal)", r"exited abnormally|Segmentation fault|Bus error|Abort trap", True),
     ("watchdog / hang", r"watchdog (timeout|reset|fired)|hang detected", True),
     ("GPU rendering lost", r"GPU rendering is OFF|reading surfaces back through the CPU from now on", False),
-    ("GPU timeout", r"\[pica\] TIMEOUT", True),
+    ("GPU timeout", r"\[pica\] TIMEOUT|\[gpu\] display mirror.*did not finish", True),
     ("GPU present check failed", r"GPU present check FAILED", True),
+    ("GPU mirror self-test failed", r"\[gpu\] display mirror( FAILED|: self-test (FAILED|aborted))", True),
     ("camera init failed", r"\[cam\].*init failed|\[cam\].*did not answer", False),
     ("camera FIFO overruns", r"\[cam\].*FIFO overruns [1-9]", False),
     ("audio device error", r"could not start DMA|no CODEC", False),
@@ -302,8 +303,8 @@ def main():
                 qset("headphones", False)
                 time.sleep(3)
                 text = read_sd_text(a.sd, "/ios3ds/log.txt")
-                jack.append({"in": len(re.findall(r"\[jack\] headphones plugged in", text)),
-                             "out": len(re.findall(r"\[jack\] headphones unplugged", text)),
+                jack.append({"in": len(re.findall(r"\[audio\] headphones plugged in", text)),
+                             "out": len(re.findall(r"\[audio\] headphones unplugged", text)),
                              "route": len(re.findall(r"\[audio\] iOS route ->", text))})
                 log("jack cycle %d: in %d out %d ios routes %d" % (i, jack[-1]["in"], jack[-1]["out"],
                                                                   jack[-1]["route"]))
