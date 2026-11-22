@@ -111,7 +111,7 @@ def main():
     ap.add_argument("--cycles", type=int, default=5)
     ap.add_argument("--camera-cycles", type=int, default=0,
                     help="extra Camera.app start/stop cycles after the main loop (default: cycles)")
-    ap.add_argument("--settle", type=float, default=8.0)
+    ap.add_argument("--settle", type=float, default=15.0)
     ap.add_argument("--boot-timeout", type=float, default=1200)
     ap.add_argument("--icount", default="2")
     ap.add_argument("--new3ds", action="store_true")

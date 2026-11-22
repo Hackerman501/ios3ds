@@ -155,9 +155,12 @@ def main():
     else:
         log("SpringBoard + input up after %.0f s; waiting for a stable home screen" % booted)
         # reference: not black (the screen copy may be switching to the GPU,
-        # soak 3) and unchanged across two shots 5 s apart
+        # soak 3) and unchanged across two shots 5 s apart.  On a loaded host
+        # with --icount 2 SpringBoard's first lit frame came ~220 s after the
+        # input daemon connected: allow 300 s (a black reference makes every
+        # later diff meaningless and the unlock checks fail).
         prev, home_ref = None, None
-        for _ in range(36):
+        for _ in range(60):
             time.sleep(5)
             img = shot("home_ref")
             bright = ImageStat.Stat(img.convert("L")).mean[0]
@@ -167,7 +170,7 @@ def main():
                 break
             prev = img
         if home_ref is None:
-            log("no stable, non-black home screen within 180 s")
+            log("no stable, non-black home screen within 300 s")
             home_ref = prev
         for i in range(a.cycles):
             x, y = targets[i % len(targets)]
