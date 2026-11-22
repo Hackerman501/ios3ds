@@ -1658,3 +1658,22 @@ and `mcu-wifi-led-writes` are read-only QOM properties. Evidence (2026-11-22,
 setting gave `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (initial 0 and one
 write of 1 at `[wifi] link up`); with `wifi_led=0` in `boot.cfg` both were 0
 and there was no `[mcu] Wi-Fi LED on` line (docs/mcu.md §12).
+
+## 88. Wi-Fi driver: end-of-task verification (2026-11-22)
+
+`make test`: all suites pass, including 200 Wi-Fi host checks and the 8
+`nwmfw` tests. `emu/wifi_test.py` with this worktree's QEMU: `ok`, `credit`,
+`tkip` and `wpa1` PASS (sections 85-87). Each run used a freshly built SD
+image; the Wi-Fi cases use a port outside the default 8080 so other workers
+on this PC are not disturbed.
+
+Fresh-image soak: `python3 emu/soak.py --cycles 5 --icount 2` printed
+**Result: PASS** (boot to SpringBoard + input 370 s, 5 cycles, no kernel
+panic, ARM11 stall, md0 I/O error, process crash or watchdog/hang). The
+soak harness now retries black screendumps and compares home screens after
+backlight normalisation: on a loaded host a raw comparison marked a lit
+home screen as "not home" (sections 85-87). Repeating that soak with this
+branch's own QEMU binary produced only the same home-screen heuristic
+false positives (1-3 cycles per run needed recovery, while every crash and
+I/O check stayed at 0); the Wi-Fi cases above all used that branch QEMU.
+`IOS3DS_QEMU` now selects the binary for both `emu/run.py` and `emu/soak.py`.
