@@ -148,6 +148,14 @@ polls `kern.ios3ds_mcu` every 100 ms:
 - **Clock check:** logs the same interval measured by the RTC,
   `gettimeofday` and `mach_absolute_time` at ~60 s and ~300 s (§8).
 
+SpringBoard owns the HID event system the daemon talks to. If SpringBoard
+restarts (a crash, or launchd killing it), the client's per-client port
+(`IOHIDEventSystemClient` + 8) becomes a dead name; every brightness and
+accelerometer read then fails silently. ios3ds-mcud checks the port every
+2 s and reconnects (`[mcud] SpringBoard's HID event port went away;
+reconnecting`), and it holds its one `NoIdleSleepAssertion` for the life of
+the process, so reconnecting cannot stack assertions.
+
 ## 6. QEMU model and verification
 
 `emu/qemu/hw/arm/nintendo3ds.c` already had the I2C controllers and an MCU
