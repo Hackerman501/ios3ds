@@ -65,6 +65,10 @@ def main():
     a = ap.parse_args()
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
+    # a worktree-private QEMU build bundles libslirp next to the binary
+    libdir = os.path.dirname(QEMU)
+    if os.path.exists(os.path.join(libdir, "libslirp.so.0")):
+        os.environ["LD_LIBRARY_PATH"] = libdir + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
     out_dir = a.out
     os.makedirs(out_dir, exist_ok=True)
     mon = os.path.join(out_dir, "monitor.sock")
