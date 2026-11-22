@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Registry of iOS versions the ios3ds build can target.
+
+The 4.2.1 entry is the *default* and deliberately carries no overrides: all
+existing code paths (build/staging, kernel/patches.json, rootfs/recipe.json,
+boot_args version 5) are used unchanged, so default builds stay byte-identical.
+
+Other versions name their own patch set and an optional rootfs recipe overlay.
+An overlay is a JSON file in rootfs/ whose dictionaries merge into the base
+recipe and whose lists/scalars replace it; `file_patches_search: true` converts
+the base file patches from fixed offsets to unique byte-pattern searches.
+Generated full recipes are written under build/fw-VERSION/ (gitignored).
+"""
+import json
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT = "4.2.1"
+
+# IPSW sha1 values below are the ones published by api.ipsw.me; the value for
+# 4.2.1 is also pinned in scripts/fwprep.py (kept there for backwards compat).
+VERSIONS = {
+    "2.1.1": {"build": "5F138", "ipsw": "iPod2,1_2.1.1_5F138_Restore.ipsw",
+              "sha1": "c3c700be49ad227d1152188e7c1e46b8958fd1e4", "ba_version": None,
+              "patch_set": None, "overlay": None,
+              "status": "inventory only: no patch set or recipe yet"},
+    "2.2": {"build": "5G77a", "ipsw": "iPod2,1_2.2_5G77a_Restore.ipsw",
+            "sha1": "34a0a489605f34d6cc6c9954edcaaf9a050deedc", "ba_version": None,
+            "patch_set": None, "overlay": None, "status": "inventory only"},
+    "2.2.1": {"build": "5H11a", "ipsw": "iPod2,1_2.2.1_5H11a_Restore.ipsw",
+              "sha1": "9af5625ea34acdd8abeb6fce71a72651d0c815d5", "ba_version": None,
+              "patch_set": None, "overlay": None, "status": "inventory only"},
+    "3.0": {"build": "7A341", "ipsw": "iPod2,1_3.0_7A341_Restore.ipsw", "sha1": None,
+            "ba_version": None, "patch_set": None, "overlay": None,
+            "status": "inventory only; keys no longer published by ipsw.me"},
+    "3.1": {"build": "7C144", "ipsw": "iPod2,1_3.1_7C144_Restore.ipsw", "sha1": None,
+            "ba_version": None, "patch_set": None, "overlay": None,
+            "status": "inventory only; keys no longer published by ipsw.me"},
+    "3.1.1": {"build": "7C145", "ipsw": "iPod2,1_3.1.1_7C145_Restore.ipsw", "sha1": None,
+              "ba_version": None, "patch_set": None, "overlay": None,
+              "status": "inventory only"},
+    "3.1.2": {"build": "7D11", "ipsw": "iPod2,1_3.1.2_7D11_Restore.ipsw", "sha1": None,
+              "ba_version": None, "patch_set": None, "overlay": None,
+              "status": "inventory only"},
+    "3.1.3": {"build": "7E18", "ipsw": "iPod2,1_3.1.3_7E18_Restore.ipsw", "sha1": None,
+              "ba_version": None, "patch_set": None, "overlay": None,
+              "status": "keys available; Apple IPSW no longer listed by ipsw.me"},
+    "4.0": {"build": "8A293", "ipsw": "iPod2,1_4.0_8A293_Restore.ipsw",
+            "sha1": "c026c373bc535496a6f901de2ba37d4a487413bf", "ba_version": 5,
+            "patch_set": None, "overlay": None, "status": "inventory only"},
+    "4.0.2": {"build": "8A400", "ipsw": "iPod2,1_4.0.2_8A400_Restore.ipsw",
+              "sha1": "06a42297d94461264eb64d7c8640cc5d1c19edeb", "ba_version": 5,
+              "patch_set": None, "overlay": None, "status": "inventory only"},
+    "4.1": {"build": "8B117", "ipsw": "iPod2,1_4.1_8B117_Restore.ipsw",
+            "sha1": "97abde6207660bd876fd476275dd526d0dcf3d19", "ba_version": 5,
+            "patch_set": "kernel/patchsets/4.1.json", "overlay": "rootfs/overlay-4.1.json",
+            "status": "experimental: see docs/multi-version.md"},
+    "4.2": {"build": "8C134", "ipsw": "iPod2,1_4.2_8C134_Restore.ipsw", "sha1": None,
+            "ba_version": 5, "patch_set": None, "overlay": None,
+            "status": "inventory only"},
+    "4.2.1": {"build": "8C148", "ipsw": "iPod2,1_4.2.1_8C148_Restore.ipsw",
+              "sha1": "b9efddc7bb4350c237a8d3846af61bbfc8a2f647", "ba_version": 5,
+              "patch_set": None, "overlay": None,
+              "status": "supported, the default"},
+}
+
+
+def get(version=DEFAULT):
+    if version not in VERSIONS:
+        raise SystemExit("[versions] unknown iOS version %r (known: %s)"
+                         % (version, ", ".join(VERSIONS)))
+    return VERSIONS[version]
+
+
+def patch_files(version=DEFAULT):
+    """Absolute patch recipe paths. None means the 4.2.1 default set."""
+    info = get(version)
+    if not info["patch_set"]:
+        return None
+    return [os.path.join(ROOT, info["patch_set"])]
+
+
+def ba_version(version=DEFAULT):
+    v = get(version)["ba_version"]
+    if v is None:
+        raise SystemExit("[versions] boot_args epoch for iOS %s is unknown" % version)
+    return v
+
+
+def _merge(base, overlay):
+    out = dict(base)
+    for k, v in overlay.items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def recipe_path(version=DEFAULT, workdir=None):
+    """Path of a rootfs recipe for `version` (None = rootfs/recipe.json).
+
+    For an overlay version the merged recipe is generated in `workdir` (create
+    it first), so the base recipe in the repository is never modified.
+    """
+    info = get(version)
+    if not info["overlay"]:
+        return None
+    if not workdir:
+        raise SystemExit("[versions] workdir needed for the %s recipe" % version)
+    with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
+        base = json.load(f)
+    with open(os.path.join(ROOT, info["overlay"])) as f:
+        overlay = json.load(f)
+    search = overlay.pop("file_patches_search", False)
+    replacements = overlay.pop("new_hex_replace", [])
+    recipe = _merge(base, overlay)
+    for fp in recipe.get("file_patches", []):
+        h = fp["new"]
+        for old, new in replacements:
+            h = h.replace(old, new)
+        fp["new"] = h
+    if search:
+        # relocate every fixed-offset file patch by its verified original bytes
+        for fp in recipe.get("file_patches", []):
+            fp.pop("offset", None)
+            fp["search"] = {}
+        recipe["_file_patches_search"] = "offsets replaced by original-byte searches"
+    os.makedirs(workdir, exist_ok=True)
+    path = os.path.join(workdir, "recipe.json")
+    with open(path, "w") as f:
+        json.dump(recipe, f, indent=1)
+    return path
+
+
+def staging_dir(version=DEFAULT, build="build"):
+    """Where firmware for this version is extracted (4.2.1 keeps build/staging)."""
+    get(version)
+    if version == DEFAULT:
+        return os.path.join(build, "staging")
+    return os.path.join(build, "fw-" + version, "staging")
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("version", nargs="?", default=DEFAULT)
+    a = ap.parse_args()
+    info = get(a.version)
+    print("iOS %s (%s): %s" % (a.version, info["build"], info["status"]))
+    print("IPSW: %s" % info["ipsw"])
+    print("sha1: %s" % (info["sha1"] or "not published"))
+    print("staging: %s" % staging_dir(a.version))
+
+
+if __name__ == "__main__":
+    main()

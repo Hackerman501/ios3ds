@@ -29,6 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "kernel"))
 from fwlib.macho import MachO  # noqa: E402
+import versions  # noqa: E402
 
 PHYS_BASE = 0x20000000
 VIRT_BASE = 0x80000000
@@ -175,10 +176,12 @@ def use_prebuilt_shim(outdir, prebuilt):
 
 def build(staging, outdir, cmdline=None, patches=True, verbose=True,
           prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None,
-          tlsfix=True, sandbox_open=False, music=None, test_song=True):
+          tlsfix=True, sandbox_open=False, music=None, test_song=True,
+          version=versions.DEFAULT):
     """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
     hfsplus / rootfs_add / cydia / cydia_cache / tlsfix / music / test_song: passed on to mkrootfs.build;
-    sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md)."""
+    sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md);
+    version: iOS version from scripts/versions.py (default 4.2.1 = original behaviour)."""
     import dtgen
     import patcher
 
@@ -193,7 +196,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         import mkrootfs
         mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose,
                        hfsplus=hfsplus, rootfs_add=rootfs_add, cydia=cydia,
-                       cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song)
+                       cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song,
+                       recipe_path=versions.recipe_path(version, os.path.dirname(staging.rstrip("/"))))
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
     shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
     # the DT size doesn't depend on the layout values, so two passes converge
@@ -214,7 +218,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         if os.environ.get("IOS3DS_SANDBOX_OPEN", "").lower() in ("1", "yes", "on", "true"):
             sandbox_open = True
         disabled = () if sandbox_open else ("sandbox-sb-evaluate",)
-        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled)
+        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled,
+                                    files=versions.patch_files(version))
         if verbose and sandbox_open:
             print("[mkboot] sandbox-sb-evaluate applied (SANDBOX=1): TLSFix reaches sandboxed apps; "
                   "Safari OOMs on 128 MB (docs/cydia.md)")
@@ -256,7 +261,7 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "mem_size=0x%08x" % MEM_SIZE,
         "# boot_args header: 4.2.1's pe_identify_machine panics 'Epoch Mismatch' unless version=5",
         "ba_revision=1",
-        "ba_version=5",
+        "ba_version=%d" % versions.ba_version(version),
         "# Video: framebuffer handed to XNU (0 = none)",
         "video_pa=0x0",
         "video_display=0",
@@ -339,6 +344,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",
     ]
+    if version != versions.DEFAULT:
+        cfg.insert(1, "# iOS %s (%s)" % (version, versions.get(version)["build"]))
     with open(os.path.join(outdir, "boot.cfg"), "w", newline="\r\n") as f:
         f.write("\n".join(cfg))
     if verbose:
@@ -357,6 +364,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds"))
     ap.add_argument("--cmdline", default=None)
     ap.add_argument("--no-patches", action="store_true")
+    ap.add_argument("--ios", default=versions.DEFAULT, help="iOS version (default 4.2.1)")
     ap.add_argument("--shim-only", metavar="DIR",
                     help="only compile shim.bin + gpu.bin into DIR (unconfigured; for releases)")
     a = ap.parse_args()
@@ -365,7 +373,7 @@ def main():
         build_shim(a.shim_only)
         print("[mkboot] shim.bin + gpu.bin -> %s" % a.shim_only)
         return
-    build(a.staging, a.out, a.cmdline, patches=not a.no_patches)
+    build(a.staging, a.out, a.cmdline, patches=not a.no_patches, version=a.ios)
 
 
 if __name__ == "__main__":

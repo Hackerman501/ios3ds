@@ -2,6 +2,7 @@
 #
 #   make toolchain            check the cross compiler / python deps
 #   make fwprep IPSW=path     decrypt kernel, device tree, rootfs into build/staging
+#                             (IOS=4.1 -> build/fw-4.1/staging; default 4.2.1)
 #   make firm                 3DS payload  -> build/boot/ios3ds.firm
 #   make shim                 kernel shim  -> build/shim/{shim.bin,gpu.bin} (prebuilt for releases)
 #   make launcher             Homebrew Launcher app -> build/launcher/ios3ds.3dsx (devkitARM + libctru)
@@ -38,8 +39,16 @@ endif
 ifneq ($(CARRY_FROM),)
 MKSD_FLAGS += --carry-from $(CARRY_FROM)
 endif
+# IOS=VERSION selects a firmware from scripts/versions.py. The default keeps the
+# old staging directory, patch set and recipe, so 4.2.1 builds stay unchanged.
 BUILD   ?= build
+IOS     ?= 4.2.1
+ifeq ($(IOS),4.2.1)
 STAGING := $(BUILD)/staging
+else
+STAGING := $(BUILD)/fw-$(IOS)/staging
+endif
+MKSD_FLAGS += --ios $(IOS) --staging $(STAGING)
 
 USERLAND := tools/ios3ds-diag tools/ios3ds-sample tools/ios3ds-gl tools/ios3ds-input/daemon tools/ios3ds-wifi/daemon tools/ios3ds-wifi/a80211 tools/ios3ds-keychain tools/ios3ds-audio/tone tools/ios3ds-mcu/daemon tools/ios3ds-mcu/gyrotest tools/ios3ds-camera/vcd tools/ios3ds-gps
 
@@ -55,7 +64,7 @@ toolchain:
 
 fwprep:
 	@test -n "$(IPSW)" || { echo "usage: make fwprep IPSW=/path/to/iPod2,1_4.2.1_8C148_Restore.ipsw"; exit 2; }
-	$(PYTHON) scripts/fwprep.py "$(IPSW)" -o $(STAGING) $(FWPREP_FLAGS)
+	$(PYTHON) scripts/fwprep.py "$(IPSW)" -o $(STAGING) --ios $(IOS) $(FWPREP_FLAGS)
 
 firm:
 	$(MAKE) -C boot

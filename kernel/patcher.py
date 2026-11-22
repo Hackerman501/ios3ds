@@ -23,13 +23,46 @@ def _expand(hexstr, symbols):
     return TOKEN.sub(rep, hexstr.replace(" ", ""))
 
 
-def apply_all(img, base_va, path, symbols=None, disabled=()):
+def locate(img, base_va, p):
+    """Return the VA of a patch. `va` keeps the original fixed-address
+    behaviour; `find` looks up the verified original bytes (optionally with
+    context) in a bounded window and requires exactly one hit."""
+    if "va" in p:
+        return int(p["va"], 16) if isinstance(p["va"], str) else p["va"]
+    f = p.get("find")
+    if not f:
+        raise ValueError("patch %s: neither va nor find" % p["name"])
+    pat = bytes.fromhex(f.get("orig", p["orig"]).replace(" ", ""))
+    before = bytes.fromhex(f.get("before", "").replace(" ", ""))
+    after = bytes.fromhex(f.get("after", "").replace(" ", ""))
+    needle = before + pat + after
+    start = int(f.get("from", "0"), 0) if isinstance(f.get("from", "0"), str) else f.get("from", 0)
+    end = int(f.get("to", "0"), 0) if isinstance(f.get("to", "0"), str) else f.get("to", 0)
+    lo = max(0, start - base_va) if start else 0
+    hi = min(len(img), end - base_va) if end else len(img)
+    hits = []
+    pos = lo
+    while True:
+        i = bytes(img[pos:hi]).find(needle)
+        if i < 0:
+            break
+        hits.append(pos + i + len(before))
+        pos += i + 1
+    if len(hits) != 1:
+        raise ValueError("patch %s: %d matches for pattern %s in [%#x,%#x)"
+                         % (p["name"], len(hits), needle.hex(), start, end))
+    return base_va + hits[0]
+
+
+def apply_all(img, base_va, path, symbols=None, disabled=(), files=None):
     """path: kernel/patches.json; every kernel/patches-*.json next to it is
-    applied too (one file per subsystem keeps parallel work conflict-free)."""
+    applied too (one file per subsystem keeps parallel work conflict-free).
+    `files` overrides that list for a non-default iOS version."""
     import glob
     import os
     recipes = []
-    files = [path] + sorted(glob.glob(os.path.join(os.path.dirname(path), "patches-*.json")))
+    if files is None:
+        files = [path] + sorted(glob.glob(os.path.join(os.path.dirname(path), "patches-*.json")))
     for fn in files:
         with open(fn) as f:
             recipes += json.load(f)
@@ -37,7 +70,7 @@ def apply_all(img, base_va, path, symbols=None, disabled=()):
     for p in recipes:
         if not p.get("enabled", True) or p["name"] in disabled:
             continue
-        va = int(p["va"], 16) if isinstance(p["va"], str) else p["va"]
+        va = locate(img, base_va, p)
         orig = bytes.fromhex(p["orig"].replace(" ", ""))
         new = bytes.fromhex(_expand(p["new"], symbols or {}))
         if p.get("branch"):

@@ -82,7 +82,8 @@ def build_tree(args):
                      hfsplus=args.hfsplus, rootfs_add=args.rootfs_add,
                      cydia=not args.no_cydia, cydia_cache=args.cydia_cache,
                      tlsfix=not args.no_tlsfix, sandbox_open=args.sandbox_open,
-                     music=args.music, test_song=not args.no_test_song)
+                     music=args.music, test_song=not args.no_test_song,
+                     version=args.ios)
         new_img = os.path.join(tree, "ios3ds", "rootfs.hfs")
         if carry_from and os.path.isfile(carry_from) and os.path.isfile(new_img) and not fresh:
             sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -153,6 +154,7 @@ def parser():
                     "(docs/audio.md section 10)")
     ap.add_argument("--no-test-song", action="store_true", help="leave the generated test song out of the Music app")
     ap.add_argument("--carry-from", help="old rootfs.hfs to carry user data from (default: IOS3DS_CARRY_FROM env; none = no carry-over)")
+    ap.add_argument("--ios", default="4.2.1", help="iOS version to build for (default 4.2.1, scripts/versions.py)")
     return ap
 
 

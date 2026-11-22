@@ -52,6 +52,30 @@ def merge_dict(dst, src):
     return dst
 
 
+def resolve_patch_offset(data, fp):
+    """Where a file patch applies: `offset` (original behaviour) or a unique
+    search for `orig` / `orig_sha256` in `data` (other iOS builds)."""
+    if "offset" in fp:
+        return int(fp["offset"], 0)
+    orig = bytes.fromhex(fp["orig"]) if "orig" in fp else None
+    if orig is not None:
+        hits = []
+        pos = 0
+        while True:
+            i = data.find(orig, pos)
+            if i < 0:
+                break
+            hits.append(i)
+            pos = i + 1
+    else:
+        n = len(bytes.fromhex(fp["new"]))
+        hits = [i for i in range(len(data) - n + 1)
+                if hashlib.sha256(data[i:i + n]).hexdigest() == fp["orig_sha256"]]
+    if len(hits) != 1:
+        raise SystemExit("file patch %s: %d matches for original bytes" % (fp.get("path", "?"), len(hits)))
+    return hits[0]
+
+
 def local_path(local, rootfs_add=None):
     """Recipe source path -> file: repo-relative, except build/rootfs-add/ -> rootfs_add."""
     if rootfs_add and local.startswith(ADD_PREFIX):
@@ -200,17 +224,22 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
                 f.write(hfs_cat(out, path))
             with open(tmp, "r+b") as f:
                 for fp in fps:
-                    off = int(fp["offset"], 0)
                     new = bytes.fromhex(fp["new"])
-                    f.seek(off)
                     # "orig": the bytes replaced; "orig_sha256": their hash instead, for
                     # longer patches (keeps Apple's code out of the recipe)
-                    if "orig_sha256" in fp:
-                        ok = hashlib.sha256(f.read(len(new))).hexdigest() == fp["orig_sha256"]
+                    orig = bytes.fromhex(fp["orig"]) if "orig" in fp else None
+                    if orig is not None and len(orig) != len(new):
+                        raise SystemExit("file patch %s: orig/new length differ" % path)
+                    if "offset" in fp:
+                        off = int(fp["offset"], 0)
                     else:
-                        orig = bytes.fromhex(fp["orig"])
-                        ok = f.read(len(orig)) == orig
-                    if not ok:
+                        # another iOS build: find the verified original bytes once
+                        f.seek(0)
+                        off = resolve_patch_offset(f.read(), fp)
+                    f.seek(off)
+                    cur = f.read(len(new))
+                    if (hashlib.sha256(cur).hexdigest() != fp["orig_sha256"]
+                            if "orig_sha256" in fp else cur != orig):
                         raise SystemExit("file patch %s @%#x: original bytes differ" % (path, off))
                     f.seek(off)
                     f.write(new)

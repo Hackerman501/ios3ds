@@ -31,6 +31,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import versions  # noqa: E402
 from fwlib import appledt, udif, vfdecrypt  # noqa: E402
 from fwlib.crypto import BACKEND  # noqa: E402
 from fwlib.img3 import Img3  # noqa: E402
@@ -95,7 +96,9 @@ def main():
     ap.add_argument("--no-rootfs", action="store_true", help="skip the (slow, ~1 GB) root filesystem")
     ap.add_argument("--keep-dmg", action="store_true", help="keep the decrypted UDIF dmg")
     ap.add_argument("--force", action="store_true", help="allow an IPSW other than iPod2,1 8C148")
+    ap.add_argument("--ios", default=versions.DEFAULT, help="iOS version (default 4.2.1)")
     args = ap.parse_args()
+    want = versions.get(args.ios)
     os.makedirs(args.out, exist_ok=True)
     log("crypto backend: %s" % BACKEND)
 
@@ -105,15 +108,21 @@ def main():
     build = bm["ProductBuildVersion"]
     version = bm["ProductVersion"]
     log("IPSW: %s iOS %s (%s)" % (product, version, build))
-    if (product, build) != (TARGET["product"], TARGET["build"]):
-        msg = "expected %s %s; this project targets that exact firmware" % (TARGET["product"], TARGET["build"])
+    expected = ("iPod2,1", want["build"])
+    if (product, build) != expected:
+        msg = "expected %s %s for iOS %s" % (expected[0], expected[1], args.ios)
         if not args.force:
             sys.exit("[fwprep] ERROR: " + msg + " (use --force to try anyway)")
         log("WARNING: " + msg)
     if os.path.getsize(args.ipsw) < 1 << 30:
         digest = sha1_file(args.ipsw)
-        ok = digest == TARGET["ipsw_sha1"]
-        log("IPSW sha1 %s (%s)" % (digest, "matches Apple's published file" if ok else "UNEXPECTED - continuing"))
+        want_sha1 = want["sha1"] or (TARGET["ipsw_sha1"] if args.ios == versions.DEFAULT else None)
+        ok = want_sha1 is not None and digest == want_sha1
+        status = "matches Apple's published file" if ok else "UNEXPECTED - continuing"
+        if want_sha1 and not ok and not args.force and args.ios != versions.DEFAULT:
+            sys.exit("[fwprep] ERROR: IPSW sha1 %s, expected %s for iOS %s (use --force to override)"
+                     % (digest, want_sha1, args.ios))
+        log("IPSW sha1 %s (%s)" % (digest, status))
 
     keys = load_keys(args, product, build)
     names = z.namelist()

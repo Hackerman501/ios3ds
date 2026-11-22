@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QEMU = os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
+QEMU = os.environ.get("IOS3DS_QEMU") or os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
 OUT = os.path.join(ROOT, "build", "emu")
 
 
