@@ -43,6 +43,7 @@ def hmp(sock_path, cmd, timeout=5):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--qemu", default="", help="QEMU binary to use (default: env IOS3DS_QEMU or the shared build/qemu)")
     ap.add_argument("--firm", default=os.path.join(ROOT, "build", "boot", "ios3ds.firm"))
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
     ap.add_argument("--time", type=float, default=8.0)
@@ -63,6 +64,9 @@ def main():
     ap.add_argument("--slider3d", type=int, default=-1,
                     help="set the 3D slider (MCU reg 0x08) at boot, e.g. 255 for stereo3d=1")
     a = ap.parse_args()
+    global QEMU
+    if a.qemu:
+        QEMU = a.qemu
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
     # a worktree-private QEMU build bundles libslirp next to the binary
