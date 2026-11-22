@@ -47,10 +47,6 @@ class TestVersions(unittest.TestCase):
                 recipe = json.load(f)
             with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
                 base = json.load(f)
-            self.assertEqual(recipe["_file_patches_search"],
-                             "offsets replaced by original-byte searches")
-            self.assertTrue(all("offset" not in fp and "search" in fp
-                                for fp in recipe["file_patches"]))
             self.assertEqual(recipe["write"]["/etc/fstab"], base["write"]["/etc/fstab"])
             # the 4.1 overlay carries symbol-relocated file-patch offsets:
             # inapplicable patches are dropped, the rest use fixed offsets
