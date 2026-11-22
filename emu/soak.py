@@ -192,7 +192,9 @@ def main():
                 if mean > 90 and mean < 170 and sd < 8:
                     prev = None             # a launch image / blank screen
                     continue
-                if prev is not None and ImageStat.Stat(ImageChops.difference(
+                differs = ImageStat.Stat(ImageChops.difference(
+                    g, home_ref.convert("L"))).mean[0] > 12
+                if differs and prev is not None and ImageStat.Stat(ImageChops.difference(
                         g, prev.convert("L"))).mean[0] < 1.0:
                     app = img
                     break
@@ -201,7 +203,12 @@ def main():
                 app = shot("c%03d_app" % i)
                 log("cycle %d: no rendered app within 180 s" % i)
             c["app_wait"] = round(time.time() - start, 1)
-            key("ret")                          # Home (START)
+            app_diff = ImageStat.Stat(ImageChops.difference(
+                app.convert("L"), home_ref.convert("L"))).mean[0]
+            if app_diff > 12:
+                key("ret")                      # Home (START)
+            else:
+                log("cycle %d: the tap did not open an app" % i)
             # wait until the screen stops changing (up to 30 s) instead of a
             # fixed 6 s: with --icount the guest runs slower when the host is
             # busy (other emulators), and a fixed wait screenshots the close
@@ -210,8 +217,7 @@ def main():
             c["home_wait"] = round(t_wait, 1)
             diff = ImageStat.Stat(ImageChops.difference(home.convert("L"), home_ref.convert("L"))).mean[0]
             c["home_diff"] = round(diff, 2)
-            c["app_diff"] = round(ImageStat.Stat(ImageChops.difference(
-                app.convert("L"), home_ref.convert("L"))).mean[0], 2)
+            c["app_diff"] = round(app_diff, 2)
             # not home: Home on page 1 opens Spotlight (a second Home returns);
             # a Home press seen as a hold shows the "Edit Home Screen" alert
             # (needs Dismiss). Recover, but record what it took.
@@ -272,7 +278,8 @@ def main():
                 # screen would report a false lock failure: press Home and
                 # compare the home screen (a slide that never unlocked still
                 # differs; the lock screen ignores Home).
-                if ImageStat.Stat(u0).mean[0] > 5:
+                if ImageStat.Stat(u0).mean[0] > 5 and ImageStat.Stat(ImageChops.difference(
+                        u0, home_ref.convert("L"))).mean[0] > 12:
                     key("ret")
                     time.sleep(2)
                     settled("c%03d_unlock_home" % i)
