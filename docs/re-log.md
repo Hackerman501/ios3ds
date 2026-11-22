@@ -1518,5 +1518,13 @@ paths below are exercised in QEMU.
   barrier request; slider down and unstamped frames restore the flat copy.
   `test_mirror.c` gained the stubs for the new dependencies. `make test`
   passes; fresh-image soaks with `stereo3d=0` and `stereo3d=1` both PASS.
-- **Frame time**: measured from the CA and ARM9 log lines, to be filled in
-  below after the final QEMU runs (the flag-off average is the baseline).
+- **Frame time**: in QEMU under heavy host load, the flag-off run logged
+  `[monitor] CPU screen copy: 31 copies in 30 s, 15.4 ms each (ARM9)`; with
+  `stereo3d=1` and the slider up it logged `42 copies in 30 s, 120.3 ms each`
+  and, in a longer run, `33 copies in 38 s, 186.4 ms each`. The two-eye copy
+  costs roughly 8-12x the single-image copy in the emulator because it packs
+  both eye columns and writes both LCD buffers; on hardware this replaces the
+  GPU mirror (which is off in this mode), so the real console cost still has
+  to be measured. The GL side logs `CA stereo3D: N frames, ... stamped/wiped`
+  and its usual per-frame line with `diag=1`; no stamp pass runs with the flag
+  off.
