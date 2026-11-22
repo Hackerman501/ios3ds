@@ -1590,7 +1590,10 @@ driver logged `[wifi-diag] ... htc: credit report: +1 ...` and the model
 runs on a loaded host timed out on an unrelated route/DNS check; the final
 run with a 900 s guest-time budget passed every check. `emu/run.py` and
 `emu/soak.py` now both accept `IOS3DS_QEMU` so a branch with its own QEMU
-build is tested with that binary.
+build is tested with that binary. A fresh SD image with `wifi.cfg` and the
+dummy firmware, soaked with `emu/soak.py --cycles 5 --icount 2 --settle 20`,
+printed **Result: PASS** (boot to SpringBoard 441 s, 5 cycles, no panics,
+stalls, md0 errors or crashes, no home/restore failures).
 
 ## 86. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
 
