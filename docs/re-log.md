@@ -1582,16 +1582,15 @@ host that ignores credits fails in QEMU, where the old model let it through.
 unknown records, torn trailers, saturation and out-of-range endpoints.
 
 **QEMU evidence (2026-11-22, this worktree's QEMU):**
-`emu/wifi_test.py --case credit` served the 4 MiB body with
-`[nettest] bulk 4194461 bytes (4194304 body, 0 bad) in 255 s: PASS`, while
-the driver logged `[wifi-diag] ... htc: credit report: +1 ...` and the model
+`emu/wifi_test.py --case credit` PASS: the 4 MiB body was served with
+`[nettest] bulk 4194461 bytes (4194304 body, 0 bad) in 255 s: PASS`, the
+driver logged `[wifi-diag] ... htc: credit report: +1 ...` and the model
 `ctr-wifi: ... HTC credits: consumed 1216, returned 1216, 218 wait(s),
-0 overflow(s)`. No `Mbox Full`, TX overflow or lost byte was seen; the
-forbidden checks in the test stayed clean. That run's final nettest summary
-was FAILED because an early default-route/DNS check timed out under host
-load (a plain `--case ok` run with the same firmware passed all checks).
-`emu/run.py` and `emu/soak.py` now both accept `IOS3DS_QEMU` so a branch
-with its own QEMU build is tested with that binary.
+0 overflow(s)`. No `Mbox Full`, TX overflow or lost byte was seen. Early
+runs on a loaded host timed out on an unrelated route/DNS check; the final
+run with a 900 s guest-time budget passed every check. `emu/run.py` and
+`emu/soak.py` now both accept `IOS3DS_QEMU` so a branch with its own QEMU
+build is tested with that binary.
 
 ## 86. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
 
