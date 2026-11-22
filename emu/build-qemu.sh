@@ -32,6 +32,8 @@ ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.c" "$Q/hw/arm/ctr_cam.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.h" "$Q/hw/arm/ctr_cam.h"
 ln -sf "$ROOT/boot/common/cam_proto.h" "$Q/hw/arm/cam_proto.h"
 ln -sf "$ROOT/boot/common/cam_pattern.h" "$Q/hw/arm/cam_pattern.h"
+# the stereo depth classes/deltas shared with the ARM9 copy and the GL engine
+ln -sf "$ROOT/boot/common/stereo.h" "$Q/hw/arm/stereo.h"
 # the Wi-Fi model: TMIO SDIO controller 2 + AR6014 + WPA2 access point (docs/wifi.md section 7)
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.c" "$Q/hw/arm/ctr_wifi.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.h" "$Q/hw/arm/ctr_wifi.h"

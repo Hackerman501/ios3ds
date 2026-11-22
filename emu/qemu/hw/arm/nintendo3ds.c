@@ -40,7 +40,7 @@
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
-#include "../../../../boot/common/stereo.h"
+#include "stereo.h"              /* symlinked from boot/common by emu/build-qemu.sh */
 #include "qapi/visitor.h"
 #include "hw/sysbus.h"
 #include "hw/boards.h"

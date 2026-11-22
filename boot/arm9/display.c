@@ -67,7 +67,10 @@ static void stereo_barrier(bool on)
 static bool stereo_is_home(const u8 *src, u32 w, u32 h, u32 stride)
 {
     u8 a[1024];
-    const u32 *px = (const u32 *)src;
+    const u32 *px;
+    if (w < 32 || h < 32 || stride < w * 4 || ((u32)(uintptr_t)src & 3))
+        return false;
+    px = (const u32 *)src;
     for (u32 j = 0; j < 32; j++) {
         u32 y = j * (h / 32);
         if (y >= h) y = h - 1;

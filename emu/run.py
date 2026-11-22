@@ -60,6 +60,8 @@ def main():
                          "Old 3DS ARM11): reproduces real-hardware timer ordering; single-threaded TCG")
     ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--regs", action="store_true", help="dump ARM11/ARM9 registers before quitting")
+    ap.add_argument("--slider3d", type=int, default=-1,
+                    help="set the 3D slider (MCU reg 0x08) at boot, e.g. 255 for stereo3d=1")
     a = ap.parse_args()
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
@@ -106,6 +108,8 @@ def main():
     for h in filter(None, a.hmp.split(";")):
         t, c = h.split("=", 1)
         events.append((float(t), "hmp", c.strip()))
+    if a.slider3d >= 0:
+        events.append((0.1, "hmp", "qom-set /machine mcu-3d-slider %d" % a.slider3d))
     events.append((a.time, "quit", None))
     events.sort(key=lambda e: e[0])
 

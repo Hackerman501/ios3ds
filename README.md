@@ -181,7 +181,8 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
   | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |
   | `diag=1` | extra diagnostics in the log |
-| `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
+  | `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
+
 ### Fake GPS location
 
 The iPod has no GPS, so Maps and geolocation in Safari get no fix by default.
