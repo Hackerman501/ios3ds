@@ -1403,25 +1403,27 @@ register-level source is unverified on hardware.**
   snap, slew limit, one-frame flicker ignored, sustained change followed, no
   oscillation on luma jitter. Host test of the ARM9 side
   (`tools/ios3ds-mcu/tests/test_mcu.c`) also checks that the mailbox stays
-  empty unless the feature is enabled and the sensor answers.
+  empty unless the feature is enabled and the sensor answers, that a camera
+  client pauses sampling (`als_state=2`, last luma held) and that the sample
+  resumes afterwards.
 - **QEMU** (`emu/qemu/hw/arm/{nintendo3ds.c,ctr_cam.c}`): `/machine
   ambient-light` (uint32 lux) feeds the inner camera's AE luma through the
   existing I2C register model, including after a sensor soft reset. The
   binary path can be overridden with `IOS3DS_QEMU` in run/viewer/soak so a
   private QEMU build can be tested without touching the shared `build/qemu`
-  symlink (which other worktrees use). New model, `auto_brightness=1`,
-  `--icount 2`, user brightness 0.50:
-  ```
-  [mcu] auto-brightness on (New model; inner camera AE luminance)
-  [cam] inner camera awake for ambient light (AE luma var 2218)
-  [mcu] ambient light: inner camera AE luma 78/255 ...
-  [mcud] auto-brightness: ambient luma 218/255 (~798 lux) -> factor 0.98 ... -> LCD backlight 490/1000
-  qom ambient-light 5 / 800 / 80 -> qom lcd-backlight 52 / 78 / 65
-  ```
-  With `auto_brightness=0` in boot.cfg the same changes leave
-  `lcd-backlight` at 79 and log `auto-brightness off`; on the Old model there
-  is no light line and the value stays 79. `make test`, `make userland`,
-  `make firm`, `make sdimg` clean.
+  symlink (which other worktrees use). Runs of 2026-11-22 (fresh image,
+  `--icount 2`, user brightness 0.50): on a New model with
+  `auto_brightness=1`, `qom-set /machine ambient-light 5 / 800 / 80` gave
+  `lcd-backlight` **52 / 78 / 65**; the SD log has
+  `[mcu] auto-brightness on (New model; inner camera AE luminance)`,
+  `[cam] inner camera awake for ambient light (AE luma var 2218)`, luma
+  160 → 78 → 218 → 154/255 and `[mcud] auto-brightness: ... -> factor ...`
+  slewing the backlight (no jumps). With `auto_brightness=0` in boot.cfg the
+  same changes left `lcd-backlight` at **79** and logged `auto-brightness off`;
+  on the Old model there was no `[cam] inner camera awake` or `[mcu] ambient
+  light` line and the value stayed **79**. `make test`, `make userland` and
+  `make sdimg` clean (the image was built `--no-cydia --no-tlsfix` to keep the
+  shared Cydia cache untouched while several other workers were building).
 - **Soaks:** fresh image for each. `python3 emu/soak.py --cycles 5 --icount 2`
   PASS and `--new3ds` PASS; the New-model log has the ambient lines, no
   panic/stall/md0 errors. The host was under load average 10–15 during these

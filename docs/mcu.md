@@ -716,19 +716,29 @@ The `nintendo3ds` model exposes `ambient-light` (uint32, lux, read/write) on
 (`IOS3DS_QEMU` selects a locally built binary; docs/emulator.md):
 
 ```sh
-python3 emu/run.py --new3ds --icount 2 --time 320 \
-  --hmp "150=qom-set /machine ambient-light 5;196=qom-get /machine lcd-backlight;\
-200=qom-set /machine ambient-light 800;246=qom-get /machine lcd-backlight;\
-250=qom-set /machine ambient-light 80;296=qom-get /machine lcd-backlight"
+IOS3DS_QEMU=/path/to/private/qemu-system-arm python3 emu/run.py \
+  --new3ds --icount 2 --time 440 \
+  --hmp "200=qom-set /machine ambient-light 5;260=qom-get /machine lcd-backlight;\
+280=qom-set /machine ambient-light 800;340=qom-get /machine lcd-backlight;\
+360=qom-set /machine ambient-light 80;420=qom-get /machine lcd-backlight"
 ```
 
-New model, user brightness 0.50: `lcd-backlight` 52 at 5 lux, 78 at 800 lux,
-65 at 80 lux; the log shows `[mcu] ambient light: inner camera AE luma ...`
-and `[mcud] auto-brightness: ... -> factor ... -> LCD backlight ...` moving in
-the same direction. With `auto_brightness=0` the same light changes leave the
-backlight at 79 and log `auto-brightness off`; on the Old model there is no
-light line at all and the backlight stays at 79. `make test` (including the
-765-check curve test) and both 5-cycle `--icount 2` soaks pass.
+The shared `build/qemu` tree belongs to another worktree, so the evidence
+below used a private copy of that source with its symlinks pointing here and
+`IOS3DS_QEMU` selecting the resulting binary (no shared tree was rebuilt).
+
+New model, `auto_brightness=1`, user brightness 0.50 (2026-11-22;
+`build/emu-als-new-on/log.txt`): `lcd-backlight` **52** at 5 lux, **78** at 800
+lux, **65** at 80 lux. The SD log shows
+`[mcu] auto-brightness on (New model; inner camera AE luminance)`,
+`[cam] inner camera awake for ambient light (AE luma var 2218)`, luma 160 → 78
+→ 218 → 154 and `[mcud] auto-brightness: ... -> factor ... -> LCD backlight ...`
+slewing in the same direction (no jumps). With `auto_brightness=0` in
+`boot.cfg`, the same changes leave `lcd-backlight` at **79** and the log says
+`auto-brightness off`. On the Old model there is no `[cam] inner camera awake`
+or `[mcu] ambient light` line at all (only mcud's single `auto-brightness off`
+line) and the backlight stays at **79**. `make test` (including the 765-check
+curve test) passes.
 
 First hardware run must show:
 1. `[mcu] auto-brightness on (New model; ...)`, `[cam] inner camera awake for
