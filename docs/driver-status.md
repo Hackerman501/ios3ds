@@ -11,7 +11,7 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 
 | Driver | Code | How it is tested | Known issues / open points | Stability verdict |
 |---|---|---|---|---|
-| GPU / PICA200 service and screen copy | `kernel/shim/pica.c`, `kernel/shim/gpu_glue.c`, `tools/ios3ds-pica/*`, `boot/arm9/gpumirror.c`, `boot/arm9/display.c` | host (`test_pica`, `test_mirror`); QEMU (`gltest`, soak, `--icount 2`); hardware runs 12–16, 21, 25, 29, New 2DS XL run 1 | The screen copy is confirmed on hardware (run 14: 0 of 518400 bytes differ, 11–24 fps). CA on the GPU, scatter surfaces and the GPU present check are QEMU-verified; the `PRESENT`/`SCATTER` shim paths have not run on a console since the scatter change (re-log 79). Any other refused surface still falls back to CPU read-back for the whole process (by design). | Stable. QEMU soak PASS; the hardware paths use the same code with a CPU read-back fallback. |
+| GPU / PICA200 service and screen copy | `kernel/shim/pica.c`, `kernel/shim/gpu_glue.c`, `tools/ios3ds-pica/*`, `boot/arm9/gpumirror.c`, `boot/arm9/display.c` | host (`test_pica`, `test_mirror`); QEMU (`gltest`, soak, `--icount 2`); hardware runs 12–16, 21, 25, 29, New 2DS XL run 1 | The screen copy is confirmed on hardware (run 14: GPU copies at 22–26 fps, spot checks 0 of 512 sampled LCD pixels differ) and the mirror self-test matched all 518,400 bytes on the New 2DS XL; CA on the GPU, scatter surfaces and the GPU present check are QEMU-verified; the `PRESENT`/`SCATTER` shim paths have not run on a console since the scatter change (re-log 79). Any other refused surface still falls back to CPU read-back for the whole process (by design). | Stable. QEMU soak PASS; the hardware paths use the same code with a CPU read-back fallback. |
 | Core Animation back end | `tools/ios3ds-gl/{ca,pica_be,iface}.c` | host (`make -C tools/ios3ds-gl host-test`); QEMU (`emu/soak.py`); hardware runs 15/16/21/25/29 | Per-frame cost on hardware is higher than in QEMU; the CA scene/self checks are the only on-device validation. Engine state lives per process; `pica_forget`/eviction is host-tested. | Stable; CPU rasterizer and CA software fallback remain available. |
 | Touch, buttons, circle pad, C-stick | `boot/arm9/tsc.c`, `boot/arm9/exthid.c`, `boot/common/input_proto.h`, `tools/ios3ds-input/shim/input.c`, `tools/ios3ds-input/daemon/*`, `kernel/shim/blk.c` (registration) | host (`test_cpad`, `test_n3ds`); QEMU (soak, session drags); hardware runs 8–14 (touch, HOME, volume), New 3DS features untested | A cached PurpleSystemEventPort send right was leaked on every app switch and could stay a dead name across an app relaunch (fixed here). C-stick axes/range/ZR bit and the circle-pad raw range are still hardware-unverified. | Stable in QEMU; the leak fix removes the only unbounded resource growth I found in this daemon. |
 | Accelerometer | `boot/arm9/mcu.c` (MCU regs), `tools/ios3ds-mcu/shim/mcu.c` (LIS302DL I2C), `tools/ios3ds-mcu/daemon/mcud.c` (old route) | host (`test_mcu`); QEMU (soak + `mcu-orient`); hardware run 14 (orientation 0→6) and Old 3DS XL issue #7 fix | Axis map for all poses is only spot-checked on hardware; the old client-side `acc` route is superseded by the kernel driver. | Stable; the kernel driver is the shipping path and has a QEMU model. |
@@ -20,7 +20,7 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 | Microphone | `kernel/shim/audio.c` (`mic_*`), `boot/arm9/audio.c` (`mic_poll`), QEMU `ctr_mic.c`, `ios3ds-tone rec` | host (mic FIFO / interpolation / odd-stream tests); QEMU (`IOS3DS_MIC=...`, Voice Memos ALAC); hardware not tested | MIC_CNT bit layout, CODEC ADC power sequence and the 1 ms drain margin are unverified on a console; Voice Memos now records ALAC because the AAC encoder is absent. | QEMU-stable (0 overruns); hardware-unverified. |
 | Cameras | `boot/arm9/camera.c`, `kernel/shim/cam.c`, `tools/ios3ds-camera/{vcd,analyze_dump.py}`, QEMU `ctr_cam.c` | host (`tests/test_camera.py`, `test_cam.c`); QEMU Camera.app preview/photo, frame dumps; hardware runs 23, 25, 29, 30, New 2DS XL | Hardware run 29 moved data (~12 fps, 0 flagged overruns) but the preview showed frame-window drift; run 30/31 added blank-aligned publishing, IOSurface re-upload and still diagnostics. Colour order, mirroring and a 1 ms CPU drain on the console remain to be re-checked. | QEMU-stable through long start/stop cycles; on hardware the fallback is a still photo/preview, never a kernel hang. |
 | MCU daemon (battery, volume, brightness) | `tools/ios3ds-mcu/daemon/mcud.c`, `tools/ios3ds-mcu/shim/mcu.c`, `boot/arm9/mcu.c` | host (`test_mcu`); QEMU (soak, `mcu-*` QOM properties); hardware run 14 | Brightness and the accelerometer go through SpringBoard's HID event system. A SpringBoard restart used to leave `ios3ds-mcud` holding a dead client forever; it now reconnects (fixed here). RTC offset handling was fixed in run 14/re-log 34. | Stable in QEMU; reconnect fix covers the remaining failure mode I found. |
-| SD block I/O (read path) | `boot/arm9/blksrv.c`, `boot/arm9/sdmmc.c`, `boot/arm9/diskio.c`, `kernel/shim/blk.c` | host (carry-over/rootfs tests use the same FatFs data); QEMU soak (`[hb] … 0 err`); hardware runs 8–16, 29 | Write/clean-shutdown behaviour belongs to the shutdown worker and is deliberately untouched. Reads are synchronous; a dead ARM9/SD leaves the ARM11 waiting (no timeout), which only a hardware fault can cause. | Stable on hardware (118k requests, 0 errors in run 29) and in soak runs. |
+| SD block I/O (read path) | `boot/arm9/blksrv.c`, `boot/arm9/sdmmc.c`, `boot/arm9/diskio.c`, `kernel/shim/blk.c` | host (carry-over/rootfs tests use the same FatFs data); QEMU soak (`[hb] … 0 err`); hardware runs 8–16, 29 | Write/clean-shutdown behaviour belongs to the shutdown worker and is deliberately untouched. Reads are synchronous; a dead ARM9/SD leaves the ARM11 waiting (no timeout), which only a hardware fault can cause. | Stable on hardware (run 29: 6648 requests / 118,846 KiB / 0 errors; the New 2DS XL run: 18,105 requests, 0 errors) and in soak runs. |
 
 ## What this work changed
 
@@ -34,7 +34,30 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 - `emu/stress.py`: repeatable driver stress (app open/close, touch drags,
   D-pad page swipes, circle-pad scroll, camera start/stop, headphone
   plug/unplug, screen rotation, lock/unlock, optional `[mem]`/`[smp]`
-  reports) with a PASS/FAIL report.
+  reports) with a PASS/FAIL report. It also checks the *real* GPU-mirror log
+  lines (`[gpu] display mirror: self-test FAILED|aborted`, `... did not
+  finish`) instead of the old `[pica] TIMEOUT`/`display mirror FAILED`
+  strings, which no code writes, and counts headphone changes from the
+  `[audio] headphones ...` lines, not a `[jack]` prefix that does not exist.
+- `emu/soak.py`: the same real GPU-mirror strings, plus camera init/FIFO
+  overrun and audio DMA/CODEC error checks, so a long soak fails on those.
+- docs: this inventory, the stress harness in `emulator.md`, and the two
+  daemon behaviours in `input-design.md` (§4.2) and `mcu.md` (§5).
+
+## How to re-run the evidence
+
+```sh
+make userland
+rm -f build/sd.img && make sdimg
+python3 emu/stress.py --cycles 5 --icount 2 --diag   # apps, input, camera, jack, rotation, locks
+python3 emu/soak.py --cycles 5 --icount 2            # long soak, Old 3DS
+rm -f build/sd.img && make sdimg
+python3 emu/soak.py --cycles 5 --icount 2 --new3ds   # long soak, New 3DS model
+```
+
+Both scripts write their screenshots, the final SD log and
+`report.md`/`report.json` under `build/emu/`. Every run that lets QEMU write
+the image needs a fresh `build/sd.img`; a killed QEMU can corrupt it.
 
 ## What only a console can settle (and the log to capture)
 

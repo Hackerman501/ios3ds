@@ -213,7 +213,24 @@ def main():
         log("boot did not reach SpringBoard in %.0f s" % a.boot_timeout)
     else:
         log("SpringBoard + input up after %.0f s" % booted)
-        home = settled("home_ref", first=5.0, limit=60.0)
+        # The input daemon connects before SpringBoard's first frame is lit
+        # (170 s vs ~400 s in a loaded --icount 2 run): wait for a stable,
+        # non-black home screen, as soak.py does, or every later screenshot is
+        # black and the cycle checks mean nothing.
+        home = None
+        prev = None
+        for _ in range(60):
+            time.sleep(5)
+            img = shot("home_wait")
+            bright = ImageStat.Stat(img.convert("L")).mean[0]
+            if prev is not None and bright > 20 and ImageStat.Stat(ImageChops.difference(
+                    img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
+                home = img
+                break
+            prev = img
+        if home is None:
+            log("no stable, non-black home screen within 300 s")
+            home = prev if prev is not None else shot("home_wait")
         ref = home.convert("L")
 
         def ensure_home(tag):
