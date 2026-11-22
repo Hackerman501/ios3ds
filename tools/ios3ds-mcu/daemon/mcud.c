@@ -41,6 +41,8 @@ extern mach_port_t mach_task_self_;
 uint64_t mach_absolute_time(void);
 kern_return_t bootstrap_look_up(mach_port_t bp, const char *name, mach_port_t *sp);
 kern_return_t mach_port_deallocate(mach_port_t task, mach_port_t name);
+kern_return_t mach_port_type(mach_port_t task, mach_port_t name, unsigned *type);
+#define MACH_PORT_TYPE_DEAD_NAME 0x100000u
 int sysctl(int *name, unsigned namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 int sysctlnametomib(const char *name, int *mibp, size_t *sizep);
 struct tv32 { long tv_sec; int tv_usec; };     /* armv6 Darwin timeval */
@@ -124,6 +126,21 @@ static void say(const char *fmt, ...)            /* one line to the console (= t
     if (fd >= 0) close(fd);
 }
 
+static IOHIDEventSystemClientRef client;
+static int sleep_assertion;             /* NoIdleSleepAssertion held (once per process) */
+
+/* SpringBoard can restart (a crash, or launchd killing it): the per-client
+   Mach port at +8 then becomes a dead name and every brightness/accelerometer
+   call silently fails. Detect it and connect again, like ios3ds-input does. */
+static int client_alive(void)
+{
+    unsigned type = 0;
+    mach_port_t p = client ? *(mach_port_t *)((char *)client + 8) : 0;
+    if (!p) return 0;
+    if (mach_port_type(mach_task_self_, p, &type) != 0) return 0;
+    return !(type & MACH_PORT_TYPE_DEAD_NAME);
+}
+
 static int parse_accmap(const char *s)
 {
     int m[3][2], i = 0;
@@ -158,7 +175,6 @@ static int volume_set(float v)
 }
 
 /* ---- brightness ---------------------------------------------------------- */
-static IOHIDEventSystemClientRef client;
 static CFStringRef k_bright, k_factor;
 
 static int copy_float(CFStringRef key, float *out)
@@ -230,24 +246,38 @@ int main(int argc, char **argv)
         if (loops == 600) clock_check(&box, "after ~60 s");
         if (loops == 3000) clock_check(&box, "after ~300 s");
 
-        /* SpringBoard owns the HID event system; connect once it is there */
+        /* SpringBoard owns the HID event system; connect once it is there,
+           and reconnect after it restarts (the old client's port dies). */
+        if (client && (loops % 20) == 0 && !client_alive()) {
+            say("[mcud] SpringBoard's HID event port went away; reconnecting");
+            CFRelease(client);
+            client = 0;
+        }
         if (!client && (loops % 20) == 0) {
             mach_port_t svc = 0;
             if (bootstrap_look_up(bootstrap_port, "com.apple.iohideventsystem", &svc) == 0) {
                 mach_port_deallocate(mach_task_self_, svc);
                 client = IOHIDEventSystemClientCreate(0);
+                if (client && !client_alive()) {
+                    CFRelease(client);          /* SpringBoard went away while opening */
+                    client = 0;
+                }
                 if (client) say("[mcud] connected to SpringBoard's HID event system");
                 /* No system sleep: after a lock iOS would put the whole system
                    to sleep ("System Sleep"), and nothing on the 3DS can wake it
                    (the PMU interrupt that does on an iPod does not exist). The
-                   screen still goes off; the CPUs idle (docs/mcu.md section 9). */
-                if (client && !opt_sleepok) {
+                   screen still goes off; the CPUs idle (docs/mcu.md section 9).
+                   One assertion for the life of this process: a reconnect must
+                   not stack another one (and the two CFStrings are reused). */
+                if (client && !opt_sleepok && !sleep_assertion) {
+                    static CFStringRef k_idle, k_why;
                     uint32_t aid = 0;
-                    int r = IOPMAssertionCreateWithName(
-                        CFStringCreateWithCString(0, "NoIdleSleepAssertion", kCFStringEncodingUTF8),
-                        kIOPMAssertionLevelOn,
-                        CFStringCreateWithCString(0, "ios3ds: no wake source for system sleep", kCFStringEncodingUTF8),
-                        &aid);
+                    int r;
+                    if (!k_idle) k_idle = CFStringCreateWithCString(0, "NoIdleSleepAssertion", kCFStringEncodingUTF8);
+                    if (!k_why) k_why = CFStringCreateWithCString(0, "ios3ds: no wake source for system sleep",
+                                                                  kCFStringEncodingUTF8);
+                    r = IOPMAssertionCreateWithName(k_idle, kIOPMAssertionLevelOn, k_why, &aid);
+                    if (!r) sleep_assertion = 1;
                     say("[mcud] NoIdleSleepAssertion %s (0x%x, id %u)", r ? "FAILED" : "held", (unsigned)r, (unsigned)aid);
                 }
             }
