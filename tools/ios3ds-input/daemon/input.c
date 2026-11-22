@@ -373,16 +373,21 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
         /* SpringBoard's lock screen or an alert over the app: the touch is
            SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
         if (!modal) {
+            int got = 0;
             if (sb_frontmost_copy) {
                 CFStringRef fs = sb_frontmost_copy();
                 if (fs) {
-                    if (!CFStringGetCString(fs, id, sizeof id, kCFStringEncodingUTF8))
-                        id[0] = 0;
+                    got = CFStringGetCString(fs, id, sizeof id, kCFStringEncodingUTF8);
                     CFRelease(fs);
+                    if (!got) id[0] = 0;
                 }
-            } else if (sbs_port && sb_frontmost) {
-                sb_frontmost(sbs_port(), id);
             }
+            /* Copy says NULL when SpringBoard itself is frontmost; the old
+               identifier call returns the literal "SpringBoard", whose named
+               port is what makes taps on the home screen work (the system
+               event port only carries the Home/lock keys). */
+            if (!got && sbs_port && sb_frontmost)
+                sb_frontmost(sbs_port(), id);
         }
         /* Log every touch while modal: when SpringBoard covers the app its
            frontmost identifier can stay empty (QEMU), so a change-of-id test
