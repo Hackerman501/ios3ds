@@ -157,8 +157,8 @@ The QEMU binary in `build/qemu` is shared between worktrees; this branch uses
 its own private build (`QEMU_DIR=$PWD/build/qemu-hy4 emu/build-qemu.sh`, the
 binary copied to `build/qemu-local/b/`), selected with
 `IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm` and
-`LD_LIBRARY_PATH=$PWD/build/qemu-local/b` (libslirp is bundled there), or
-`--qemu` for `emu/soak.py`:
+`LD_LIBRARY_PATH=$PWD/build/qemu-local/b` (libslirp is bundled there)
+(or `--qemu PATH` with either script; both pick up the bundled libslirp):
 
 ```
 # flag on + slider up: anaglyph home screen; tap an app: no offset
