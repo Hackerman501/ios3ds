@@ -154,14 +154,17 @@ alias of the LCD register page so its barrier writes reach the model. With
 the barrier off or PDC0 in 2D mode the ordinary top-screen copy is shown.
 
 The QEMU binary in `build/qemu` is shared between worktrees; this branch uses
-its own `build/qemu-local` (built with `QEMU_DIR=$PWD/build/qemu-local
-emu/build-qemu.sh`), selected with `IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm`
-(or `--qemu` for `emu/soak.py`):
+its own private build (`QEMU_DIR=$PWD/build/qemu-hy4 emu/build-qemu.sh`, the
+binary copied to `build/qemu-local/b/`), selected with
+`IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm` and
+`LD_LIBRARY_PATH=$PWD/build/qemu-local/b` (libslirp is bundled there), or
+`--qemu` for `emu/soak.py`:
 
 ```
 # flag on + slider up: anaglyph home screen; tap an app: no offset
+LD_LIBRARY_PATH=$PWD/build/qemu-local/b \
 IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm \
-  python3 emu/run.py --time 90 --shots 70,80 --hmp '5=qom-set /machine mcu-3d-slider 255'
+  python3 emu/run.py --time 90 --shots 70,80 --slider3d 255
 # slider down: flat
 ... --hmp '5=qom-set /machine mcu-3d-slider 0'
 # flag off: ordinary screen
