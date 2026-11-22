@@ -40,6 +40,7 @@
 #define R_IRQ_MASK  0x18        /* 4 bytes, 1 = masked */
 #define R_PWR       0x20        /* bit 0 power off, bit 2 reboot */
 #define R_LCD_PWR   0x22        /* bits 2/3 bottom backlight off/on, 4/5 top off/on (libn3ds MCU_LCD_PWR_*) */
+#define R_WIFI_LED  0x2A        /* Wi-Fi LED state, 4 bits: non-zero = on (3dbrew "I2C Registers") */
 #define R_LED       0x2D        /* notification LED pattern, 100-byte stream */
 #define R_RTC       0x30        /* 7 bytes BCD */
 #define R_ACC_CFG   0x40        /* bit 0 accelerometer on */
@@ -192,6 +193,22 @@ static int led_shown = -1;              /* 0 off, 1 low-battery blink */
 
 void mcu_set_led(bool on) { led_enabled = on; }
 
+/* ---- Wi-Fi link LED (MCU reg 0x2A) ----------------------------------------
+   The state is cached: wifi_poll() updates it every monitor pass, but only a
+   change costs one I2C byte. Disabled by boot.cfg wifi_led=0. */
+static bool wifi_led_enabled = true;
+static int wifi_led_shown = -1;
+
+void mcu_set_wifi_led(bool on)
+{
+    if (!wifi_led_enabled || !box || box->state != MCU_ST_OK) return;
+    int want = on ? 1 : 0;
+    if (want == wifi_led_shown) return;
+    if (!wr(R_WIFI_LED, (u8)want)) return;
+    wifi_led_shown = want;
+    logp("[mcu] Wi-Fi LED %s (reg 0x2A = %u)\n", want ? "on" : "off", want);
+}
+
 static void led_update(void)
 {
     if (!led_enabled) return;
@@ -213,6 +230,7 @@ static void led_update(void)
     }
 }
 
+void mcu_config_wifi_led(bool on) { wifi_led_enabled = on; }
 void mcu_set_powersave(bool on) { if (box) box->ps_on = on; }
 void mcu_screen_off(bool off) { if (box) box->screen_off = off; }
 
@@ -362,6 +380,7 @@ static void power_off(u32 how)
         box->batt_percent = 100;
         led_update();
     }
+    mcu_set_wifi_led(false);        /* never leave the Wi-Fi LED lit on a switched-off console */
     log_warn("[mcu] iOS %s: log synced, powering off through the MCU\n",
              how == MCU_PWR_REBOOT ? "restarted" : "shut down");
     log_flush();

@@ -27,7 +27,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Graphics on the 3DS GPU (PICA200) | the iOS interface is drawn by the GPU |
 | ✅ | Sound, volume slider | speaker |
 | ✅ | Battery level, charging, date and time, brightness | through the 3DS system controller |
-| ✅ | Wi-Fi: scan, WPA2, also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically by the launcher (or the GodMode9 script); stays connected through the router's key renewals |
+| ✅ | Wi-Fi: scan, WPA2, WPA1 (TKIP) and WPA/WPA2 mixed networks (TKIP group), also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically by the launcher (or the GodMode9 script); stays connected through the router's key renewals; WPA1 is set up in `wifi.cfg` |
 | ✅ | Safari | loads pages; big pages can fail with "Cannot allocate memory" (a retry usually works), being worked on |
 | ✅ | Cydia | pre-installed, on the first home screen page |
 | ✅ | Screen rotation (accelerometer) | |
@@ -180,6 +180,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `screen=0/1/2` | start in screen layout top / both / bottom |
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
   | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |
+  | `wifi_led=0` | don't light the console's Wi-Fi LED while connected |
   | `diag=1` | extra diagnostics in the log |
   | `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
 

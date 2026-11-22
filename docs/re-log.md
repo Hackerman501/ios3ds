@@ -1580,3 +1580,55 @@ host that ignores credits fails in QEMU, where the old model let it through.
 
 **Host tests:** `make -C tools/ios3ds-wifi test` covers cumulative reports,
 unknown records, torn trailers, saturation and out-of-range endpoints.
+
+## 86. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
+
+**Firmware first.** GBATEK "WMI Connect Functions" lists the AR6014's
+WMI_CONNECT values: auth 3 = WPA-PSK, 5 = WPA2-PSK, crypto 3 = TKIP, 4 = AES;
+"WMI Channel and Cipher Functions" says the host installs WPA/WPA2 keys with
+WMI_ADD_CIPHER_KEY after the 4-way handshake. Our key installer already put
+32-byte TKIP keys into that command with the MIC halves swapped (dsiwifi's
+order), so the firmware does the TKIP/Michael frame crypto itself. No software
+TKIP or Michael was added: the supplicant only derives/installs the keys.
+
+**TKIP group with WPA2 pairwise CCMP** was already handled in `wpa2.c` and the
+QEMU AP: the RSN IE's group suite becomes 00-0F-AC-02, the GTK is 32 bytes and
+the firmware gets a TKIP group key. The work here is a real end-to-end check
+(`emu/wifi_test.py --case tkip`) and keeping it working while WPA v1 landed.
+
+**WPA v1 differences** (IEEE 802.11i/D10 and hostapd's `wpa_auth.c`,
+`wpa_common.c`, `rsn_supp/wpa.c`): a WPA vendor IE (`DD 18 00:50:F2:01`)
+instead of an RSN IE; EAPOL-Key descriptor 0xFE, Key Info version 0;
+HMAC-MD5 MIC over the frame with the MIC field zeroed; a 64-byte PTK
+(KCK 16, KEK 16, TKIP TK 32) from the same PRF-SHA1; Key Data RC4 with the
+key `Key IV[16] || KEK[16]` and the first 256 stream bytes dropped; a 32-byte
+TKIP GTK in the same 00:0F:AC:01 KDE; M2 echoes M1's Key Length and the WPA
+IE; M4 does not. Message 3 carries the GTK key index in the bits that RSN
+calls Install, so WPA v1 must not require the Install bit.
+
+`boot/arm9/wifi/wpa2.c` gained MD5, HMAC-MD5, RC4-drop-256 and a 64-byte PTK,
+plus a WPA-IE parser/builder; `ar6k.c` detects the vendor IE in BSSINFO and in
+the iOS scan table, sends WMI_CONNECT with auth 3 / TKIP, uses the exact WPA
+IE from the firmware's association request in M2 and installs the 32-byte TK.
+The QEMU AP gained `security=wpa1` with the same authenticator rules; WPA2
+paths are unchanged. WEP is documented as unsupported: a WMI WEP key type
+exists, but open/shared-key association and WEP key management were not added.
+
+**Host tests:** RFC 1321 MD5 and RFC 2202 HMAC-MD5 vectors, the well-known RC4
+vectors and an independently computed RC4-drop-256 vector, a 64-byte PTK check,
+WPA-IE parse/reject cases, and a full WPA1 4-way + group rekey against a small
+authenticator in `tools/ios3ds-wifi/tests/test_host.c` (200 checks, 0 failed).
+QEMU evidence: `emu/wifi_test.py --case wpa1` (vendor IE, TKIP keys, link up,
+nettest) and `--case tkip` (WPA2/TKIP group). Results: TBD.
+
+## 87. Wi-Fi LED follows the link (2026-11-22)
+
+The blue Wi-Fi LED is MCU register 0x2A (4 bits, any non-zero value turns it
+on; 3dbrew "I2C Registers", device 3). `boot/arm9/mcu.c` caches the value and
+writes 1 while `netmbox_t.link` is up, 0 on link-down and before a power-off.
+The monitor loop samples the link once per pass; only a transition costs one
+I2C byte. `boot.cfg wifi_led=0` disables the feature (default on), next to
+`notify_led` for the separate RGB notification LED.
+
+The QEMU MCU now models reg 0x2A and counts writes: `/machine mcu-wifi-led`
+and `mcu-wifi-led-writes` are read-only QOM properties. Evidence: TBD.

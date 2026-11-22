@@ -17,6 +17,9 @@ void mcu_set_led(bool on);
    luminance into the MCU mailbox (docs/mcu.md section 12). Call after the
    model check, once camera_init has run. */
 void mcu_set_als(bool on);
+/* Wi-Fi link LED (MCU reg 0x2A); boot.cfg wifi_led=0 disables it */
+void mcu_config_wifi_led(bool on);
+void mcu_set_wifi_led(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */

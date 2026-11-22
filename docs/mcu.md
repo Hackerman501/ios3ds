@@ -16,6 +16,7 @@ assumptions it checks.
 | Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | Apple's AppleLIS302DL driver on an emulated LIS302DL (shim I2C register file) → SpringBoard orientation, UIAccelerometer | see §6.2 |
 | Gyroscope | ITG-3270 class chip on I2C bus 3 (not the MCU) | Apple's AppleLIS331DLH driver on a new `gyro` DT node, two vtable words patched → IOHID gyro events → CoreMotion (`CMMotionManager` gyro / deviceMotion) | see §11 |
 | iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9; a long POWER press calls `reboot(RB_HALT)` from `ios3ds-input` | see §6, §12 |
+| Wi-Fi LED | reg 0x2A (non-zero = on, 4 bits) | ARM9 follows `netmbox_t.link` | see §14 |
 
 ## 1. Data path
 
@@ -755,3 +756,20 @@ First hardware run must show:
 3. No new `[cam]` errors, no camera-preview regression, no extra wakeups on
    the Old model. If the luma never changes, leave `auto_brightness=0` on
    hardware and report the log; the rest of the brightness path is unchanged.
+
+## 14. Wi-Fi LED (default on, `wifi_led=0` to disable)
+
+The 3DS's blue Wi-Fi LED is MCU register 0x2A: 4 bits, any non-zero value
+turns it on (3dbrew "I2C Registers", device 3). `boot/arm9/mcu.c` writes 1
+while the network link is up and 0 when it goes down or iOS shuts down;
+`mcu_set_wifi_led()` caches the value, so only a transition costs one I2C
+byte. The link comes from `netmbox_t.link`, which `wifi_poll()` maintains;
+without Wi-Fi firmware or with `backend=off` it stays 0 and the LED is off.
+`wifi_led=0` in `sd:/ios3ds/boot.cfg` disables all of it (the notification
+LED of §10 is a separate register and switch, `notify_led`).
+
+The QEMU MCU models reg 0x2A and counts writes: `qom-get /machine
+mcu-wifi-led` (0 or 1) and `qom-get /machine mcu-wifi-led-writes`. A Wi-Fi
+QEMU run with a link shows one write of 1 at link-up; `wifi_led=0` shows no
+write of 1. Hardware check: the blue LED next to the power LED comes on
+when Settings joins a network and goes dark on "Turn Wi-Fi Off" or shutdown.

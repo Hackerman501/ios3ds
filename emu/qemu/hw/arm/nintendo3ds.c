@@ -609,6 +609,7 @@ typedef struct {
     uint32_t led_idx;
     uint32_t led_rgb0;          /* qom mcu-led-rgb0: first step's colour, 0xRRGGBB */
     uint32_t led_lit;           /* qom mcu-led-steps: steps (of 32) with any colour */
+    uint32_t wifi_led_writes;   /* qom mcu-wifi-led-writes: reg 0x2A writes */
 } CtrMcu;
 
 /* Gyroscope: an InvenSense ITG-3200-family chip (the Old 3DS' ITG-3270) on
@@ -1322,6 +1323,13 @@ static void mcu_write_reg(CtrMachine *s, uint8_t reg, uint8_t v)
         m->rtc_offset = qemu_timedate_diff(&tm);
         return;
     }
+    if (reg == 0x2A) {                                        /* Wi-Fi LED state (4 bits) */
+        m->regs[reg] = v & 0x0F;
+        m->wifi_led_writes++;
+        qemu_log_mask(LOG_UNIMP, "nintendo3ds: MCU Wi-Fi LED %s (reg 0x2A = %u)\n",
+                      (v & 0x0F) ? "on" : "off", v & 0x0F);
+        return;
+    }
     if (reg == 0x2D) {                                        /* notification LED pattern */
         if (m->led_idx < sizeof(m->led)) {
             m->led[m->led_idx++] = v;
@@ -1379,6 +1387,7 @@ static void mcu_reset(CtrMachine *s)
     m->reg = 0;
     m->got_reg = false;
     m->irq = m->irq_mask = 0;
+    m->wifi_led_writes = 0;
     m->regs[0x00] = 0x13;       /* firmware 3.56 */
     m->regs[0x01] = 0x38;
     m->regs[0x09] = 0x20;       /* volume slider */
@@ -1715,6 +1724,8 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_uint8_ptr(obj, "mcu-volume", &s->mcu.regs[0x09], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-3d-slider", &s->mcu.regs[0x08], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-orient", &s->mcu.orient, OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-wifi-led", &s->mcu.regs[0x2A], OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "mcu-wifi-led-writes", &s->mcu.wifi_led_writes, OBJ_PROP_FLAG_READ);
     object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
     object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
     object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);

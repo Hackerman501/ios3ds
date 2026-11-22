@@ -130,6 +130,7 @@ typedef struct {
     char gyro_axes[16];  /* iOS x,y,z from the gyro chip's axes, e.g. -y,x,z */
     u32 powersave;       /* 0: no power saving while iOS' screen is off */
     u32 notify_led;      /* 1: notification LED blinks red on low battery */
+    u32 wifi_led;        /* 1 (default): MCU Wi-Fi LED follows the link; 0 disables it */
     u32 diag;            /* 1: diagnostics on (boot-arg ios3ds_diag=1 for the test daemons, docs/boot-perf.md) */
     u32 ioprof;          /* md0 profile: 1 = [io] per second, 2 = + [blk] per request */
     u32 log_ts;          /* 1: "[s.ms]" timestamps on forwarded console lines */
@@ -190,6 +191,7 @@ static int parse_bootcfg(char *txt)
     cfg.mcu_acc = 1;
     cfg.gyro = 1;
     cfg.powersave = 1;
+    cfg.wifi_led = 1;
     cfg.mic = 1;
     cfg.camera = 1;
     cfg.hp_route = 1;
@@ -213,7 +215,7 @@ static int parse_bootcfg(char *txt)
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
         { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
         { "ca_gpu", &cfg.ca_gpu },
-        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
+        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led }, { "wifi_led", &cfg.wifi_led },
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "hp_codec", &cfg.hp_codec }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
         { "n3ds_ram", &cfg.n3ds_ram }, { "auto_brightness", &cfg.auto_brightness },
@@ -599,6 +601,8 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         input_poll(cfg.shim_pa);
         /* Wi-Fi driver step + frames <-> network mailbox (kern.ios3ds_net) */
         if (wifi_poll()) busy = true;
+        /* docs/mcu.md: the MCU Wi-Fi LED follows the link (netmbox_t.link) */
+        mcu_set_wifi_led(((volatile netmbox_t *)NET_PA)->link);
         audio_poll(cfg.shim_pa);    /* docs/audio.md */
         mcu_poll(clk_ticks());      /* RTC, battery, sliders, HOME/POWER (docs/mcu.md) */
         gyro_poll(clk_ticks());     /* gyroscope while iOS wants it (docs/mcu.md 11) */
@@ -1088,6 +1092,7 @@ void a9_main(int argc, char **argv)
     gyro_init(cfg.shim_pa, cfg.gyro != 0, cfg.gyro_axes, T9_HZ);
     ps_init(cfg.powersave != 0, cfg.shim_pa, T9_HZ);              /* screen-off power saving */
     mcu_set_led(cfg.notify_led != 0);
+    mcu_config_wifi_led(cfg.wifi_led != 0);
     audio_set_mic(cfg.mic != 0);
     audio_set_hp_route(cfg.hp_route != 0);
     camera_init(cfg.shim_pa, cfg.camera != 0, cfg.cam_test != 0);   /* docs/camera.md */
