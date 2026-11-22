@@ -31,6 +31,13 @@ int sd_write_small(const char *path, const char *buf, u32 len) { (void)path; (vo
 static int clean_marks;
 bool blksrv_mark_clean(void) { clean_marks++; return true; }
 
+/* the real camera driver is not linked into this host test: the ambient light
+   source is a fake I2C camera, like the fake MCU below */
+static bool als_ok, als_want;
+static u8 als_luma;
+void camera_als_enable(bool on) { als_want = on; if (!on) als_ok = false; }
+bool camera_als_sample(u8 *luma) { if (!als_want || !als_ok) return false; *luma = als_luma; return true; }
+
 /* ---- fake MCU ------------------------------------------------------------ */
 static u8 regs[256];
 static u32 irq;                 /* pending, clear on read */
@@ -211,6 +218,25 @@ int main(void)
     CHECK(writes_0x20 == -1, "power off waits for the log to drain");
     run(300);
     CHECK(writes_0x20 == 1, "power off write %d", writes_0x20);
+
+    /* Auto-brightness: no samples unless enabled AND the sensor answers;
+       the Old model never calls mcu_set_als at all */
+    fake_reset();
+    mcu_init(SHIM_PA, true, 0, HZ);
+    als_ok = true;
+    als_luma = 160;
+    run(300);
+    CHECK(b->als_luma == 0 && !(b->valid & MCUV_ALS), "ALS off by default on Old models");
+    mcu_set_als(true);
+    run(300);
+    CHECK(b->als_luma == 160 && b->als_state == 1 && (b->valid & MCUV_ALS),
+          "ALS sample %u state %u", b->als_luma, b->als_state);
+    als_luma = 40;
+    run(300);
+    CHECK(b->als_luma == 40, "ALS follows the light level: %u", b->als_luma);
+    mcu_set_als(false);
+    run(300);
+    CHECK(!(b->valid & MCUV_ALS) && b->als_state == 0, "ALS kill switch");
 
     /* MCU dead at boot: FAILED, no buttons, nothing touched */
     fake_reset();

@@ -658,6 +658,7 @@ typedef struct {
     uint32_t exthid_btn;           /* bit 2 ZL, bit 1 ZR (qom exthid-buttons; keys z / n) */
     uint32_t exthid_reads;
     uint8_t  exthid_idx;
+    uint32_t ambient_lux;          /* qom ambient-light: inner camera luminance in lux */
     struct { uint32_t off, val; int64_t due; } gx_q[8];   /* started GPU operations, not run yet */
     int gx_nq;
     QEMUTimer *gx_timer;
@@ -1679,6 +1680,23 @@ static bool gyro_prop_get_awake(Object *obj, Error **errp)
     return !(ctr->gyro.regs[0x3E] & 0x40);
 }
 
+/* Ambient light for auto-brightness (New models): QOM `ambient-light` is in
+   lux. The inner camera model turns it into the AE luma byte the ARM9 reads
+   over I2C (docs/mcu.md section 12). */
+static void ambient_prop_get(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    visit_type_uint32(v, name, (uint32_t *)opaque, errp);
+}
+
+static void ambient_prop_set(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    uint32_t val;
+    if (visit_type_uint32(v, name, &val, errp)) {
+        *(uint32_t *)opaque = val;
+        ctr_cam_set_ambient_lux(val);
+    }
+}
+
 static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
 {
     static const char *const axes[3] = { "gyro-x", "gyro-y", "gyro-z" };
@@ -1693,6 +1711,8 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
     object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
     object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);
+    object_property_add(obj, "ambient-light", "uint32", ambient_prop_get, ambient_prop_set,
+                        NULL, &s->ambient_lux);
     object_property_add_uint32_ptr(obj, "mcu-led-rgb0", &s->mcu.led_rgb0, OBJ_PROP_FLAG_READ);
     object_property_add_uint32_ptr(obj, "mcu-led-steps", &s->mcu.led_lit, OBJ_PROP_FLAG_READ);
 }
@@ -2656,6 +2676,8 @@ static void ctr_init(MachineState *machine)
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
     ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
     ctr_cam_init(&s->io_shared, 0x10120000 - CTR_IO_SHARED_BASE, sys);    /* docs/camera.md */
+    s->ambient_lux = 100;                  /* QOM ambient-light: a lit room */
+    ctr_cam_set_ambient_lux(s->ambient_lux);
     /* headphone jack GPIO2 bit 0 + machine property "headphones" (ctr_csnd.c) */
     ctr_jack_init(OBJECT(machine), &s->io_shared, 0x10147010 - CTR_IO_SHARED_BASE);
     {

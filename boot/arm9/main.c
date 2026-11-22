@@ -144,6 +144,7 @@ typedef struct {
     u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
     u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
     u32 n3ds_ram;        /* New 3DS: 1 = XNU gets the 128 MiB FCRAM extension too (256 MiB) */
+    u32 auto_brightness; /* New 3DS: 0 = never sample ambient light / never change the backlight */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -195,6 +196,7 @@ static int parse_bootcfg(char *txt)
     cfg.n3ds_clock = 1;
     cfg.n3ds_hid = 1;
     cfg.n3ds_ram = 1;
+    cfg.auto_brightness = 1;
 
     static const struct { const char *k; u32 *v; } nums[] = {
         { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
@@ -213,7 +215,7 @@ static int parse_bootcfg(char *txt)
         { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led },
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "hp_codec", &cfg.hp_codec }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
-        { "n3ds_ram", &cfg.n3ds_ram },
+        { "n3ds_ram", &cfg.n3ds_ram }, { "auto_brightness", &cfg.auto_brightness },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
@@ -1088,6 +1090,10 @@ void a9_main(int argc, char **argv)
     n3ds_setup();                   /* model, 804 MHz, L2, timer calibration (docs/n3ds.md) */
     if (cfg.shim[0] && cfg.shim_pa)     /* SELECT+START word: outside shim.bin, whatever RAM held */
         *(vu32 *)(cfg.shim_pa + SHIM_PANIC_REQ) = 0;
+    /* Ambient light only exists on New models; on an Old 3DS we do not even
+       call this: nothing touches the camera bus and the mailbox stays zero
+       (docs/mcu.md section 12). */
+    if (n3ds_res & N3RES_NEW) mcu_set_als(cfg.auto_brightness != 0);
     exthid_init(cfg.n3ds_hid != 0 && (n3ds_res & N3RES_NEW), cfg.diag != 0, T9_HZ);
     stamp("New 3DS check");
     if (!cfg.jump) {

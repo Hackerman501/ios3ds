@@ -8,6 +8,7 @@ On a New 3DS, New 3DS XL or New 2DS XL, ios3ds can use the faster CPU clock, the
 | `n3ds_l2=0` | **off** | the 2 MiB L2C-310 L2 cache, write-through (experimental, section 2) |
 | `n3ds_hid=1` | **on** | read the C-stick / ZL / ZR chip (section 3) |
 | `n3ds_ram=1` | **on** | iOS gets 256 MiB of FCRAM instead of 128 MiB (section 6) |
+| `auto_brightness=1` | **on** | ambient-light-driven backlight from the inner camera (section 7; emulator only) |
 
 Still not used on any model: CPU cores 1–3 (XNU 1504 is uniprocessor) and the extra QTM RAM.
 
@@ -172,3 +173,34 @@ A New 3DS has 256 MiB of FCRAM; the second half, 0x28000000-0x2FFFFFFF, is the "
 - **What must stay below 0x28000000:** memory a 3DS DMA engine reads. Only the GPU does that with memory XNU allocates: the shim takes the GPU arena with `IOMallocContiguous` and gives it back when it lands in the extension (whether the GPU reaches the extension is unverified), and `PICA_OP_PRESENT` still only accepts destinations below 0x28000000 (others are read back by the CPU). The CPU paths (page-table walks in `pica.c`, Apple's audio buffers in `audio.c`) accept all 256 MiB. md0, Wi-Fi, audio rings and the camera use fixed buffers below 0x20900000.
 - **QEMU:** `-M nintendo3ds,new3ds=on` has 256 MiB of FCRAM; the GPU model still only reaches the first 128 MiB.
 - `n3ds_ram=0`, or any `mem_size` other than 128 MiB in boot.cfg, keeps iOS at 128 MiB.
+
+## 7. Ambient light / auto-brightness (New models only, emulator only)
+
+The New 3DS family's 3D face-tracking sensor doubles as an ambient light
+sensor; Horizon exposes its reading as `qtm:s GetCameraLux` (3dbrew "QTM
+Services" 0x04020000; libctru `QTMS_GetCameraLuminance`). There is **no** such
+register on the MCU (3dbrew "I2C Registers", device 3), so this is the only
+plausible source for an ARM9 driver without Horizon. We read the inner
+camera's own auto-exposure luminance byte (`MCUREG_APT_AE_LAST_LUMA` 0x2218,
+Aptina MT9V113 on I2C bus 1 / 0x7A) and convert it to an approximate lux
+scale with smoothing in ios3ds-mcud. The register-level choice is a guess;
+the sensor's existence and the QTM service are documented. Full research,
+curve and hardware checklist: [mcu.md](mcu.md) section 12 and re-log §85.
+
+- **Model gate:** as with the C-stick (§3), this is armed only when
+  `CFG11_SOCINFO` bit 1 says New. On an Old 3DS the camera bus is untouched;
+  the mailbox field is zero and the daemon leaves the backlight alone.
+- **Switch:** `auto_brightness=0` in boot.cfg, or `SBEnableALS=0` in
+  `com.apple.springboard` (Settings > Wallpaper & Brightness), or the `noals`
+  argument in mcud's launchd job. Nintendo says Auto-Brightness is
+  unavailable on New 2DS XL; our code still tries it there (the first
+  hardware log will show whether the reading varies).
+- **Cost:** the inner camera stays awake while the feature is on (~2 Hz
+  register reads; no picture data crosses the CAM FIFO), like QTM's own face
+  tracking. Camera.app can keep using the sensor; an outer-camera session
+  keeps the last value until it ends.
+- **QEMU:** `ambient-light` (uint32, lux, read/write) on `/machine` sets the
+  inner camera's AE value; `-M nintendo3ds,new3ds=on` also gates it on the
+  model. With `auto_brightness=1`, changing it from 5 to 800 to 80 lux moved
+  `lcd-backlight` 52 → 78 → 65 at 0.50 user brightness; with the switch off
+  (or on an Old model) it stayed at 79. Soaks and curve tests pass.

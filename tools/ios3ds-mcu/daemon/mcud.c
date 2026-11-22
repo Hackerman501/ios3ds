@@ -32,6 +32,7 @@
 #include <math.h>
 
 #include "mcu_proto.h"
+#include "als_curve.h"
 
 /* ---- libSystem ----------------------------------------------------------- */
 typedef unsigned int mach_port_t;
@@ -54,17 +55,22 @@ uint32_t notify_get_state(int token, uint64_t *state);
 
 /* ---- CoreFoundation / IOKit HID (layouts as in tools/ios3ds-input) ------- */
 typedef const void *CFTypeRef;
+typedef const void *CFBooleanRef;
 typedef const struct __CFString *CFStringRef;
 typedef const struct __CFNumber *CFNumberRef;
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 CFStringRef CFStringCreateWithCString(const void *alloc, const char *s, uint32_t enc);
+CFTypeRef CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID);
 unsigned long CFGetTypeID(CFTypeRef cf);
+unsigned long CFBooleanGetTypeID(void);
+unsigned char CFBooleanGetValue(CFBooleanRef b);
 unsigned long CFNumberGetTypeID(void);
 unsigned char CFNumberGetValue(CFNumberRef n, long type, void *out);
 void CFRelease(CFTypeRef cf);
 #define kCFStringEncodingUTF8 0x08000100u
 #define kCFNumberFloatType    12
+#define kCFNumberIntType      3
 
 IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(const void *allocator);
 int IOPMAssertionCreateWithName(CFStringRef type, uint32_t level, CFStringRef name, uint32_t *id);
@@ -84,7 +90,7 @@ extern SEL sel_registerName(const char *);
 extern id objc_msgSend(id, SEL, ...);
 #define MSG(type, obj, sel) ((type)objc_msgSend)(obj, sel_registerName(sel)
 
-static int opt_debug, opt_noacc = 1, opt_novol, opt_nobl, opt_sleepok;
+static int opt_debug, opt_noacc = 1, opt_novol, opt_nobl, opt_sleepok, opt_noals;
 static void say(const char *fmt, ...);
 
 /* Clock cross-check (the open "gettimeofday vs mach_absolute_time" question,
@@ -177,6 +183,37 @@ static int volume_set(float v)
 /* ---- brightness ---------------------------------------------------------- */
 static CFStringRef k_bright, k_factor;
 
+/* SpringBoard's Settings > Wallpaper & Brightness switch ("Auto-Brightness")
+   lives in com.apple.springboard as SBEnableALS. On an iPod2,1 that key is
+   normally absent (no ALS hardware); when absent we leave auto-brightness
+   on, as on the real iPhone/iPod models whose Settings shows the switch.
+   The boot.cfg auto_brightness=0 switch is enforced by the ARM9 (the mailbox
+   then says there is no sensor), so both kill switches have the same effect. */
+static int als_pref(void)
+{
+    static CFStringRef key, app;
+    if (!key) {
+        key = CFStringCreateWithCString(0, "SBEnableALS", kCFStringEncodingUTF8);
+        app = CFStringCreateWithCString(0, "com.apple.springboard", kCFStringEncodingUTF8);
+    }
+    CFTypeRef v = CFPreferencesCopyAppValue(key, app);
+    if (!v) return -1;
+    int on = 1;
+    if (CFGetTypeID(v) == CFBooleanGetTypeID())
+        on = CFBooleanGetValue((CFBooleanRef)v) != 0;
+    else if (CFGetTypeID(v) == CFNumberGetTypeID()) {
+        int n = 1;
+        if (CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &n)) on = n != 0;
+    }
+    CFRelease(v);
+    return on;
+}
+
+static als_smooth_t als;
+static int als_on = -1, als_pref_last = -1;
+static uint8_t als_luma_last;
+static float als_factor_last = -1;
+
 static int copy_float(CFStringRef key, float *out)
 {
     CFTypeRef v = client ? IOHIDEventSystemClientCopyProperty(client, key) : 0;
@@ -207,6 +244,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "acc")) opt_noacc = 0;
         else if (!strcmp(argv[i], "novol")) opt_novol = 1;
         else if (!strcmp(argv[i], "nobl")) opt_nobl = 1;
+        else if (!strcmp(argv[i], "noals")) opt_noals = 1;
         else if (!strcmp(argv[i], "sleepok")) opt_sleepok = 1;
         else if (!strncmp(argv[i], "acc=", 4)) {
             opt_noacc = 0;
@@ -303,22 +341,55 @@ int main(int argc, char **argv)
             }
         }
 
-        /* iOS brightness -> LCD backlight, 2x per second */
-        /* screen off (ARM9 power saving): every (slower) loop, so the wake's
-           brightness reaches the LCD at once */
+        /* screen off (ARM9 power saving): poll the brightness every (slower)
+           loop, so the wake's backlight reaches the LCD at once */
         int scr_off = box.ps_on && box.screen_off;
+
+        /* Auto-brightness (New models only): the ARM9 samples the inner
+           camera's AE luminance into the mailbox. The Settings switch
+           SBEnableALS decides whether we use it; with no key (iPod2,1
+           default) it is on. Smoothing/hysteresis are in als_curve.h. */
+        if ((loops % 50) == 0) als_pref_last = als_pref();
+        int pref_on = als_pref_last < 0 ? 1 : als_pref_last;
+        int want_als = !opt_noals && pref_on && box.als_state == 1 && (box.valid & MCUV_ALS) != 0;
+        if (want_als != als_on) {
+            say("[mcud] auto-brightness %s (SBEnableALS %s, ambient luma %u/255)",
+                want_als ? "on" : "off", als_pref_last < 0 ? "absent" : als_pref_last ? "1" : "0",
+                (unsigned)box.als_luma);
+            als_on = want_als;
+            als.valid = 0;                      /* snap to the current light level */
+            als_factor_last = -1;
+        }
+        float als_factor = 1.0f;
+        if (als_on && (loops % 5) == 0 && bright >= 0.0f) {
+            als_factor = als_smooth(&als, box.als_luma, scr_off ? 250u : 100u);
+            if (fabsf(als_factor - als_factor_last) > 0.004f ||
+                (box.als_luma != als_luma_last && fabsf(als_factor - als_factor_last) > 0.001f)) {
+                say("[mcud] auto-brightness: ambient luma %u/255 (~%.0f lux) -> factor %.2f, "
+                    "brightness %.2f x %.2f -> LCD backlight %u/1000",
+                    (unsigned)box.als_luma, als_luma_to_lux(box.als_luma), als_factor,
+                    bright < 0 ? 0.0f : bright, factor < 0 ? 1.0f : factor,
+                    (unsigned)((bright < 0 ? 0.0f : bright) * (factor < 0 ? 1.0f : factor) *
+                               als_factor * 1000.0f + 0.5f));
+                als_factor_last = als_factor;
+            }
+            als_luma_last = box.als_luma;
+        }
+
+        /* iOS brightness -> LCD backlight, 2x per second */
         if (!opt_nobl && client && (scr_off || (loops % 5) == 0)) {
             float b = -1, fa = -1;
             int hb = copy_float(k_bright, &b), hf = copy_float(k_factor, &fa);
             if (hb && !hf) fa = 1;
             if (hb && (fabsf(b - bright) > 0.005f || fabsf(fa - factor) > 0.005f)) {
-                say("[mcud] iOS brightness %.2f x factor %.2f -> LCD backlight %u/1000", b, fa,
-                    (unsigned)(b * fa * 1000.0f + 0.5f));
+                say("[mcud] iOS brightness %.2f x factor %.2f%s -> LCD backlight %u/1000", b, fa,
+                    als_on ? " x auto-brightness" : "",
+                    (unsigned)(b * fa * (als_on ? als_factor : 1.0f) * 1000.0f + 0.5f));
                 bright = b;
                 factor = fa;
             }
             if (hb) {
-                float l = bright * factor;
+                float l = bright * factor * (als_on ? als_factor : 1.0f);
                 if (l < 0) l = 0;
                 if (l > 1) l = 1;
                 ctl.backlight = 1 + (uint32_t)(l * 1000.0f + 0.5f);

@@ -4,7 +4,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../..)
 CC   := $(ROOT)/scripts/ios-cc
 OUT  ?= $(ROOT)/build/rootfs-add/usr/libexec/ios3ds-mcud
 
-$(OUT): mcud.c $(ROOT)/boot/common/mcu_proto.h
+$(OUT): mcud.c $(ROOT)/boot/common/mcu_proto.h $(ROOT)/boot/common/als_curve.h
 	mkdir -p $(dir $@)
 	$(CC) -Os -Wall -Wextra -I$(ROOT)/boot/common mcud.c -framework IOKit -framework CoreFoundation -lobjc -o $@
 

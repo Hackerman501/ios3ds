@@ -1344,3 +1344,76 @@ records the concrete steps and blockers of stages 2–3.
   worse. Once the host quietened down, the exact required fresh-image command
   printed **Result: PASS** (5 cycles, boot 197 s, all eight failure checks at
   0); the earlier FAILs were host contention, see docs/multi-version.md §5.4.
+
+## 88. Auto-brightness on New models: where the ambient light comes from, and a camera AE reading from the ARM9 (2026-11-21)
+
+Design/checklist: docs/mcu.md §12, docs/n3ds.md §7. Status: **QEMU only; the
+register-level source is unverified on hardware.**
+
+- **Research, primary sources.** 3dbrew "I2C Registers", device 3's complete
+  MCU register table has no lux/ambient register (0x0A–0x0F battery and flags,
+  0x45–0x4A accelerometer, 0x4F/0x7F diagnostics), so the "read an MCU
+  register" candidate is ruled out. 3dbrew "QTM Services" lists `qtm:s`
+  command 0x04020000 `GetCameraLux`, and libctru's `qtm.h` documents
+  `QTMS_GetCameraLuminance` as "average ambient luminance as perceived by the
+  inner camera (in lux)", affected by auto-exposure and fixed at 400.0 on New
+  2DS XL. Wikipedia's New Nintendo 3DS hardware section says the face-tracking
+  sensor is also the ambient light sensor for automatic brightness; Nintendo's
+  support pages say the setting is unavailable on New 2DS XL. 3dbrew "I2C
+  Registers" device 16 is the New-3DS-only QTM device at bus 1 / 0x40 but has
+  no documented luminance register. BlocksDS `nds/camera.h` (Aptina MT9V113,
+  the 3DS inner camera already driven by `boot/arm9/camera.c`) defines
+  `MCUREG_APT_AE_LAST_LUMA` (0x2218), the sensor's own measured luminance,
+  reachable through the camera's variable-address registers 0x098C/0x0990 on
+  I2C bus 1 / 0x7A. libn3ds `I2C_DEV_EXTHID` / GBATEK show the same ARM9 I2C
+  pattern used by our C-stick driver. **Confirmed:** a camera-based ambient
+  measurement exists on New 3DS and Horizon exposes it as lux. **Guess:** the
+  AE luma byte is the value QTM turns into lux, and that this works the same
+  way on a New 2DS XL. Nothing was measured on a console.
+- **Path.** `camera_als_sample()` (`boot/arm9/camera.c`) brings the inner
+  sensor up once (PLL + AE + sequencer refresh) and reads var 0x2218 at 2 Hz;
+  it reuses the live AE when Camera.app has the inner camera open and waits
+  out outer-camera sessions. `mcu_set_als()` (`boot/arm9/mcu.c`) is armed by
+  `main.c` **only** after `n3ds_setup()` says New; `auto_brightness=0`
+  prevents even that call. The byte lands in line 5 of `mcubox_t` (which had
+  20 spare bytes; all existing line offsets and the 256-byte size stay put),
+  alongside a state bit `MCUV_ALS`. ios3ds-mcud reads SpringBoard's
+  `SBEnableALS` preference (absent on an iPod2,1 → on), converts luma → lux →
+  multiplier with hysteresis/slew (`boot/common/als_curve.h`) and multiplies
+  `DisplayBrightness × DisplayBrightnessFactor` before sending the backlight
+  through `kern.ios3ds_mcuctl`. The shim and the PWM registers are unchanged.
+- **Curve tests** (`tests/test_als.c`, added to `make test`): 765 checks —
+  monotonic luma→lux anchors, bounded monotonic multiplier, first-sample
+  snap, slew limit, one-frame flicker ignored, sustained change followed, no
+  oscillation on luma jitter. Host test of the ARM9 side
+  (`tools/ios3ds-mcu/tests/test_mcu.c`) also checks that the mailbox stays
+  empty unless the feature is enabled and the sensor answers.
+- **QEMU** (`emu/qemu/hw/arm/{nintendo3ds.c,ctr_cam.c}`): `/machine
+  ambient-light` (uint32 lux) feeds the inner camera's AE luma through the
+  existing I2C register model, including after a sensor soft reset. The
+  binary path can be overridden with `IOS3DS_QEMU` in run/viewer/soak so a
+  private QEMU build can be tested without touching the shared `build/qemu`
+  symlink (which other worktrees use). New model, `auto_brightness=1`,
+  `--icount 2`, user brightness 0.50:
+  ```
+  [mcu] auto-brightness on (New model; inner camera AE luminance)
+  [cam] inner camera awake for ambient light (AE luma var 2218)
+  [mcu] ambient light: inner camera AE luma 78/255 ...
+  [mcud] auto-brightness: ambient luma 218/255 (~798 lux) -> factor 0.98 ... -> LCD backlight 490/1000
+  qom ambient-light 5 / 800 / 80 -> qom lcd-backlight 52 / 78 / 65
+  ```
+  With `auto_brightness=0` in boot.cfg the same changes leave
+  `lcd-backlight` at 79 and log `auto-brightness off`; on the Old model there
+  is no light line and the value stays 79. `make test`, `make userland`,
+  `make firm`, `make sdimg` clean.
+- **Soaks:** fresh image for each. `python3 emu/soak.py --cycles 5 --icount 2`
+  PASS and `--new3ds` PASS; the New-model log has the ambient lines, no
+  panic/stall/md0 errors. The host was under load average 10–15 during these
+  runs (another emulator and several compilers), which made the soak's
+  short synthetic key presses miss the ARM9 input polls: early runs failed
+  with "not home after Home" and lock rounds ending on the lock screen while
+  the SD log showed 0 panics, 0 stalls, 0 md0 errors. `emu/soak.py` now holds
+  keys 0.4 s (below the input daemon's 0.8 s long-press threshold), waits up
+  to 45 s for the screen to settle, retries Home before giving up, wakes with
+  two Home presses and retries the slide-to-unlock gesture. Those are harness
+  timing fixes, not changes to the pass criteria.

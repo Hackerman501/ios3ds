@@ -13,6 +13,10 @@ void mcu_set_powersave(bool on);
 void mcu_screen_off(bool off);
 /* boot.cfg notify_led=1: low battery (<= 10 %, not charging) blinks the notification LED red */
 void mcu_set_led(bool on);
+/* boot.cfg auto_brightness on New models: sample the inner camera's ambient
+   luminance into the MCU mailbox (docs/mcu.md section 12). Call after the
+   model check, once camera_init has run. */
+void mcu_set_als(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */

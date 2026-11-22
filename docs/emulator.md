@@ -25,6 +25,7 @@ on the console.
 | Buttons | HID at 0x10146000. Keyboard: A=a, B=s, X=x, Y=y, L=q, R=w, START=Enter, SELECT=Backspace, plus the arrow keys |
 | MCU (I2C bus 2, 0x4A) | IRQs, RTC from the host clock, battery, sliders, accelerometer, power off (QEMU exits). Keys: HOME=h, POWER=p ("held" after 3 s, which starts iOS's clean shutdown through `ios3ds-input`), volume slider -/=, shell c, turn the console [ / ]. QOM properties on `/machine` for tests: `mcu-battery`, `mcu-charging`, `mcu-volume`, `mcu-shell-open`, `mcu-orient`, `lcd-backlight` (read only). [mcu.md](mcu.md) §6, §12 |
 | Gyroscope (I2C bus 3, 0xD0) | ITG-3200 registers (WHO_AM_I, PWR_MGM sleep, GYRO_XOUT..ZOUT at 14.375 LSB per deg/s). QOM: `gyro-x`, `gyro-y`, `gyro-z` (millidegrees/s about the console's axes), `gyro-awake`, `gyro-reads` (read only). [mcu.md](mcu.md) §11 |
+| Ambient light | QOM `ambient-light` (uint32, lux, read/write on `/machine`): the inner camera model reports the matching 8-bit AE luminance (MCU var 0x2218) the ARM9 reads on New models; the backlight follows it in `ios3ds-mcud` when auto-brightness is on. [mcu.md](mcu.md) §12 |
 | Cameras | Three MT9V113 sensors on I2C (0x10161000: 0x7A inner, 0x78 outer right; 0x10144000: 0x78 outer left; they answer only with CFG11_CAMERA_CNT bit 0), CAM0/CAM1 at 0x10120000/0x10121000, FIFO windows 0x10320000/0x10321000 (pop on address change, 0x500 units, overrun), a moving test pattern at 15 fps on the virtual clock (`ctr_cam.c`). Use `--icount 2`: with plain timing every frame overruns. `IOS3DS_CAM_LOG=1` logs register writes and transfers. [camera.md](camera.md) §5 |
 | LCD backlight | 0x10202240 / 0x10202A40; once written, the emulated screens are dimmed by it (and blacked out when the MCU switches a backlight off) |
 | CFG9 / CFG11 | SDMMCCTL is stored; SOCINFO reports an Old 3DS (New 3DS with `new3ds=on`, below) |
@@ -62,6 +63,10 @@ python3 emu/run.py --time 420 --out build/emu-x --hmp "300=qom-set /machine mcu-
 python3 emu/tap.py --time 400 --key 280:h --key 340:p:5 --set 255:mcu-battery=50 --get 300:lcd-backlight
 python3 emu/run.py --icount 2 --time 300   # real-hardware timing (see below)
 ```
+
+`IOS3DS_QEMU=/path/to/qemu-system-arm` overrides the binary path in
+`emu/run.py`, `emu/viewer.py` and `emu/soak.py`; handy when building a private
+copy of the machine model without touching the shared `build/qemu` tree.
 
 ### Real-hardware timing: `--icount`
 By default QEMU's timers follow the host's wall clock while TCG runs the

@@ -28,6 +28,7 @@
 #include "util.h"
 #include "mcu_proto.h"
 #include "input_proto.h"
+#include "camera.h"
 
 #define MCU_BUS     1           /* I2C2, 0x10144000 */
 #define MCU_DEV     0x4A
@@ -58,7 +59,9 @@ static u32 hz;                  /* ARM9 timer ticks per second */
 static u32 fails_in_row;
 
 /* timers (ARM9 ticks) */
-static u32 t_irq, t_slider, t_batt, t_rtc, t_acc;
+static u32 t_irq, t_slider, t_batt, t_rtc, t_acc, t_als;
+static bool als_want;                 /* New models, boot.cfg auto_brightness */
+static uint8_t als_last;              /* last luminance published to the mailbox */
 
 /* button state presented to the input mailbox */
 static bool home_down, home_tap;
@@ -206,6 +209,44 @@ static void led_update(void)
 
 void mcu_set_powersave(bool on) { if (box) box->ps_on = on; }
 void mcu_screen_off(bool off) { if (box) box->screen_off = off; }
+
+/* Auto-brightness: only wired up after the model check found a New 3DS.
+   The sensor is the inner camera's AE luminance (docs/mcu.md section 12). */
+void mcu_set_als(bool on)
+{
+    if (!box) return;
+    als_want = on && box->state == MCU_ST_OK;
+    camera_als_enable(als_want);
+    if (on && !als_want) return;
+    box->als_state = als_want ? 1 : 0;
+    if (!als_want) {
+        box->valid &= ~(uint32_t)MCUV_ALS;
+        box->als_luma = 0;
+    }
+    logp("[mcu] auto-brightness %s (New model; inner camera AE luminance)\n",
+         als_want ? "on" : "off");
+}
+
+static void als_sample(u32 now)
+{
+    if (!als_want || box->state != MCU_ST_OK) return;
+    if (t_als && (int)(now - t_als) < 0) return;
+    t_als = now + ms_ticks(500);
+    u8 luma;
+    if (!camera_als_sample(&luma)) return;
+    int first = !(box->valid & MCUV_ALS);
+    int delta = (int)luma - (int)als_last;
+    if (delta < 0) delta = -delta;
+    box->als_luma = luma;
+    box->als_state = 1;
+    box->valid |= MCUV_ALS;
+    if (first || delta >= 8) {
+        logp("[mcu] ambient light: inner camera AE luma %u/255 (New model auto-brightness)\n",
+             (unsigned)luma);
+    }
+    als_last = luma;
+    bump();
+}
 
 void mcu_config_acc(bool on)
 {
@@ -385,4 +426,5 @@ void mcu_poll(u32 now)
             bump();
         }
     }
+    als_sample(now);
 }

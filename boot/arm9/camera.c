@@ -32,6 +32,10 @@
 
 #define BUS_DSI         0           /* i2c.c bus numbers: 0 = 0x10161000, 1 = 0x10144000 */
 #define BUS_3DS         1
+/* BlocksDS libnds camera.h MCUREG_APT_AE_LAST_LUMA: the sensor's own measured
+   scene luminance (8-bit, gamma encoded). New 3DS' QTM service turns camera
+   data into lux; this raw byte is the ARM9-readable part of that path. */
+#define ALS_LUMA_VAR    0x2218u
 #define REG32(a)        (*(vu32 *)(a))
 #define REG8(a)         (*(vu8 *)(a))
 
@@ -42,6 +46,7 @@ static bool enabled;
 static u32 handled_seq;
 static int active = -1;             /* camera whose parallel output is on */
 static bool powered;
+static bool als_want, als_ready;    /* ambient light sampling (New models, docs/mcu.md section 12) */
 static u32 t_started, diag_step;    /* camera_poll's diagnostic dumps after a start */
 static u32 t_stat;                  /* last 10 s statistics line */
 static u32 t_watch;                 /* last independent CAM_STAT sample */
@@ -540,10 +545,59 @@ static void stop(void)
     active = -1;
     dump_frames();                       /* the buffers are clean and quiescent now */
     watch_report("at stop");
-    power(false);
+    /* Auto-brightness needs the inner sensor's AE running between Camera.app
+       sessions. Keep the camera clock on in that case (docs/mcu.md §12). */
+    if (!als_ready) power(false);
     publish(CAM_ST_OFF, 0);
     log_ok("[cam] cameras off (frames %u, FIFO overruns %u, CAM restarts %u)\n",
            (unsigned)box->frames, (unsigned)box->overruns, (unsigned)box->restarts);
+}
+
+/* ---- ambient light (auto-brightness on New 3DS / New 2DS XL) -------------
+   The face-tracking ("inner") camera is the only ambient light source a New
+   3DS has (Wikipedia's hardware section and 3dbrew QTM Services' GetCameraLux;
+   no MCU register exposes a lux value). QTM keeps its AE running under
+   Horizon; without Horizon we bring the sensor up once and leave it awake.
+   If no sensor answers, samples fail and mcud keeps the user's brightness. */
+void camera_als_enable(bool on)
+{
+    als_want = on;
+    if (!on && als_ready && active < 0) {
+        apt_standby(&cams[CAM_INNER]);
+        als_ready = false;
+        power(false);
+        logp("[cam] inner camera standby (auto-brightness off)\n");
+    }
+}
+
+bool camera_als_sample(uint8_t *luma)
+{
+    if (!enabled || !als_want) return false;
+    const camdev_t *c = &cams[CAM_INNER];
+    u16 v;
+    /* While Camera.app uses the inner camera its AE is already running. An
+       outer-camera session leaves the shared CAM0 bus busy: keep the last
+       reading in that case instead of switching sensors behind iOS' back. */
+    if (active == CAM_INNER) {
+        if (!mcu_rd(c, ALS_LUMA_VAR, &v)) return false;
+        *luma = (uint8_t)(v & 0xFF);
+        return true;
+    }
+    if (active >= 0) return false;
+    if (!powered) power(true);
+    if (!(box->present & (1u << CAM_INNER))) return false;
+    if (!als_ready) {
+        u32 err = apt_init(c, true);       /* PLL, AE window, sequencer refresh */
+        if (err) {
+            log_warn("[cam] ambient light: inner camera init failed (step %u)\n", (unsigned)err);
+            return false;
+        }
+        als_ready = true;
+        log_ok("[cam] inner camera awake for ambient light (AE luma var %04x)\n", ALS_LUMA_VAR);
+    }
+    if (!mcu_rd(c, ALS_LUMA_VAR, &v)) return false;
+    *luma = (uint8_t)(v & 0xFF);
+    return true;
 }
 
 void camera_init(u32 shim_pa, bool enable, bool self_test)
