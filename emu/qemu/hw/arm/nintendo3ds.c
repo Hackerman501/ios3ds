@@ -40,6 +40,7 @@
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
+#include "../../../../boot/common/stereo.h"
 #include "qapi/visitor.h"
 #include "hw/sysbus.h"
 #include "hw/boards.h"
@@ -1707,6 +1708,7 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_uint32_ptr(obj, "gyro-reads", &s->gyro.reads, OBJ_PROP_FLAG_READ);
     object_property_add_uint8_ptr(obj, "mcu-battery", &s->mcu.regs[0x0B], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-volume", &s->mcu.regs[0x09], OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-3d-slider", &s->mcu.regs[0x08], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-orient", &s->mcu.orient, OBJ_PROP_FLAG_READWRITE);
     object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
     object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
@@ -2335,6 +2337,77 @@ static void ctr_draw_screen(CtrMachine *s, int n, uint32_t *dst, int dst_stride_
     }
 }
 
+/* Stereo 3D: when the 3D slider is up and the iOS framebuffer carries a
+   class map (boot.cfg stereo3d=1), render the top screen as a red/cyan
+   anaglyph built from the two eye images, so the per-layer offsets show up
+   in a screenshot. Reads the iOS framebuffer directly (0x18000000). */
+static int ctr_draw_stereo_top(CtrMachine *s, uint32_t *dst, int dst_stride_px)
+{
+    const uint32_t SRC_W = 320, SRC_H = 480;
+    const uint32_t ios_fb_pa = 0x18000000;
+    uint8_t *buf;
+    size_t len = SRC_W * SRC_H * 4;
+    int slider = s->mcu.regs[0x08];
+    int k = stereo_shift_k((uint32_t)slider);
+    /* sample the alpha plane for a class map */
+    uint8_t alpha[1024];
+    int ai = 0;
+    int has_map = 0;
+    if (slider < STEREO_MIN_SLIDER) return 0;
+    buf = g_malloc(len);
+    if (address_space_read(&address_space_memory, ios_fb_pa, MEMTXATTRS_UNSPECIFIED, buf, len) != MEMTX_OK) {
+        g_free(buf);
+        return 0;
+    }
+    /* build a small alpha sample */
+    for (int i = 0; i < 1024; i++) {
+        int idx = (i * (SRC_W * SRC_H / 1024)) * 4;
+        alpha[ai++] = buf[idx];   /* ABGR8: alpha is byte 0 */
+    }
+    has_map = stereo_alphas_stereo(alpha, 1024);
+    if (!has_map) { g_free(buf); return 0; }
+
+    int outw = (int)(SRC_H * 3 / 4);   /* 360 */
+    int x0 = (400 - outw) / 2;
+    /* clear top area */
+    for (int y = 0; y < CTR_SCR_H; y++)
+        for (int x = 0; x < 400; x++)
+            dst[y * dst_stride_px + x] = 0x202020;
+
+    for (int c = 0; c < outw; c++) {
+        int iy0 = c * 4 / 3;
+        if (iy0 >= (int)SRC_H) iy0 = SRC_H - 1;
+        for (int rr = 0; rr < CTR_SCR_H; rr++) {
+            int sx = rr * 4 / 3;
+            if (sx >= (int)SRC_W) sx = SRC_W - 1;
+            int idx = (iy0 * SRC_W + sx) * 4;
+            int cls = stereo_class_of(buf[idx]);   /* byte 0 = alpha */
+            /* left and right sample rows */
+            int dL = stereo_eye_delta(cls, k, 0);
+            int dR = stereo_eye_delta(cls, k, 1);
+            int iyL = iy0 + dL;
+            int iyR = iy0 + dR;
+            if (iyL < 0) iyL = 0; if (iyL >= (int)SRC_H) iyL = SRC_H - 1;
+            if (iyR < 0) iyR = 0; if (iyR >= (int)SRC_H) iyR = SRC_H - 1;
+            int iL = (iyL * SRC_W + sx) * 4;
+            int iR = (iyR * SRC_W + sx) * 4;
+            /* ABGR8: bytes B,G,R,A? case 0 in ctr_draw: r=px[3],g=px[2],b=px[1], alpha=px[0] */
+            int rL = buf[iL+3], gL = buf[iL+2], bL = buf[iL+1];
+            int rR = buf[iR+3], gR = buf[iR+2], bR = buf[iR+1];
+            int r = rL;
+            int g = gR;
+            int b = bR;
+            if (s->lcd_abl_set) {
+                int bl = MIN(s->lcd_abl[0] * 256 / 0x8F, 256);
+                r = r * bl >> 8; g = g * bl >> 8; b = b * bl >> 8;
+            }
+            dst[rr * dst_stride_px + (x0 + c)] = (r << 16) | (g << 8) | b;
+        }
+    }
+    g_free(buf);
+    return 1;
+}
+
 static void ctr_gfx_update(void *opaque)
 {
     CtrMachine *s = opaque;
@@ -2343,7 +2416,15 @@ static void ctr_gfx_update(void *opaque)
     int stride_px = surface_stride(surf) / 4;
 
     memset(d, 0x20, (size_t)surface_stride(surf) * surface_height(surf));
-    ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
+    {
+        int drew = 0;
+        if (s->mcu.regs[0x08] >= STEREO_MIN_SLIDER) {
+            drew = ctr_draw_stereo_top(s, d, stride_px);
+        }
+        if (!drew || s->mcu.regs[0x08] < STEREO_MIN_SLIDER) {
+            ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
+        }
+    }
     ctr_draw_screen(s, 1, d, stride_px, CTR_BOT_W, (CTR_TOP_W - CTR_BOT_W) / 2, CTR_SCR_H);
     dpy_gfx_update_full(s->con);
 }

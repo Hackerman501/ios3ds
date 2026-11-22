@@ -37,12 +37,14 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ⚠️ | Headphone jack | iOS switches to headphones when plugged in, but 0.4.0 was silent in them; CODEC fix after 0.4.0 not yet confirmed, see [docs/audio.md](docs/audio.md) §4 |
 | 🧪 | Music app: a test song and your own songs | `install.py --music DIR` (or files in `SD/ios3ds/music/`): .mp3, .m4a (AAC/ALAC), .wav, .aif; [docs/audio.md](docs/audio.md) §10 |
 | 🧪 | Gyroscope (CoreMotion) | |
+| 🧪 | Stereoscopic 3D home screen (experimental, emulator only) | `stereo3d=1` in `boot.cfg`; depth slider controls it; see [docs/stereo3d.md](docs/stereo3d.md) |
 | 🧪 | Fake GPS location (CoreLocation) | set with `boot.cfg` `gps=` or `/usr/bin/ios3ds-gps` from a terminal; 1 Hz updates in apps, including Safari, see [docs/location.md](docs/location.md) |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
 | 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | 🧪 | New 3DS: auto-brightness from the ambient light sensor | emulator only, off on Old models; `auto_brightness=0` to disable, see [docs/mcu.md](docs/mcu.md) §13 |
-| ❌ | 3D screen, IR, NFC, video recording | currently unplanned |
+| 🧪 | 3D screen (home screen only, experimental) | `stereo3d=1`, emulator only; see [docs/stereo3d.md](docs/stereo3d.md) |
+| ❌ | IR, NFC, video recording | currently unplanned |
 
 ✅ works on a real 3DS · ⚠️ works on a real 3DS with known problems · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
 
@@ -179,7 +181,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
   | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |
   | `diag=1` | extra diagnostics in the log |
-
+| `stereo3d=1` | experimental stereoscopic 3D home screen (emulator only); needs `gpu_mirror=0` automatically |
 ### Fake GPS location
 
 The iPod has no GPS, so Maps and geolocation in Safari get no fix by default.

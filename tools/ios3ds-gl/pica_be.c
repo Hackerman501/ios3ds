@@ -1461,9 +1461,11 @@ static void pica_finish(GC *gc, RT *rt)
 static void pica_flush_all(GC *gc)
 {
     int i;
-    (void)gc;
     if (P.state != 1)
         return;
+    /* stereo stamp: decide the frame and wipe a non-home frame's class map
+       before anything is written back (docs/stereo3d.md section 4) */
+    stereo_end_frame(gc);
     for (i = 0; i < MAX_TARGETS; i++)
         if (P.target[i].key && P.target[i].dirty)
             sync_target(&P.target[i]);

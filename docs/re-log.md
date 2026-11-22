@@ -1442,3 +1442,26 @@ register-level source is unverified on hardware.**
   failures). Earlier attempts on the overloaded host were killed during the
   image build (`make: *** [Makefile:79: sdimg] Killed`) and were recorded as
   unfinished in the interim; these final runs complete them.
+
+## 89. Experimental stereoscopic 3D home screen (2026-11-22)
+Design: docs/stereo3d.md. Status: experimental, emulator only, off by default.
+
+- **Mechanism:** CoreAnimation composites SpringBoard through our GL engine
+  (`tools/ios3ds-gl`), which stamps a depth class into the composed frame's
+  alpha byte with a second, alpha-only pass. The classes are wallpaper (0x33),
+  icon grid (0x66), dock/status bar (0x99), folders/alerts (0xCC), flat
+  (0x00). The ARM9 CPU screen copy reads that class map and builds the two
+  eye images with a horizontal offset per class; the 3D slider scales the
+  offset (0..4 px) and 0 turns the barrier off.
+- **Gate:** `boot.cfg stereo3d=1` appends `ios3ds_stereo=1` to the kernel
+  boot-args; only the CA render server (`IOS3DS_CA=1`) stamps. With the flag
+  off `stereo_prepare()` returns -1 at once and the normal path is unchanged.
+  Frames that are not the home screen are wiped flat (one full-screen quad),
+  so apps and the lock screen give both eyes the same image.
+- **Files:** `boot/common/stereo.h` (shared classes, offsets, classifier),
+  `tools/ios3ds-gl/stereo.c`, `tools/ios3ds-gl/{api,ca,draw,iface,pica_be}.c`,
+  `boot/arm9/main.c` (flag + boot-arg + gpu_mirror off for stereo),
+  `emu/qemu/hw/arm/nintendo3ds.c` (slider QOM property + anaglyph top screen),
+  `tests/test_stereo.py`.
+- **Tests:** `make test` passes (host tests for the depth/offset logic);
+  soak with the flag off and on both PASS.

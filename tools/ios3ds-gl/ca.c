@@ -303,6 +303,12 @@ void ca_frame(void)
     pica_backend_stats2(&s);
     /* a new render thread starts its CPU clock at 0: never subtract backwards */
     dcpu = cpu >= cpu0 ? cpu - cpu0 : 0;
+    if (stereo_enabled()) {
+        unsigned f, h, fl, stp, wp;
+        stereo_stats(&f, &h, &fl, &stp, &wp);
+        gl_log("CA stereo3D: %u frames, %u home (stamped), %u flat (wiped), %u stamp passes, %u wipes",
+               f, h, fl, stp, wp);
+    }
     gl_log("CA: %llu frames; per frame over the last %u: render thread CPU %llu us, %u.%u command lists, "
            "%u.%u GPU presents (%u.%u via an arena copy), %u.%u CPU read-backs (%u KiB), %u.%u texture uploads (%u KiB); "
            "GPU memory: %u KiB held (%u textures, %u KiB), arena %u KiB free, %u evictions%s",

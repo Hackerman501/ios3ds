@@ -169,6 +169,7 @@ void gl_tex_drop_image(Tex *t)
     t->surface = NULL;
     t->w = t->h = t->pitch = 0;
     t->base = 0;
+    t->stereo_opq = 0;
 }
 
 static Tex *tex_lookup(GC *gc, GLuint name, int create)
@@ -1016,6 +1017,7 @@ static GLenum base_format(GLenum f)
 void gl_tex_dirty(GC *gc, Tex *t)
 {
     t->be_seq++;
+    t->stereo_opq = 0;              /* the pixels changed: re-check for stereo */
     if (gc->be->tex_changed)
         gc->be->tex_changed(gc, t);
 }

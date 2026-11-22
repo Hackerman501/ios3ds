@@ -290,6 +290,7 @@ static int transform(GC *gc, int lo, int hi)
 typedef struct Emit {
     GC *gc;
     RT *rt;
+    int cls;                        /* stereo stamp class for this draw (stereo.c) */
     Vtx buf[BATCH];
     int n;
 } Emit;
@@ -297,7 +298,7 @@ typedef struct Emit {
 static void emit_flush(Emit *e)
 {
     if (e->n)
-        e->gc->be->triangles(e->gc, e->rt, e->buf, e->n);
+        gl_be_triangles(e->gc, e->rt, e->buf, e->n, e->cls);
     e->n = 0;
 }
 
@@ -428,6 +429,7 @@ void gl_draw(GC *gc, GLenum mode, int first, int count, GLenum type, const void 
     v = gc->vcache;
     e->gc = gc;
     e->rt = &rt;
+    e->cls = stereo_prepare(gc, &rt, v, hi - lo + 1);
     e->n = 0;
     switch (mode) {
     case GL_TRIANGLES:
@@ -508,7 +510,7 @@ void gl_draw_tex(GC *gc, float x, float y, float z, float w, float h)
     q[0] = c[0]; q[1] = c[1]; q[2] = c[2];
     q[3] = c[0]; q[4] = c[2]; q[5] = c[3];
     gc->cull = 0;
-    gc->be->triangles(gc, &rt, q, 6);
+    gl_be_triangles(gc, &rt, q, 6, stereo_prepare(gc, &rt, q, 6));
     gc->cull = saved_cull;
     memcpy(gc->vp, saved_vp, sizeof saved_vp);
 }

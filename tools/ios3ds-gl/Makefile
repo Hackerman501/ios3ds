@@ -14,8 +14,10 @@ ENGINE := $(ADD)/System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle
 GLTEST := $(ADD)/usr/libexec/ios3ds-gltest
 HOSTDIR := $(ROOT)/build/gl-host
 
-CORE  := api.c draw.c raster.c pica_be.c ca.c
+CORE  := api.c draw.c raster.c pica_be.c ca.c stereo.c
 HDRS  := engine.h gl_defs.h gl_slots.h
+# boot/common/stereo.h: the shared depth classes and layer classifier (docs/stereo3d.md)
+STEREO := $(ROOT)/boot/common/stereo.h
 # PICA200 back end (docs/pica200.md): command encoders shared with the tests;
 # the GPU itself is the kernel shim on iOS and the software model on the host
 PICA  := ../ios3ds-pica
@@ -23,11 +25,11 @@ PICA_SRC := $(PICA)/src/pica_cmd.c $(PICA)/src/pica_state.c $(PICA)/src/pica_tex
 PICA_IOS := $(PICA_SRC) $(PICA)/src/pica_dev_ios.c
 PICA_HOST := $(PICA_SRC) $(PICA)/src/pica_dev_host.c $(PICA)/src/pica_drv.c $(PICA)/sim/picasim.c
 PICA_HDRS := $(wildcard $(PICA)/include/*.h $(PICA)/src/*.h $(PICA)/sim/*.h)
-CFLAGS := -O2 -Wall -Wextra -Wno-unused-parameter -mfpu=vfp -DGL_PICA -I$(PICA)/include
+CFLAGS := -O2 -Wall -Wextra -Wno-unused-parameter -mfpu=vfp -DGL_PICA -I$(PICA)/include -I$(ROOT)/boot/common
 
 all: $(ENGINE) $(GLTEST)
 
-$(ENGINE): $(CORE) iface.c thunks.S $(HDRS) $(PICA_IOS) $(PICA_HDRS)
+$(ENGINE): $(CORE) iface.c thunks.S $(HDRS) $(STEREO) $(PICA_IOS) $(PICA_HDRS)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -bundle -fvisibility=hidden $(CORE) $(PICA_IOS) iface.c thunks.S \
 	    -framework CoreFoundation -o $@
@@ -52,9 +54,9 @@ host-test: $(HOSTDIR)/gltest
 	IOS3DS_GL_PRESENT_ALL=1 IOS3DS_HOST_PRESENT=swap $(HOSTDIR)/gltest > $(HOSTDIR)/swap.log 2>&1; \
 	    st=$$?; cat $(HOSTDIR)/swap.log; test $$st = 0 && grep -q "present check FAILED" $(HOSTDIR)/swap.log
 
-$(HOSTDIR)/gltest: $(CORE) test/host_gl.c test/gltest.c test/glapi.h $(HDRS) $(PICA_HOST) $(PICA_HDRS)
+$(HOSTDIR)/gltest: $(CORE) test/host_gl.c test/gltest.c test/glapi.h $(HDRS) $(STEREO) $(PICA_HOST) $(PICA_HDRS)
 	mkdir -p $(dir $@)
-	cc -DGL_HOST -DGL_PICA -I$(PICA)/include -O2 -g -Wall -Wno-unused-result -Wno-array-bounds -Wno-maybe-uninitialized \
+	cc -DGL_HOST -DGL_PICA -I$(PICA)/include -I$(ROOT)/boot/common -O2 -g -Wall -Wno-unused-result -Wno-array-bounds -Wno-maybe-uninitialized \
 	    $(CORE) $(PICA_HOST) test/host_gl.c test/gltest.c -lm -o $@
 
 slots:

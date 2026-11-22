@@ -145,6 +145,7 @@ typedef struct {
     u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
     u32 n3ds_ram;        /* New 3DS: 1 = XNU gets the 128 MiB FCRAM extension too (256 MiB) */
     u32 auto_brightness; /* New 3DS: 0 = never sample ambient light / never change the backlight */
+    u32 stereo3d;       /* 1 = experimental stereoscopic 3D home screen (docs/stereo3d.md) */
     u32 nloads;
     char load_path[4][64];
     u32 load_pa[4];
@@ -216,6 +217,7 @@ static int parse_bootcfg(char *txt)
         { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "hp_codec", &cfg.hp_codec }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
         { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
         { "n3ds_ram", &cfg.n3ds_ram }, { "auto_brightness", &cfg.auto_brightness },
+        { "stereo3d", &cfg.stereo3d },
         { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
     };
     int lineno = 0;
@@ -1041,6 +1043,10 @@ void a9_main(int argc, char **argv)
             strlcpy_(ba->CommandLine + strlen(ba->CommandLine), gpstmp,
                      sizeof(ba->CommandLine) - strlen(ba->CommandLine));
     }
+    /* stereo3d=1 -> boot-arg ios3ds_stereo=1 so the CA render server stamps
+       depth classes into the frame's alpha (docs/stereo3d.md) */
+    if (cfg.stereo3d && strlen(ba->CommandLine) + 20 < sizeof(ba->CommandLine))
+        strlcpy_(ba->CommandLine + strlen(ba->CommandLine), " ios3ds_stereo=1", 17);
     log_ok("boot_args at %08x: dt va %08x len %u\n", cfg.bootargs_pa, ba->deviceTreeP, dsize);
 
     /* XNU log ring (filled by the M2 console hook) */
@@ -1082,6 +1088,10 @@ void a9_main(int argc, char **argv)
     audio_set_mic(cfg.mic != 0);
     audio_set_hp_route(cfg.hp_route != 0);
     camera_init(cfg.shim_pa, cfg.camera != 0, cfg.cam_test != 0);   /* docs/camera.md */
+    if (cfg.stereo3d) {
+        cfg.gpu_mirror = 0;
+        log_color(CON_YELLOW, "[monitor] stereo3d=1: GPU display mirror off, ARM9 CPU copy builds the eyes\n");
+    }
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };
         gm_init(cfg.shim_pa, T9_HZ, g, cfg.screen < SCREEN_MODES ? (int)cfg.screen : SCREEN_BOTH);
