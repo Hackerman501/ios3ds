@@ -207,18 +207,6 @@ def main():
         for i in range(a.cycles):
             x, y = targets[i % len(targets)]
             c = {"cycle": i, "tap": [x, y]}
-            if not dark_ref:
-                # A still page-swipe animation (or a Home press that opened
-                # Spotlight) can outlive the previous cycle when the host is
-                # busy. Tap only once we are back on the reference home screen;
-                # the Home-return check below is unchanged.
-                for attempt in range(3):
-                    cur = shot("c%03d_before" % i).convert("L")
-                    if ImageStat.Stat(ImageChops.difference(
-                            cur, home_ref.convert("L"))).mean[0] <= 12:
-                        break
-                    key("ret")
-                    time.sleep(8)
             tap(x, y)
             c["settle"] = settles[i % len(settles)]
             # Wait for the app to *render*, not for a fixed time: on a loaded
