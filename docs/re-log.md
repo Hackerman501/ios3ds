@@ -1192,3 +1192,68 @@ Design: docs/wifi.md §10.8. Hardware report: Settings joins the user's WPA2+WPA
   `Select a Wi-Fi Network` alert, types the password and joins again. The
   exact popup screenshot and the `[wifi] link up` / `[wifid] en0 configured
   by configd` lines are in `build/emu-wifi-popup/`; results TBD.
+
+## 85. Driver stability: inventory, stress harness, input and MCU fixes (2026-11-22)
+Goal (user): every driver stable inside iOS 4.2.1. This section covers the
+drivers no other worker owns: GPU/Core Animation and the screen copy, touch +
+buttons + circle pad/C-stick, accelerometer/gyroscope, audio out (speaker and
+headphones), microphone, cameras, the MCU daemon and the SD read path. The
+per-driver inventory (code, tests, open hardware checks, verdict) is
+[docs/driver-status.md](driver-status.md); it is kept there instead of
+repeating the table here.
+
+- **Stress harness.** `emu/stress.py` (docs/emulator.md "Driver stress") opens
+  the five apps whose home-screen slot `rootfs/recipe.json` pins (Photos,
+  Settings, Notes, Safari, Music), drags in them, swipes pages with the D-pad,
+  scrolls with the circle pad, starts/stops Camera.app, plugs and unplugs the
+  emulated headphones, cycles the accelerometer poses and locks/unlocks.
+  `--diag` turns on the boot jobs (gltest, gyrotest, the `[smp]` sampler) and
+  the default `--mem` adds `ios3ds_mem=1`; it reads `sd:/ios3ds/log.txt`
+  while the guest runs and reports panics, stalls, md0 errors, GPU
+  timeouts/present-check failures/CPU fallback, camera init failures and FIFO
+  overruns, audio DMA/CODEC errors, input stale-port messages, the MCU
+  reconnect line, `[mem]` free memory and `[smp]` samples. It needs a fresh
+  image per run (it edits that image's boot.cfg) and fails when a requested
+  camera cycle produced no start/stop.
+- **`emu/soak.py`** gained the same driver error checks, so the long soak
+  catches a GPU timeout, present-check failure or CPU fallback, a camera
+  init failure/overrun and an audio DMA/CODEC error, not just a panic. Its
+  cycle now waits for the app to render before pressing Home: on a loaded
+  `--icount 2` host the app's uniform gray launch image differs from the home
+  screen enough to look like a finished frame, and Home pressed on it is
+  ignored (the old fixed wait then made every such cycle "stuck").
+- **Input: leaked app send right and dead-name touches.**
+  `send_touch_gs()` cached the frontmost app's `PurpleSystemEventPort` send
+  right in a static. `GSCopyPurpleNamedPort` returns +1 and the old value was
+  overwritten on every app switch: one leaked send right per switch (the
+  32-bit port-name table is finite). The same cache could outlive its app: a
+  relaunch under the same bundle id kept `strcmp(id, app)` equal while the
+  cached name was dead, so touches were silently dropped. The daemon now
+  releases the previous right (`app_port_set`) and checks
+  `mach_port_type(..., MACH_PORT_TYPE_DEAD_NAME)` before reuse, re-resolving
+  and logging `[input] stale touch port ...` under `debug`.
+- **MCU daemon: SpringBoard restart left brightness/rotation dead.**
+  ios3ds-mcud connected to SpringBoard's HID event system once. If
+  SpringBoard restarted, the per-client port at `client + 8` became a dead
+  name and every `DisplayBrightness`/accelerometer call failed silently until
+  reboot. It now checks the port every 2 s, drops the dead client and
+  reconnects (`[mcud] SpringBoard's HID event port went away; reconnecting`);
+  the `NoIdleSleepAssertion` and its two CFStrings are created once per
+  process instead of once per reconnect.
+- **Host tests:** `make test` passes (63 Python tests plus pica, GL, Wi-Fi,
+  GPS, `test_cpad` 206 checks and `test_n3ds` 35 checks).
+- **QEMU soak, Old 3DS** (`--cycles 5 --icount 2 --settle 45`, fresh image;
+  the host had ~8 other QEMU runs, load >40, so the per-cycle settle was 45 s
+  instead of the 15 s default): **Result: PASS**, boot 310 s, 5 cycles,
+  0 panics / stalls / crashes / md0 errors, 0 GPU fallback or timeouts,
+  recoveries `Dismiss` (1), `Home + unlock` (2, the slow cycles crossed iOS's
+  auto-lock) and `second Home` (1), last heartbeat
+  `md0 4401 req 90135 KiB 0 err`.
+- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image):
+  <new3ds result>.
+- **Only a console can settle:** the hardware checks are listed in
+  [driver-status.md](driver-status.md) §"What only a console can settle",
+  with the exact log lines/files to capture (headphone CODEC readbacks, mic
+  FIFO overruns, camera frame dumps, gyro/`[gyrotest]`, the GPU
+  present/scatter path, `[hb] ... md0 ... N err`, a SpringBoard restart's
+  `[mcud] ... reconnecting`).
