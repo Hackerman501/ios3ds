@@ -1528,3 +1528,13 @@ paths below are exercised in QEMU.
   to be measured. The GL side logs `CA stereo3D: N frames, ... stamped/wiped`
   and its usual per-frame line with `diag=1`; no stamp pass runs with the flag
   off.
+
+**Soak status on the shared, heavily loaded host:** the flag-on soak
+`--cycles 5 --icount 2 --slider3d 255` passed (`Result: PASS`, 5 cycles, no
+panic/IO/watchdog hits). Repeating both flag-off and flag-on runs on fresh
+images produced clean crash/IO checks but the soak's screenshot-based "home
+restored" check was flaky while the host ran 20-50 concurrent builds; one
+flag-off run did not reach SpringBoard within its 1200 s boot timeout. The
+soak input dwell/timeouts were increased (commits above) to cope with that
+host load; no code path other than the test harness was changed for those
+retries. A final confirmation run on an idle machine is still desirable.
