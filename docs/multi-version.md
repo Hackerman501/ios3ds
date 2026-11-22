@@ -1,0 +1,281 @@
+# Multi-version support: research and design (stage 1)
+
+Status: **design only** for the 1.x backend (not implemented in this task). The
+4.2.1 path stays the default and must stay byte-identical. Stage 2 adds the
+version switches; stage 3 brings up one other iPod2,1 firmware in QEMU and
+records the blockers at the end of this document.
+
+Legend: **[V]** = verified in this task (a fetched API response, a file in
+this repository, or an actual build/boot); **[G]** = reasoned guess, needs a
+firmware and a test before it can be relied on. Nothing in this document is
+claimed as tested on real 3DS hardware for other iOS versions.
+
+## 1. Which firmwares exist for the iPod touch 2G (iPod2,1 / N72AP / S5L8720)
+
+**[V]** All entries below share the platform `s5l8720x`, board `n72ap`, CPU
+CPID 0x8720 (ARMv6). The list combines
+<https://api.ipsw.me/v4/device/iPod2,1> (7 builds: 2.1.1, 2.2, 2.2.1, 4.0,
+4.0.2, 4.1, 4.2.1), <https://ipsw.io/iPod2,1> (also 4.2 / 8C134),
+<https://ipswbeta.dev/ios/3.x/iPod2,1> (five 3.x builds) and the Apple key API
+(<https://api.ipsw.me/v4/keys/ipsw/iPod2,1/7E18>, which confirms 3.1.3 keys are
+public).
+
+| iOS | Build | IPSW / keys | Relevant to us |
+|---|---|---|---|
+| 2.1.1 | 5F138 | Apple URL still listed by ipsw.me | oldest iPod2,1 release |
+| 2.2 | 5G77a | Apple URL still listed | |
+| 2.2.1 | 5H11a | Apple URL still listed | last 2.x; **[G]** no dyld shared cache yet |
+| 3.0 | 7A341 | list verified; keys API 404 today | **[G]** first with dyld shared cache |
+| 3.1 | 7C144 | list verified; keys API 404 today | **[G]** |
+| 3.1.1 | 7C145 | list verified; keys API 404 today | **[G]** |
+| 3.1.2 | 7D11 | list verified; keys API 404 today | **[G]** |
+| 3.1.3 | 7E18 | list + keys verified | preferred second version (stage 3) |
+| 4.0 | 8A293 | Apple URL listed | **[G]** Darwin 10 branch begins here |
+| 4.0.1 | — | not in the lists above for this device | probably not released for iPod2,1 **[G]** |
+| 4.0.2 | 8A400 | Apple URL listed | |
+| 4.1 | 8B117 | Apple URL + keys verified | fallback second version (stage 3) |
+| 4.2 | 8C134 | ipsw.io list | short-lived release |
+| **4.2.1** | **8C148** | Apple URL + keys verified; IPSW sha1 pinned in `scripts/fwprep.py` | **current, default** |
+
+**[V]** Apple no longer serves a 3.1.3 iPod2,1 IPSW through the public
+ipsw.me/IPSW.io links (the 3.1.3 page lists iPhone2,1/1,1/3,1 but not
+iPod2,1), although its keys are published and third-party archives claim a
+copy. The project has no IPSW downloader: `make fwprep IPSW=…` consumes a
+user-supplied file and `scripts/fwprep.py` fetches only the *keys* from
+api.ipsw.me. Stage 3 therefore tries 3.1.3 from an archived copy and falls
+back to 4.1 (Apple URL still live) if no verifiable copy is obtainable.
+
+iOS 1.x does **not** exist for iPod2,1. **[V]** It requires the first-generation
+iPod touch / iPhone (`iPod1,1` / `iPhone1,1`, S5L8900, N45AP). The reference
+project <https://github.com/roastme/ios3ds> boots iPhone OS 1.1 (3A101a) there.
+No 1.x work is implemented here.
+
+## 2. What differs for us per version
+
+Everything in this section is about the *same* general approach: Apple's
+prelinked kernelcache, patched at build time, with our ARM11 shim and the ARM9
+monitor. The common boot contract (boot_args in FCRAM, device tree, flat
+kernel image, r0 = physical boot_args, MMU off) is **[V]** documented in
+`docs/architecture.md` / `docs/m1-design.md` and is shared by all these
+kernelcaches **[G]** (prior art: `qemu-ios` boots 8C148 without iBoot; we have
+not tested an older cache yet).
+
+### 2.1 Kernelcache layout and entry point
+
+- **[V]** `scripts/fwprep.py` decrypts the img3 `kernelcache.release.*`, inflates
+  the complzss payload and writes a Mach-O; `scripts/mkboot.py` flattens its
+  `__TEXT`/`__DATA`/… segments at `vmaddr - virtBase + physBase`, uses
+  `mach_header.entry` as the jump address and computes `kernel_pa`,
+  `devtree_pa`, `bootargs_pa` from the resulting length. Nothing in that path
+  assumes 8.148 except the *patch addresses* and the `ba_version=5` line.
+- **[V]** 8C148: `__TEXT` at 0x80001000, entry 0x80067050, 8,273,920-byte
+  Mach-O, `kernel.bin` ends below the fixed shim slot at 0x20840000
+  (`build/staging/manifest.json`, generated boot.cfg).
+- **[G]** 2.1.1–3.1.3: smaller kernelcaches (roughly 5–7 MB) and different
+  `entry`; the flat image should still fit below the shim. Locations of the
+  five CPU instructions from `docs/kernel-strategy.md` move with the build;
+  they are not fixed between iOS releases.
+- **[G]** 4.0–4.2.1: xnu-1504 family, so the *code shapes* (S5L8720 pexpert,
+  AppleM2CLCD, md0, VIC/timer hooks) are close to 8C148; function addresses
+  move with every build. Verify by byte-pattern search with original-byte
+  checks, not by assuming an address.
+
+### 2.2 Kernel patches (`kernel/patches*.json`)
+
+**[V]** All 28 current recipes use a fixed virtual address (`va`) plus a strict
+original-byte check. `kernel/patcher.py` stops on any mismatch, so simply
+running them on another kernelcache cannot silently corrupt it — it fails.
+Groups and how they are located:
+
+| Group | File | What it patches | Locating strategy for another build |
+|---|---|---|---|
+| CPU (PPMR ×2, IFAR ×2, ACTLR) | `patches.json` | 4-byte ARM instructions in `__text` | short pattern; needs a surrounding-context check or a symbol-derived anchor **[G]** |
+| UART console (8 patches) | `patches.json` | S5L8720 UART driver functions | find the driver by its string/constant references, then match the instruction sequence **[G]** |
+| Timer hooks (3), IRQ entry, md0 strategy | `patches.json` | `cpu_data` hooks, vector path, `mdevstrategy` | pattern = 8 original bytes; fairly distinctive **[G]** |
+| RTC waits, CLCD sync/backlight | `patches.json` | Thumb/ARM immediates and branches | pattern must include neighbouring instructions **[G]** |
+| Audio, boot, MCU, sandbox (opt-in) | `patches-*.json` | subsystem-specific | same approach; check the target kext is present in the cache **[G]** |
+
+**[G]** Some kexts may not exist in older kernels (e.g. AppleM2CLCD in 2.x,
+sandbox in 2.x/3.x). A version must therefore name the patch files it uses,
+and individual patches must be skippable when their target is absent, with a
+loud log line instead of a silent omission. The new patch locator should
+support `va` (old behaviour, exact position) *and* a bounded byte-pattern
+search with an original-byte check plus uniqueness requirement; both are
+recorded in the applied-patch report.
+
+### 2.3 Device tree
+
+- **[V]** `kernel/dtgen.py` starts from the n72ap template extracted from the
+  *same* IPSW, fills iBoot's slots, deletes S5L8720 nodes, maps fake register
+  pages and sets CPU frequencies. It requires particular nodes/properties and
+  a fixed number of `MemoryMapReserved-*` slots.
+- **[G]** The n72ap template changed between releases (nodes added/removed by
+  newer iOS). 4.0–4.2.1 should be close. 2.x/3.x may lack properties this
+  generator insists on (`pram`, `vram`, `clcd`, audio nodes) or have different
+  sizes; `_set_same_size()` deliberately refuses to change property sizes, so
+  the failure will be explicit. The generator needs per-version node overrides
+  and a fallback for missing-but-optional nodes before those versions can boot.
+
+### 2.4 launchd / SpringBoard
+
+- **[V]** 4.2.1 userland work is in `rootfs/recipe.json`: ~28 daemons disabled,
+  liblockdown and AppleKeyStore stubbed by byte patches in the dyld cache,
+  `DYLD_INSERT_LIBRARIES` for configd/securityd/SpringBoard, camera plists,
+  trust store, Cydia/TLSFix, etc.
+- **[G]** 2.x/3.x: no App Store in 2.x, no Game Center/Camera/Gyro before the
+  relevant releases, no `MobileKeyBag` in 2.x, different launchd plist names
+  and activation paths, no Substrate-compatible Cydia packages for those
+  versions. Our `ios3ds-applog`, `ios3ds-a80211`, `ios3ds-input`, `ios3ds-mcud`
+  interposers should be built per-version against that rootfs; the 4.2.1 stub
+  SDK in `scripts/ios-sdk-symbols.json` is not proof that an API existed in
+  iOS 3.x. Expect a reduced feature set first (no Cydia/TLSFix, fewer hooks).
+- **[G]** 4.0/4.1/4.2: closest to current; launchd, SpringBoard and the
+  dyld-cache layout largely match 8C148, but *all* file-patch offsets in
+  `rootfs/recipe.json` are build-specific and must be relocated by original
+  bytes, and the hardcoded strings "4.2.1"/"8C148" in the liblockdown table
+  must become version variables.
+
+### 2.5 dyld shared cache
+
+- **[V]** 8C148 has `/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6`;
+  `mkrootfs.py` patches it at fixed offsets and creates
+  `enable-dylibs-to-override-cache` so our `MBXGLEngine` can replace the cached
+  one. Cache *absence* is already handled in one place: 3DS-specific binaries
+  are installed as separate files, so only the override/patch entries depend
+  on the cache.
+- **[G]** The shared cache arrived with iPhone OS 3.x (2.x ships individual
+  framework dylibs). On such a rootfs, skip all dyld-cache patches and instead
+  patch/replace individual `liblockdownd.dylib`, `OpenGLES.framework`, etc.,
+  or accept that activation/display workarounds need another mechanism. The
+  `file_patches` step needs pattern-based location for 3.x/4.x too.
+
+### 2.6 Our userland tools' SDK/ABI assumptions
+
+**[V]** The tools are ARMv6 Mach-O built with the local iOS stub SDK
+(`scripts/build-ios-toolchain.sh`, `scripts/ios-cc`, `scripts/ios-sdk-symbols.json`)
+and use private APIs (IOSurface, IOKit, CoreMotion, Celestial, Substrate).
+They are linked against 4.2.1's exported symbol set, not against each target
+OS. **[G]** Within Darwin 10 (4.x) most of that ABI is stable, so the same
+binaries should load, but some private selectors/classes moved; on Darwin 9
+(3.x) and 2.x many are absent. Plan: a version-tagged subset of tools per
+release, built with a matching stub-symbol list; missing-symbol checks at
+install time rather than runtime crashes.
+
+### 2.7 Rootfs recipe
+
+**[V]** `mkrootfs.build()` already accepts `recipe_path`; a version can provide
+a full or merged recipe. The default rootfs is grown to 1 GiB, `/etc/fstab`
+points at `/dev/md0`, and Cydia/TLSFix/trust-store additions are optional.
+**[G]** Older rootfs images are smaller (2.x: ~100–200 MB), so growth and the
+RAMDisk size in the device tree must be computed from the actual image (the
+code already does this). A version recipe should be a small overlay on the
+base recipe: which daemons exist, which dyld/file patches to apply, which
+binaries to install, which plist keys to set. It must never rewrite the 4.2.1
+recipe.
+
+## 3. Version plumbing design (stage 2)
+
+1. New `scripts/versions.py`: table of `version -> {build, ipsw, ipsw_sha1,
+   patch_files, disabled_patches, recipe, boot_cfg overrides, notes}`.
+   Default entry is 4.2.1 and contains **no overrides**: existing code paths
+   and file names stay exactly as they are.
+2. `Makefile`: `IOS ?= 4.2.1`; non-default versions stage firmware under
+   `build/fw-$(IOS)/staging/` and generate their recipe/patch list there;
+   `--ios` is passed to `mksd.py`/`fwprep.py`. Default 4.2.1 keeps
+   `build/staging` and the same command lines.
+3. `kernel/patcher.py`: accept an optional list of recipe files and a bounded
+   pattern locator; a recipe with `va` behaves exactly as today. Pattern
+   patches require a unique hit and retain the original-byte check.
+4. `scripts/mkrootfs.py`: support `offset` **or** `search` in `file_patches`
+   (unique hit, original bytes must match); version recipes are generated by
+   merging overlays into the base recipe under `build/fw-VERSION/`.
+5. `scripts/mksd.py` / `scripts/mkboot.py`: pass the version through; the
+   boot-args epoch (`ba_version=5` today) becomes a version setting. 4.2.1's
+   generated `boot.cfg`, `kernel.bin`, `devtree.bin`, `fakeio.bin`, `shim.bin`
+   and `rootfs.hfs` must hash the same before and after (verified by comparing
+   outputs).
+6. `scripts/install.py`: accept `--ios VERSION` (default 4.2.1), select the
+   matching recipe and refuse unknown versions; the release's prebuilt
+   shim/payload stay version-independent as long as the shim ABI is unchanged.
+
+## 4. iOS 1.x: trap-and-emulate vs. our patched-kernel approach
+
+### 4.1 What the reference project does **[V]**
+
+`roastme/ios3ds` (GPL-2.0-or-later, <https://github.com/roastme/ios3ds>;
+`COPYING`, `README.md`, `notes/hw-inventory.md`, `notes/hd2-xnu-review.md`,
+`shim/dabt.c`, `shim/start.S` read via raw.githubusercontent.com) boots Apple's
+unmodified iPhone OS 1.1 (3A101a) kernelcache on a **New 3DS**:
+
+- Its loader hands the stock kernel a boot_args record; a small shim replaces
+  the data-abort vector. Every S5L8900 MMIO access from XNU faults; the shim
+  decodes the faulting ARM load/store (including shifted offsets and
+  LDRH/STRH/LDRSB/LDRSH), walks TTBR0 to recover the physical address, models
+  timer (+0x80/+0x84 timebase, +0xA4/+0xA8 decrementer), UART TX, and shadows
+  the rest, then resumes after the instruction.
+- It maps the MPCore private timer into the kernel's L1 table as a fast
+  timebase, uses the same "log to SD" idea, and documents hot paths: the idle
+  hook touches clock/power registers ~10 times per idle cycle (candidate:
+  patch `_processorIdle` to `bx lr`), the timebase is read 3× per
+  `mach_absolute_time`, and cache set/way loops assume a 16 KB D-cache on the
+  ARM1176 but the MPCore has 32 KB.
+- Its XNU kernel maps devices at 0xE0000000+ and uses a linear map
+  `VA = PA + 0xA0000000`, and its virtual kernel base is 0xC0000000 — our
+  4.2.1 layout uses `virtBase=0x80000000`. That alone makes the two loaders
+  different.
+- Status by its own README: "created almost entirely by AI and was not tested
+  extensively"; it uses qemu-ios and 3Beans harnesses, not our 3DS FIRM.
+
+Licence: GPL-2.0-*or-later*, so ideas/source can be reused in this GPL-3.0-
+or-later project (GPL-3 is a later version), with attribution. **This stage
+copies no code from it**; if a later stage ports an algorithm (the abort
+decoder, MMIO inventory, register maps), add a credit to `README.md` §Credits
+and to the relevant file header, and keep its notices intact.
+
+### 4.2 Comparison
+
+| | ios3ds today (4.2.1, S5L8720) | roastme (1.1, S5L8900) | What 1.x would need here |
+|---|---|---|---|
+| Kernel | Apple's cache, ~28 binary patches | Apple's cache, **unmodified** | either route can work; ours needs a new patch set for the 1.1 cache, theirs needs a full abort decoder |
+| MMIO | generated DT points drivers at fake pages in AXI WRAM; shim implements only the pieces we need (timer, VIC, CLCD, audio…) | **all** S5L8900 MMIO traps; shim decodes/resumes each access | our DT is n72ap-shaped; 1.1's template is n45ap and the device set is different (ADM/FTL NAND, AppleH1CLCD, Zephyr touch) |
+| CPU | MPCore patches (PPMR, IFAR, ACTLR) | same core family, plus cache-geometry patch and idle-hook patch | New 3DS ARM11 is ARMv6K (no caches modelled in our QEMU); on Old 3DS the older kernel's cache loops must be checked |
+| Boot layout | virtBase 0x80000000, boot_args version 5, kernel at 0x20001000 | virtBase 0xC0000000, linear map +0xA0000000, own loader | new ARM11 entry path, new memory map and DT generator |
+| Rootfs | HFS+ served over md0 from ARM9; 1 GB grown image | NAND/FTL image in qemu-ios/3Beans | reuse ARM9 block server if the 1.1 kernel can use a RAMDisk/md0; otherwise implement FTL-style NAND on the ARM9 |
+| Userland | 4.2.1 binaries, dyld cache patches | 1.1 SpringBoard, no dyld cache | all our tools must be rebuilt/gated for 1.1; no Cydia/TLSFix |
+
+### 4.3 Realistic plan and effort (all numbers are **[G]**)
+
+- **Separate backend, shared ARM9 monitor (recommended).** Keep our ARM9
+  payload, SD/log/mailbox protocol, FIRM packaging and QEMU machine; add an
+  alternative ARM11 path with the 1.1 loader, trap decoder and S5L8900 device
+  models. The 3DS GPU path, Wi-Fi, cameras, MCU and iOS userland hooks are all
+  out of scope for a first "home screen or panic log" milestone. Rough order:
+  1. port the loader's boot_args/DT hand-off and get XNU's banner (2–4 days);
+  2. trap decoder + timer/VIC/UART models with a host test, then early boot in
+     our QEMU (5–10 days);
+  3. NAND/rootfs delivery instead of qemu-ios's NAND model (5–10 days);
+  4. CLCD + touch + SpringBoard bring-up (10–20 days);
+  5. 3DS hardware validation and stability (5–10 days).
+  **Total: ~1–2 person-months to a first 1.1 home screen**, more if the 1.1
+  kernel needs the NAND/FTL path rather than our md0 block server.
+- **Extend the existing shared shim instead.** Tempting because both projects
+  use the same ARM9/ARM11 split, but the shim is linked at a fixed 4.2.1 VA,
+  patched into 8C148 instructions at fixed addresses, assumes S5L8720 fake
+  pages and 4.2.1 `cpu_data` hook offsets, and expects boot_args version 5.
+  Supporting 1.1 would mean conditional DT generation, two patch sets, two
+  shim layouts and two kernel entry paths in one binary. **Estimated 1.5–3×
+  the separate-backend effort**, with much higher regression risk to 4.2.1.
+  Only worth it if both backends end up sharing most device models.
+- **Not recommended:** generic trap-and-emulate for *all* versions. The
+  per-access cost is high (roastme's MMIO inventory shows tens of millions of
+  timer reads per boot), and our 4.2.1 path already runs natively with far
+  fewer patches. Keep trap-and-emulate as the 1.x backend's core idea, not as
+  a replacement for the current DT + fake-page design.
+- QEMU work: our `nintendo3ds` machine models the 3DS hardware, not the
+  S5L8900; the trap decoder can be tested with a host harness (as the reference
+  project does with `tools/hosttest/dabt_test.c`), but a 1.x guest needs an
+  S5L8900-aware loader/boot path in QEMU before any visual result.
+
+## 5. Blocker log for stage 3
+
+_Filled in by the stage-3 bring-up; main `docs/re-log.md` continues at §85._
