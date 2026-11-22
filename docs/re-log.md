@@ -1669,8 +1669,10 @@ on this PC are not disturbed.
 
 Fresh-image soak: `python3 emu/soak.py --cycles 5 --icount 2` printed
 **Result: PASS** (boot to SpringBoard + input 370 s, 5 cycles, no kernel
-panic, ARM11 stall, md0 I/O error, process crash or watchdog/hang). The
-soak harness now retries black screendumps and compares home screens after
+panic, ARM11 stall, md0 I/O error, process crash or watchdog/hang). A
+second fresh-image soak with `wifi.cfg` and dummy firmware (Wi-Fi link up
+during the run) and `--settle 20` also printed **Result: PASS** (section 85).
+The soak harness now retries black screendumps and compares home screens after
 backlight normalisation: on a loaded host a raw comparison marked a lit
 home screen as "not home" (sections 85-87). Repeating that soak with this
 branch's own QEMU binary produced only the same home-screen heuristic
