@@ -89,6 +89,22 @@ class TestPatcher(unittest.TestCase):
         self.assertEqual(patcher.locate(img, base, p3), base + 3)
 
 
+class TestReleasePackaging(unittest.TestCase):
+    def test_release_ships_version_files(self):
+        """install.py imports versions.py and --ios loads these recipes; the
+        release zip must carry them or missing_imports() refuses to package."""
+        import glob
+        import mkrelease  # noqa: E402
+        srcs = set()
+        for pat in mkrelease.SOURCES:
+            srcs.update(os.path.relpath(h, ROOT) for h in
+                        glob.glob(os.path.join(ROOT, pat)) if os.path.isfile(h))
+        mkrelease.missing_imports(srcs)             # raises SystemExit if a module is missing
+        for rel in ("scripts/versions.py", "kernel/patchsets/4.1.json",
+                    "rootfs/overlay-4.1.json"):
+            self.assertIn(rel, srcs)
+
+
 class TestFilePatches(unittest.TestCase):
     def test_offset_and_search(self):
         data = b"aaaORIGINALbbb"

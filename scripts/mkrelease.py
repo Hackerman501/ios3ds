@@ -50,8 +50,10 @@ ROOTFS_ADD = "rootfs-add"       # build/rootfs-add/** -> prebuilt/rootfs-add/**,
 # repository files the installer imports or reads (paths kept as in the repo)
 SOURCES = [
     "scripts/fwprep.py", "scripts/mkboot.py", "scripts/mkrootfs.py", "scripts/mksd.py",
-    "scripts/install.py", "scripts/fwlib/*.py",
+    "scripts/install.py", "scripts/versions.py", "scripts/fwlib/*.py",
     "kernel/dtgen.py", "kernel/patcher.py", "kernel/patches*.json",
+    # per-version patch sets and rootfs overlays (experimental IOS=4.1 build)
+    "kernel/patchsets/*.json", "rootfs/overlay-*.json",
     "tools/ios3ds-audio/dt_audio.py", "tools/ios3ds-mcu/dt_mcu.py",
     "tools/ios3ds-wifi/ios3ds-wifi-fw.gm9", "tools/ios3ds-wifi/nwmfw.py",
     "scripts/cydia.py", "scripts/certs.py", "scripts/music.py", "scripts/carryover.py", "rootfs/recipe.json", "rootfs/cydia.json",
