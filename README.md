@@ -276,6 +276,7 @@ Optional:
 ## Credits
 
 - [samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (Light Touch): research on booting 8C148, invaluable.
+- [roastme/ios3ds](https://github.com/roastme/ios3ds): iPhone OS 1.1 / S5L8900 trap-and-emulate reference (GPL-2.0-or-later); its design informed the 1.x feasibility study in [docs/multi-version.md](docs/multi-version.md) §4. No code was copied.
 - [devos50/qemu-ios](https://github.com/devos50/qemu-ios): iPod touch emulation and S5L8720 notes.
 - [darwin-on-arm](https://github.com/darwin-on-arm/xnu) (winocm): boot_args and pexpert reference.
 - [libn3ds](https://github.com/profi200/libn3ds), [Luma3DS](https://github.com/LumaTeam/Luma3DS), [linux-3ds](https://github.com/linux-3ds), [dsiwifi](https://github.com/shinyquagsire23/dsiwifi), GBATEK and 3dbrew: 3DS hardware references.
