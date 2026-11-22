@@ -13,7 +13,7 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 |---|---|---|---|---|
 | GPU / PICA200 service and screen copy | `kernel/shim/pica.c`, `kernel/shim/gpu_glue.c`, `tools/ios3ds-pica/*`, `boot/arm9/gpumirror.c`, `boot/arm9/display.c` | host (`test_pica`, `test_mirror`); QEMU (`gltest`, soak, `--icount 2`); hardware runs 12–16, 21, 25, 29, New 2DS XL run 1 | The screen copy is confirmed on hardware (run 14: GPU copies at 22–26 fps, spot checks 0 of 512 sampled LCD pixels differ) and the mirror self-test matched all 518,400 bytes on the New 2DS XL; CA on the GPU, scatter surfaces and the GPU present check are QEMU-verified; the `PRESENT`/`SCATTER` shim paths have not run on a console since the scatter change (re-log 79). Any other refused surface still falls back to CPU read-back for the whole process (by design). | Stable. QEMU soak PASS; the hardware paths use the same code with a CPU read-back fallback. |
 | Core Animation back end | `tools/ios3ds-gl/{ca,pica_be,iface}.c` | host (`make -C tools/ios3ds-gl host-test`); QEMU (`emu/soak.py`); hardware runs 15/16/21/25/29 | Per-frame cost on hardware is higher than in QEMU; the CA scene/self checks are the only on-device validation. Engine state lives per process; `pica_forget`/eviction is host-tested. | Stable; CPU rasterizer and CA software fallback remain available. |
-| Touch, buttons, circle pad, C-stick | `boot/arm9/tsc.c`, `boot/arm9/exthid.c`, `boot/common/input_proto.h`, `tools/ios3ds-input/shim/input.c`, `tools/ios3ds-input/daemon/*`, `kernel/shim/blk.c` (registration) | host (`test_cpad`, `test_n3ds`); QEMU (soak, session drags); hardware runs 8–14 (touch, HOME, volume), New 3DS features untested | A cached PurpleSystemEventPort send right was leaked on every app switch and could stay a dead name across an app relaunch (fixed here). C-stick axes/range/ZR bit and the circle-pad raw range are still hardware-unverified. | Stable in QEMU; the leak fix removes the only unbounded resource growth I found in this daemon. |
+| Touch, buttons, circle pad, C-stick | `boot/arm9/tsc.c`, `boot/arm9/exthid.c`, `boot/common/input_proto.h`, `tools/ios3ds-input/shim/input.c`, `tools/ios3ds-input/daemon/*`, `kernel/shim/blk.c` (registration) | host (`test_cpad`, `test_n3ds`); QEMU (soak, session drags); hardware runs 8–14 (touch, HOME, volume), New 3DS features untested | A cached PurpleSystemEventPort send right was leaked on every app switch and could stay a dead name across an app relaunch (fixed here). The frontmost id also lagged Home, so a touch right after Home went to the closing app: the daemon now uses `SBSCopyFrontmostApplicationDisplayIdentifier` and a 1.5 s SpringBoard grace after Menu (fixed here; QEMU-only panic on app-targeted drags is documented in re-log 85). C-stick axes/range/ZR bit and the circle-pad raw range are still hardware-unverified. | Stable in QEMU; the leak and stale-target fixes remove the two unbounded/lost-touch modes in this daemon. |
 | Accelerometer | `boot/arm9/mcu.c` (MCU regs), `tools/ios3ds-mcu/shim/mcu.c` (LIS302DL I2C), `tools/ios3ds-mcu/daemon/mcud.c` (old route) | host (`test_mcu`); QEMU (soak + `mcu-orient`); hardware run 14 (orientation 0→6) and Old 3DS XL issue #7 fix | Axis map for all poses is only spot-checked on hardware; the old client-side `acc` route is superseded by the kernel driver. | Stable; the kernel driver is the shipping path and has a QEMU model. |
 | Gyroscope → CoreMotion | `boot/arm9/gyro.c`, `tools/ios3ds-mcu/dt_mcu.py`, `tools/ios3ds-mcu/shim/mcu.c`, `tools/ios3ds-mcu/gyrotest` | host (`test_gyro`); QEMU (`--icount 2`, diag gyrotest); hardware not tested | Axes, range, chip address variants and New 3DS behaviour are assumptions; the chip sleeps until CoreMotion asks. | QEMU-stable; hardware-unverified. A one-line `[gyro]`/`[gyrotest]` log from a console settles it. |
 | Audio out (speaker + headphones) | `boot/arm9/audio.c`, `kernel/shim/audio.c`, `tools/ios3ds-audio/*`, QEMU `ctr_csnd.c` | host (`tests/test_audio.py` + `tools/ios3ds-audio/tests`); QEMU (tone, soak, `headphones` QOM); hardware run 32 (speaker confirmed), runs 14/16 (streams) | Headphones: iOS switches route and the CODEC path was reworked (`hp_codec=1`), but sound in the headphones is still unconfirmed on hardware (docs/audio.md §4/§8). The 3DS volume slider is not read by the CODEC. | Speaker path stable and hardware-confirmed; headphone path QEMU-clean, hardware pending. |
@@ -27,7 +27,11 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 - `tools/ios3ds-input/daemon/input.c`: the cached frontmost-app Mach send
   right is now released when the app changes and re-resolved when it has
   become a dead name (an app relaunched under the same bundle id). The
-  frontmost identifier is also always NUL-terminated.
+  frontmost identifier comes from `SBSCopyFrontmostApplicationDisplayIdentifier`
+  (the non-Copy call can keep returning the app that just went away; NULL
+  means SpringBoard), is always NUL-terminated, and touches go to the system
+  port for 1.5 s after Menu so a tap right after Home cannot reach the
+  closing app.
 - `tools/ios3ds-mcu/daemon/mcud.c`: detects a dead SpringBoard HID client
   after a SpringBoard restart and reconnects; the `NoIdleSleepAssertion` and
   its two CFStrings are created once, not once per reconnect.
@@ -41,11 +45,14 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
   `[audio] headphones ...` lines, not a `[jack]` prefix that does not exist.
   The continuous drags run on SpringBoard; dragging inside the opened app is
   behind `--app-drag` because an app-targeted GSEvent move makes the QEMU
-  model panic (\"undefined kernel instruction\", r11 = the app's shared-cache
+  model panic ("undefined kernel instruction", r11 = the app's shared-cache
   address) while the same path works on hardware (re-log 78). A cycle longer
   than iOS' auto-lock is recovered with Home + slide-to-unlock.
 - `emu/soak.py`: the same real GPU-mirror strings, plus camera init/FIFO
   overrun and audio DMA/CODEC error checks, so a long soak fails on those.
+- **QEMU:** `make test` green; `emu/soak.py --cycles 5 --icount 2` on a fresh
+  image PASSES on the Old 3DS (boot 310 s, 0 panics/stalls/crashes/md0
+  errors) and on the New 3DS model (boot 260 s, same zero-error checks).
 - docs: this inventory, the stress harness in `emulator.md`, and the two
   daemon behaviours in `input-design.md` (§4.2) and `mcu.md` (§5).
 

@@ -1232,6 +1232,26 @@ repeating the table here.
   releases the previous right (`app_port_set`) and checks
   `mach_port_type(..., MACH_PORT_TYPE_DEAD_NAME)` before reuse, re-resolving
   and logging `[input] stale touch port ...` under `debug`.
+- **Input follow-up: the cached id was stale for the lookup, and home taps
+  need the system port.** Re-resolving a dead port was not enough:
+  `SBFrontmostApplicationDisplayIdentifier` can keep returning the app that
+  just went away, so the lookup used the stale bundle id again.
+  `SBSCopyFrontmostApplicationDisplayIdentifier` returns NULL when SpringBoard
+  is frontmost (and the app id otherwise) and is used when available, with the
+  old call as the fallback. With an empty id home-screen touches go through
+  `GSSendSystemEvent`, which does hit-test (apps opened and `touch target`
+  lines appeared only for app switches in the PASS runs). Touches also go to
+  SpringBoard for 1.5 s after a Home press (`home_grace_until`): SpringBoard's
+  frontmost state lags the close animation, and an app-targeted hand event in
+  that window is what triggers the QEMU panic below.
+- **QEMU-only panic on app-targeted drags.** A press/move/release delivered
+  to the frontmost app's `PurpleSystemEventPort` makes QEMU's ARM11 panic in
+  the kernel copy path: `undefined kernel instruction`, pc 0x80067e44,
+  r11 = 0x35ed5658 (the shared-cache address the app GSEvent points at), then
+  `Debugger message: Fatal Exception`. The same events work on hardware
+  (re-log 78). `emu/stress.py` keeps in-app drags behind `--app-drag` and
+  does the continuous drags on SpringBoard; both harnesses now match
+  `undefined kernel instruction`/`Fatal Exception` as a panic.
 - **MCU daemon: SpringBoard restart left brightness/rotation dead.**
   ios3ds-mcud connected to SpringBoard's HID event system once. If
   SpringBoard restarted, the per-client port at `client + 8` became a dead
@@ -1249,8 +1269,12 @@ repeating the table here.
   recoveries `Dismiss` (1), `Home + unlock` (2, the slow cycles crossed iOS's
   auto-lock) and `second Home` (1), last heartbeat
   `md0 4401 req 90135 KiB 0 err`.
-- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image):
-  <new3ds result>.
+- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image, image
+  with the final input daemon from this branch): **Result: PASS**, boot 260 s,
+  5 cycles, 0 panics / stalls / crashes / md0 errors, 0 GPU fallback or
+  timeouts, recoveries `Dismiss` (2), last heartbeat
+  `[hb] t=30s quiet 1s | abs 369350 dec 28702 timer 14626 irq 16370 vbl 1495 |
+  md0 4356 req 90027 KiB 0 err`.
 - **Only a console can settle:** the hardware checks are listed in
   [driver-status.md](driver-status.md) §"What only a console can settle",
   with the exact log lines/files to capture (headphone CODEC readbacks, mic
