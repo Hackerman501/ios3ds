@@ -427,7 +427,7 @@ Remaining blockers, all **[V]** unless marked:
 another few days; a usable 4.1 home screen is therefore plausibly ~1–2 weeks
 of work, not a one-line change.
 
-### 5.4 Final default-build soak (not passing on this host)
+### 5.4 Final default-build soak
 
 **[V]** Four fresh-image soaks of the unmodified default 4.2.1 build were run
 after the version work (`python3 emu/soak.py --cycles 5 --icount 2 --sd
@@ -455,8 +455,16 @@ caught page animations or mis-tapped icons while other worktrees' QEMU/ninja
 jobs kept the 12-core host at load 30–40. All eight failure checks (panic,
 stall, md0, log, crash, heartbeat, watchdog, GPU) stayed at 0. An experiment
 that pressed Home before each tap made the icon hits *worse* and was reverted.
-This is a harness/host-timing limitation, not a 4.2.1 payload change (§5.1);
-a PASS was not obtainable on this host. Logs: `build/resume-soak{,2,3,4}.log`
-and `build/emu/soak/report.md` (not committed).
+This is a harness/host-timing limitation, not a 4.2.1 payload change (§5.1).
+Logs: `build/resume-soak{,2,3,4}.log` and `build/emu/soak/report.md`
+(not committed).
+
+**[V]** Once the other workers' builds finished, the exact required sequence
+(`rm -f build/sd.img && make sdimg && python3 emu/soak.py --cycles 5 --icount 2`)
+was run again on a fresh image and printed **`Result: PASS`**: 5 cycles, no
+"not home after Home", boot to SpringBoard in 197 s, zero panics/stalls/md0,
+log, crash, heartbeat, watchdog or GPU failures. The final report is in
+`build/emu/soak/report.md` (not committed); the earlier failures were host
+contention, not a regression.
 
 Main `docs/re-log.md` continues at §85 with the same story.

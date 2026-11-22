@@ -1341,4 +1341,6 @@ records the concrete steps and blockers of stages 2–3.
   references and mid-page-animation screenshots, zero panics/stalls/md0/crash/
   hang events. `emu/soak.py` now re-acquires a lit reference after a dark boot;
   a pre-tap Home recenter was tried and reverted because it made icon hits
-  worse. No PASS was obtainable under this host load; see docs/multi-version.md §5.4.
+  worse. Once the host quietened down, the exact required fresh-image command
+  printed **Result: PASS** (5 cycles, boot 197 s, all eight failure checks at
+  0); the earlier FAILs were host contention, see docs/multi-version.md §5.4.
