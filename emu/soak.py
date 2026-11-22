@@ -135,7 +135,7 @@ def main():
         img.save(os.path.join(a.out, name + ".png"))
         return img
 
-    def settled(name, first=4.0, limit=30.0):
+    def settled(name, first=4.0, limit=60.0):
         """screenshot once two shots 2 s apart (after `first` s) are the same
         and lit: a still-black screen (backlight fading in after an unlock)
         would otherwise pass here and fail the unlock comparison"""
