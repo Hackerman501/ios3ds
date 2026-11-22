@@ -1589,9 +1589,20 @@ static void wmi_cmd(CtrWifiState *s, const uint8_t *b, uint32_t len)
         }
         if (usage == 0) {                           /* PAIRWISE_USAGE */
             s->sta_tk_set = true;
-            s->sta_tk_ok = s->wpa2 && s->hs == HS_DONE &&
-                           (s->wpa1 ? type == CRYPT_TKIP && klen == 32 && !memcmp(key, s->ptk + 32, 32) :
-                                      type == CRYPT_AES && klen == 16 && !memcmp(key, s->ptk + 32, 16));
+            bool tk_ok = false;
+            if (s->wpa1 && type == CRYPT_TKIP && klen == 32) {
+                /* dsiwifi's WMI_ADD_CIPHER_KEY order: the two 8-byte MIC
+                   halves of a TKIP key are swapped (the driver does the
+                   same for the group key below). */
+                uint8_t want[32];
+                memcpy(want, s->ptk + 32, 32);
+                memcpy(want + 16, s->ptk + 56, 8);
+                memcpy(want + 24, s->ptk + 48, 8);
+                tk_ok = !memcmp(key, want, 32);
+            } else if (!s->wpa1 && type == CRYPT_AES && klen == 16) {
+                tk_ok = !memcmp(key, s->ptk + 32, 16);
+            }
+            s->sta_tk_ok = s->wpa2 && s->hs == HS_DONE && tk_ok;
             WLOG(s, 1, "WMI_ADD_CIPHER_KEY pairwise, index %d, type %d, %d bytes: %s", idx, type, klen,
                  s->sta_tk_ok ? "equals the AP's TK" : "DOES NOT equal the AP's TK");
         } else if (usage == 1) {                    /* GROUP_USAGE */

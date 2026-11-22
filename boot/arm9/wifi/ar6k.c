@@ -950,7 +950,7 @@ static void on_wmi(const u8 *b, u32 len)
                     for (u32 start = 4; start <= 10 && !A.wpa.own_ie_len; start += 6)   /* assoc / reassoc */
                         for (u32 i = start; i + 2 <= ql; i += 2 + q[i + 1]) {
                             if (i + 2 + q[i + 1] > ql) break;
-                            if ((q[i] == (A.wpa1_ap ? 0xDD : 0x30)) && q[i + 1] + 2 <= sizeof(A.wpa.own_ie) &&
+                            if ((q[i] == (A.wpa1_ap ? 0xDD : 0x30)) && (u32)(q[i + 1] + 2) <= sizeof(A.wpa.own_ie) &&
                                 (!A.wpa1_ap || (q[i + 1] >= 10 &&
                                  !memcmp(q + i + 2, "\x00\x50\xF2\x01", 4)))) {
                                 A.wpa.own_ie_len = (u8)(q[i + 1] + 2);
@@ -1220,10 +1220,12 @@ static void target_lookup(void)
     A.found = 1;
     A.channel = best->channel_mhz;
     memcpy(A.bssid, best->bssid, 6);
+    int saw_rsn = 0;
     for (u32 i = 0; i + 2 <= best->ie_len && i + 2 + best->ie[i + 1] <= WLAN_IE_MAX;
          i += 2 + best->ie[i + 1]) {
         if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6) {
             rsn_info_t ri;
+            saw_rsn = 1;                        /* a PSK/SAE RSN IE wins over WPA v1 */
             A.rsn_mode = (u8)wpa2_rsn_parse(best->ie + i, best->ie_len - i, &ri);
             A.group_crypt = (ri.ok ? ri.group : best->ie[i + 7]) == 2 ? CRYPT_TKIP : CRYPT_AES;
             u32 l = 2 + best->ie[i + 1];
@@ -1241,8 +1243,10 @@ static void target_lookup(void)
             }
         }
     }
-    if (A.rsn_mode == RSN_MODE_WPA2 || A.rsn_mode == RSN_MODE_MIXED)
-        A.wpa1_ap = 0;                          /* a PSK RSN IE wins over WPA v1 */
+    /* Only an actual RSN IE overrides WPA v1. RSN_MODE_WPA2 is also the
+       default when there is no RSN IE at all, so testing the mode alone
+       cleared WPA v1 and tried WPA2-PSK/CCMP against a TKIP-only AP. */
+    if (saw_rsn) A.wpa1_ap = 0;
     if (A.wpa1_ap) A.group_crypt = CRYPT_TKIP;
 }
 
