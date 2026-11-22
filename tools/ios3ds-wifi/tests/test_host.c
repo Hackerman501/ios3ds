@@ -171,6 +171,31 @@ static void test_frames(void)
     CHECK(wifi_frame_from_wmi(rx, 10, back, sizeof(back), &et) == 0);
 }
 
+/* HTC credit reports from the RX trailer (ath6kl htc.h record 1) */
+static void test_htc_credits(void)
+{
+    u8 c[8] = { 1, 0, 2, 0, 0, 0, 0, 0 };
+    const u8 rep[] = { WMI_HTC_REC_CREDITS, 4, 1, 2, 2, 3 };
+    CHECK(wifi_htc_credits(rep, sizeof(rep), c) == 5);
+    CHECK(c[1] == 2 && c[2] == 5 && c[3] == 0);
+    /* unknown records are skipped; a second credit record is cumulative */
+    const u8 two[] = { 7, 2, 0xAA, 0xBB, WMI_HTC_REC_CREDITS, 2, 3, 1, 0, 0 };
+    CHECK(wifi_htc_credits(two, sizeof(two), c) == 1);
+    CHECK(c[3] == 1 && c[1] == 2);
+    /* a torn record credits nothing, including records before the tear */
+    u8 before[8];
+    memcpy(before, c, sizeof(c));
+    const u8 torn[] = { WMI_HTC_REC_CREDITS, 4, 1, 1, 2 };
+    CHECK(wifi_htc_credits(torn, sizeof(torn), c) == 0);
+    CHECK(memcmp(before, c, sizeof(c)) == 0);
+    /* saturation and out-of-range endpoints */
+    c[0] = 254;
+    const u8 sat[] = { WMI_HTC_REC_CREDITS, 4, 0, 3, 9, 2 };
+    CHECK(wifi_htc_credits(sat, sizeof(sat), c) == 3);   /* ep 9 is ignored */
+    CHECK(c[0] == 255 && c[1] == 2);                    /* ep 0 saturates */
+    CHECK(wifi_htc_credits(rep, 1, c) == 0);                    /* truncated header */
+}
+
 /* ---------------------------------------------------------------- wlan */
 static void test_wlan(void)
 {
@@ -509,6 +534,7 @@ int main(void)
     test_ring();
     test_wlan();
     test_frames();
+    test_htc_credits();
     test_cfg();
     test_crypto();
     test_handshake();

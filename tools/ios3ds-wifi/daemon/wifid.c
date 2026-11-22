@@ -205,16 +205,20 @@ static int has_ipv4(void)
     return found;
 }
 
-/* wifi.cfg "nettest=<url> [dns name]": run the self-test client once */
+/* wifi.cfg "nettest=<url> [dns name] [bulk]": run the self-test client once */
 static void start_nettest(const char *spec)
 {
-    char url[64], name[64];
-    name[0] = 0;
-    if (!spec[0] || sscanf(spec, "%63s %63s", url, name) < 1) return;
+    char url[64], name[64], extra[16];
+    name[0] = extra[0] = 0;
+    if (!spec[0] || sscanf(spec, "%63s %63s %15s", url, name, extra) < 1) return;
     int pid = fork();
     if (pid == 0) {
-        if (name[0]) execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, name, (char *)0);
-        else execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, (char *)0);
+        if (name[0] && extra[0])
+            execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, name, extra, (char *)0);
+        else if (name[0])
+            execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, name, (char *)0);
+        else
+            execl("/usr/libexec/ios3ds-nettest", "ios3ds-nettest", ifname, url, (char *)0);
         _exit(127);
     }
     say("[wifid] nettest started (pid %d): %s", pid, spec);

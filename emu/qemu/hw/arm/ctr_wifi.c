@@ -207,6 +207,9 @@ struct CtrWifiState {
     uint16_t ep_svc[8];             /* service id per endpoint, 0 = free */
     int next_ep, wmi_ep;
     uint8_t owed[8];                /* credits to return per endpoint */
+    uint8_t credits[8];             /* credits granted to the host per endpoint */
+    uint8_t credit_pool;            /* unassigned credits (rest go to the first data endpoint) */
+    uint32_t credit_used, credit_reports, credit_overflow, credit_waits;
     QEMUTimer *credit_timer;
 
     /* WMI / station */
@@ -386,6 +389,11 @@ static void htc_queue(CtrWifiState *s, int ep, const uint8_t *body, uint32_t len
         trailer[0] = HTC_REC_CREDITS;
         trailer[1] = 2 * n;
         tl = 2 + 2 * n;
+        s->credit_reports += n;
+        if (!(s->credit_reports % 64)) {
+            WLOG(s, 1, "HTC credits: consumed %u, returned %u, %u wait(s), %u overflow(s)",
+                 s->credit_used, s->credit_reports, s->credit_waits, s->credit_overflow);
+        }
     }
     uint32_t padded = ROUND_UP(6 + len + tl, io_block(s));
     uint8_t *m = g_malloc0(padded);
@@ -1537,7 +1545,23 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
         WLOG(s, 1, "HTC: message for unconnected endpoint %d dropped", ep);
         return;
     }
-    s->owed[ep] = MIN(s->owed[ep] + 1, 255);
+    /* ath6kl htc_mbox.c: every message consumes credits for the padded
+       length. A host that ignores the reports overruns the firmware mailbox
+       ("Mbox Full", dsiwifi): refuse the message and flag TX overflow. */
+    uint32_t need = (ROUND_UP(avail, io_block(s)) + HTC_CREDIT_SIZE - 1) / HTC_CREDIT_SIZE;
+    if (!need) {
+        need = 1;
+    }
+    if (s->credits[ep] < need) {
+        s->credit_overflow++;
+        s->err_int |= ERR_TX_OVERFLOW;
+        WLOG(s, 1, "HTC: Mbox Full on endpoint %d (%u credits needed, %u left): message dropped",
+             ep, need, s->credits[ep]);
+        return;
+    }
+    s->credits[ep] -= need;
+    s->credit_used += need;
+    s->owed[ep] = MIN(s->owed[ep] + need, 255);
     const uint8_t *p = m + 6;
     if (ep == 0) {
         uint16_t id = len >= 2 ? rd16le(p) : 0;
@@ -1556,6 +1580,12 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
                 r[4] = 0;
                 r[5] = s->next_ep;
                 s->ep_svc[s->next_ep] = svc;
+                /* one credit for one maximum-sized message, like ath6kl's
+                   htc_setup_tx_allocs; the remainder goes to the BE data ep */
+                if (s->credit_pool) {
+                    s->credits[s->next_ep] = 1;
+                    s->credit_pool--;
+                }
                 if (svc == 0x0100) {
                     s->wmi_ep = s->next_ep;
                 }
@@ -1571,6 +1601,16 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
                 return;
             }
             s->htc_setup_done = true;
+            /* the host and the target must agree: the leftover credits all go
+               to the first data endpoint (ath6kl's BE endpoint) */
+            for (int e = 1; e < 8 && s->credit_pool; e++) {
+                if (s->ep_svc[e] && e != s->wmi_ep) {
+                    s->credits[e] += s->credit_pool;
+                    s->credit_pool = 0;
+                    WLOG(s, 1, "HTC: endpoint %d has %u credits (%u bytes each)",
+                         e, s->credits[e], HTC_CREDIT_SIZE);
+                }
+            }
             uint8_t rd[7], reg[4] = { 0 };
             memcpy(rd, s->sta_mac, 6);
             rd[6] = 0x02;                           /* phy capability: 11g */
@@ -1590,6 +1630,7 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
         sta_tx(s, p, len);
     }
     if (m[1] & HTC_FLG_NEED_CREDIT) {
+        s->credit_waits++;
         timer_mod(s->credit_timer, now_ns() + SCALE_MS);
     }
 }
@@ -2163,6 +2204,10 @@ static void target_reset(CtrWifiState *s, bool cold)
     s->htc_setup_done = false;
     memset(s->ep_svc, 0, sizeof(s->ep_svc));
     memset(s->owed, 0, sizeof(s->owed));
+    memset(s->credits, 0, sizeof(s->credits));
+    s->credits[0] = 1;                      /* endpoint 0 always gets one */
+    s->credit_pool = HTC_CREDITS - 1;       /* the rest are handed out on CONNECT_SERVICE */
+    s->credit_used = s->credit_reports = s->credit_overflow = s->credit_waits = 0;
     s->wmi_ep = -1;
     s->bss_filter = 0;
     s->probed_len = 0;
@@ -2325,6 +2370,15 @@ static const Property ctr_wifi_props[] = {
     DEFINE_PROP_BOOL("fifo32", CtrWifiState, fifo32, true),
     DEFINE_PROP_BOOL("decoys", CtrWifiState, decoys, true),
     DEFINE_PROP_UINT32("rekey", CtrWifiState, rekey_s, 0),
+    /* HTC credits: read with HMP 'qom-get /machine/...' (diagnostics, docs/wifi.md 7) */
+    DEFINE_PROP_UINT32("htc-credits-used", CtrWifiState, credit_used, 0),
+    DEFINE_PROP_UINT32("htc-credit-reports", CtrWifiState, credit_reports, 0),
+    DEFINE_PROP_UINT32("htc-credit-waits", CtrWifiState, credit_waits, 0),
+    DEFINE_PROP_UINT32("htc-overflows", CtrWifiState, credit_overflow, 0),
+    DEFINE_PROP_UINT32("wifi-tx-frames", CtrWifiState, tx_frames, 0),
+    DEFINE_PROP_UINT32("wifi-rx-frames", CtrWifiState, rx_frames, 0),
+    DEFINE_PROP_UINT32("wifi-tx-drop", CtrWifiState, tx_drop, 0),
+    DEFINE_PROP_UINT32("wifi-rx-drop", CtrWifiState, rx_drop, 0),
     DEFINE_PROP_UINT32("debug", CtrWifiState, debug, 1),
 };
 

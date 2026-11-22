@@ -80,6 +80,8 @@ enum { BMI_DONE = 1, BMI_WRITE_MEMORY = 3, BMI_EXECUTE = 4, BMI_READ_SOC_REG = 6
    practice 1 = WMI control, 2..5 = data BE/BK/VI/VO */
 enum { PKT_HTC = 0 };
 #define HTC_FLG_RX_TRAILER 0x02
+#define HTC_FLG_NEED_CREDIT 0x01    /* ask the target to return credits */
+#define HTC_REC_CREDITS 1           /* trailer record id (ath6kl htc.h) */
 enum { HTC_READY = 1, HTC_CONN_SVC = 2, HTC_SETUP_COMPLETE = 4 };
 enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
        WMI_START_SCAN = 0x0007, WMI_SET_BSS_FILTER = 0x0009, WMI_SET_PROBED_SSID = 0x000A,
@@ -118,6 +120,14 @@ static struct {
     u8 rxframe[NET_FRAME_MAX];      /* one converted frame waiting for rx() */
     u32 rxlen;
     u8 ep_wmi, ep_data;             /* endpoints the firmware assigned */
+    /* HTC credits (ath6kl htc_mbox.c): the target owns a pool of credits of
+       cred_sz bytes; a message consumes ceil(padded_len / cred_sz) of them and
+       the target returns them in the RX trailer of the messages it sends. */
+    u8  ep_credits[8], ep_cred_per_msg[8];
+    u16 ep_max_msg[8];
+    u32 cred_sz, cred_pool;
+    u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
+    u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
     u32 reconnect_at;               /* now_ms() for the next WMI_CONNECT, 0 = none */
     u8 scan_done, auth_fails;
@@ -328,10 +338,131 @@ static int bmi_chunk(u32 cmd, u32 addr, const u8 *p, u32 n)
 }
 
 /* ---- mailbox packets (HTC framing) ------------------------------------------ */
-static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len)
+
+/* ---- HTC credits -----------------------------------------------------------
+   The target tells us in HTC_READY how many credits of how many bytes it has
+   (ath6kl htc_ready_msg: cred_cnt, cred_sz). A message consumes
+   ceil(padded_len / cred_sz) credits, at least one; the target returns credits
+   in the trailer of the messages it sends us (htc_credit_report: eid, credits).
+   Writing without credits overruns the firmware's mailbox ("Mbox Full" on the
+   AR6014), so the data path queues its frame and the control path waits for a
+   report instead. The initial distribution follows ath6kl: every endpoint gets
+   enough for one maximum-sized message, the rest goes to the data endpoint. */
+static int mbox_recv(u32 *type);
+static void pump_msg(u32 type, int n);
+static void defer_msg(u32 type, const u8 *body, int n);
+
+static u32 credit_need(u32 padded)
+{
+    return padded > A.cred_sz ? (padded + A.cred_sz - 1) / A.cred_sz : 1;
+}
+
+static void credit_assign(u32 ep, u32 max_msg)
+{
+    if (ep > 7) return;
+    u32 per = max_msg > A.cred_sz ? (max_msg + A.cred_sz - 1) / A.cred_sz : 1;
+    if (per < 1) per = 1;
+    A.ep_cred_per_msg[ep] = (u8)per;
+    A.ep_max_msg[ep] = (u16)max_msg;
+    u32 take = per < A.cred_pool ? per : A.cred_pool;
+    A.ep_credits[ep] += take;
+    A.cred_pool -= take;
+    DIAG("htc: endpoint %u: %u credit(s) of %u bytes (max message %u), %u left in the pool",
+         ep, take, A.cred_sz, max_msg, A.cred_pool);
+}
+
+static void credit_init(u32 n, u32 sz)
+{
+    memset(A.ep_credits, 0, sizeof(A.ep_credits));
+    memset(A.ep_cred_per_msg, 0, sizeof(A.ep_cred_per_msg));
+    memset(A.ep_max_msg, 0, sizeof(A.ep_max_msg));
+    A.cred_sz = sz ? sz : 1664;
+    A.cred_pool = n;
+    A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
+    A.credit_log = 0;
+    credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
+}
+
+/* one RX trailer: records of (id, len, data...); id 1 = credit reports */
+static void credit_report(const u8 *t, u32 n)
+{
+    u32 got = wifi_htc_credits(t, n, A.ep_credits);
+    if (!got) return;
+    A.credit_rpt += got;
+    A.credit_ret += got;
+    if (A.credit_log < 16) {
+        A.credit_log++;
+        DIAG("htc: credit report: +%u credit(s) = %u on ep1/%u on ep2, returned in total %u",
+             got, A.ep_credits[A.ep_data ? A.ep_data : 1], A.ep_credits[2], A.credit_ret);
+    }
+}
+
+/* A credit wait must not re-enter the WMI/HTC state machine (we may already
+   be inside its handler). Keep whole packets in a small queue and run them
+   after the current step, from pump() below. Credit records are already
+   applied by mbox_recv() when it strips the trailer. */
+#define DEFER_MAX 4
+static struct { u8 type; u16 len; u8 body[0x680]; } D[DEFER_MAX];
+static u8 d_head, d_count;
+
+static void defer_msg(u32 type, const u8 *body, int n)
+{
+    if (n <= 0 || (u32)n > sizeof(D[0].body) || d_count >= DEFER_MAX) return;
+    u8 i = (u8)((d_head + d_count) % DEFER_MAX);
+    D[i].type = (u8)type;
+    D[i].len = (u16)n;
+    memcpy(D[i].body, body, (u32)n);
+    d_count++;
+}
+
+static void pump_msg(u32 type, int n)
+{
+    defer_msg(type, pkt + 6, n);
+}
+
+/* Wait for a credit report. Credits come back in the trailer of the next
+   message the firmware sends (or in an empty endpoint-0 message after a
+   NEED_CREDIT_UPDATE), so drain the mailbox until one arrives. Bounded: a
+   wedged firmware fails its bring-up step later, not here. */
+static int credit_wait(u32 ep, u32 need)
+{
+    for (u32 i = 0; i < 40000 && A.ep_credits[ep] < need; i++) {
+        u32 type;
+        int n = mbox_recv(&type);
+        if (n > 0) pump_msg(type, n);
+        else if (n < 0) return n;
+        else waitcycles(3350);
+    }
+    if (A.ep_credits[ep] < need) {
+        A.credit_busy++;
+        if (A.credit_log < 16)
+            DIAG("htc: tx waits for credits on endpoint %u (%u < %u)", ep, A.ep_credits[ep], need);
+        return SDIO_ERR_BUSY;
+    }
+    return 0;
+}
+
+static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wait)
 {
     if (len + 6 > sizeof(pkt)) return SDIO_ERR_ARG;
     u32 total = (len + 6 + SDIO_BLOCK - 1) & ~(SDIO_BLOCK - 1);
+    if (type < 8) {
+        u32 need = credit_need(total);
+        if (A.ep_credits[type] < need) {
+            if (!wait) {
+                A.credit_busy++;
+                return SDIO_ERR_BUSY;       /* caller keeps the frame queued */
+            }
+            int r = credit_wait(type, need);
+            if (r < 0) return r;
+        }
+        A.ep_credits[type] -= need;
+        A.credit_used += need;
+        if (A.ep_credits[type] < A.ep_cred_per_msg[type]) {
+            ack |= HTC_FLG_NEED_CREDIT;     /* ask the target to give them back */
+            A.credit_low++;
+        }
+    }
     memset(pkt, 0, total);
     pkt[0] = (u8)type; pkt[1] = (u8)ack;
     pkt[2] = (u8)len; pkt[3] = (u8)(len >> 8);
@@ -353,7 +484,8 @@ static int wmi_send(u32 id, const void *params, u32 len)
     if (len + 2 > sizeof(b)) return SDIO_ERR_ARG;
     b[0] = (u8)id; b[1] = (u8)(id >> 8);
     if (len) memcpy(b + 2, params, len);
-    return mbox_send(A.ep_wmi, 1, 0, b, len + 2);   /* flag 1: credit update wanted */
+    /* flag 1: credit update wanted; WMI waits for a report if it runs out */
+    return mbox_send(A.ep_wmi, 1, 0, b, len + 2, 1);
 }
 
 /* Read one packet into pkt[]. Returns the payload length (bytes after the
@@ -384,6 +516,8 @@ static int mbox_recv(u32 *type)
     *type = pkt[0];
     /* credit / lookahead records at the end (ath6kl HTC_FLG_RX_TRAILER) */
     u32 trailer = (pkt[1] & HTC_FLG_RX_TRAILER) ? pkt[4] : 0;
+    if (trailer > len) trailer = 0;
+    if (trailer) credit_report(pkt + 6 + len - trailer, trailer);
     return trailer < len ? (int)(len - trailer) : 0;
 }
 
@@ -521,6 +655,8 @@ static void link_up(void)
     A.state = NET_ST_UP;
     A.auth_fails = 0;
     A.nonet = 0;
+    DIAG("htc: credits so far: used %u, returned %u, reports %u, low-credit flags %u, waits %u",
+         A.credit_used, A.credit_ret, A.credit_rpt, A.credit_low, A.credit_busy);
     log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", T.ssid,
            A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3], A.bssid[4], A.bssid[5]);
 }
@@ -577,7 +713,7 @@ static void on_eapol(const u8 *eth, u32 len)
     memcpy(frame + 6, A.mac, 6);
     frame[12] = 0x88; frame[13] = 0x8E;
     u32 n = wifi_frame_to_wmi(frame, 14 + rlen, out, sizeof(out));
-    int r = n ? mbox_send(A.ep_data, 0, 0, out, n) : SDIO_ERR_ARG;
+    int r = n ? mbox_send(A.ep_data, 0, 0, out, n, 1) : SDIO_ERR_ARG;
     if (ev == WPA2_EV_GTK && A.state == NET_ST_UP)
         logp("[wifi] group key renewed by the AP (index %u): %d\n", A.wpa.gtk_idx, r);
     else
@@ -920,12 +1056,14 @@ static void on_htc(const u8 *b, u32 len)
     static const u8 done[2] = { HTC_SETUP_COMPLETE, 0 };
     u8 eid[5] = { 0 };
     int r = 0;
-    logp("[wifi] HTC ready: %u credits of %u bytes\n", len >= 6 ? b[2] | b[3] << 8 : 0,
-         len >= 6 ? b[4] | b[5] << 8 : 0);
+    u32 ncred = len >= 6 ? (u32)b[2] | (u32)b[3] << 8 : 0;
+    u32 csize = len >= 6 ? (u32)b[4] | (u32)b[5] << 8 : 0;
+    logp("[wifi] HTC ready: %u credits of %u bytes\n", ncred, csize);
     DIAG("htc: HTC_READY %u ms after the firmware started, %u bytes: %s", now_ms() - A.t_state, len, hex(b, len));
+    credit_init(ncred, csize);
     for (int i = 0; i < 5 && r >= 0; i++) {
         u32 type;
-        r = mbox_send(PKT_HTC, 0, 0, svc[i], 8);
+        r = mbox_send(PKT_HTC, 0, 0, svc[i], 8, 1);
         int t;
         for (t = 0; r >= 0 && t < 2000; t++) {          /* its response */
             int got = mbox_recv(&type);
@@ -935,8 +1073,10 @@ static void on_htc(const u8 *b, u32 len)
             if (got >= 6 && type == PKT_HTC && q[0] == 3 && q[2] == svc[i][2] && q[3] == svc[i][3]) {
                 if (q[4] != 0 || q[5] == 0 || q[5] > 7) r = -120 - q[4];
                 eid[i] = q[5];
+                u32 maxmsg = got >= 8 ? (u32)q[6] | (u32)q[7] << 8 : A.cred_sz;
+                credit_assign(q[5], maxmsg);
                 DIAG("htc: service %02x%02x -> status %u, endpoint %u, max message %u (%u polls)",
-                     q[3], q[2], q[4], q[5], got >= 8 ? q[6] | q[7] << 8 : 0, t);
+                     q[3], q[2], q[4], q[5], maxmsg, t);
                 break;
             }
             if (got == 0) waitcycles(3350);             /* nothing, or a credit report */
@@ -945,7 +1085,15 @@ static void on_htc(const u8 *b, u32 len)
     }
     A.ep_wmi = eid[0];
     A.ep_data = eid[1];
-    if (r >= 0) r = mbox_send(PKT_HTC, 0, 0, done, 2);
+    /* ath6kl gives every endpoint one credit and the rest to the BE data
+       endpoint; the target model uses the same split. */
+    if (r >= 0 && A.cred_pool && A.ep_data) {
+        A.ep_credits[A.ep_data] = (u8)((u32)A.ep_credits[A.ep_data] + A.cred_pool);
+        DIAG("htc: endpoint %u gets the remaining %u credits (%u total)", A.ep_data, A.cred_pool,
+             A.ep_credits[A.ep_data]);
+        A.cred_pool = 0;
+    }
+    if (r >= 0) r = mbox_send(PKT_HTC, 0, 0, done, 2, 1);
     if (r >= 0) r = f1_w32(F1_INT_STATUS_EN, 0x010300D1);
     logp("[wifi] HTC services connected: %d (WMI endpoint %u, data %u/%u/%u/%u)\n", r,
          eid[0], eid[1], eid[2], eid[3], eid[4]);
@@ -958,24 +1106,17 @@ static void on_htc(const u8 *b, u32 len)
     }
 }
 
-/* Drain one mailbox packet. Data frames end up in A.rxframe. */
-static void pump(void)
+/* One decoded mailbox message. Data frames end up in A.rxframe. */
+static void pump_body(u32 type, const u8 *body, u32 n)
 {
-    u32 type = 0;
-    int n = mbox_recv(&type);
-    if (n <= 0) {
-        if (n < 0 && A.verbose) log_warn("[wifi] mailbox read: %d\n", n);
-        return;
-    }
-    const u8 *body = pkt + 6;
     if (type == PKT_HTC) {
-        on_htc(body, (u32)n);
+        on_htc(body, n);
     } else if (type == A.ep_wmi) {
-        on_wmi(body, (u32)n);
+        on_wmi(body, n);
     } else if (A.ep_wmi) {                              /* the data endpoints */
         static u8 eth[NET_FRAME_MAX];
         u16 et = 0;
-        u32 len = wifi_frame_from_wmi(body, (u32)n, eth, sizeof(eth), &et);
+        u32 len = wifi_frame_from_wmi(body, n, eth, sizeof(eth), &et);
         if (!len) return;
         if (et == 0x888E) {
             /* also while up: group key rekeys (and PTK rekeys) arrive then; ignoring
@@ -986,6 +1127,30 @@ static void pump(void)
             memcpy(A.rxframe, eth, len);
             A.rxlen = len;
         }
+    }
+}
+
+/* Read the mailbox and run both fresh and deferred messages. */
+static void pump(void)
+{
+    u32 type = 0;
+    int n = mbox_recv(&type);
+    if (n > 0) {
+        u8 body[0x680];
+        memcpy(body, pkt + 6, (u32)n);
+        pump_body(type, body, (u32)n);
+    } else if (n < 0 && A.verbose) {
+        log_warn("[wifi] mailbox read: %d\n", n);
+    }
+    while (d_count) {
+        u8 i = d_head;
+        u32 t = D[i].type;
+        u32 l = D[i].len;
+        u8 body[0x680];
+        memcpy(body, D[i].body, l);
+        d_head = (u8)((d_head + 1) % DEFER_MAX);
+        d_count--;
+        pump_body(t, body, l);
     }
 }
 
@@ -1428,7 +1593,9 @@ static int ar6k_tx(const u8 *eth, u32 len)
     static u8 out[2 + 14 + 8 + 1500];
     if (A.state != NET_ST_UP) return -1;
     u32 n = wifi_frame_to_wmi(eth, len, out, sizeof(out));
-    return n ? mbox_send(A.ep_data, 0, 0, out, n) : -2;
+    if (!n) return -2;
+    int r = mbox_send(A.ep_data, 0, 0, out, n, 0); /* no credits: leave the frame in the mailbox */
+    return r == SDIO_ERR_BUSY ? -1 : r;
 }
 
 static u32 ar6k_rx(u8 *eth, u32 cap)

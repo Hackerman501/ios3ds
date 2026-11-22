@@ -71,3 +71,26 @@ u32 wifi_frame_from_wmi(const u8 *wmi, u32 len, u8 *out, u32 cap, u16 *ethertype
     if (ethertype) *ethertype = 0;
     return total;
 }
+
+/* HTC credit reports in an RX trailer: {id=1, len, {endpoint, credits}...},
+   possibly followed by other records. Malformed records stop the parser: a
+   torn trailer must never credit an endpoint twice. */
+u32 wifi_htc_credits(const u8 *t, u32 n, u8 credits[8])
+{
+    u32 i = 0, got = 0;
+    while (i + 2 <= n) {
+        u32 id = t[i], l = t[i + 1];
+        if (i + 2 + l > n) break;
+        if (id == WMI_HTC_REC_CREDITS) {
+            for (u32 k = 0; k + 1 < l; k += 2) {
+                u32 ep = t[i + 2 + k], cr = t[i + 2 + k + 1];
+                if (ep >= 8) continue;
+                u32 v = (u32)credits[ep] + cr;
+                credits[ep] = (u8)(v > 255 ? 255 : v);
+                got += cr;
+            }
+        }
+        i += 2 + l;
+    }
+    return got;
+}

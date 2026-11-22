@@ -48,9 +48,9 @@ end-to-end.
 | File | Role |
 |---|---|
 | `sdio.c` | Polled TMIO host: CMD5/3/7 enumeration, 4-bit bus, block size 128, CMD52, CMD53 block mode and byte mode (FIFO32). Register usage and command encoding follow dsiwifi `wifi_sdio.twl.c`; every wait is bounded. |
-| `ar6k.c` | State machine, one bounded step per monitor-loop pass: POWER -> BMI -> FWLOAD (one 256-byte chunk per pass) -> BOOT (`hi_board_data_initialized`, 3 s) -> HTC (HTC_READY, 5 s) -> WMI (WMI_READY, 5 s) -> SCAN (10 s) -> AUTH -> UP. Timeouts use the monitor's clock (timers 2+3). After "SDIO up" a FIFO self-test (CMD52 pattern into the function-1 scratch registers, read back with one CMD53) decides between CMD53 block transfers and a CMD52-per-byte fallback for the mailbox. The WMI and data endpoints are the ones the firmware returns in its CONNECT_SERVICE responses. |
+| `ar6k.c` | State machine, one bounded step per monitor-loop pass: POWER -> BMI -> FWLOAD (one 256-byte chunk per pass) -> BOOT (`hi_board_data_initialized`, 3 s) -> HTC (HTC_READY, 5 s) -> WMI (WMI_READY, 5 s) -> SCAN (10 s) -> AUTH -> UP. Timeouts use the monitor's clock (timers 2+3). After "SDIO up" a FIFO self-test (CMD52 pattern into the function-1 scratch registers, read back with one CMD53) decides between CMD53 block transfers and a CMD52-per-byte fallback for the mailbox. The WMI and data endpoints are the ones the firmware returns in its CONNECT_SERVICE responses. HTC credits from HTC_READY are split per endpoint; each message takes `ceil(padded_len / cred_sz)`, reports in RX trailers return them, data frames stay queued when an endpoint is empty and control messages wait (bounded) for a report. |
 | `wpa2.c` | SHA-1, HMAC, PBKDF2, 802.11i PRF, AES-128, RFC 3394 unwrap, EAPOL-Key 4-way and group handshake (CCMP pairwise; CCMP or TKIP group). Written from the standards. |
-| `wifi_frame.c` | Ethernet II <-> WMI data frames (LLC/SNAP RFC 1042 and bridge-tunnel). |
+| `wifi_frame.c` | Ethernet II <-> WMI data frames (LLC/SNAP RFC 1042 and bridge-tunnel), and the HTC RX-trailer credit parser (`wifi_htc_credits`). |
 | `wifi_ring.c` | ARM9 half of the mailbox. |
 | `wifi_cfg.c` | `sd:/ios3ds/wifi.cfg` parser. |
 | `nwmcode.c` | NWM `.code` -> firmware container at boot (section 3): in-place BLZ, GBATEK's literal pools, fixed block sizes. Same logic as `nwmfw.py`; the host tests compare both byte for byte. |
@@ -435,7 +435,7 @@ Run it: `python3 emu/wifi_test.py` (section 7.3). Manually: boot with
 | Mailbox 0 | one byte stream each way. Windows `0x000-0x0FF`, `0x800-0xFFF`, `0x1000-0x3FFF`; a host write that touches the window's last address ends a message (HTC mode). Target messages are padded to `hi_mbox_io_block_sz` | ath6kl `hif.h`, dsiwifi (`0x4000 - len`, byte register `0xFF`) |
 | BMI | `NOP, DONE, READ/WRITE_MEMORY, EXECUTE, SET_APP_START, READ/WRITE_SOC_REGISTER, GET_TARGET_ID (2300006Fh), LZ_STREAM_START, LZ_DATA`; data chunks up to 200h bytes; RAM 0x500000-0x53FFFF incl. the host interest area at 0x520000; `0x40EC` = chip id 0D000001h; `RESET_CONTROL` bit 8 = warm reset back into the ROM (`RESET_CAUSE` 2). Wedges (log line, no reply) on unknown commands, oversized chunks, writes outside RAM, `EXECUTE` of an address nothing was uploaded to, `LZ_DATA` without `LZ_STREAM_START` | dsiwifi `ath/bmi.h`, `wifi_card.twl.c`; GBATEK; ath6kl `bmi.c` |
 | Firmware start | `BMI_DONE` + 50 ms: runs only if main firmware was streamed (`LZ_DATA` >= 1 KiB), the stub was executed and `hi_dset_list_head` points at uploaded data; otherwise the target stays dead | GBATEK upload order |
-| HTC | `HTC_READY` (8 credits of 1664 bytes), `CONNECT_SERVICE` for services 0100h-0104h (endpoints handed out in order: 1 = WMI, 2-5 = data; unknown/duplicate services refused), `SETUP_COMPLETE(_EX)`; credits come back in RX trailers (`HTC_FLG_RX_TRAILER`, record 1), and a message with `NEED_CREDIT_UPDATE` gets an empty EP0 credit report if nothing else is sent | ath6kl `htc.h`, `htc_mbox.c`; dsiwifi `htc.twl.c` |
+| HTC | `HTC_READY` (8 credits of 1664 bytes), `CONNECT_SERVICE` for services 0100h-0104h (endpoints handed out in order: 1 = WMI, 2-5 = data; unknown/duplicate services refused), `SETUP_COMPLETE(_EX)`; the target keeps one credit for EP0 and one per service, the rest go to the first data endpoint. Every host message consumes `ceil(padded_len / 1664)` credits; without enough it logs `Mbox Full`, sets TX overflow and drops the message. Credits come back in RX trailers (`HTC_FLG_RX_TRAILER`, record 1), and a message with `NEED_CREDIT_UPDATE` gets an empty EP0 credit report if nothing else is sent. QOM: `htc-credits-used`, `htc-credit-reports`, `htc-credit-waits`, `htc-overflows` | ath6kl `htc.h`, `htc_mbox.c`; dsiwifi `htc.twl.c` |
 | WMI | 2-byte command header (AR6002-era firmware). Commands with a wrong parameter size get `WMI_CMD_ERROR_EVENT` (INVALID_PARAM). Events: `READY` (MAC, phy cap), `REG_DOMAIN`, `BSSINFO` (beacon or probe response with SSID, rates, DS, RSN IEs; SNR 40), `SCAN_COMPLETE`, `CONNECT` (channel, BSSID, intervals, assoc request/response IEs), `DISCONNECT` (802.11 code, BSSID, WMI reason), `GET_CHANNEL_LIST` reply. Scan: 30 ms per channel, honours the channel list, BSS filter (none / all / probed-SSID) and a hidden AP (only found by a directed probe) | dsiwifi `ath/wmi.h`, `wmi.twl.c`; ath6kl `wmi.h`; GBATEK "WMI" |
 | Connect | `WMI_CONNECT` (52 bytes) must name the AP's SSID; channel/BSSID must match if given; WPA2 AP needs auth 5, pairwise 4 (AES), group = the AP's group cipher; open AP needs 1/1. Mismatch = `DISCONNECT` with the 802.11 status a real AP would use (41/42/43) | GBATEK "WMI Connect", 802.11-2007 7.3.1.9 |
 | Authenticator | PMK = PBKDF2(psk, ssid) (GLib HMAC-SHA1), message 1 (ANonce), message 2 checked (replay counter, MIC with the PTK from PRF-384, RSN IE equal to the association request's, compared like hostapd), message 3 (AP RSN IE + GTK KDE, AES key wrap with QEMU's AES), message 4 MIC; retransmit every 1 s, deauth after 4 tries (reason 15). Written from IEEE 802.11i, not from `wpa2.c` | IEEE 802.11i-2004 8.5, RFC 3394, hostapd behaviour |
@@ -461,9 +461,10 @@ the firmware reports; QEMU's NIC default 52:54:00:12:34:56).
   FIFO stalls are not modelled.
 - **No interrupts.** Neither the TMIO2 IRQ (GIC 64/65 on the ARM11) nor the
   SDIO card interrupt; the ARM9 polls anyway.
-- **No HTC back-pressure.** The model processes each host message at once,
-  so a host that ignores credits never overflows it (real firmware: "Mbox
-  Full", see dsiwifi).
+- **Credits are returned immediately** when the model processes a host message
+  (or one virtual ms after `NEED_CREDIT_UPDATE`), not when a real firmware's
+  buffer is freed. The accounting and the `Mbox Full` refusal are real, so a
+  host that ignores credits fails here; the exact timing of a return is not.
 - **Assumptions** (no source; settle on hardware with the log lines in
   section 6): the board-data stub sets `hi_board_data_initialized` = 1
   (dsiwifi only shows it being 1 after boot); the firmware's association
@@ -479,6 +480,8 @@ Writes `wifi.cfg` (with `nettest=`, section 5) and a dummy `wifi-fw.bin`
 `build/sd.img`, starts an HTTP server on the host's `127.0.0.1:8080` (iOS
 reaches it as `10.0.2.2:8080` through slirp), boots, checks every step in
 the log and removes the two files again. Cases: `--case ok` (WPA2, default),
+`credit` (`nettest=<url> <dns> bulk`: iOS fetches a 4 MiB body, checks every
+byte and the log must show credits used/returned and no `Mbox Full`),
 `open`, `nocfg` (Wi-Fi must stay off and the card unpowered), `nofw`
 (firmware missing: one log line, Wi-Fi off), `wrongpsk` (message 2 MIC
 rejected, AP deauths after 4 tries, no link), psk hint after the third try), `nofifo` (model property
@@ -529,8 +532,6 @@ board ("backend qemu-vnic not available").
   listed here as "not feasible without a kernel IO80211 controller").
 - Data frames are sent with mailbox control word 0; dsiwifi uses `2008h` for
   IP traffic. Try that if unicast data does not flow after the handshake.
-- TX flow control: no HTC credit accounting from the receive trailer yet;
-  heavy traffic may overflow the firmware's MBOX ("Mbox Full" in dsiwifi).
 - WPA (TKIP pairwise), WEP and enterprise networks are not supported.
 - Faster path later: wake the daemon from the shim instead of 4 ms polling,
   CMD53 byte mode for BMI instead of one CMD52 per byte.

@@ -14,6 +14,7 @@ enum {
     SDIO_ERR_CARD = -2,         /* error bits in STAT1 (see sdio_last_status) */
     SDIO_ERR_NOCARD = -3,       /* no answer to CMD5: chip unpowered / held in reset */
     SDIO_ERR_ARG = -4,
+    SDIO_ERR_BUSY = -5,         /* no HTC credits left: retry the frame later */
 };
 
 /* Power the port, reset the controller, enumerate the card (CMD5/CMD3/CMD7),

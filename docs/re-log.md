@@ -1535,3 +1535,48 @@ flag-off run did not reach SpringBoard within its 1200 s boot timeout. The
 soak input dwell/timeouts were increased (commits above) to cope with that
 host load; no code path other than the test harness was changed for those
 retries. A final confirmation run on an idle machine is still desirable.
+
+## 91. HTC TX credits: the "Mbox Full" back-pressure (2026-11-21)
+
+**Symptom:** dsiwifi calls it "Mbox Full"; with sustained traffic the AR6014
+can be asked to send more mailbox messages than it has buffers for. The host
+driver sent every WMI/data message as soon as iOS handed it a frame and never
+read the credit reports the target puts in RX trailers (ath6kl
+`htc_mbox.c`, `htc.h`: record 1 is `endpoint, credits`; `NEED_CREDIT_UPDATE`
+asks for a report when nothing else is sent).
+
+**What the target announces.** `HTC_READY` carries `cred_cnt, cred_sz` (the
+model: 8 x 1664 bytes). A message costs `ceil(padded_len / cred_sz)` credits,
+at least one; the padded length is what goes over SDIO (our block size 128).
+The pool is split the way ath6kl does it: one credit for EP0, one for each
+connected service, the rest for the first (BE) data endpoint. The firmware
+returns a credit for every message it consumes; a host that ignores the
+reports runs the pool to zero.
+
+**Driver** (`boot/arm9/wifi/ar6k.c`, `sdio.h`, `wifi_frame.c`):
+- `credit_init()`/`credit_assign()` distribute the pool; `mbox_send()` takes
+  `ceil()` credits before writing, sets `NEED_CREDIT_UPDATE` when an endpoint
+  falls below one maximum-sized message, and refuses data sends with the new
+  `SDIO_ERR_BUSY` (-5) instead of writing. `wifi.c` maps that to its "busy"
+  return, so the frame stays in the ARM9<->iOS TX ring for the next pass.
+  WMI/control sends wait for a report (bounded), rather than dropping a
+  command.
+- A credit wait must not re-enter the WMI/HTC state machine, so whole
+  packets that arrive while waiting are copied into a four-slot deferred
+  queue and run from the next `pump()` pass. The trailer parser itself moved
+  to `wifi_frame.c` (`wifi_htc_credits()`) so it can be tested on the host;
+  it ignores out-of-range endpoints and stops at a torn record.
+- `[wifi-diag]` logs every endpoint assignment and the first 16 reports,
+  plus a credit total when the link comes up.
+
+**QEMU model** (`emu/qemu/hw/arm/ctr_wifi.c`): it now *has* credit accounting,
+not just trailers. Host messages are dropped with `Mbox Full`, TX-overflow
+set and an `htc-overflows` counter when the endpoint is out of credits;
+credits are owed back for every accepted message and travel in the next RX
+trailer or an empty EP0 report one virtual ms after `NEED_CREDIT_UPDATE`.
+QOM (HTC credits used/reported/waits/overflows, frame counts) makes the
+evidence readable without a debugger. This is a real back-pressure test: a
+host that ignores credits fails in QEMU, where the old model let it through.
+
+**Host tests:** `make -C tools/ios3ds-wifi test` covers cumulative reports,
+unknown records, torn trailers, saturation and out-of-range endpoints.
