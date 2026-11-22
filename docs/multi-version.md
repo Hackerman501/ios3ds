@@ -427,4 +427,19 @@ Remaining blockers, all **[V]** unless marked:
 another few days; a usable 4.1 home screen is therefore plausibly ~1–2 weeks
 of work, not a one-line change.
 
+### 5.4 Final default-build soak (not passing on this host)
+
+**[V]** Three fresh-image soaks of the unmodified default 4.2.1 build were run
+after the version work (`python3 emu/soak.py --cycles 5 --icount 2 --sd
+build/sd-soak{,2,3}.img`; isolated images were needed because several other
+workers were rebuilding `build/sd.img` concurrently). All three printed
+`**Result: FAIL**`, but the only failing check was "not home after Home" —
+screenshots stayed black/stale while boot-to-`SpringBoard` took 435–965 s
+(normally ~100 s on an idle host) because many QEMU/build jobs from other
+worktrees were sharing the CPU. There were **0** kernel panics, ARM11 stalls,
+md0/log errors, process crashes, watchdog/hang events or GPU mirror failures.
+We could not obtain a PASS while the host was this loaded; this is a host
+contention problem, not a change in the generated 4.2.1 boot files (§5.1).
+The reports are in `build/emu-soak-final{,2,3}/report.md` (not committed).
+
 Main `docs/re-log.md` continues at §85 with the same story.
