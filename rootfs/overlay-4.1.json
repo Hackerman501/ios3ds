@@ -5,8 +5,44 @@
  "file_patches_search": true,
  "_new_hex_replace": "relocate the literal CFStrings in liblockdown's activation table: ProductVersion 4.2.1 -> 4.1 (length 5 -> 3, keeping the 160-byte patch), BuildVersion 8C148 -> 8B117 (same length)",
  "new_hex_replace": [
-  ["050000005055923ec807000046ba8436", "030000005055923ec807000046ba8436"],
-  ["342e322e3100", "342e31000000"],
-  ["384331343800", "384231313700"]
- ]
+  [
+   "050000005055923ec807000046ba8436",
+   "030000005055923ec807000046ba8436"
+  ],
+  [
+   "342e322e3100",
+   "342e31000000"
+  ],
+  [
+   "384331343800",
+   "384231313700"
+  ]
+ ],
+ "file_patch_offsets": [
+  "0x4fbd98",
+  null,
+  "0x4fbe24",
+  "0x4fbf7c",
+  "0x4fbfc8",
+  "0x4fc018",
+  "0x4fc05c",
+  "0x4fc078",
+  "0x4fc098",
+  "0x4fc0c8",
+  "0x4fc0e4",
+  "0x4fc0f8",
+  "0x4fc1c8",
+  "0x4fca90",
+  "0x4fcbbc",
+  "0x2c0aa4c",
+  "0x2c0c6a0",
+  null,
+  null,
+  "0x30b4458",
+  "0x9b3d94",
+  null,
+  null,
+  null
+ ],
+ "_file_patch_offsets": "8C148 file offsets relocated to 8B117 by dyld-cache symbol+offset (see docs/multi-version.md); null entries are skipped"
 }

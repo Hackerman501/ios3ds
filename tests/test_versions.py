@@ -52,6 +52,11 @@ class TestVersions(unittest.TestCase):
             self.assertTrue(all("offset" not in fp and "search" in fp
                                 for fp in recipe["file_patches"]))
             self.assertEqual(recipe["write"]["/etc/fstab"], base["write"]["/etc/fstab"])
+            # the 4.1 overlay carries symbol-relocated file-patch offsets:
+            # inapplicable patches are dropped, the rest use fixed offsets
+            self.assertEqual(len(recipe["file_patches"]), 18)
+            self.assertTrue(all("offset" in fp and "search" not in fp
+                                for fp in recipe["file_patches"]))
 
 
 class TestPatcher(unittest.TestCase):

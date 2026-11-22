@@ -71,11 +71,17 @@ def apply(root):
     for name, value in AUDIO0_ADD.items():
         codec.set(name, value)
     gpio, vic = root.find("arm-io/gpio"), root.find("arm-io/vic")
-    if gpio is None or int.from_bytes(gpio.get("AAPL,phandle")[:4], "little") != GPIO_PHANDLE:
-        raise ValueError("dt_audio: /arm-io/gpio is not phandle %#x" % GPIO_PHANDLE)
-    if vic is None or int.from_bytes(vic.get("AAPL,phandle")[:4], "little") != VIC0_PHANDLE:
-        raise ValueError("dt_audio: /arm-io/vic is not phandle %#x" % VIC0_PHANDLE)
-    for name, value in AUDIO0_HP.items():
+    if gpio is None or vic is None or not gpio.get("AAPL,phandle") or not vic.get("AAPL,phandle"):
+        raise KeyError("dt_audio: template lacks gpio/vic phandles")
+    # Apple assigns phandles per firmware build (8C148: 0x90c9a0 / 0x90c3e0,
+    # 8B117: 0x9040c0 / 0x90ba80). Read them from this template so the same
+    # recipe works for other iPod2,1 versions; for 8C148 the bytes are unchanged.
+    gpio_ph = gpio.get("AAPL,phandle")[:4]
+    vic_ph = vic.get("AAPL,phandle")[:4]
+    hp = dict(AUDIO0_HP)
+    hp["function-hp_detect"] = gpio_ph + AUDIO0_HP["function-hp_detect"][4:]
+    hp["interrupt-parent"] = vic_ph
+    for name, value in hp.items():
         codec.set(name, value)
     dmac = root.find("arm-io/dmac0")
     irq = dmac.get("interrupts")

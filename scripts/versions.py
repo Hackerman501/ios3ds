@@ -116,13 +116,23 @@ def recipe_path(version=DEFAULT, workdir=None):
         overlay = json.load(f)
     search = overlay.pop("file_patches_search", False)
     replacements = overlay.pop("new_hex_replace", [])
+    fp_offsets = overlay.pop("file_patch_offsets", None)
     recipe = _merge(base, overlay)
+    if fp_offsets is not None:
+        relocated = []
+        for fp, off in zip(recipe.get("file_patches", []), fp_offsets):
+            if off is None:      # patch not applicable on this firmware
+                continue
+            fp["offset"] = off
+            fp.pop("search", None)
+            relocated.append(fp)
+        recipe["file_patches"] = relocated
     for fp in recipe.get("file_patches", []):
         h = fp["new"]
         for old, new in replacements:
             h = h.replace(old, new)
         fp["new"] = h
-    if search:
+    if search and fp_offsets is None:
         # relocate every fixed-offset file patch by its verified original bytes
         for fp in recipe.get("file_patches", []):
             fp.pop("offset", None)
