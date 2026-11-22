@@ -38,18 +38,36 @@ static void vh_read(void)
 
 bool blksrv_mark_clean(void)
 {
-    if (!open_ok || !vh_ok) return false;
-    if (vh_attrs & HFS_UNMOUNTED) return true;         /* XNU already wrote it */
+    if (!open_ok) return false;
+    /* Re-read the volume header from disk: the cached copy taken at boot is
+       stale by now (XNU clears bit 8 on mount and may set it again on a
+       clean unmount), so a cached "already clean" answer would either skip a
+       needed write or, worse, trust a dirty image. Only a live clean halt
+       ever calls this, so setting the bit here is always correct. */
+    u8 hdr[8];
+    UINT n = 0;
+    FRESULT r = f_lseek(&f, HFS_VH_OFF);
+    if (r == FR_OK) r = f_read(&f, hdr, sizeof hdr, &n);
+    vh_ok = r == FR_OK && n == sizeof hdr && hdr[0] == 'H' && (hdr[1] == '+' || hdr[1] == 'X');
+    if (!vh_ok) {
+        log_warn("rootfs: no HFS+ volume header at byte %u: cannot set the clean flag\n", HFS_VH_OFF);
+        return false;
+    }
+    vh_attrs = (u32)hdr[4] << 24 | (u32)hdr[5] << 16 | (u32)hdr[6] << 8 | hdr[7];
+    if (vh_attrs & HFS_UNMOUNTED) {
+        log_ok("[blk] rootfs.hfs: already cleanly unmounted (attributes 0x%08x)\n", vh_attrs);
+        return true;
+    }
     u32 clean = vh_attrs | HFS_UNMOUNTED;
     u8 b[4] = { (u8)(clean >> 24), (u8)(clean >> 16), (u8)(clean >> 8), (u8)clean };
-    UINT n = 0;
-    FRESULT r = f_lseek(&f, HFS_VH_OFF + HFS_VH_ATTR);
+    r = f_lseek(&f, HFS_VH_OFF + HFS_VH_ATTR);
+    n = 0;
     if (r == FR_OK) r = f_write(&f, b, sizeof b, &n);
     if (r == FR_OK && n != sizeof b) r = FR_DENIED;
     if (r == FR_OK) r = f_sync(&f);
     if (r == FR_OK) {
-        vh_attrs |= HFS_UNMOUNTED;
-        log_ok("[blk] rootfs.hfs: marked cleanly unmounted after iOS shutdown\n");
+        vh_attrs = clean;
+        log_ok("[blk] rootfs.hfs: marked cleanly unmounted after iOS shutdown (attributes 0x%08x)\n", vh_attrs);
     } else {
         log_err("[blk] rootfs.hfs: could not set the clean flag (FRESULT %d)\n", (int)r);
     }
