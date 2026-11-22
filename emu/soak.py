@@ -41,6 +41,12 @@ CHECKS = [
     ("jetsam / low memory", r"jetsam|memorystatus|low memory|Received memory warning", False),
     ("SpringBoard restart", r"\[input\] connected to SpringBoard", False),
     ("GPU mirror failure", r"display mirror FAILED", False),
+    ("GPU timeout", r"\[pica\] TIMEOUT", True),
+    ("GPU present check failed", r"GPU present check FAILED", True),
+    ("GPU fell back to the CPU", r"GPU rendering is OFF|reading surfaces back through the CPU from now on", False),
+    ("camera init failed", r"\[cam\].*init failed|\[cam\].*did not answer", False),
+    ("camera FIFO overruns", r"\[cam\].*FIFO overruns [1-9]", False),
+    ("audio DMA error", r"could not start DMA|no CODEC", False),
     ("watchdog / hang", r"watchdog (timeout|reset|fired)|hang detected", True),
 ]
 

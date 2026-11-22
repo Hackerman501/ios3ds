@@ -80,6 +80,20 @@ settle, cold-launches Settings, Notes and Safari, and writes a phase table
 to `build/emu/bootprof/report.md`. `emu/hfsmap.py` maps the md0 sectors to
 HFS+ files. See [boot-perf.md](boot-perf.md).
 
+### Driver stress: `emu/stress.py`
+`python3 emu/stress.py --cycles 5 --icount 2` opens the apps whose home-screen
+slot is known from the rootfs recipe (Photos, Settings, Notes, Safari, Music),
+drags in them, swipes pages with the D-pad, scrolls with the circle pad,
+starts/stops Camera.app, plugs and unplugs the emulated headphones, turns the
+console through the accelerometer poses and locks/unlocks twice. It then
+checks the SD log for panics, stalls, md0 errors, GPU timeouts/present
+failures, camera overruns and audio DMA errors. `--diag` adds `diag=1` to the
+image's boot.cfg (gltest probe, gyrotest, `[smp]` sampler) and the default
+`--mem` adds `ios3ds_mem=1` (the `[mem]` report). Both edit `sd:/ios3ds/boot.cfg`
+inside the disposable image; every run needs a fresh image. Artifacts and the
+PASS/FAIL report are in `build/emu/stress/`. The inventory of drivers, tests
+and open hardware checks is [driver-status.md](driver-status.md).
+
 ### Safari and memory: `emu/safari_test.py`
 `python3 emu/safari_test.py --icount 2` boots with the Wi-Fi model, opens
 pages from a host HTTP server in Safari (`ios3ds-diag -urlpoll`, boot-arg
