@@ -321,10 +321,27 @@ before the version plumbing landed; sha256 of the generated files:
 | `rootfs.hfs` | `7b63a5de25ba8d2e572476d83d6644a821f450a49d038f461854e4dbb97e2faf` |
 | `sd.img` | `7776bb093a47f2f7184340359a5cb4db4bea339b5b208e8374b04bf0ccf8ce17` |
 
-The post-change comparison is repeated at the end of stage 3; the generated
-device tree was additionally checked byte-for-byte with the old and new
-`dt_audio.py` (§5.2). The FIRM embeds `git describe` and therefore changes with
-each commit, as it always has.
+**[V]** After the version plumbing landed, a fresh 4.2.1 build (`make userland`,
+`rm -f build/sd.img && make sdimg`, isolated output tree so other workers'
+builds could not race it) produced exactly the six hashes above for
+`kernel.bin`, `devtree.bin`, `fakeio.bin`, `shim.bin`, `gpu.bin` and `boot.cfg`.
+For a stricter before/after test, the same six files were generated twice into
+separate trees — once from `origin/main` (the old scripts) and once from this
+branch — with the same staged IPSW, HFS+ tool, prebuilt shim, .deb cache and
+`SOURCE_DATE_EPOCH=1763800000`. `cmp` found all six byte-identical; `boot.cfg`
+differs in no line.
+
+`rootfs.hfs` (and therefore `sd.img`) is **not** byte-reproducible even with a
+fixed epoch: `scripts/music.py` puts a build timestamp in the generated Music
+library and xpwn's `hfsplus` stamps the *current* mtime on every file it adds
+(`hfsplus ls` shows the same file with a different date in the two images).
+The fixed-epoch images hash `9e29cb82…` (old) and `2d4ca4ac…` (new); the
+patched dyld cache, our iOS binaries, the modified plists and `/etc/fstab` all
+have identical sha256 when read back from both images, so only HFS+ metadata
+differs. Nothing about the 4.2.1 recipe or its generated boot files changed.
+The generated device tree was additionally checked byte-for-byte with the old
+and new `dt_audio.py` (§5.2). The FIRM embeds `git describe` and therefore
+changes with each commit, as it always has.
 
 ### 5.2 4.1 (8B117) bring-up in QEMU
 
