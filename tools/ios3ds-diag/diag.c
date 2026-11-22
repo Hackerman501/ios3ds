@@ -151,7 +151,9 @@ int main(int argc, char **argv)
     ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
     const char *p = strstr(ba, gate);
     size_t gl = strlen(gate);
-    if (!p || p[gl] == '0' || p[gl] == 0 || p[gl] == ' ') return 0;
+    if (!p || p[gl] == 0 || p[gl] == ' ') return 0;
+    /* only a bare 0 means off: gps=0.5,... is a real value */
+    if (p[gl] == '0' && (p[gl + 1] == 0 || p[gl + 1] == ' ')) return 0;
     execv(argv[1], argv + 1);
     perror(argv[1]);
     return 1;
