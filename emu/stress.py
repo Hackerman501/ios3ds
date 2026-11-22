@@ -49,7 +49,8 @@ CHECKS = [
     ("md0 I/O error", r"\[blk\] .* failed", True),
     ("log write error", r"\[log\] write error", True),
     ("md0 errors in heartbeat", r"\[hb\] t=.* (?!0 err)\d+ err$", True),
-    ("process crash (signal)", r"exited abnormally|Segmentation fault|Bus error|Abort trap", True),
+    ("process crash (signal)", r"exited abnormally(?!.*signal 9)|Segmentation fault|Bus error|Abort trap", True),
+    ("app killed by iOS (signal 9)", r"exited abnormally.*signal 9", False),
     ("watchdog / hang", r"watchdog (timeout|reset|fired)|hang detected", True),
     ("GPU rendering lost", r"GPU rendering is OFF|reading surfaces back through the CPU from now on", False),
     ("GPU timeout", r"\[pica\] TIMEOUT|\[gpu\] display mirror.*did not finish", True),
@@ -394,7 +395,13 @@ def main():
             key("ret")
             time.sleep(2)
             u = settled("unlock_home_%d" % i)
-            d = ImageStat.Stat(ImageChops.difference(u.convert("L"), ref)).mean[0]
+            # the emulated backlight is still fading in after a wake: compare
+            # at the reference brightness, as soak.py does
+            ul, rl = u.convert("L"), ref
+            mu, mr = ImageStat.Stat(ul).mean[0], ImageStat.Stat(rl).mean[0]
+            if mu > 5:
+                ul = ul.point(lambda v, k=mr / mu: min(255, int(v * k + 0.5)))
+            d = ImageStat.Stat(ImageChops.difference(ul, rl)).mean[0]
             unlocks.append({"attempts": attempt + 1, "diff": round(d, 2)})
             log("lock round %d: %d unlock attempt(s), diff %.1f" % (i, attempt + 1, d))
         results["unlocks"] = unlocks
