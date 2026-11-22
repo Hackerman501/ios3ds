@@ -53,6 +53,7 @@
 #include "pica_mirror.h"
 #include "pica_diag.h"
 #include "gpu_mirror.h"
+#include "stereo.h"
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -620,6 +621,10 @@ void shim_gpu_thread_poll(void)
     uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
     int v, keep_tex = 0;
 
+    /* PDC0 3D mode is needed even when the display mirror is off (the stereo
+       path uses the ARM9 CPU copy), so this runs before the mirror gates. */
+    extern void shim_stereo_poll(void);
+    shim_stereo_poll();
     if (m_tried || !gm_valid())
         return;
     if (!GM->gpu_enable || !GM->mirror_enable) {

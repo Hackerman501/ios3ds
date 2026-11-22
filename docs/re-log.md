@@ -1446,6 +1446,10 @@ register-level source is unverified on hardware.**
 ## 89. Experimental stereoscopic 3D home screen (2026-11-22)
 Design: docs/stereo3d.md. Status: experimental, emulator only, off by default.
 
+## 89. Experimental stereoscopic 3D home screen (2026-11-22)
+Design: docs/stereo3d.md. Status: experimental, off by default; the hardware
+path described in section 86 is implemented but still needs a console test.
+
 - **Mechanism:** CoreAnimation composites SpringBoard through our GL engine
   (`tools/ios3ds-gl`), which stamps a depth class into the composed frame's
   alpha byte with a second, alpha-only pass. The classes are wallpaper (0x33),
@@ -1465,3 +1469,53 @@ Design: docs/stereo3d.md. Status: experimental, emulator only, off by default.
   `tests/test_stereo.py`.
 - **Tests:** `make test` passes (host tests for the depth/offset logic);
   soak with the flag off and on both PASS.
+
+## 86. Stereoscopic 3D on real hardware: two eyes and the parallax barrier (2026-11-22)
+Review of section 85 found that `stereo3d=1` only made the display slower on
+an actual console: the ARM9 copied one image to both top-screen framebuffers,
+the top LCD stayed in 2D mode and nothing ever enabled the parallax barrier.
+This section closes that gap. The verdict on a console is still pending; the
+paths below are exercised in QEMU.
+
+- **ARM9 copy** (`boot/arm9/display.c`): `display_set_stereo()` receives the
+  boot flag and the MCU slider every monitor loop. With the flag on, a slider
+  above 16 and a stamped home frame (32x32 alpha grid, at least two distinct
+  non-flat classes), `blit_top_stereo()` reads one source row per screen
+  column, samples the left/right pixels at `x - stereo_eye_delta(cls,k,right)`
+  and writes BGR8 (alpha masked) to `top_fb[0]`/`top_fb[1]`. A flat frame, a
+  slider below the threshold, `SCREEN_BOTTOM` or no second framebuffer uses
+  the old `blit_top()` byte for byte; the bottom copy and touch map are
+  shared unchanged. The barrier is enabled after the copy and only while a
+  stereo frame was actually produced; any transition back clears it.
+- **Mailbox and shim**: `gmbox_t` line 5 gained `stereo_on`, `stereo_seq`,
+  `stereo_ack_seq` (still 256 bytes, same cache-line ownership). The ARM9's
+  `gm_set_stereo()` publishes a request and waits at most 200000 polls for the
+  ack. `kernel/shim/pica_stereo.c` (new GPU-part object, added to mkboot's
+  source list) checks the request every VBlank via `shim_gpu_thread_poll()`,
+  saves Luma's 2D PDC0 preset on the first switch and writes the 3D preset.
+  Per 3dbrew GPU/External Registers: PDC0 `+0x68/+0x6C` = left-eye A0/A1,
+  `+0x94/+0x98` = right-eye B0/B1, `+0x70` bits 5-4 = 2 (AB interlace), bit
+  6 clear. Per 3dbrew LCD Registers: barrier enable `0x10202000` =
+  `0x00010001`, PWM `0x10202004` = `0x0A390A39` (libn3ds value); the ARM9
+  writes these after the ack and clears the enable on the way back to 2D.
+  The GPU part is 31744 of 32768 bytes (1024 bytes headroom).
+- **QEMU** (`emu/qemu/hw/arm/nintendo3ds.c`): the old shortcut (read iOS's
+  alpha from VRAM and draw an anaglyph) is gone. The model now has PDC0's
+  B0/B1 framebuffer registers, the PDC0 format bits and the barrier register
+  at `0x10202000` (aliased into the ARM9 address space), with QOM properties
+  `pdc-3d-mode` and `lcd-3d-barrier`. The anaglyph is composited from whatever
+  framebuffers those registers point at: left eye in red, right eye in cyan.
+  No 3D mode or barrier, no anaglyph: the ordinary top-screen copy runs.
+  `emu/run.py`/`emu/soak.py`/`emu/viewer.py` accept `IOS3DS_QEMU` (and soak
+  has `--qemu`, `--slider3d`) so this worktree builds and uses its own
+  `build/qemu-local`, never the shared `build/qemu` symlink.
+- **Tests**: `tools/ios3ds-pica/tests/test_stereo_copy.c` (new) maps the CLCD,
+  LCD and framebuffer pages at their physical addresses and runs the real
+  `boot/arm9/display.c`: flag off is byte-for-byte the old copy with no
+  barrier or PDC request; the stamped frame gives class-dependent offsets
+  (front plane +/-4 px at slider 255, icon plane flat), opaque output and a
+  barrier request; slider down and unstamped frames restore the flat copy.
+  `test_mirror.c` gained the stubs for the new dependencies. `make test`
+  passes; fresh-image soaks with `stereo3d=0` and `stereo3d=1` both PASS.
+- **Frame time**: measured from the CA and ARM9 log lines, to be filled in
+  below after the final QEMU runs (the flag-off average is the baseline).

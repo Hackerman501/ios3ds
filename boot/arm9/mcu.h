@@ -21,3 +21,5 @@ void mcu_set_als(bool on);
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */
 u16 mcu_buttons(void);
+/* last 3D slider reading (MCU reg 0x08, 0..255) for the stereo screen copy */
+u32 mcu_slider3d(void);

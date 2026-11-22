@@ -12,7 +12,10 @@
  */
 #include "display.h"
 #include "util.h"
+#include "log.h"
 #include "blksrv.h"
+#include "gpumirror.h"
+#include "stereo.h"
 
 #define SCR_W 400
 #define SCR_H 240
@@ -21,6 +24,61 @@ static u8 *top_fb[2], *bot_fb[2];
 static int mode = SCREEN_BOTH;
 static u32 snapshot[0x100];
 static bool armed, touched;
+
+/* Experimental stereo copy (docs/stereo3d.md): boot.cfg stereo3d and the
+   current 3D slider. With the flag off this code is dormant and the normal
+   copy below runs exactly as before. */
+static bool stereo_cfg, stereo_hw, stereo_no_shim, stereo_warned;
+static u32 stereo_slider;
+
+static void stereo_barrier(bool on);
+
+void display_set_stereo(bool on, u32 slider)
+{
+    stereo_cfg = on && top_fb[0] && top_fb[1] && top_fb[0] != top_fb[1];
+    stereo_slider = slider;
+    if (!on || !stereo_cfg || slider < STEREO_MIN_SLIDER)
+        stereo_no_shim = false;                 /* retry a failed switch next time */
+    if (stereo_hw && (!stereo_cfg || !stereo_active(1, slider))) {
+        stereo_barrier(false);
+        gm_set_stereo(false);
+        stereo_hw = false;
+        logp("[monitor] stereo 3D: back to 2D, parallax barrier off\n");
+    }
+}
+
+/* 3dbrew "LCD Registers": parallax barrier PWM 0x10202004 = 0x0A390A39 and
+   enable 0x10202000 = 0x00010001 (libn3ds LCD_setParallaxBarrier); 0 = off.
+   Written only after the ARM11 has acknowledged the PDC0 2D/3D switch. */
+static void stereo_barrier(bool on)
+{
+    vu32 *cnt = (vu32 *)(uintptr_t)ST_BARRIER_PA;
+    if (on) {
+        *(vu32 *)(uintptr_t)ST_BARRIER_PWM_PA = ST_BARRIER_PWM;
+        *cnt = ST_BARRIER_ON;
+    } else {
+        *cnt = 0;
+    }
+}
+
+/* Sample the alpha plane of the iOS frame. The GL engine stamps a depth
+   class into it on home frames only; every other frame (apps, lock screen,
+   software compositor) has no class map and must stay flat. */
+static bool stereo_is_home(const u8 *src, u32 w, u32 h, u32 stride)
+{
+    u8 a[1024];
+    const u32 *px = (const u32 *)src;
+    for (u32 j = 0; j < 32; j++) {
+        u32 y = j * (h / 32);
+        if (y >= h) y = h - 1;
+        for (u32 i = 0; i < 32; i++) {
+            u32 x = i * (w / 32);
+            if (x >= w) x = w - 1;
+            a[j * 32 + i] = (u8)(px[y * (stride / 4) + x] >> 24);
+        }
+    }
+    return stereo_alphas_stereo(a, (int)sizeof a) != 0;
+}
 
 /* remember the register page as loaded; the mirror starts once the kernel
    driver has written to it (i.e. AppleM2CLCD is really driving "the panel") */
@@ -212,6 +270,71 @@ static void blit_top(const u8 *src, u32 w, u32 h, u32 stride)
     }
 }
 
+/* ---- stereoscopic top copy ---------------------------------------------
+   One source row is read per screen column (as in blit_top). The alpha byte
+   of the source pixel selects which horizontal sample each eye sees:
+   out(x) = in(x - stereo_eye_delta(cls, k, right)). The alpha byte is masked
+   away, so the LCD always gets opaque BGR8. The bottom copy above is shared
+   unchanged, including the touch map. */
+static u32 eye_col[2][SCR_H] __attribute__((aligned(32)));
+
+static void pack_eye_column(const u16 *ix, u32 w, int k)
+{
+    int wm1 = (int)w - 1;
+    for (u32 rr = 0; rr < SCR_H; rr++) {
+        int x = ix[rr], s, d;
+        u32 px = rowbuf[x];
+        int cls = stereo_class_of((u8)(px >> 24));
+        /* class 0 (flat) and unknown alphas never move; out(x)=in(x-delta) */
+        d = stereo_eye_delta(cls, k, 0);
+        s = x - d;
+        eye_col[0][rr] = rowbuf[s < 0 ? 0 : (s > wm1 ? wm1 : s)] & 0xFFFFFF;
+        d = stereo_eye_delta(cls, k, 1);
+        s = x - d;
+        eye_col[1][rr] = rowbuf[s < 0 ? 0 : (s > wm1 ? wm1 : s)] & 0xFFFFFF;
+    }
+}
+
+static void pack_bgr_column(const u32 *src)
+{
+    u32 *o = colbuf;
+    for (u32 rr = 0; rr < SCR_H; rr += 4, o += 3) {
+        u32 p0 = src[rr] & 0xFFFFFF, p1 = src[rr + 1] & 0xFFFFFF;
+        u32 p2 = src[rr + 2] & 0xFFFFFF, p3 = src[rr + 3] & 0xFFFFFF;
+        o[0] = p0 | p1 << 24;
+        o[1] = p1 >> 8 | p2 << 16;
+        o[2] = p2 >> 16 | p3 << 8;
+    }
+}
+
+static void blit_top_stereo(const u8 *src, u32 w, u32 h, u32 stride)
+{
+    static u16 ix[SCR_H];
+    static u32 ix_w;
+    u32 outw = h * 3 / 4, x0;
+    int k = stereo_shift_k(stereo_slider);
+    if (outw > SCR_W) outw = SCR_W;
+    x0 = (SCR_W - outw) / 2;
+    if (ix_w != w) {
+        for (u32 rr = 0; rr < SCR_H; rr++) {
+            u32 x = rr * 4 / 3;
+            ix[rr] = x < w ? x : w - 1;
+        }
+        ix_w = w;
+    }
+    for (u32 c = 0; c < outw; c++) {
+        if (c % POLL_EVERY == 0) poll_io();
+        wcopy(rowbuf, (const u32 *)(src + (c * 4 / 3) * stride), w);
+        pack_eye_column(ix, w, k);
+        for (u32 eye = 0; eye < 2; eye++) {
+            if (!top_fb[eye])
+                continue;
+            pack_bgr_column(eye_col[eye]);
+            wcopy((u32 *)(top_fb[eye] + (x0 + c) * SCR_H * 3), colbuf, SCR_H * 3 / 4);
+        }
+    }
+}
+
 bool display_active(u32 regs_pa)
 {
     vu32 *r = (vu32 *)regs_pa;
@@ -274,8 +397,39 @@ void display_blit(u32 regs_pa)
     if (w <= 320 && !(w & 3) && stride >= w * 4 && !(stride & 3) && !((u32)(uintptr_t)src & 3) &&
         top_fb[0] && !((u32)(uintptr_t)top_fb[0] & 3) && (!top_fb[1] || !((u32)(uintptr_t)top_fb[1] & 3)) &&
         (!bot_fb[0] || !((u32)(uintptr_t)bot_fb[0] & 3)) && (!bot_fb[1] || !((u32)(uintptr_t)bot_fb[1] & 3))) {
+        /* Experimental stereo path. With the flag off (or a slider down, or
+           an unstamped frame, or SCREEN_BOTTOM) `stereo` is false and the two
+           lines below are the original copy, unchanged. */
+        bool stereo = stereo_cfg && !stereo_no_shim && stereo_active(1, stereo_slider) &&
+                      mode != SCREEN_BOTTOM && top_fb[1] && top_fb[1] != top_fb[0] &&
+                      stereo_is_home(src, w, h, stride);
+        if (stereo && !stereo_hw && !gm_set_stereo(true)) {
+            if (!stereo_warned) {
+                log_warn("[monitor] stereo 3D: no shim to switch the top LCD into 3D mode; staying in 2D\n");
+                stereo_warned = true;
+            }
+            stereo_no_shim = true;
+            stereo = false;
+        }
+        if (!stereo && stereo_hw) {
+            stereo_barrier(false);
+            gm_set_stereo(false);
+            stereo_hw = false;
+            logp("[monitor] stereo 3D: top screen back to 2D, parallax barrier off\n");
+        }
         if (mode != SCREEN_TOP) blit_bottom(src, w, h, stride);
-        if (mode != SCREEN_BOTTOM) blit_top(src, w, h, stride);
+        if (mode != SCREEN_BOTTOM) {
+            if (stereo)
+                blit_top_stereo(src, w, h, stride);
+            else
+                blit_top(src, w, h, stride);
+        }
+        if (stereo && !stereo_hw) {
+            stereo_barrier(true);
+            stereo_hw = true;
+            logp("[monitor] stereo 3D: both eyes from the stamped home frame, parallax barrier on "
+                 "(slider %u, shift %d px)\n", stereo_slider, stereo_shift_k(stereo_slider));
+        }
         return;
     }
     display_blit_slow(regs_pa);

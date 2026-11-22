@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Build QEMU with the ios3ds "nintendo3ds" machine into build/qemu.
 #   emu/build-qemu.sh          (first run clones QEMU v10.2.4, ~10 min)
+#   QEMU_DIR=/abs/path emu/build-qemu.sh   (private build for this worktree;
+#     build/qemu is a symlink shared with other worktrees - never write there)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-Q="$ROOT/build/qemu"
+Q="${QEMU_DIR:-$ROOT/build/qemu}"
 VER=v10.2.4
 if [[ ! -d "$Q/.git" ]]; then
     git clone -q --depth 1 --branch "$VER" https://gitlab.com/qemu-project/qemu.git "$Q"

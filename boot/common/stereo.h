@@ -27,6 +27,23 @@
 #define STEREO_MIN_SLIDER   16u
 /* shift in iOS pixels at slider 255: a few pixels at most (docs/stereo3d.md) */
 #define STEREO_MAX_SHIFT    4
+
+/* Hardware registers shared by the ARM9 copy, the ARM11 shim and QEMU.
+   3dbrew "LCD Registers": parallax barrier enable 0x10202000 (bit 0 = on),
+   parallax barrier PWM 0x10202004 (libn3ds LCD_setParallaxBarrier writes
+   0x0A390A39 first, then 0x00010001; 0 turns the barrier off).
+   3dbrew "GPU/External Registers": PDC0 (top) at 0x10400400; +0x68/+0x6C are
+   framebuffer A (left eye) 0/1, +0x94/+0x98 framebuffer B (right eye) 0/1;
+   +0x70 bits 5-4 = 2 (AB interlace) selects 3D mode, bit 6 (line doubling)
+   must then be clear. All are 32-bit accesses. */
+#define ST_BARRIER_PA      0x10202000u
+#define ST_BARRIER_PWM_PA  0x10202004u
+#define ST_BARRIER_ON      0x00010001u
+#define ST_BARRIER_PWM     0x0A390A39u
+#define ST_PDC0_PA         0x10400400u
+#define ST_PDC_FMT_OFF     0x70u
+#define ST_PDC_FMT_INTER   (2u << 4)       /* AB: alternate A/B per scanline */
+#define ST_PDC_FMT_MASK    0x70u           /* interlace + line-doubling bits */
 /* a home screen frame needs at least this many icon-grid draws; the lock
    screen and Spotlight have fewer, apps none */
 #define STEREO_MIN_ICONS    4

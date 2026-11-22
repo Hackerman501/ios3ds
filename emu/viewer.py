@@ -28,6 +28,8 @@ import tkinter as tk
 from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# IOS3DS_QEMU lets a worktree use its own build (build/qemu is shared).
 QEMU = os.environ.get("IOS3DS_QEMU") or os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
 
 # Tk keysym -> QEMU qcode (the board maps qcodes to 3DS buttons, nintendo3ds.c)

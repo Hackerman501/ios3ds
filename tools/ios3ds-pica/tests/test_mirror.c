@@ -43,8 +43,10 @@ static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
                            printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* display.c's only outside dependency */
+/* display.c's outside dependencies (stereo is off in this test) */
 bool blksrv_poll(void) { return false; }
+bool gm_set_stereo(bool on) { (void)on; return true; }
+void log_color(unsigned color, const char *fmt, ...) { (void)color; (void)fmt; }
 
 static uint8_t *h_mem(void *o, uint32_t pa, uint32_t len, int write)
 {

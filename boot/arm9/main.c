@@ -621,6 +621,9 @@ static void __attribute__((noreturn)) monitor(const char *phase)
         /* the PICA200 copies the screen while its frames keep coming (gpumirror.c) */
         bool disp_on = cfg.display_regs && display_active(cfg.display_regs);
         bool gpu_copy = gm_live(tnow, disp_on);
+        /* stereo3d=1 + slider up: only home frames get the two-eye copy and
+           the barrier (docs/stereo3d.md). The slider comes from the MCU box. */
+        display_set_stereo(cfg.stereo3d, mcu_slider3d());
         if (cfg.display_regs && tnow - last_blit >= blit_gap && display_active(cfg.display_regs)) {
             if (!ios_display) {
                 ios_display = true;

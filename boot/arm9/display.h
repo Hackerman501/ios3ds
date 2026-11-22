@@ -12,5 +12,9 @@ void display_blit(u32 regs_pa);
 void display_arm(u32 regs_pa);
 void display_fbs(u32 out[4]);
 void display_set_shown(u32 mask);   /* bit 0/1 top set 0/1, bit 2/3 bottom set 0/1 */
+/* stereo3d=1 (boot.cfg) + the current MCU 3D slider, called every monitor
+   loop: with a stamped home frame the ARM9 copy builds the two eyes and the
+   top LCD goes into 3D mode; otherwise the normal copy stays untouched. */
+void display_set_stereo(bool on, u32 slider);
 /* called with blksrv_poll() every few columns of a CPU copy */
 void display_set_poll(void (*fn)(void));

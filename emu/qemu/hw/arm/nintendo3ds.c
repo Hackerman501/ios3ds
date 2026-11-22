@@ -549,6 +549,8 @@ typedef struct {
 #define PDC_V_COUNT (0x54 / 4)
 #define PDC_FB_A0   (0x68 / 4)
 #define PDC_FB_A1   (0x6C / 4)
+#define PDC_FB_B0   (0x94 / 4)       /* right eye (3dbrew GPU/External Registers) */
+#define PDC_FB_B1   (0x98 / 4)
 #define PDC_FORMAT  (0x70 / 4)
 #define PDC_CNT     (0x74 / 4)
 #define PDC_SELECT  (0x78 / 4)
@@ -682,7 +684,10 @@ typedef struct {
     CtrMcu mcu;
     CtrGyro gyro;
     qemu_irq mcu_irq;              /* GIC 113 (GPIO3 bit 9, falling edge) */
-    MemoryRegion lcd;              /* LCD registers 0x10202000 (backlight PWM) */
+    MemoryRegion lcd;              /* LCD registers 0x10202000 (barrier, backlight PWM) */
+    MemoryRegion lcd9;             /* the ARM9 owns the parallax barrier register */
+    uint32_t lcd_barrier;          /* 0x10202000 bit0: parallax barrier on */
+    uint32_t pdc3d;                /* PDC0 format bits 5-4 == 2: stereo mode */
     uint32_t lcd_abl[2];           /* top / bottom backlight level */
     bool lcd_abl_set;              /* the guest wrote one: the display shows it */
 
@@ -1715,6 +1720,9 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);
     object_property_add(obj, "ambient-light", "uint32", ambient_prop_get, ambient_prop_set,
                         NULL, &s->ambient_lux);
+    /* 3dbrew LCD Registers + PDC0 format: what the guest actually programmed */
+    object_property_add_uint32_ptr(obj, "lcd-3d-barrier", &s->lcd_barrier, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "pdc-3d-mode", &s->pdc3d, OBJ_PROP_FLAG_READ);
     object_property_add_uint32_ptr(obj, "mcu-led-rgb0", &s->mcu.led_rgb0, OBJ_PROP_FLAG_READ);
     object_property_add_uint32_ptr(obj, "mcu-led-steps", &s->mcu.led_lit, OBJ_PROP_FLAG_READ);
 }
@@ -1785,6 +1793,11 @@ static void ctr_add_n3ds_props(CtrMachine *s, Object *obj)
 static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
+    /* 3dbrew "LCD Registers": +0x00 parallax barrier enable, +0x04 PWM */
+    if (addr == 0x00)
+        return s->lcd_barrier;
+    if (addr == 0x04)
+        return 0x0A390A39u;
     if (addr == 0x240 || addr == 0xA40) {
         return s->lcd_abl[addr == 0xA40];
     }
@@ -1794,6 +1807,12 @@ static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
 static void lcd_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
 {
     CtrMachine *s = opaque;
+    if (addr == 0x00) {
+        s->lcd_barrier = v;
+        return;
+    }
+    if (addr == 0x04)
+        return;                     /* barrier PWM timing, modelled as always set */
     if (addr == 0x240 || addr == 0xA40) {
         s->lcd_abl[addr == 0xA40] = v & 0x3FF;
         s->lcd_abl_set = true;
@@ -2337,74 +2356,72 @@ static void ctr_draw_screen(CtrMachine *s, int n, uint32_t *dst, int dst_stride_
     }
 }
 
-/* Stereo 3D: when the 3D slider is up and the iOS framebuffer carries a
-   class map (boot.cfg stereo3d=1), render the top screen as a red/cyan
-   anaglyph built from the two eye images, so the per-layer offsets show up
-   in a screenshot. Reads the iOS framebuffer directly (0x18000000). */
+/* Stereo 3D display model. The guest writes the two eye images into PDC0's
+   framebuffers A (left) and B (right), switches +0x70 to AB interlace and
+   turns on the parallax barrier at 0x10202000 (3dbrew GPU/External Registers,
+   LCD Registers). This function only scans out what those registers point at,
+   tinted red/cyan so a screenshot shows the per-layer offsets. When any part
+   is missing the normal top-screen copy is used. */
 static int ctr_draw_stereo_top(CtrMachine *s, uint32_t *dst, int dst_stride_px)
 {
-    const uint32_t SRC_W = 320, SRC_H = 480;
-    const uint32_t ios_fb_pa = 0x18000000;
-    uint8_t *buf;
-    size_t len = SRC_W * SRC_H * 4;
-    int slider = s->mcu.regs[0x08];
-    int k = stereo_shift_k((uint32_t)slider);
-    /* sample the alpha plane for a class map */
-    uint8_t alpha[1024];
-    int ai = 0;
-    int has_map = 0;
-    if (slider < STEREO_MIN_SLIDER) return 0;
-    buf = g_malloc(len);
-    if (address_space_read(&address_space_memory, ios_fb_pa, MEMTXATTRS_UNSPECIFIED, buf, len) != MEMTX_OK) {
-        g_free(buf);
+    CtrPdc *p = &s->pdc_regs[0];
+    if (s->mcu.regs[0x08] < STEREO_MIN_SLIDER || !(s->lcd_barrier & 1))
         return 0;
-    }
-    /* build a small alpha sample */
-    for (int i = 0; i < 1024; i++) {
-        int idx = (i * (SRC_W * SRC_H / 1024)) * 4;
-        alpha[ai++] = buf[idx];   /* ABGR8: alpha is byte 0 */
-    }
-    has_map = stereo_alphas_stereo(alpha, 1024);
-    if (!has_map) { g_free(buf); return 0; }
-
-    int outw = (int)(SRC_H * 3 / 4);   /* 360 */
-    int x0 = (400 - outw) / 2;
-    /* clear top area */
-    for (int y = 0; y < CTR_SCR_H; y++)
-        for (int x = 0; x < 400; x++)
-            dst[y * dst_stride_px + x] = 0x202020;
-
-    for (int c = 0; c < outw; c++) {
-        int iy0 = c * 4 / 3;
-        if (iy0 >= (int)SRC_H) iy0 = SRC_H - 1;
-        for (int rr = 0; rr < CTR_SCR_H; rr++) {
-            int sx = rr * 4 / 3;
-            if (sx >= (int)SRC_W) sx = SRC_W - 1;
-            int idx = (iy0 * SRC_W + sx) * 4;
-            int cls = stereo_class_of(buf[idx]);   /* byte 0 = alpha */
-            /* left and right sample rows */
-            int dL = stereo_eye_delta(cls, k, 0);
-            int dR = stereo_eye_delta(cls, k, 1);
-            int iyL = iy0 + dL;
-            int iyR = iy0 + dR;
-            if (iyL < 0) iyL = 0; if (iyL >= (int)SRC_H) iyL = SRC_H - 1;
-            if (iyR < 0) iyR = 0; if (iyR >= (int)SRC_H) iyR = SRC_H - 1;
-            int iL = (iyL * SRC_W + sx) * 4;
-            int iR = (iyR * SRC_W + sx) * 4;
-            /* ABGR8: bytes B,G,R,A? case 0 in ctr_draw: r=px[3],g=px[2],b=px[1], alpha=px[0] */
-            int rL = buf[iL+3], gL = buf[iL+2], bL = buf[iL+1];
-            int rR = buf[iR+3], gR = buf[iR+2], bR = buf[iR+1];
-            int r = rL;
-            int g = gR;
-            int b = bR;
-            if (s->lcd_abl_set) {
-                int bl = MIN(s->lcd_abl[0] * 256 / 0x8F, 256);
-                r = r * bl >> 8; g = g * bl >> 8; b = b * bl >> 8;
-            }
-            dst[rr * dst_stride_px + (x0 + c)] = (r << 16) | (g << 8) | b;
+    if ((p->regs[PDC_FORMAT] & ST_PDC_FMT_MASK) != ST_PDC_FMT_INTER ||
+        !(p->regs[PDC_CNT] & PDC_CNT_EN))
+        return 0;
+    uint32_t fb[2] = { p->cur_fb ? p->regs[PDC_FB_A1] : p->regs[PDC_FB_A0],
+                       p->cur_fb ? p->regs[PDC_FB_B1] : p->regs[PDC_FB_B0] };
+    if (!fb[0] || !fb[1])
+        return 0;
+    unsigned fmt = p->regs[PDC_FORMAT] & 7;
+    unsigned bpp = (fmt == 0) ? 4 : (fmt == 1) ? 3 : 2;
+    uint32_t stride = p->regs[PDC_STRIDE] ? p->regs[PDC_STRIDE] : CTR_SCR_H * bpp;
+    size_t len = (size_t)stride * CTR_TOP_W;
+    uint8_t *buf[2] = { NULL, NULL };
+    for (int e = 0; e < 2; e++) {
+        buf[e] = g_malloc(len);
+        if (address_space_read(&address_space_memory, fb[e], MEMTXATTRS_UNSPECIFIED,
+                               buf[e], len) != MEMTX_OK) {
+            g_free(buf[0]);
+            g_free(buf[1]);
+            return 0;
         }
     }
-    g_free(buf);
+    uint32_t bl = s->lcd_abl_set ? MIN(s->lcd_abl[0] * 256 / 0x8F, 256) : 256;
+    if (!(s->mcu.regs[MCU_REG_EX_HW_STAT] & 0x40))
+        bl = 0;
+    /* AB interlace puts one scanline from A (left) and the next from B
+       (right) on the panel; the barrier sends each set to one eye. A single
+       screenshot combines both eye images into a red/cyan anaglyph. */
+    for (int x = 0; x < CTR_TOP_W; x++) {
+        for (int y = 0; y < CTR_SCR_H; y++) {
+            size_t off = (size_t)x * stride + (size_t)(CTR_SCR_H - 1 - y) * bpp;
+            uint32_t rgb[2];
+            for (int e = 0; e < 2; e++) {
+                const uint8_t *px = buf[e] + off;
+                switch (fmt) {
+                case 0: rgb[e] = ((uint32_t)px[3] << 16) | ((uint32_t)px[2] << 8) | px[1]; break;
+                case 1: rgb[e] = ((uint32_t)px[2] << 16) | ((uint32_t)px[1] << 8) | px[0]; break;
+                case 2: { uint16_t v = px[0] | px[1] << 8;
+                          rgb[e] = (((uint32_t)(v >> 11) << 3) << 16) | (((uint32_t)((v >> 5) & 63) << 2) << 8) |
+                                   ((uint32_t)(v & 31) << 3); break; }
+                case 3: { uint16_t v = px[0] | px[1] << 8;
+                          rgb[e] = (((uint32_t)(v >> 11) << 3) << 16) | (((uint32_t)((v >> 6) & 31) << 3) << 8) |
+                                   ((uint32_t)(v >> 1) << 3); break; }
+                default: { uint16_t v = px[0] | px[1] << 8;
+                           rgb[e] = (((uint32_t)(v >> 12) << 4) << 16) | (((uint32_t)((v >> 8) & 15) << 4) << 8) |
+                                    ((uint32_t)((v >> 4) & 15) << 4); break; }
+                }
+            }
+            /* anaglyph: left eye red, right eye cyan */
+            uint32_t r = (rgb[0] >> 16) & 255, g = (rgb[1] >> 8) & 255, b = rgb[1] & 255;
+            r = r * bl >> 8; g = g * bl >> 8; b = b * bl >> 8;
+            dst[(size_t)y * dst_stride_px + x] = (r << 16) | (g << 8) | b;
+        }
+    }
+    g_free(buf[0]);
+    g_free(buf[1]);
     return 1;
 }
 
@@ -2416,15 +2433,9 @@ static void ctr_gfx_update(void *opaque)
     int stride_px = surface_stride(surf) / 4;
 
     memset(d, 0x20, (size_t)surface_stride(surf) * surface_height(surf));
-    {
-        int drew = 0;
-        if (s->mcu.regs[0x08] >= STEREO_MIN_SLIDER) {
-            drew = ctr_draw_stereo_top(s, d, stride_px);
-        }
-        if (!drew || s->mcu.regs[0x08] < STEREO_MIN_SLIDER) {
-            ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
-        }
-    }
+    s->pdc3d = s->pdc_regs[0].regs[PDC_FORMAT] & ST_PDC_FMT_MASK;
+    if (!ctr_draw_stereo_top(s, d, stride_px))
+        ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
     ctr_draw_screen(s, 1, d, stride_px, CTR_BOT_W, (CTR_TOP_W - CTR_BOT_W) / 2, CTR_SCR_H);
     dpy_gfx_update_full(s->con);
 }
@@ -2824,6 +2835,9 @@ static void ctr_init(MachineState *machine)
     memory_region_add_subregion_overlap(sys, 0x10400000, &s->gx, -1);
     memory_region_init_io(&s->lcd, NULL, &lcd_ops, s, "ctr.lcd", 0x1000);
     memory_region_add_subregion(sys, 0x10202000, &s->lcd);
+    /* the ARM9 writes the parallax barrier enable at +0x00 (3dbrew LCD Registers) */
+    memory_region_init_alias(&s->lcd9, NULL, "ctr.lcd9", &s->lcd, 0, 0x1000);
+    memory_region_add_subregion(&s->arm9_root, 0x10202000, &s->lcd9);
     s->lcd_abl[0] = s->lcd_abl[1] = 0x5F;          /* Luma's default brightness preset */
     ctr_add_unimp(sys, "ctr.io11.unimp", CTR_IO11_BASE, 0x400000);
 

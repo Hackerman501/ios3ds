@@ -1,28 +1,30 @@
 # Experimental stereoscopic 3D home screen
 
-Status: **experimental, emulator only**. Off by default (`stereo3d=0`).
-Enabled with `stereo3d=1` in `sd:/ios3ds/boot.cfg`.
+Status: **hardware path implemented, not yet tested on a console**. Off by
+default (`stereo3d=0`). Enabled with `stereo3d=1` in `sd:/ios3ds/boot.cfg`;
+the 3D slider must be above the bottom notch (MCU register 0x08 >= 16).
+The bottom screen, the touch map and the GPU display mirror are unaffected
+(the mirror is switched off by this flag: the ARM9 builds the eyes).
 
 ## 1. Idea
 
 The 3DS top LCD has a parallax barrier: with the barrier on it shows two
 images, one per eye, and the viewer sees depth. iOS's home screen is drawn by
 SpringBoard through CoreAnimation, which composites every layer with our GL
-engine (`tools/ios3ds-gl`, docs/gpu.md). That engine already has the layer
-geometry in hand, so it can composite the frame a second time for the other
-eye with a small horizontal offset per layer depth, while the home screen is
-visible:
+engine (`tools/ios3ds-gl`, docs/gpu.md). That engine stamps the depth class
+of the topmost layer into the frame's alpha byte while it composites:
 
 - wallpaper furthest back,
 - the icon grid at the convergence plane,
 - dock and status bar in front of it,
 - folders and alerts in front of those.
 
-Offsets scale with the 3D slider (0 = flat 2D, barrier off) and are a few
-pixels at most; the eyes shift in opposite directions. Everywhere except the
-home screen (apps, the lock screen, alerts over apps) both eyes get the same
-image or the barrier stays off. The bottom screen and the touch map do not
-change.
+The ARM9 screen copy reads that class map and builds the left and right eye
+images in the two LCD framebuffer sets, shifting each class by its eye offset.
+The 3D slider scales the shift (0..4 pixels); slider down or a frame that is
+not the home screen gives both eyes the same image and the barrier is off.
+The alpha byte is masked away before the pixels reach the LCD: the screen
+always gets opaque BGR8.
 
 ## 2. Why the alpha channel
 
@@ -30,19 +32,19 @@ The composed frame is 32 bpp BGRA in window 1 (`/vram`, 0x18000000). Core
 Animation's own colours, blending and coverage are left untouched in pass 1.
 Pass 2 writes only the alpha channel of the same pixels with the layer's
 depth class (a second, alpha-only pass over the same geometry, colour mask A
-only, blending off, no texture). The ARM9 screen copy reads that byte back
-and builds the two eye images by sampling the frame with a horizontal offset
-that depends on the class.
+only, blending off, no texture). The ARM9 screen copy reads that byte back.
 
 The alpha values are chosen (0x00/0x33/0x66/0x99/0xCC) well away from the
 premultiplied alphas a software compositor would leave behind (0x00
 transparent, 0xFF opaque), so a frame without our stamps never looks like a
-class map: `stereo_alphas_stereo()` rejects it.
+class map: `stereo_alphas_stereo()` rejects it. The ARM9 samples a 32x32 grid
+of the frame's alpha bytes on every copy; one unstamped byte is enough to
+fall back to the normal, flat copy.
 
 ## 3. Depth classes and offsets
 
-Shared by the GL engine, the ARM9 copy, the kernel shim mirror and the host
-tests in `boot/common/stereo.h`:
+Shared by the GL engine, the ARM9 copy, and the host tests in
+`boot/common/stereo.h`:
 
 - `STC_FLAT` (0): both eyes identical,
 - `STC_BG` (1): wallpaper, furthest back,
@@ -52,8 +54,10 @@ tests in `boot/common/stereo.h`:
 
 `stereo_eye_delta(cls, k, right)` gives the horizontal sampling offset in iOS
 pixels for one eye: `out(x) = in(x - delta)`. Class 2 stays put; class 1
-moves `-k` (left) / `+k` (right); class 4 moves `+2k` / `-2k`. `k` is
-`stereo_shift_k(slider)`, 1..4 for slider 16..255 and 0 below that.
+moves `-k` (left) / `+k` (right); class 3 moves `+k` / `-k`; class 4 moves
+`+2k` / `-2k`. `k = stereo_shift_k(slider)` is 1..4 for slider 16..255 and 0
+below that. The frame is rotated on the LCD, so this horizontal iOS offset
+becomes a vertical parallax shift on the 3DS panel.
 
 ## 4. GL engine stamping (`tools/ios3ds-gl/stereo.c`)
 
@@ -81,20 +85,114 @@ copy sees a uniform frame and gives both eyes the same image.
 Pass 1 is CoreAnimation's own draw, untouched. Pass 2 stamps alpha only.
 `gl_be_triangles()` runs pass 1 then, when classified, pass 2.
 
-## 5. Cost
+## 5. Real hardware: the two-eye copy and the display registers
+
+**ARM9 copy** (`boot/arm9/display.c`, `blit_top_stereo()`): one source row is
+read per screen column as in the normal fast copy. For each output pixel the
+alpha byte at that source position picks the depth class; the left eye
+samples `x - delta(cls,k,left)`, the right eye `x + delta(cls,k,right)`,
+clamped to the source width. Both samples are packed as BGR8 (low 24 bits
+only) into `top_fb[0]` (left eye) and `top_fb[1]` (right eye). The bottom
+copy and the touch map are the ordinary `blit_bottom()`, unchanged.
+
+**PDC0 2D/3D switch** (`kernel/shim/pica_stereo.c`, ARM11 GPU part): the PDC
+registers are ARM11-only, so the ARM9 publishes the requested mode in the
+display mailbox (`gmbox_t.stereo_on/stereo_seq`, `boot/common/gpu_mirror.h`)
+and the shim applies the preset on the next VBlank. Per 3dbrew
+[GPU/External Registers](https://www.3dbrew.org/wiki/GPU/External_Registers):
+
+- PDC0 (top screen) is at PA `0x10400400`;
+- `+0x68/+0x6C` = framebuffer A (left eye) set 0/1, `+0x94/+0x98` =
+  framebuffer B (right eye) set 0/1: both pairs are pointed at the two LCD
+  framebuffer sets the ARM9 just wrote;
+- `+0x70` bits 5-4 = 2 selects AB interlace (one scanline from A, the next
+  from B) and bit 6 must be clear: this is the 3D mode GSP uses. The shim
+  saves Luma's 2D preset on the first switch and restores it on the way back
+  (bit 6 set, no interlace).
+
+**Parallax barrier** (`boot/arm9/display.c`, ARM9 side). Per 3dbrew
+[LCD Registers](https://www.3dbrew.org/wiki/LCD_Registers):
+
+- parallax barrier enable at PA `0x10202000`: `0x00010001` on, `0` off;
+- parallax barrier PWM at PA `0x10202004`: `0x0A390A39` before enabling
+  (the value libn3ds' `LCD_setParallaxBarrier` writes).
+
+The ARM9 enables the barrier only **after** the shim acknowledged the PDC
+switch, and only when a stamped home frame was actually copied. Any later
+flat frame (app, slider down, boot flag off) switches PDC0 back to 2D and
+clears the barrier register again. No CONFIG11/SPI write is needed: the
+barrier itself is the register above (3dbrew also notes that Horizon's GSP
+turns it on when it programs AB interlace; we are baremetal, so we write it
+directly).
+
+**`stereo3d=0`** never calls any of this code: `display_blit()` executes the
+same two copy calls as before, writing the same bytes to the same
+framebuffers. `tools/ios3ds-pica/tests/test_stereo_copy.c` and
+`test_mirror.c` check that byte-for-byte (including the flag-off case and
+the slider-down fallback).
+
+## 6. Cost
 
 With the flag off the normal path is unchanged: `stereo_prepare()` returns -1
-immediately and no stamp pass runs. With the flag on the back end logs frame
-times in `ca_frame()` (`CA: ... frames; per frame ...`), including the extra
-stamp passes; the wipe adds one full-screen quad to non-home frames. The
-classifier and the texture opacity cache (`Tex.stereo_opq`, scanned once per
-image) keep the overhead small.
+immediately and no stamp pass runs. With the flag on the CA render server
+logs `CA stereo3D: N frames, N home (stamped), ...` and the usual
+`CA: ... per frame ...` line in `sd:/ios3ds/log.txt` (enable `diag=1` for the
+per-draw classifier log). The ARM9 logs each stereo transition and its
+30-second `[monitor] CPU screen copy: ... ms each (ARM9)` average. The extra
+cost is the alpha-only stamp pass on home frames, one wipe quad on other
+frames, and writing both eye framebuffers instead of one; the GPU mirror is
+off in this mode, so this replaces the GPU copy rather than adding to it.
+Measured numbers from this branch are in docs/re-log.md, section 86.
 
-## 6. QEMU
+## 7. QEMU
 
-QEMU models the 3D slider as the MCU register 0x08 (`mcu-3d-slider` QOM
-property). When the slider is up and the iOS framebuffer carries a class map,
-the top screen is rendered as a red/cyan anaglyph built from the two eye
-images, so the per-layer offsets are visible in a screenshot. With the slider
-down or no class map (flag off, apps, lock screen) the normal top screen is
-shown. The bottom screen and touch mapping are unchanged.
+QEMU models the hardware registers, not the old shortcut: the anaglyph comes
+from PDC0's framebuffer A (left) and B (right), the format bits at `+0x70`
+and the barrier register at `0x10202000` (plus QOM properties `pdc-3d-mode`
+and `lcd-3d-barrier`, readable with `qom-get /machine ...`). The arm9 gets an
+alias of the LCD register page so its barrier writes reach the model. With
+the barrier off or PDC0 in 2D mode the ordinary top-screen copy is shown.
+
+The QEMU binary in `build/qemu` is shared between worktrees; this branch uses
+its own `build/qemu-local` (built with `QEMU_DIR=$PWD/build/qemu-local
+emu/build-qemu.sh`), selected with `IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm`
+(or `--qemu` for `emu/soak.py`):
+
+```
+# flag on + slider up: anaglyph home screen; tap an app: no offset
+IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm \
+  python3 emu/run.py --time 90 --shots 70,80 --hmp '5=qom-set /machine mcu-3d-slider 255'
+# slider down: flat
+... --hmp '5=qom-set /machine mcu-3d-slider 0'
+# flag off: ordinary screen
+```
+
+`emu/soak.py --slider3d 255` sets the slider before boot for flag-on soaks.
+The bottom screen and the touch mapping are unchanged.
+
+## 8. What still needs a console
+
+Everything above is implemented and exercised in QEMU, but **the 3D effect
+has not been seen on a real 3DS**. To test:
+
+1. Add `stereo3d=1` to `sd:/ios3ds/boot.cfg` (and keep `diag=1` if you want
+   the per-frame classifier lines). Boot as usual.
+2. On the home screen, push the 3D slider up and take a **photo of the top
+   screen from straight in front**, with the slider at maximum and at the
+   bottom notch (control photo). Compare: wallpaper/dock should separate in
+   depth in the first, the second should look like 2D. Open an app with the
+   slider still up and take a third photo: it must look flat.
+3. Capture `sd:/ios3ds/log.txt` (and `log_prev.txt` if a previous run is
+   relevant). The lines to look for are
+   `[monitor] stereo3d=1: GPU display mirror off, ARM9 CPU copy builds the eyes`,
+   `[gpu] PDC0 stereo preset applied: left fb ..., right fb ... (3D=1)`,
+   `[monitor] stereo 3D: both eyes ... parallax barrier on (slider ..., shift ... px)`
+   and, after leaving the home screen or sliding down,
+   `[monitor] stereo 3D: top screen back to 2D, parallax barrier off`.
+   Any `[monitor] stereo 3D: no shim ...` means the GPU part was not loaded
+   (check `gpu=1`): the copy stays in 2D rather than showing a broken image.
+4. Report the console model (Old/New, 2DS?) and whether the top LCD really
+   shows depth. A 2DS has no barrier, so a flat picture there is expected.
+
+Until that photo and log arrive, treat this as experimental; the README row
+stays 🧪.

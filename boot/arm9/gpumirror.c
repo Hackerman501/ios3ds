@@ -209,6 +209,24 @@ u32 gm_shown(void)
     return m;
 }
 
+/* Stereo mode switch. The PDC registers are ARM11-only (3dbrew
+   GPU/External Registers), so the GPU part of the shim writes them; the
+   parallax barrier is ARM9-side and is enabled by display.c after this ack.
+   Only a transition writes the mailbox; a stalled shim must not hold the
+   monitor loop, so the wait is bounded. */
+bool gm_set_stereo(bool on)
+{
+    if (!gm || !gm->gpu_enable || gm->magic != GM_MAGIC)
+        return false;
+    if (gm->stereo_on == (u32)on && gm->stereo_ack_seq == gm->stereo_seq)
+        return true;
+    gm->stereo_on = on;
+    u32 seq = ++gm->stereo_seq;
+    for (volatile u32 n = 0; n < 200000 && gm->stereo_ack_seq != seq; n++)
+        blksrv_poll();
+    return gm->stereo_ack_seq == seq;
+}
+
 /* every 30 s: what the copy costs, GPU and CPU side by side */
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown)
 {

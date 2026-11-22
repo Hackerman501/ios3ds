@@ -12,9 +12,10 @@ SRC  := src/pica_cmd.c src/pica_state.c src/pica_tex.c src/pica_ff.c src/pica_dr
 ENC  := src/pica_cmd.c src/pica_state.c src/pica_ff.c
 INC  := -Iinclude -I$(ROOT)/boot/common
 
-test: $(OUT)/test_pica $(OUT)/test_mirror $(OUT)/gpumirror.bin
+test: $(OUT)/test_pica $(OUT)/test_mirror $(OUT)/test_stereo_copy $(OUT)/gpumirror.bin
 	$(OUT)/test_pica
 	$(OUT)/test_mirror $(OUT)/gpumirror.bin
+	$(OUT)/test_stereo_copy
 
 mirror: $(OUT)/gpumirror.bin
 
@@ -32,6 +33,12 @@ $(OUT)/test_mirror: tests/test_mirror.c src/pica_mirror.c src/pica_drv.c src/pic
 	mkdir -p $(OUT)
 	cc -O2 -g -Wall -Wextra -Wno-int-to-pointer-cast $(INC) -I$(ROOT)/boot/arm9 tests/test_mirror.c \
 		src/pica_mirror.c src/pica_drv.c src/pica_diag.c sim/picasim.c $(ROOT)/boot/arm9/display.c -lm -o $@
+
+$(OUT)/test_stereo_copy: tests/test_stereo_copy.c $(ROOT)/boot/arm9/display.c $(ROOT)/boot/common/stereo.h \
+		$(ROOT)/boot/arm9/display.h $(ROOT)/boot/arm9/gpumirror.h
+	mkdir -p $(OUT)
+	cc -O2 -g -Wall -Wextra -Wno-int-to-pointer-cast -Iinclude -I$(ROOT)/boot/common -I$(ROOT)/boot/arm9 tests/test_stereo_copy.c \
+		$(ROOT)/boot/arm9/display.c -o $@
 
 $(OUT)/test_pica: $(SRC) tests/test_pica.c $(wildcard include/*.h sim/*.h src/*.h)
 	mkdir -p $(OUT)

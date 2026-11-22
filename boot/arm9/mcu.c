@@ -178,6 +178,11 @@ void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 ticks_per_s)
          (box->flags & MCUF_SHELL_OPEN) ? "open" : "closed", mask_ok ? "set" : "NOT set (no HOME/POWER events)");
 }
 
+u32 mcu_slider3d(void)
+{
+    return box && (box->valid & MCUV_SLIDERS) ? box->slider3d : 0;
+}
+
 /* ---- notification LED (MCU reg 0x2D) -------------------------------------
    Pattern (3dbrew "MCU Services" / libn3ds McuInfoLedPattern): delay, smoothing,
    loop delay, unknown, then 32 steps of red, green, blue. Unverified on

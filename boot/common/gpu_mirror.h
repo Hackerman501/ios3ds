@@ -90,7 +90,13 @@ typedef struct {
        read the GPU block itself). The CPU copy writes only those. */
     uint32_t pdc_magic;     /* GM_PDC_MAGIC once published */
     uint32_t pdc_swap[2];   /* top, bottom */
-    uint32_t _r5[5];
+    /* stereo 3D mode switch (docs/stereo3d.md): ARM9 sets on + bumps seq,
+       ARM11 applies the PDC0 2D/3D preset and acknowledges here. The ARM9
+       enables the parallax barrier only after the ack. */
+    uint32_t stereo_on;
+    uint32_t stereo_seq;
+    uint32_t stereo_ack_seq;
+    uint32_t _r5[2];
     /* lines 6-7: free */
     uint32_t _r6[16];
 } gmbox_t;

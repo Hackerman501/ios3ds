@@ -87,18 +87,23 @@ def soak_slot(slots=2):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
+    ap.add_argument("--qemu", default="", help="QEMU binary to use (default: env IOS3DS_QEMU or the shared build/qemu)")
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "emu", "soak"))
     ap.add_argument("--cycles", type=int, default=40)
     ap.add_argument("--boot-timeout", type=float, default=1200)
     ap.add_argument("--settle", type=float, default=15, help="seconds an app gets after its tap")
     ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--icount", default="")
+    ap.add_argument("--slider3d", type=int, default=-1,
+                    help="set the 3D slider (MCU reg 0x08) at boot, e.g. 255 for stereo3d=1")
     ap.add_argument("--long-lock", type=float, default=130, help="seconds locked on every 10th cycle")
     ap.add_argument("--targets", default="", help="x,y;x,y;... iOS points to tap instead of the icon grid + dock")
     ap.add_argument("--settles", default="", help="comma list of per-cycle settle seconds (cycled)")
     a = ap.parse_args()
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
+    if a.qemu:
+        viewer.QEMU = a.qemu
     os.makedirs(a.out, exist_ok=True)
     targets = [tuple(float(v) for v in p.split(",")) for p in a.targets.split(";") if p] or TARGETS
     settles = [float(v) for v in a.settles.split(",") if v] or [a.settle]
@@ -114,6 +119,8 @@ def main():
     slot = soak_slot()  # noqa: F841 (held until exit)
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     q = viewer.QMP(sock)
+    if a.slider3d >= 0:
+        q.cmd("qom-set", path="/machine", property="mcu-3d-slider", value=a.slider3d)
     t0 = time.time()
     log = lambda m: print("[soak %6.0fs] %s" % (time.time() - t0, m), flush=True)  # noqa: E731
 
