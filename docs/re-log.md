@@ -1491,7 +1491,7 @@ paths below are exercised in QEMU.
   `stereo_ack_seq` (still 256 bytes, same cache-line ownership). The ARM9's
   `gm_set_stereo()` publishes a request and waits at most 200000 polls for the
   ack. `kernel/shim/pica_stereo.c` (new GPU-part object, added to mkboot's
-  source list) checks the request every VBlank via `shim_gpu_thread_poll()`,
+  source list) checks the request in thread context via `shim_gpu_thread_poll()`,
   saves Luma's 2D PDC0 preset on the first switch and writes the 3D preset.
   Per 3dbrew GPU/External Registers: PDC0 `+0x68/+0x6C` = left-eye A0/A1,
   `+0x94/+0x98` = right-eye B0/B1, `+0x70` bits 5-4 = 2 (AB interlace), bit
