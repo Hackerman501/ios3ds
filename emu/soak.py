@@ -228,15 +228,19 @@ def main():
                 c["lock_seconds"] = a.long_lock if i % 10 == 9 else 4
                 time.sleep(c["lock_seconds"])
                 key("ret")
-                time.sleep(3)
+                time.sleep(5)
                 # The first slide after a wake can be swallowed while the
                 # input daemon is still polling at 10 Hz (re-log 75/78): the
                 # screen stays black not because iOS hung, but because the
                 # gesture never reached SpringBoard. Retry a missed slide
-                # before measuring the unlock screen.
-                for attempt in range(3):
+                # before measuring the unlock screen; wake again first if the
+                # screen went dark (auto-lock on a long cycle).
+                for attempt in range(5):
+                    if ImageStat.Stat(shot("c%03d_unlock" % i).convert("L")).mean[0] < 5:
+                        key("ret")
+                        time.sleep(3)
                     drag(40, 420, 300, 420, 0.8)
-                    settled("c%03d_unlock" % i)  # the icons fly in after an unlock
+                    settled("c%03d_unlock" % i, limit=45)  # the icons fly in after an unlock
                     u0 = shot("c%03d_unlock" % i).convert("L")
                     if ImageStat.Stat(u0).mean[0] > 5:
                         break
