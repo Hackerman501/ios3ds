@@ -552,11 +552,15 @@ static void test_wpa1_crypto(void)
     CHECK(eqhex(d, "750c783e6ab0b503eaa86e310a5db738"));
     /* RC4 (key "Key", "Wiki": well-known reference vectors) */
     u8 buf[32], k32[32];
+    memset(k32, 0, sizeof(k32));
+    memcpy(k32, "Key", 3);
     memcpy(buf, "Plaintext", 9);
-    wpa_rc4_skip((const u8 *)"Key\0\0", 3, 0, buf, 9);
+    wpa_rc4_skip(k32, 3, 0, buf, 9);
     CHECK(eqhex(buf, "bbf316e8d940af0ad3"));
+    memset(k32, 0, sizeof(k32));
+    memcpy(k32, "Wiki", 4);
     memcpy(buf, "pedia", 5);
-    wpa_rc4_skip((const u8 *)"Wiki\0", 4, 0, buf, 5);
+    wpa_rc4_skip(k32, 4, 0, buf, 5);
     CHECK(eqhex(buf, "1021bf0420"));
     /* WPA RC4-drop-256: key and plaintext 00..1f, independently computed */
     for (u32 i = 0; i < 32; i++) { k32[i] = (u8)i; buf[i] = (u8)i; }
