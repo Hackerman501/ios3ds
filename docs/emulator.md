@@ -31,7 +31,7 @@ on the console.
 | CFG9 / CFG11 | SDMMCCTL is stored; SOCINFO reports an Old 3DS (New 3DS with `new3ds=on`, below) |
 | New 3DS (`-M nintendo3ds,new3ds=on`, `emu/run.py --new3ds`, `emu/soak.py --new3ds`, or `IOS3DS_NEW3DS=1`) | SOCINFO 7, the `PDN_LGR_SOCMODE` clock switch with its GIC 88 handshake (PERIPHCLK follows: 402 MHz at 804), the L2C-310 registers at 0x17E10000 (maintenance counted, no cache), the C-stick/ZL/ZR chip on I2C bus 3 at 0x54 (Z = ZL, N = ZR, keypad 8/2/4/6 = C-stick). QOM: `n3ds-socmode`, `l2c-ctrl`, `l2c-inv-lines`, `l2c-syncs`, `cstick-x/-y`, `exthid-buttons`, `exthid-reads`. [n3ds.md](n3ds.md) section 4 |
 | GPU (PICA200) | The GX block at 0x10400000: PSC memory fill, PPF display transfer / texture copy and the P3D command-list processor, rendered by a software model (`tools/ios3ds-pica/sim/picasim.c`, [pica200.md](pica200.md) §5). GIC 40/41/44/45 follow its status bits. `PDN_GPU_CNT` reads 0x1007F (clocked, out of reset), `CFG11_GPUPROT` is stored. Compared with hardware since run 13: like the real GPU, fills outside VRAM write nothing and non-power-of-two textures sample garbage; started operations finish later in virtual time ([pica200.md](pica200.md) §13). |
-| Wi-Fi | TMIO controller 2 at 0x10122000 with an AR6014-like SDIO card (BMI, HTC/WMI) and a WPA2 access point bridged to `-nic user,model=ctr-wifi` (slirp); CFG11_WIFICNT and GPIO 2_2/3_12 power it. HTC sends per-endpoint credits in RX trailers and refuses messages with `Mbox Full` when they run out; QOM: `htc-credits-used`, `htc-credit-reports`, `htc-credit-waits`, `htc-overflows`, `wifi-tx/rx-frames`, `wifi-tx/rx-drop`. `emu/wifi_test.py` runs the end-to-end tests (including a 4 MiB credit/bulk transfer); scans also report two decoys (NeighborNet, CoffeeShop); `emu/wifi_ui_test.py` joins through iOS Settings. [wifi.md](wifi.md) §7, §10 |
+| Wi-Fi | TMIO controller 2 at 0x10122000 with an AR6014-like SDIO card (BMI, HTC/WMI) and a WPA2/WPA1 (CCMP or TKIP) access point bridged to `-nic user,model=ctr-wifi` (slirp); CFG11_WIFICNT and GPIO 2_2/3_12 power it. HTC sends per-endpoint credits in RX trailers and refuses messages with `Mbox Full` when they run out; QOM: `htc-credits-used`, `htc-credit-reports`, `htc-credit-waits`, `htc-overflows`, `wifi-tx/rx-frames`, `wifi-tx/rx-drop`. `emu/wifi_test.py` runs the end-to-end tests (including a 4 MiB credit/bulk transfer); scans also report two decoys (NeighborNet, CoffeeShop); `emu/wifi_ui_test.py` joins through iOS Settings. [wifi.md](wifi.md) §7, §10 |
 | Unmapped addresses | **external abort**, like a real bus. This is how the emulator caught XNU touching S5L8720 peripherals. Known IO windows are `unimplemented-device` (reads return 0, logged with `-d unimp`). |
 
 ## Known fidelity gaps (verify on hardware)
@@ -62,6 +62,8 @@ python3 emu/run.py --gdb     # waits for arm-none-eabi-gdb on :1234
 python3 emu/run.py --time 420 --out build/emu-x --hmp "300=qom-set /machine mcu-battery 15"
 python3 emu/tap.py --time 400 --key 280:h --key 340:p:5 --set 255:mcu-battery=50 --get 300:lcd-backlight
 python3 emu/run.py --icount 2 --time 300   # real-hardware timing (see below)
+IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm \
+  python3 emu/soak.py --cycles 5 --icount 2   # soak a branch with its own QEMU build
 ```
 
 `IOS3DS_QEMU=/path/to/qemu-system-arm` overrides the binary path in

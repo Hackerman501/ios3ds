@@ -769,7 +769,10 @@ without Wi-Fi firmware or with `backend=off` it stays 0 and the LED is off.
 LED of §10 is a separate register and switch, `notify_led`).
 
 The QEMU MCU models reg 0x2A and counts writes: `qom-get /machine
-mcu-wifi-led` (0 or 1) and `qom-get /machine mcu-wifi-led-writes`. A Wi-Fi
-QEMU run with a link shows one write of 1 at link-up; `wifi_led=0` shows no
-write of 1. Hardware check: the blue LED next to the power LED comes on
-when Settings joins a network and goes dark on "Turn Wi-Fi Off" or shutdown.
+mcu-wifi-led` (0 or 1) and `qom-get /machine mcu-wifi-led-writes`. Wi-Fi QEMU
+runs (2026-11-22, `emu/wifi_test.py --case ok` with HMP queries at 180 guest
+seconds) showed `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (one initial 0,
+one 1 at `[wifi] link up`) with the default setting, and `0` / `0` with
+`wifi_led=0` in `boot.cfg` — no write of 1 in the latter run. Hardware check:
+the blue LED next to the power LED comes on when Settings joins a network and
+goes dark on "Turn Wi-Fi Off" or shutdown.

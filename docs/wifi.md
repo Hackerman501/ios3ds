@@ -503,8 +503,13 @@ with `network backend 'user' is not compiled into this binary` in `run.txt`.
 Results (2026-11-18, re-log 45): `ok` PASS in plain QEMU and with
 `--icount 2` (SpringBoard on screen, `[nettest] all steps passed`, the host's
 server logged `GET /ios3ds-nettest`); `open`, `nocfg` (full boot to
-SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden`, `tkip` PASS. WPA v1
-and the 4 MiB credit transfer were re-checked later (re-log 85/86). The
+SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden` PASS. Later runs
+(2026-11-22, re-log 85-87) with this branch's QEMU: `ok`, `tkip` and `wpa1`
+PASS end to end; the credit case delivered 4 MiB with 0 bad bytes and
+1,216 credits consumed and returned with 0 overflows (its final nettest
+summary still failed on an early route/DNS timeout under host load). LED
+QOM checks matched `wifi_led` on/off. For a branch with its own QEMU build,
+set `IOS3DS_QEMU` (both `emu/run.py` and `emu/soak.py` honour it). The
 status bar showed "Searching..." and no Wi-Fi bars; section 10 added them.
 
 The paravirtual "ctr-vnic" NIC that an earlier version of this section

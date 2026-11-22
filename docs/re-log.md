@@ -1581,6 +1581,18 @@ host that ignores credits fails in QEMU, where the old model let it through.
 **Host tests:** `make -C tools/ios3ds-wifi test` covers cumulative reports,
 unknown records, torn trailers, saturation and out-of-range endpoints.
 
+**QEMU evidence (2026-11-22, this worktree's QEMU):**
+`emu/wifi_test.py --case credit` served the 4 MiB body with
+`[nettest] bulk 4194461 bytes (4194304 body, 0 bad) in 255 s: PASS`, while
+the driver logged `[wifi-diag] ... htc: credit report: +1 ...` and the model
+`ctr-wifi: ... HTC credits: consumed 1216, returned 1216, 218 wait(s),
+0 overflow(s)`. No `Mbox Full`, TX overflow or lost byte was seen; the
+forbidden checks in the test stayed clean. That run's final nettest summary
+was FAILED because an early default-route/DNS check timed out under host
+load (a plain `--case ok` run with the same firmware passed all checks).
+`emu/run.py` and `emu/soak.py` now both accept `IOS3DS_QEMU` so a branch
+with its own QEMU build is tested with that binary.
+
 ## 86. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
 
 **Firmware first.** GBATEK "WMI Connect Functions" lists the AR6014's
@@ -1618,8 +1630,16 @@ exists, but open/shared-key association and WEP key management were not added.
 vectors and an independently computed RC4-drop-256 vector, a 64-byte PTK check,
 WPA-IE parse/reject cases, and a full WPA1 4-way + group rekey against a small
 authenticator in `tools/ios3ds-wifi/tests/test_host.c` (200 checks, 0 failed).
-QEMU evidence: `emu/wifi_test.py --case wpa1` (vendor IE, TKIP keys, link up,
-nettest) and `--case tkip` (WPA2/TKIP group). Results: TBD.
+QEMU evidence (2026-11-22): `--case tkip` PASS — `[wifi] connect
+"ios3ds-qemu" (WPA2-PSK/CCMP, TKIP group)` and `WMI_ADD_CIPHER_KEY group ...
+equals the AP's GTK`. The first `--case wpa1` run exposed two bugs:
+`target_lookup()` used its `RSN_MODE_WPA2` default as if an RSN IE had been
+seen, clearing WPA1 selection (QEMU: WMI auth 5/4/4, status 43), and the
+QEMU AP compared the pairwise TKIP key in raw order while both dsiwifi and
+our installer swap the MIC halves. With `saw_rsn` and the model's swapped
+comparison, `--case wpa1` PASS: `[wifi] connect ... WPA-PSK/TKIP`,
+`pairwise ... equals the AP's TK`, `4-way: message 4 OK` and `[nettest] all
+steps passed`. Host tests: 200 checks, 0 failed.
 
 ## 87. Wi-Fi LED follows the link (2026-11-22)
 
@@ -1631,4 +1651,8 @@ I2C byte. `boot.cfg wifi_led=0` disables the feature (default on), next to
 `notify_led` for the separate RGB notification LED.
 
 The QEMU MCU now models reg 0x2A and counts writes: `/machine mcu-wifi-led`
-and `mcu-wifi-led-writes` are read-only QOM properties. Evidence: TBD.
+and `mcu-wifi-led-writes` are read-only QOM properties. Evidence (2026-11-22,
+`emu/wifi_test.py --case ok`, HMP `qom-get` at 180 guest seconds): default
+setting gave `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (initial 0 and one
+write of 1 at `[wifi] link up`); with `wifi_led=0` in `boot.cfg` both were 0
+and there was no `[mcu] Wi-Fi LED on` line (docs/mcu.md §12).
