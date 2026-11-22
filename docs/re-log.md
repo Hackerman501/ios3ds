@@ -1268,7 +1268,11 @@ repeating the table here.
   0 panics / stalls / crashes / md0 errors, 0 GPU fallback or timeouts,
   recoveries `Dismiss` (1), `Home + unlock` (2, the slow cycles crossed iOS's
   auto-lock) and `second Home` (1), last heartbeat
-  `md0 4401 req 90135 KiB 0 err`.
+  `md0 4401 req 90135 KiB 0 err`. Re-ran with the final input daemon from this
+  branch (Copy resolver + Home grace, fresh image): **Result: PASS**, boot
+  190 s, 5 cycles, 0 panics/stalls/crashes/md0 errors, recoveries
+  `second Home` (1) and `Dismiss + Home` (1), last heartbeat
+  `md0 4334 req 89603 KiB 0 err`.
 - **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image, image
   with the final input daemon from this branch): **Result: PASS**, boot 260 s,
   5 cycles, 0 panics / stalls / crashes / md0 errors, 0 GPU fallback or
