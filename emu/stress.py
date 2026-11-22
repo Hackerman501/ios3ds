@@ -256,10 +256,13 @@ def main():
             app = shot("c%03d_%s" % (i, name))
             c["app"] = name
             c["app_lit"] = round(ImageStat.Stat(app.convert("L")).mean[0], 1)
-            # continuous drag across the app, then a vertical drag
-            drag(160, 240, 40, 240, 0.8)
-            drag(160, 160, 160, 380, 0.8)
-            shot("c%03d_drag_%s" % (i, name))
+            if a.app_drag:
+                # App-targeted GSEvents work on hardware (re-log 78) but make
+                # QEMU's ARM11 mach/copyout path panic deterministically. Off
+                # by default; see docs/driver-status.md.
+                drag(160, 240, 40, 240, 0.8)
+                drag(160, 160, 160, 380, 0.8)
+                shot("c%03d_drag_%s" % (i, name))
             key("ret")
             home = settled("c%03d_home" % i)
             c["home_diff"] = round(ImageStat.Stat(ImageChops.difference(home.convert("L"), ref)).mean[0], 2)
@@ -279,6 +282,15 @@ def main():
                         break
                 else:
                     c["recovered_with"] = "stuck"
+            # continuous touch drags on SpringBoard: page there and back,
+            # then a vertical drag (still touch down/move/up, no app port)
+            drag(280, 240, 40, 240, 0.7)
+            time.sleep(1)
+            drag(40, 240, 280, 240, 0.7)
+            time.sleep(1)
+            drag(160, 120, 160, 380, 0.7)
+            time.sleep(1)
+            ensure_home("c%03d_drags" % i)
             # page swipes with the D-pad (left/right); recover if one is lost
             key("right")
             time.sleep(2)
