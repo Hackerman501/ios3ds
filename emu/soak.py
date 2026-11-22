@@ -267,6 +267,16 @@ def main():
                     if ImageStat.Stat(u0).mean[0] > 5:
                         break
                 c["unlock_attempts"] = attempt + 1
+                # iOS unlocks to whatever was frontmost. If a previous Home
+                # did not leave the app, comparing the app with the home
+                # screen would report a false lock failure: press Home and
+                # compare the home screen (a slide that never unlocked still
+                # differs; the lock screen ignores Home).
+                if ImageStat.Stat(u0).mean[0] > 5:
+                    key("ret")
+                    time.sleep(2)
+                    settled("c%03d_unlock_home" % i)
+                    u0 = shot("c%03d_unlock" % i).convert("L")
                 # iOS fades the screen in after an unlock (and the emulated
                 # backlight dims it): compare at the reference's brightness so
                 # only content differences count (re-log 63)

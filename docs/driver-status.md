@@ -39,6 +39,11 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
   finish`) instead of the old `[pica] TIMEOUT`/`display mirror FAILED`
   strings, which no code writes, and counts headphone changes from the
   `[audio] headphones ...` lines, not a `[jack]` prefix that does not exist.
+  The continuous drags run on SpringBoard; dragging inside the opened app is
+  behind `--app-drag` because an app-targeted GSEvent move makes the QEMU
+  model panic (\"undefined kernel instruction\", r11 = the app's shared-cache
+  address) while the same path works on hardware (re-log 78). A cycle longer
+  than iOS' auto-lock is recovered with Home + slide-to-unlock.
 - `emu/soak.py`: the same real GPU-mirror strings, plus camera init/FIFO
   overrun and audio DMA/CODEC error checks, so a long soak fails on those.
 - docs: this inventory, the stress harness in `emulator.md`, and the two

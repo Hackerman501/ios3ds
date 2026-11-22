@@ -226,7 +226,7 @@ def main():
             time.sleep(5)
             img = shot("home_wait")
             bright = ImageStat.Stat(img.convert("L")).mean[0]
-            if prev is not None and bright > 20 and ImageStat.Stat(ImageChops.difference(
+            if prev is not None and bright > 10 and ImageStat.Stat(ImageChops.difference(
                     img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
                 home = img
                 break
