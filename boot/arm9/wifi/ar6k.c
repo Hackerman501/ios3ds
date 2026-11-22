@@ -128,6 +128,7 @@ static struct {
     u16 ep_max_msg[8];
     u32 cred_sz, cred_pool;
     u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
+    u32 credit_refund;              /* credits returned after a failed mailbox write */
     u32 eapol_busy;                 /* EAPOL replies queued for lack of credits */
     u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
@@ -382,6 +383,7 @@ static void credit_init(u32 n, u32 sz)
     A.cred_sz = sz ? sz : 1664;
     A.cred_pool = n;
     A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
+    A.credit_refund = A.eapol_busy = 0;
     A.credit_log = 0;
     credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
 }
@@ -450,21 +452,24 @@ static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wa
 {
     if (len + 6 > sizeof(pkt)) return SDIO_ERR_ARG;
     u32 total = (len + 6 + SDIO_BLOCK - 1) & ~(SDIO_BLOCK - 1);
+    u32 need = 0;
+    int r = 0, asked = 0;
     if (type < 8) {
-        u32 need = credit_need(total);
+        need = credit_need(total);
         if (A.ep_credits[type] < need) {
             if (!wait) {
                 A.credit_busy++;
                 return SDIO_ERR_BUSY;       /* caller keeps the frame queued */
             }
-            int r = credit_wait(type, need);
+            r = credit_wait(type, need);
             if (r < 0) return r;
         }
-        A.ep_credits[type] -= need;
+        A.ep_credits[type] -= (u8)need;
         A.credit_used += need;
         if (A.ep_credits[type] < A.ep_cred_per_msg[type]) {
             ack |= HTC_FLG_NEED_CREDIT;     /* ask the target to give them back */
             A.credit_low++;
+            asked = 1;
         }
     }
     memset(pkt, 0, total);
@@ -473,13 +478,28 @@ static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wa
     pkt[4] = (u8)ctl; pkt[5] = (u8)(ctl >> 8);
     if (len) memcpy(pkt + 6, body, len);
     if (A.byte_mode) {                  /* last byte at the window end = end of message */
-        for (u32 i = 0; i < total; i++) {
-            int r = sdio_w8(1, F1_MBOX0_END - total + i, pkt[i]);
-            if (r < 0) return r;
-        }
-        return 0;
+        for (u32 i = 0; i < total; i++)
+            if ((r = sdio_w8(1, F1_MBOX0_END - total + i, pkt[i])) < 0) goto failed;
+    } else {
+        r = sdio_write_blocks(1, F1_MBOX0_END - total, pkt, total);
     }
-    return sdio_write_blocks(1, F1_MBOX0_END - total, pkt, total);
+    if (r >= 0) return r;
+
+failed:
+    /* The target never saw the message, so it owes us no replacement report:
+       put the credits back now, as ath6kl returns cred_used on write failure. */
+    if (need) {
+        u32 back = need > 255u - A.ep_credits[type] ? 255u - A.ep_credits[type] : need;
+        A.ep_credits[type] = (u8)(A.ep_credits[type] + back);
+        A.credit_used -= need < A.credit_used ? need : A.credit_used;
+        A.credit_refund += need;
+        if (asked && A.credit_low) A.credit_low--;
+        if (A.credit_log < 16) {
+            A.credit_log++;
+            DIAG("htc: mailbox write failed (%d): returned %u credits to endpoint %u", r, need, type);
+        }
+    }
+    return r;
 }
 
 static int wmi_send(u32 id, const void *params, u32 len)

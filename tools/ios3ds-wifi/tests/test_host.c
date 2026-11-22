@@ -856,6 +856,35 @@ static void test_ar6k_credits(void)
     CHECK(host_wait_cycles == waits);
 }
 
+static void test_ar6k_write_credits(void)
+{
+    const u8 body[8] = { 0 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_credits[2] = 1;
+    A.ep_cred_per_msg[2] = 2;           /* the send sets NEED_CREDIT_UPDATE */
+    A.credit_used = 10;
+    mock_reset();
+
+    /* SDIO write fails: the target never sees the message, credits come back */
+    mock_write_err = SDIO_ERR_CARD;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == SDIO_ERR_CARD);
+    CHECK(A.ep_credits[2] == 1 && A.credit_used == 10 && A.credit_refund == 1);
+    CHECK(A.credit_low == 0);
+    /* a successful send still consumes exactly one credit */
+    mock_write_err = 0;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == 0);
+    CHECK(A.ep_credits[2] == 0 && A.credit_used == 11);
+    /* same refund in the CMD52 byte-mode fallback */
+    A.ep_credits[2] = 1;
+    A.byte_mode = 1;
+    mock_w8_err = SDIO_ERR_CARD;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == SDIO_ERR_CARD);
+    CHECK(A.ep_credits[2] == 1 && A.credit_used == 11 && A.credit_refund == 2);
+    CHECK(mock_w8_calls > 0);
+}
+
 int main(void)
 {
     test_ring();
@@ -863,6 +892,7 @@ int main(void)
     test_frames();
     test_htc_credits();
     test_ar6k_credits();
+    test_ar6k_write_credits();
     test_cfg();
     test_crypto();
     test_handshake();
