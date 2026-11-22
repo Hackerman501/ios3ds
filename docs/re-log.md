@@ -1262,23 +1262,14 @@ repeating the table here.
   process instead of once per reconnect.
 - **Host tests:** `make test` passes (63 Python tests plus pica, GL, Wi-Fi,
   GPS, `test_cpad` 206 checks and `test_n3ds` 35 checks).
-- **QEMU soak, Old 3DS** (`--cycles 5 --icount 2 --settle 45`, fresh image;
-  the host had ~8 other QEMU runs, load >40, so the per-cycle settle was 45 s
-  instead of the 15 s default): **Result: PASS**, boot 310 s, 5 cycles,
-  0 panics / stalls / crashes / md0 errors, 0 GPU fallback or timeouts,
-  recoveries `Dismiss` (1), `Home + unlock` (2, the slow cycles crossed iOS's
-  auto-lock) and `second Home` (1), last heartbeat
-  `md0 4401 req 90135 KiB 0 err`. Re-ran with the final input daemon from this
-  branch (Copy resolver + Home grace, fresh image): **Result: PASS**, boot
-  190 s, 5 cycles, 0 panics/stalls/crashes/md0 errors, recoveries
-  `second Home` (1) and `Dismiss + Home` (1), last heartbeat
-  `md0 4334 req 89603 KiB 0 err`.
-- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image, image
-  with the final input daemon from this branch): **Result: PASS**, boot 260 s,
-  5 cycles, 0 panics / stalls / crashes / md0 errors, 0 GPU fallback or
-  timeouts, recoveries `Dismiss` (2), last heartbeat
-  `[hb] t=30s quiet 1s | abs 369350 dec 28702 timer 14626 irq 16370 vbl 1495 |
-  md0 4356 req 90027 KiB 0 err`.
+- **QEMU soak, Old 3DS** (`--cycles 5 --icount 2 --settle 45`, fresh image,
+  final tree and input daemon): **Result: PASS**, boot 100 s, 5 cycles, no
+  recoveries, 0 panics / stalls / crashes / md0 errors, 0 GPU fallback or
+  timeouts, last heartbeat `md0 4295 req 88771 KiB 0 err`.
+- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image, final
+  tree): **Result: PASS**, boot 100 s, 5 cycles, no recoveries, 0 panics /
+  stalls / crashes / md0 errors, 0 GPU fallback or timeouts, last heartbeat
+  `md0 4342 req 90023 KiB 0 err`.
 - **Only a console can settle:** the hardware checks are listed in
   [driver-status.md](driver-status.md) §"What only a console can settle",
   with the exact log lines/files to capture (headphone CODEC readbacks, mic

@@ -51,8 +51,9 @@ Legend for **tested**: *host* = `make test` / a host test; *QEMU* = the
 - `emu/soak.py`: the same real GPU-mirror strings, plus camera init/FIFO
   overrun and audio DMA/CODEC error checks, so a long soak fails on those.
 - **QEMU:** `make test` green; `emu/soak.py --cycles 5 --icount 2` on a fresh
-  image PASSES on the Old 3DS (boot 310 s, 0 panics/stalls/crashes/md0
-  errors) and on the New 3DS model (boot 260 s, same zero-error checks).
+  image PASSES on the Old 3DS (boot 100 s, no recoveries, 0 panics / stalls /
+  crashes / md0 errors, 0 GPU fallback/timeouts) and on the New 3DS model
+  (boot 100 s, same zero-error checks).
 - docs: this inventory, the stress harness in `emulator.md`, and the two
   daemon behaviours in `input-design.md` (§4.2) and `mcu.md` (§5).
 
