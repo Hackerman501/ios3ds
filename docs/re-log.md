@@ -1286,3 +1286,46 @@ repeating the table here.
 - **Safety:** on `req_power` from `PEHaltRestart` (after iOS unmounted) the ARM9 sets bit 8 in the volume header if XNU has not; `f_sync()` makes it durable. In the QEMU runs XNU had already set it. The slider shutdown still works after the change.
 - **Dirty-boot limits:** a `kill -9` after a settled boot leaves bit 8 clear; the next boot logs the warning above and reports the same EBUSY from Apple's fsck. A `kill -9` *during* boot-time writes is worse: that image logged `Bug: launchctl.c:3849 … lstat(de->d_name) != -1` and stalled before SpringBoard. Setting bit 8 by hand on it removed the lstat bug but it still stalled, and the unmodified firmware stalled the same way — so the damage is in the catalog, not in our code. Without a working `fsck_hfs` in the guest there is no safe repair; the ARM9 only reports the condition and never claims a dirty volume is clean.
 
+## 87. Multi-version build plumbing and a 4.1 bring-up (2026-11-22)
+
+Design and the full verified/guessed analysis: docs/multi-version.md. This entry
+records the concrete steps and blockers of stages 2–3.
+
+- **Version selector.** `IOS=4.2.1` (default) and `IOS=4.1` select a build from
+  scripts/versions.py; `make fwprep IPSW=… IOS=4.1` stages firmware in
+  build/fw-4.1/staging instead of the shared build/staging symlink. The 4.2.1
+  path has no overrides, so its kernel/devtree/rootfs/boot.cfg are the same
+  recipes as before (hashes compared in docs/multi-version.md §5.1).
+- **Firmware source.** 4.1's IPSW came from Apple's own CDN link published by
+  api.ipsw.me; its sha1 (97abde6207660bd876fd476275dd526d0dcf3d19) matches.
+  All extracted Apple files live in build/fw-4.1/. The 3.1.3 (7E18) keys are
+  public but current firmware lists no downloadable iPod2,1 IPSW, so 4.1 is
+  the second version under test.
+- **Kernel patches.** 8C148's fixed virtual addresses cannot be reused: 4.1's
+  xnu-1504.55.33 kernelcache is 7,938,048 bytes (vs 8,273,920) but its entry
+  point is the same 0x80067050. The 8B117 set was derived by fixed address,
+  context search and function anchors; every original byte was verified. Six
+  patches (gyro ×2, two CLCD wake/log fixes, clock voltage lookup, IORTC wait)
+  changed too much and are skipped for now.
+- **Device tree.** dt_audio.py had hard-coded gpio/vic phandles from the 8C148
+  template; 8B117 assigns different ones. It now reads the phandles from the
+  tree. The 8C148 generated device tree stayed byte-identical.
+- **Rootfs.** File patches in the dyld cache were relocated by parsing the
+  cache's image and symbol tables (the technique already used by
+  tools/ios3ds-gl/genslots.py): 8C148 offset -> VA -> image symbol + delta ->
+  8B117 symbol -> file offset, with original bytes checked. 18 of 24 patches
+  relocated; the liblockdown lookup body, its table, the VirtualAudio routing
+  table, CoreMotion capability mask and MusicLibrary signing check are open
+  blockers. Cydia/TLSFix are disabled in the 4.1 overlay.
+- **QEMU.** This worktree's build/qemu is a shared symlink without a built
+  binary; emu/run.py and emu/viewer.py now accept IOS3DS_QEMU=/path/to/qemu-system-arm
+  so a local copy can be used without touching that symlink.
+- **Boot result (QEMU, 4.1 + full patch set):** XNU starts and drives the
+  S5L8720 peripherals, then panics in `OSDictionary::setOptions()+0x44`
+  (fault address 0x4) before launchd. With only the 19 CPU/timer/IRQ/UART
+  patches it reaches `BSD root: md0`, loads the filesystem-compression kext
+  and runs the display copy and heartbeats for 100 s; adding the relocated
+  md0 strategy gets to `BSD root: md0` and then takes an undefined-instruction
+  exception in the fake GPIO page (pc 0xc38b3e94). No 4.1 home screen yet;
+  the full panic logs and the remaining blockers are in
+  docs/multi-version.md §5.3.

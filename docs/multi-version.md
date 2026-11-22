@@ -307,7 +307,24 @@ and to the relevant file header, and keep its notices intact.
 
 ### 5.1 4.2.1 byte-for-byte check
 
-_Baseline and post-change hashes are compared below after the build finishes._
+`make userland` then `rm -f build/sd.img && make sdimg` (default, 4.2.1) was run
+before the version plumbing landed; sha256 of the generated files:
+
+| File | sha256 |
+|---|---|
+| `kernel.bin` | `505f451a44d9da6aae7034d427d5524d7392d9fc70640ec997c374b0b5a70e38` |
+| `devtree.bin` | `25b1bd233447ddfc60eb69e30ad4cbd085c1963f86e77052fda969469d8327cc` |
+| `fakeio.bin` | `e5fecd6645b3bc44d6510d7af7397c667fdc25da4517e2cd9fabc42fb673570d` |
+| `shim.bin` | `78c2bae0156695765fb7c77cbc560e8bb5995f9cf35a18d907ad937d4e17c170` |
+| `gpu.bin` | `9b0f1cc31f66144514f41b6c357d98e2166b8717b885e7ee152946a73dbe2a92` |
+| `boot.cfg` | `e52fdeb118e0ad3d5f287b2096beb46482ee5a6be8eb24469ae308b5ffb32479` |
+| `rootfs.hfs` | `7b63a5de25ba8d2e572476d83d6644a821f450a49d038f461854e4dbb97e2faf` |
+| `sd.img` | `7776bb093a47f2f7184340359a5cb4db4bea339b5b208e8374b04bf0ccf8ce17` |
+
+The post-change comparison is repeated at the end of stage 3; the generated
+device tree was additionally checked byte-for-byte with the old and new
+`dt_audio.py` (§5.2). The FIRM embeds `git describe` and therefore changes with
+each commit, as it always has.
 
 ### 5.2 4.1 (8B117) bring-up in QEMU
 
@@ -351,8 +368,46 @@ Blockers found and resolved:
    4.1; the overlay disables them. All userland binaries still come from
    `make userland` and are ABI-tested only on 4.2.1.
 
-### 5.3 Boot result
+### 5.3 Boot result (4.1, QEMU `nintendo3ds`, `--icount 2`)
 
-_To be filled in with the QEMU log after the 4.1 image has been built._
+**[V]** `make sdimg IOS=4.1` succeeded (kernel sha256
+`e26135779d1b2f88aa912cd6afdea38dfc3eb6daad2bd780179b21b8210dfdc8`, devtree
+`29ebba25ac24b6fe7fcf2f3ba9597f96ab4c2368c4089f9771cf8b58e665f002`, boot.cfg
+`6189ee30b59fd596bd18025422f732d1c09efd3de12e75bd736731164571c506`, rootfs
+`b91c758519c52bde7a47be8404c147acfc4c32ab8d2043e20f920a66ecedca71`).
+
+With the **full 4.1 patch set**, XNU starts, prints its banner, brings up the
+S5L8720 drivers (VIC, GPIO, power, clock controller, DMAC, I2C, timer, watchdog,
+I2S, CLCD) and then panics in `OSDictionary::setOptions()+0x44`, fault address
+`0x4`, before `launchd`. The CLCD's benign "Couldn't allocate AppleARMFunction
+for function-lcd_enable" line also appears in working 4.2.1 boots, so it is not
+the cause.
+
+A control run with only the 19 CPU/timer/IRQ/UART/console patches (no kext or
+md0 patches) got **much further**: `BSD root: md0`, launchd's filesystem
+compression kext, screen copying and 100 s of heartbeat logs, but no home
+screen (md0 strategy is still unpatched, so the root disk is not really read).
+Adding the relocated `mdevstrategy` patch reaches `BSD root: md0` and then
+takes an undefined-instruction exception at `pc 0xc38b3e94`, inside the fake
+GPIO register page — a 4.1-specific interrupt/function-pointer path we have not
+untangled. No 4.1 home screen yet. See `build/emu-4.1/last-4.1-log.txt` for the
+full panic dump (build/ artifacts are not committed).
+
+Remaining blockers, all **[V]** unless marked:
+
+1. The optional 4.1 kernel patches need per-subsystem validation; at least one
+   of the six relocated CLCD/audio/I2C patches causes the early
+   `OSDictionary::setOptions` panic.
+2. The md0/`mdevstrategy` path needs 4.1-specific work: the relocated patch
+   gets the disk mounted but a later interrupt lands in a fake IO page.
+3. `lockdown_copy_value` and its activation table, VirtualAudio routing,
+   CoreMotion's capability mask and MusicLibrary's signing check are not
+   patched on 4.1 (§5.2). Expect activation/UI problems even once 1–2 are fixed.
+4. The 4.2.1 userland binaries are used unmodified on 4.1; none of the private
+   API/selection behaviour has been validated on this firmware.
+
+**[G]** Fixing 1–2 is a few days of disassembly and QEMU bisecting; fixing 3 is
+another few days; a usable 4.1 home screen is therefore plausibly ~1–2 weeks
+of work, not a one-line change.
 
 Main `docs/re-log.md` continues at §85 with the same story.

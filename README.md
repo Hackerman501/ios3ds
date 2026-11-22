@@ -239,6 +239,11 @@ make sd                                              # SD card tree -> build/sd/
 make test                                            # offline unit tests
 ```
 
+Experimental: `make sd IOS=4.1` selects another iPod2,1 firmware from
+`scripts/versions.py` (firmware staged under `build/fw-4.1/`); 4.2.1 stays the
+default and unchanged. See [docs/multi-version.md](docs/multi-version.md) — 4.1
+does not reach the home screen yet.
+
 Optional:
 - `make qemu` builds the emulator, about 10 minutes.
 - `make emu` boots `build/sd.img` in it.
@@ -252,6 +257,7 @@ Optional:
 | | |
 |---|---|
 | [architecture.md](docs/architecture.md) | boot chain, memory map, every hardware bridge |
+| [multi-version.md](docs/multi-version.md) | other iOS versions (experimental `IOS=4.1` build), 1.x feasibility |
 | [real-hardware.md](docs/real-hardware.md) | testing safely on a console |
 | [emulator.md](docs/emulator.md) | the QEMU `nintendo3ds` machine, Azahar |
 | [gpu.md](docs/gpu.md) · [pica200.md](docs/pica200.md) | OpenGL ES engine, CoreAnimation and the screen copy on the PICA200 |
