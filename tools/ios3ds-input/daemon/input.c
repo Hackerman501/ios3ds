@@ -115,6 +115,20 @@ static const struct { uint16_t btn, usage; } keymap[] = {
 
 static int opt_flipx, opt_flipy, opt_stretch, opt_debug;
 static IOHIDEventSystemClientRef client;
+static char app_id[256];                /* frontmost app the cached port belongs to */
+static mach_port_t app_port;            /* its PurpleSystemEventPort send right (+1) */
+
+/* Replace the cached app port and release the old send right: GSCopyPurpleNamedPort
+   returns +1 and the old code dropped that right on every app switch. */
+static void app_port_set(mach_port_t p)
+{
+    if (p == app_port) {
+        if (p) mach_port_deallocate(mach_task_self_, p);
+        return;
+    }
+    if (app_port) mach_port_deallocate(mach_task_self_, app_port);
+    app_port = p;
+}
 
 static void say(const char *fmt, ...)
 {
@@ -302,10 +316,19 @@ static int sb_modal(void)
     return m;
 }
 
+/* A cached send right stays usable until the app exits; SpringBoard can also
+   restart an app with the same bundle id, which leaves a dead name behind.
+   Check before reuse so touches keep reaching the new process. */
+static int mach_port_alive(mach_port_t p)
+{
+    unsigned type = 0;
+    if (!p) return 0;
+    if (mach_port_type(mach_task_self_, p, &type) != 0) return 0;
+    return !(type & MACH_PORT_TYPE_DEAD_NAME);
+}
+
 static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
 {
-    static char app[256];
-    static mach_port_t app_port;
     gstouch_t e;
     uint64_t ts;
     float x = nx * 320.0f, y = ny * 480.0f;
@@ -344,10 +367,17 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
         if (!modal && sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
         /* Log every touch while modal: when SpringBoard covers the app its
            frontmost identifier can stay empty (QEMU), so a change-of-id test
-           alone would hide the switch to the system event port. */
-        if (modal || strcmp(id, app)) {
-            strncpy(app, id, sizeof app - 1);
-            app_port = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+           alone would hide the switch to the system event port.  A cached
+           port that has become a dead name (the app exited or was relaunched
+           with the same bundle id) is re-resolved too. */
+        if (modal || strcmp(id, app_id) || (app_port && !mach_port_alive(app_port))) {
+            mach_port_t p;
+            if (opt_debug && app_port && !mach_port_alive(app_port))
+                say("[input] stale touch port for %s: re-resolving", app_id[0] ? app_id : "SpringBoard");
+            p = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+            app_port_set(p);
+            strncpy(app_id, id, sizeof app_id - 1);
+            app_id[sizeof app_id - 1] = 0;
             if (opt_debug) say("[input] touch target %s%s", id[0] ? id : "SpringBoard",
                                modal & 6 ? " (alert)" : modal & 1 ? " (lock screen)" : "");
         }
