@@ -1329,11 +1329,13 @@ records the concrete steps and blockers of stages 2–3.
   exception in the fake GPIO page (pc 0xc38b3e94). No 4.1 home screen yet;
   the full panic logs and the remaining blockers are in
   docs/multi-version.md §5.3.
-- **Final soak:** three fresh-image 5-cycle soaks of the default build on this
+- **Final soak:** four fresh-image 5-cycle soaks of the default build on this
   heavily shared host printed Result: FAIL only on "not home after Home"
-  (black/stale screenshots, boot 435–965 s); zero panics, md0 errors, crashes
-  or hangs. No PASS could be obtained while other workers saturated the CPU.
-  The 4.2.1 kernel/devtree/fakeio/shim/gpu/boot.cfg hashes were unchanged.
+  (black/stale screenshots, boot 435–965 s; heartbeats barely advancing);
+  zero panics, md0 errors, crashes or hangs. The last run used the soak
+  script's new lit-home-reference re-acquisition. No PASS could be obtained
+  while other workers saturated the CPU. The 4.2.1
+  kernel/devtree/fakeio/shim/gpu/boot.cfg hashes were unchanged.
 - **Soak harness:** four more exact-command runs with fresh images (boot 425–554 s,
   host load 30–40) still printed FAIL only on "not home after Home": black
   references and mid-page-animation screenshots, zero panics/stalls/md0/crash/

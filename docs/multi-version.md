@@ -429,18 +429,21 @@ of work, not a one-line change.
 
 ### 5.4 Final default-build soak (not passing on this host)
 
-**[V]** Three fresh-image soaks of the unmodified default 4.2.1 build were run
+**[V]** Four fresh-image soaks of the unmodified default 4.2.1 build were run
 after the version work (`python3 emu/soak.py --cycles 5 --icount 2 --sd
-build/sd-soak{,2,3}.img`; isolated images were needed because several other
-workers were rebuilding `build/sd.img` concurrently). All three printed
+build/sd-soak{,2,3,4}.img`; isolated images were needed because several other
+workers were rebuilding `build/sd.img` concurrently). The last one also used
+the soak script's new re-acquire-a-lit-home-reference logic. All four printed
 `**Result: FAIL**`, but the only failing check was "not home after Home" —
 screenshots stayed black/stale while boot-to-`SpringBoard` took 435–965 s
 (normally ~100 s on an idle host) because many QEMU/build jobs from other
-worktrees were sharing the CPU. There were **0** kernel panics, ARM11 stalls,
+worktrees were sharing the CPU (the last run's own heartbeat log only reached
+`t=30s` after 950 s of wall time). There were **0** kernel panics, ARM11 stalls,
 md0/log errors, process crashes, watchdog/hang events or GPU mirror failures.
 We could not obtain a PASS while the host was this loaded; this is a host
 contention problem, not a change in the generated 4.2.1 boot files (§5.1).
-The reports are in `build/emu-soak-final{,2,3}/report.md` (not committed).
+The logs are in `build/soak-run{,2,3,4}.log` (not committed); some report
+directories were removed by other workers' cleanups.
 
 **[V]** The exact required sequence
 (`rm -f build/sd.img && make sdimg && python3 emu/soak.py --cycles 5 --icount 2`)
