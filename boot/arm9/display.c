@@ -61,6 +61,17 @@ static void stereo_barrier(bool on)
     }
 }
 
+/* The stamp is an alpha-only GL pass. The iOS surface is 32 bpp BGRA, but
+   the PICA present path's byte order has been described both ways (docs/gpu.md
+   says B,G,R,A in memory, the original QEMU model used A,B,G,R), so accept
+   the class magic in either end of the word. Colour bytes are masked out
+   when the eye images are packed; the stamp never reaches the LCD. */
+static int stereo_px_class(u32 px)
+{
+    int cls = stereo_class_of((u8)(px >> 24));
+    return cls >= 0 ? cls : stereo_class_of((u8)px);
+}
+
 /* Sample the alpha plane of the iOS frame. The GL engine stamps a depth
    class into it on home frames only; every other frame (apps, lock screen,
    software compositor) has no class map and must stay flat. */
@@ -77,7 +88,9 @@ static bool stereo_is_home(const u8 *src, u32 w, u32 h, u32 stride)
         for (u32 i = 0; i < 32; i++) {
             u32 x = i * (w / 32);
             if (x >= w) x = w - 1;
-            a[j * 32 + i] = (u8)(px[y * (stride / 4) + x] >> 24);
+            u32 v = px[y * (stride / 4) + x];
+            int cls = stereo_px_class(v);
+            a[j * 32 + i] = cls < 0 ? 0xFF : stereo_magic(cls);
         }
     }
     return stereo_alphas_stereo(a, (int)sizeof a) != 0;
@@ -287,7 +300,7 @@ static void pack_eye_column(const u16 *ix, u32 w, int k)
     for (u32 rr = 0; rr < SCR_H; rr++) {
         int x = ix[rr], s, d;
         u32 px = rowbuf[x];
-        int cls = stereo_class_of((u8)(px >> 24));
+        int cls = stereo_px_class(px);
         /* class 0 (flat) and unknown alphas never move; out(x)=in(x-delta) */
         d = stereo_eye_delta(cls, k, 0);
         s = x - d;
