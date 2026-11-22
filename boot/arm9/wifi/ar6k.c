@@ -95,7 +95,8 @@ enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
 /* WMI crypto types as the DSi/3DS firmware uses them (GBATEK "WMI Connect
    Functions": NONE 1, WEP 2, TKIP 3, AES 4 - not the ath6kl bit values) */
 enum { CRYPT_NONE = 1, CRYPT_TKIP = 3, CRYPT_AES = 4 };
-enum { AUTH_NONE = 1, AUTH_WPA2_PSK = 5 };  /* WMI authMode as sent by dsiwifi */
+/* WMI authMode as sent by dsiwifi: WPA-PSK 3, WPA2-PSK 5 (GBATEK) */
+enum { AUTH_NONE = 1, AUTH_WPA_PSK = 3, AUTH_WPA2_PSK = 5 };
 
 /* ---- sd:/ios3ds/wifi-fw.bin (written by tools/ios3ds-wifi/nwmfw.py) ------ */
 #define FW_MAGIC 0x46573349u    /* 'I3WF' */
@@ -136,6 +137,7 @@ static struct {
     u8 nonet, rescan;               /* NO_NETWORK_AVAIL failures in a row; a directed rescan is running */
     u8 cancelling;                  /* our WMI_DISCONNECT that ends the firmware's own retries */
     u8 rsn_mode;                    /* RSN_MODE_* of the target AP (scan), see wpa2_rsn_parse */
+    u8 wpa1_ap;                     /* AP offers WPA v1 (vendor IE) with TKIP pairwise */
     u16 disc_reason, disc_code;
     u32 link_seq;
     /* [wifi-diag] */
@@ -603,9 +605,9 @@ static int wmi_connect(void)
     memset(&p, 0, sizeof(p));
     p.networkType = 1;                          /* infrastructure */
     p.dot11AuthMode = 1;                        /* open system */
-    p.authMode = wpa ? AUTH_WPA2_PSK : AUTH_NONE;
-    p.pairwiseCryptoType = wpa ? CRYPT_AES : CRYPT_NONE;
-    p.groupCryptoType = wpa ? A.group_crypt : CRYPT_NONE;
+    p.authMode = wpa ? (A.wpa1_ap ? AUTH_WPA_PSK : AUTH_WPA2_PSK) : AUTH_NONE;
+    p.pairwiseCryptoType = wpa ? (A.wpa1_ap ? CRYPT_TKIP : CRYPT_AES) : CRYPT_NONE;
+    p.groupCryptoType = wpa ? (A.wpa1_ap ? CRYPT_TKIP : A.group_crypt) : CRYPT_NONE;
     p.ssidLength = T.ssid_len;
     memcpy(p.ssid, T.ssid, T.ssid_len);
     if (A.found) {
@@ -719,7 +721,8 @@ static void on_eapol(const u8 *eth, u32 len)
     else
         logp("[wifi] EAPOL event %d, reply %u bytes: %d\n", ev, rlen, r);
     if (ev == WPA2_EV_KEYS || ev == WPA2_EV_GTK) {
-        if (ev == WPA2_EV_KEYS) wmi_add_key(0, 0, A.wpa.tk, 16, NULL);          /* pairwise */
+        if (ev == WPA2_EV_KEYS)
+            wmi_add_key(0, 0, A.wpa.tk, A.wpa.wpa1 ? 32 : 16, NULL);           /* pairwise */
         wmi_add_key(A.wpa.gtk_idx, 1, A.wpa.gtk, A.wpa.gtk_len, A.wpa.rsc);     /* group */
         if (A.state != NET_ST_UP) link_up();
     }
@@ -781,7 +784,7 @@ static void scan_record(const u8 *d, u32 n)
             memcpy(b->ssid, p + 2, p[1]);
         }
         if (p[0] == 0x30) b->flags |= WLAN_BSS_RSN;
-        if (p[0] == 0xDD && p[1] >= 4 && p[2] == 0x00 && p[3] == 0x50 && p[4] == 0xF2 && p[5] == 1)
+        if (p[0] == 0xDD && p[1] >= 6 && p[2] == 0x00 && p[3] == 0x50 && p[4] == 0xF2 && p[5] == 1)
             b->flags |= WLAN_BSS_WPA;
         if ((u32)b->ie_len + 2 + p[1] <= WLAN_IE_MAX) {
             memcpy(b->ie + b->ie_len, p, 2 + p[1]);
@@ -813,16 +816,23 @@ static void on_bssinfo(const u8 *d, u32 n)
     scan_record(d, n);
     if (!T.have) return;
     const u8 *ie = d + 28, *end = d + n;
-    int match = 0, group = CRYPT_AES;
+    int match = 0, group = CRYPT_AES, rsn = 0, wpa1 = 0;
     while (ie + 2 <= end && ie + 2 + ie[1] <= end) {
         if (ie[0] == 0 && ie[1] == T.ssid_len && !memcmp(ie + 2, T.ssid, ie[1])) match = 1;
-        if (ie[0] == 0x30 && ie[1] >= 6) group = ie[7] == 2 ? CRYPT_TKIP : CRYPT_AES;  /* RSN group suite 00-0F-AC-xx */
+        if (ie[0] == 0x30 && ie[1] >= 6) {                /* RSN group suite 00-0F-AC-xx */
+            rsn = 1;
+            group = ie[7] == 2 ? CRYPT_TKIP : CRYPT_AES;
+        }
+        if (!rsn && ie[0] == 0xDD && ie[1] >= 10 && !memcmp(ie + 2, "\x00\x50\xF2\x01", 4))
+            wpa1 = 1;                                    /* WPA v1 vendor IE */
         ie += 2 + ie[1];
     }
     if (!match || (A.found && d[3] <= A.found)) return;   /* keep the strongest (by SNR) */
     A.found = d[3] ? d[3] : 1;
     A.channel = (u16)(d[0] | d[1] << 8);
     memcpy(A.bssid, d + 6, 6);
+    A.wpa1_ap = (u8)(wpa1 && !rsn);                       /* mixed WPA+WPA2: use RSN */
+    if (A.wpa1_ap) group = CRYPT_TKIP;                    /* WPA v1 is TKIP pairwise */
     A.group_crypt = (u8)group;
 }
 
@@ -843,7 +853,7 @@ static void do_connect(void)
         logp("[wifi] \"%s\" is a WPA2 + WPA3 network: joining with WPA2-PSK\n", T.ssid);
     int r = wmi_connect();
     logp("[wifi] connect \"%s\" (%s%s), %s: %d\n", T.ssid,
-         T.security == WIFI_SEC_WPA2 ? "WPA2-PSK/CCMP" : "open",
+         T.security == WIFI_SEC_WPA2 ? (A.wpa1_ap ? "WPA-PSK/TKIP" : "WPA2-PSK/CCMP") : "open",
          A.group_crypt == CRYPT_TKIP ? ", TKIP group" : "",
          A.found ? "seen in scan" : "not seen in scan, firmware picks", r);
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_SCAN;
@@ -926,8 +936,9 @@ static void on_wmi(const u8 *b, u32 len)
             u8 sn[32];
             memset(sn, 0, sizeof(sn));
             snonce(sn);
-            wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
-            /* our RSN IE as the firmware put it into the association request */
+            if (A.wpa1_ap) wpa1_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
+            else wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
+            /* our RSN / WPA IE as the firmware put it into the association request */
             if (n >= 19) {
                 u32 bl = d[16], ql = d[17], rl = d[18];
                 const u8 *q = d + 19 + bl;
@@ -936,7 +947,9 @@ static void on_wmi(const u8 *b, u32 len)
                     for (u32 start = 4; start <= 10 && !A.wpa.own_ie_len; start += 6)   /* assoc / reassoc */
                         for (u32 i = start; i + 2 <= ql; i += 2 + q[i + 1]) {
                             if (i + 2 + q[i + 1] > ql) break;
-                            if (q[i] == 0x30 && q[i + 1] + 2 <= sizeof(A.wpa.own_ie)) {
+                            if ((q[i] == (A.wpa1_ap ? 0xDD : 0x30)) && q[i + 1] + 2 <= sizeof(A.wpa.own_ie) &&
+                                (!A.wpa1_ap || (q[i + 1] >= 10 &&
+                                 !memcmp(q + i + 2, "\x00\x50\xF2\x01", 4)))) {
                                 A.wpa.own_ie_len = (u8)(q[i + 1] + 2);
                                 memcpy(A.wpa.own_ie, q + i, A.wpa.own_ie_len);
                                 break;
@@ -1199,11 +1212,13 @@ static void target_lookup(void)
     A.found = 0;
     A.group_crypt = CRYPT_AES;
     A.rsn_mode = RSN_MODE_WPA2;
+    A.wpa1_ap = 0;
     if (!best) return;
     A.found = 1;
     A.channel = best->channel_mhz;
     memcpy(A.bssid, best->bssid, 6);
-    for (u32 i = 0; i + 2 <= best->ie_len; i += 2 + best->ie[i + 1])
+    for (u32 i = 0; i + 2 <= best->ie_len && i + 2 + best->ie[i + 1] <= WLAN_IE_MAX;
+         i += 2 + best->ie[i + 1]) {
         if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6) {
             rsn_info_t ri;
             A.rsn_mode = (u8)wpa2_rsn_parse(best->ie + i, best->ie_len - i, &ri);
@@ -1214,7 +1229,18 @@ static void target_lookup(void)
             char hx[2 * 40 + 1];
             for (u32 k = 0; k < l; k++) snprintf(hx + 2 * k, 3, "%02x", best->ie[i + k]);
             DIAG("target \"%s\": %u MHz, rssi %d, RSN IE %s", T.ssid, A.channel, best->rssi, hx);
+        } else if (best->ie[i] == 0xDD && best->ie[i + 1] >= 10 &&
+                   !memcmp(best->ie + i + 2, "\x00\x50\xF2\x01", 4)) {
+            rsn_info_t wi;
+            if (wpa1_ie_parse(best->ie + i, best->ie_len - i, &wi) == RSN_MODE_WPA1) {
+                A.wpa1_ap = 1;
+                DIAG("target \"%s\": WPA v1 vendor IE, TKIP pairwise", T.ssid);
+            }
         }
+    }
+    if (A.rsn_mode == RSN_MODE_WPA2 || A.rsn_mode == RSN_MODE_MIXED)
+        A.wpa1_ap = 0;                          /* a PSK RSN IE wins over WPA v1 */
+    if (A.wpa1_ap) A.group_crypt = CRYPT_TKIP;
 }
 
 int ar6k_command(const volatile wlan_cmd_t *c)

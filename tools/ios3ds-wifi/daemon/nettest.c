@@ -458,7 +458,10 @@ static int http_bulk_get(const char *url)
             for (size_t i = 0; i < (size_t)r && hlen + 1 < sizeof hdr; i++) hdr[hlen++] = buf[i];
             hdr[hlen] = 0;
             char *e = strstr(hdr, "\r\n\r\n");
-            if (!e) continue;               /* a whole header in one read in practice */
+            if (!e) {
+                if (hlen + 1 >= sizeof hdr) break;  /* no header in 512 bytes */
+                continue;               /* header may span reads; bytes are in hdr */
+            }
             headers = 1;
             from = (size_t)(e + 4 - hdr);
         }

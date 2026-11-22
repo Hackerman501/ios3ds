@@ -49,7 +49,7 @@ end-to-end.
 |---|---|
 | `sdio.c` | Polled TMIO host: CMD5/3/7 enumeration, 4-bit bus, block size 128, CMD52, CMD53 block mode and byte mode (FIFO32). Register usage and command encoding follow dsiwifi `wifi_sdio.twl.c`; every wait is bounded. |
 | `ar6k.c` | State machine, one bounded step per monitor-loop pass: POWER -> BMI -> FWLOAD (one 256-byte chunk per pass) -> BOOT (`hi_board_data_initialized`, 3 s) -> HTC (HTC_READY, 5 s) -> WMI (WMI_READY, 5 s) -> SCAN (10 s) -> AUTH -> UP. Timeouts use the monitor's clock (timers 2+3). After "SDIO up" a FIFO self-test (CMD52 pattern into the function-1 scratch registers, read back with one CMD53) decides between CMD53 block transfers and a CMD52-per-byte fallback for the mailbox. The WMI and data endpoints are the ones the firmware returns in its CONNECT_SERVICE responses. HTC credits from HTC_READY are split per endpoint; each message takes `ceil(padded_len / cred_sz)`, reports in RX trailers return them, data frames stay queued when an endpoint is empty and control messages wait (bounded) for a report. |
-| `wpa2.c` | SHA-1, HMAC, PBKDF2, 802.11i PRF, AES-128, RFC 3394 unwrap, EAPOL-Key 4-way and group handshake (CCMP pairwise; CCMP or TKIP group). Written from the standards. |
+| `wpa2.c` | SHA-1, HMAC, PBKDF2, 802.11i PRF, AES-128, RFC 3394 unwrap, EAPOL-Key 4-way and group handshake (CCMP or WPA v1 TKIP pairwise; CCMP or TKIP group). WPA v1 adds MD5/HMAC-MD5, RC4-drop-256 for Key Data and a 64-byte TKIP PTK. Written from the standards. |
 | `wifi_frame.c` | Ethernet II <-> WMI data frames (LLC/SNAP RFC 1042 and bridge-tunnel), and the HTC RX-trailer credit parser (`wifi_htc_credits`). |
 | `wifi_ring.c` | ARM9 half of the mailbox. |
 | `wifi_cfg.c` | `sd:/ios3ds/wifi.cfg` parser. |
@@ -438,13 +438,14 @@ Run it: `python3 emu/wifi_test.py` (section 7.3). Manually: boot with
 | HTC | `HTC_READY` (8 credits of 1664 bytes), `CONNECT_SERVICE` for services 0100h-0104h (endpoints handed out in order: 1 = WMI, 2-5 = data; unknown/duplicate services refused), `SETUP_COMPLETE(_EX)`; the target keeps one credit for EP0 and one per service, the rest go to the first data endpoint. Every host message consumes `ceil(padded_len / 1664)` credits; without enough it logs `Mbox Full`, sets TX overflow and drops the message. Credits come back in RX trailers (`HTC_FLG_RX_TRAILER`, record 1), and a message with `NEED_CREDIT_UPDATE` gets an empty EP0 credit report if nothing else is sent. QOM: `htc-credits-used`, `htc-credit-reports`, `htc-credit-waits`, `htc-overflows` | ath6kl `htc.h`, `htc_mbox.c`; dsiwifi `htc.twl.c` |
 | WMI | 2-byte command header (AR6002-era firmware). Commands with a wrong parameter size get `WMI_CMD_ERROR_EVENT` (INVALID_PARAM). Events: `READY` (MAC, phy cap), `REG_DOMAIN`, `BSSINFO` (beacon or probe response with SSID, rates, DS, RSN IEs; SNR 40), `SCAN_COMPLETE`, `CONNECT` (channel, BSSID, intervals, assoc request/response IEs), `DISCONNECT` (802.11 code, BSSID, WMI reason), `GET_CHANNEL_LIST` reply. Scan: 30 ms per channel, honours the channel list, BSS filter (none / all / probed-SSID) and a hidden AP (only found by a directed probe) | dsiwifi `ath/wmi.h`, `wmi.twl.c`; ath6kl `wmi.h`; GBATEK "WMI" |
 | Connect | `WMI_CONNECT` (52 bytes) must name the AP's SSID; channel/BSSID must match if given; WPA2 AP needs auth 5, pairwise 4 (AES), group = the AP's group cipher; open AP needs 1/1. Mismatch = `DISCONNECT` with the 802.11 status a real AP would use (41/42/43) | GBATEK "WMI Connect", 802.11-2007 7.3.1.9 |
-| Authenticator | PMK = PBKDF2(psk, ssid) (GLib HMAC-SHA1), message 1 (ANonce), message 2 checked (replay counter, MIC with the PTK from PRF-384, RSN IE equal to the association request's, compared like hostapd), message 3 (AP RSN IE + GTK KDE, AES key wrap with QEMU's AES), message 4 MIC; retransmit every 1 s, deauth after 4 tries (reason 15). Written from IEEE 802.11i, not from `wpa2.c` | IEEE 802.11i-2004 8.5, RFC 3394, hostapd behaviour |
+| Authenticator | PMK = PBKDF2(psk, ssid) (GLib HMAC-SHA1), message 1 (ANonce), message 2 checked (replay counter, MIC with the PTK from PRF-384/512, IE equal to the association request's, compared like hostapd), message 3 (AP RSN/WPA IE + GTK KDE, AES key wrap with QEMU's AES, or RC4-drop-256 for WPA v1), message 4 MIC; retransmit every 1 s, deauth after 4 tries (reason 15). Written from IEEE 802.11i, not from `wpa2.c` | IEEE 802.11i-2004 8.5, RFC 3394, hostapd behaviour |
+| WPA v1 | `security=wpa1`: WPA vendor IE (0xDD 00:50:F2 01) in beacons, probe responses and the association request; WMI_CONNECT auth 3 / TKIP pairwise / TKIP group; EAPOL-Key descriptor 0xFE, version 0, HMAC-MD5 MIC, Key IV + KEK RC4-drop-256 Key Data, 64-byte PTK, 32-byte TKIP GTK. The firmware installs TKIP keys with `WMI_ADD_CIPHER_KEY` (MIC halves swapped), so no software TKIP/Michael is needed in the driver | 802.11i/D10, WPA spec, hostapd `wpa_auth.c`/`wpa_common.c`, GBATEK "WMI Connect Functions" |
 | Keys | `WMI_ADD_CIPHER_KEY` (45 or 51 bytes): pairwise must equal the AP's TK (type AES), group must equal the GTK with the AP's key index (TKIP: MIC halves swapped, as dsiwifi). Unicast frames are delivered/accepted only with the right TK, group frames only with the right GTK, nothing but EAPOL before message 4 | ath6kl `wmi.h` (`key_usage`), dsiwifi `wmi_add_cipher_key` |
 | Data | host TX on a data endpoint: 2-byte WMI data header (`info & 3` = 0), 802.3 header, LLC/SNAP; source must be the station MAC. RX: `rssi, info, 802.3, LLC/SNAP` on the BE endpoint. Up to 24 KiB queued towards the host, beyond that frames are dropped like a full firmware buffer | dsiwifi `data_handle_pkt`, GBATEK "MBOX Transfer Headers" |
 
 Properties (`-global ctr-wifi.<name>=`): `ssid` (default `ios3ds-qemu`),
-`psk` (`ios3ds-test-passphrase`), `security` (`wpa2`/`open`), `group`
-(`ccmp`/`tkip`), `channel` (1-13, default 6), `hidden`, `debug` (0-3; 1 logs
+`psk` (`ios3ds-test-passphrase`), `security` (`wpa2`/`wpa1`/`open`, plus the
+`wpa2-wpa3` and `wpa3` cases), `group` (`ccmp`/`tkip`), `channel` (1-13, default 6), `hidden`, `debug` (0-3; 1 logs
 every milestone as `ctr-wifi: <virtual seconds> ...`), `mac` (the station MAC
 the firmware reports; QEMU's NIC default 52:54:00:12:34:56).
 
@@ -486,8 +487,9 @@ byte and the log must show credits used/returned and no `Mbox Full`),
 (firmware missing: one log line, Wi-Fi off), `wrongpsk` (message 2 MIC
 rejected, AP deauths after 4 tries, no link), psk hint after the third try), `nofifo` (model property
 `fifo32=off`: the driver's FIFO self-test fails and the mailbox runs over
-CMD52), `hidden` (AP only answers a directed probe), `tkip` (TKIP group key,
-MIC halves swapped), `nwm` (no `wifi-fw.bin`: a synthetic BLZ-compressed
+CMD52), `hidden` (AP only answers a directed probe), `tkip` (WPA2 with a TKIP group
+key, MIC halves swapped), `wpa1` (WPA v1 vendor IE, TKIP pairwise and group,
+HMAC-MD5/RC4 key data), `nwm` (no `wifi-fw.bin`: a synthetic BLZ-compressed
 `nwm.code` with GBATEK's newer pool, cut up by the ARM9 at boot; also checks
 the `[wifi-diag]` lines of section 6), `badnwm` (an `nwm.code` that is not
 NWM: one red line, card never powered). `--icount 2` gives hardware-like
@@ -501,7 +503,8 @@ with `network backend 'user' is not compiled into this binary` in `run.txt`.
 Results (2026-11-18, re-log 45): `ok` PASS in plain QEMU and with
 `--icount 2` (SpringBoard on screen, `[nettest] all steps passed`, the host's
 server logged `GET /ios3ds-nettest`); `open`, `nocfg` (full boot to
-SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden`, `tkip` PASS. The
+SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden`, `tkip` PASS. WPA v1
+and the 4 MiB credit transfer were re-checked later (re-log 85/86). The
 status bar showed "Searching..." and no Wi-Fi bars; section 10 added them.
 
 The paravirtual "ctr-vnic" NIC that an earlier version of this section
@@ -527,12 +530,15 @@ board ("backend qemu-vnic not available").
 
 ## 9. Open items
 
-- Hardware bring-up (section 6); MCU Wi-Fi LED (I2C, optional).
+- Hardware bring-up (section 6). The MCU Wi-Fi LED now follows the link
+  ([docs/mcu.md](mcu.md) §12), but it has only been checked in QEMU.
 - Status-bar Wi-Fi icon and Settings > Wi-Fi: done (section 10; it was
   listed here as "not feasible without a kernel IO80211 controller").
 - Data frames are sent with mailbox control word 0; dsiwifi uses `2008h` for
   IP traffic. Try that if unicast data does not flow after the handshake.
-- WPA (TKIP pairwise), WEP and enterprise networks are not supported.
+- WEP and enterprise (802.1X) networks are not supported. The firmware does
+  have a WEP key type in `WMI_ADD_CIPHER_KEY`, but that alone is not enough:
+  WEP needs an open/shared-key association and key management we do not do.
 - Faster path later: wake the daemon from the shim instead of 4 ms polling,
   CMD53 byte mode for BMI instead of one CMD52 per byte.
 
@@ -706,8 +712,10 @@ Besides section 6's list (SDIO, BMI, firmware, WMI, 4-way):
 
 ### 10.7 Open items
 
-- WEP, WPA-only (TKIP pairwise) and enterprise networks: Settings lists them,
-  joining fails (EOPNOTSUPP / association failed).
+- WEP and enterprise networks: Settings lists them, joining fails
+  (EOPNOTSUPP / association failed). WPA v1 (TKIP) works through `wifi.cfg`
+  and is detected in Settings scans, but the on-screen join still needs a
+  key type mapping in `a80211` beyond the PMK type used by WPA2.
 - The status bar's carrier text says "Searching..." (no baseband); an iPod
   shows "iPod" there. Unrelated to Wi-Fi.
 - Turning Wi-Fi off in Settings disassociates but leaves the chip powered.

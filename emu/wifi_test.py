@@ -15,13 +15,15 @@ keys -> iOS interface -> DHCP lease -> DNS -> HTTP fetch.
 The files are removed from the image afterwards (so the image keeps the
 "no wifi.cfg" state), unless --keep.
 
-Cases: ok (WPA2, everything must pass), open (open network), nocfg (no
-wifi.cfg: Wi-Fi must stay off and nothing may touch the card), nofw (no
-firmware file: one log line, Wi-Fi off), wrongpsk (the 4-way handshake must
-fail at message 2, no link), nwm (no wifi-fw.bin: the ARM9 cuts the
-firmware out of a synthetic, BLZ-compressed sd:/ios3ds/nwm.code itself, as
-after the GodMode9 script; plus the [wifi-diag] lines), badnwm (an nwm.code
-that is not NWM: one error line, Wi-Fi off, card untouched).
+Cases: ok (WPA2, everything must pass), credit (4 MiB bulk fetch through the
+HTC credit path), open (open network), nocfg (no wifi.cfg: Wi-Fi must stay
+off and nothing may touch the card), nofw (no firmware file: one log line,
+Wi-Fi off), wrongpsk (the 4-way handshake must fail at message 2, no link),
+tkip (WPA2 with a TKIP group key), wpa1 (WPA v1 vendor IE, TKIP pairwise),
+nwm (no wifi-fw.bin: the ARM9 cuts the firmware out of a synthetic,
+BLZ-compressed sd:/ios3ds/nwm.code itself, as after the GodMode9 script;
+plus the [wifi-diag] lines), badnwm (an nwm.code that is not NWM: one error
+line, Wi-Fi off, card untouched).
 """
 import argparse
 import http.server
@@ -106,7 +108,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
                     choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip", "mixed", "wpa3", "rekey",
-                             "credit", "settings", "nwm", "badnwm"))
+                             "credit", "wpa1", "settings", "nwm", "badnwm"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
     ap.add_argument("--port", type=int, default=8080)
@@ -172,6 +174,8 @@ def main():
         extra += ["-global", "ctr-wifi.hidden=on"]
     if a.case == "tkip":
         extra += ["-global", "ctr-wifi.group=tkip"]
+    if a.case == "wpa1":
+        extra += ["-global", "ctr-wifi.security=wpa1"]
     if a.case == "mixed":                   # FRITZ!Box "WPA2 + WPA3" (hardware run 22)
         extra += ["-global", "ctr-wifi.security=wpa2-wpa3"]
     if a.case == "wpa3":
@@ -243,9 +247,18 @@ def main():
         "credit": [
             ("HTC credits used", r"\[wifi-diag\] .*htc: credits so far: used [1-9][0-9]*"),
             ("credit reports applied", r"\[wifi-diag\] .*htc: credit report: \+[1-9]"),
-            ("model returned credits", r"ctr-wifi: HTC credits: consumed [1-9][0-9]*, returned [1-9]"),
+            ("model returned credits", r"ctr-wifi: .*HTC credits: consumed [1-9][0-9]*, returned [1-9]"),
             ("4 MiB bulk transfer", r"\[nettest\] bulk \d+ bytes \(%d body, 0 bad\).*PASS" % BULK_SIZE),
             ("HTTP fetch", r"\[nettest\] http .*" + TOKEN),
+            ("self-test passed", r"\[nettest\] all steps passed"),
+        ],
+        "wpa1": [
+            ("WPA v1 selected", r"\[wifi\] connect .*WPA-PSK/TKIP"),
+            ("WPA vendor IE used", r"WPA v1 vendor IE"),
+            ("pairwise TKIP key", r"pairwise.*equals the AP's TK"),
+            ("group TKIP key", r"group.*equals the AP's GTK"),
+            ("4-way: message 4 OK", r"4-way: message 4 OK"),
+            ("ARM9 link up", r"\[wifi\] link up"),
             ("self-test passed", r"\[nettest\] all steps passed"),
         ],
         "rekey": [

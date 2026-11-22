@@ -343,9 +343,12 @@ static void test_crypto(void)
 }
 
 /* ------------------------------------------------- 4-way handshake (AP side) */
+#define EK_DESC 4
 #define EK_INFO 5
+#define EK_KEYLEN 7
 #define EK_REPLAY 9
 #define EK_NONCE 17
+#define EK_IV 49
 #define EK_RSC 65
 #define EK_MIC 81
 #define EK_DATALEN 97
@@ -529,6 +532,173 @@ static void test_rsn_view(void)
     CHECK(!memcmp(b, mixed, 10));
 }
 
+/* ------------------------------------------------------------- WPA v1 / TKIP */
+static void test_wpa1_crypto(void)
+{
+    u8 d[64];
+    md5_hash((const u8 *)"", 0, d);             /* RFC 1321 test suite */
+    CHECK(eqhex(d, "d41d8cd98f00b204e9800998ecf8427e"));
+    md5_hash((const u8 *)"abc", 3, d);
+    CHECK(eqhex(d, "900150983cd24fb0d6963f7d28e17f72"));
+    md5_hash((const u8 *)"abcdefghijklmnopqrstuvwxyz", 26, d);
+    CHECK(eqhex(d, "c3fcd3d76192e4007dfb496cca67e13b"));
+    static u8 nulkey[16];
+    memset(nulkey, 0x0B, sizeof(nulkey));        /* RFC 2202 cases 1, 2 and 4 */
+    hmac_md5(nulkey, (const u8 *)"Hi There", 8, NULL, 0, d);
+    CHECK(eqhex(d, "9294727a3638bb1c13f48ef8158bfc9d"));
+    u8 jefe[16] = { 0 };
+    memcpy(jefe, "Jefe", 4);
+    hmac_md5(jefe, (const u8 *)"what do ya want for nothing?", 28, NULL, 0, d);
+    CHECK(eqhex(d, "750c783e6ab0b503eaa86e310a5db738"));
+    /* RC4 (key "Key", "Wiki": well-known reference vectors) */
+    u8 buf[32], k32[32];
+    memcpy(buf, "Plaintext", 9);
+    wpa_rc4_skip((const u8 *)"Key\0\0", 3, 0, buf, 9);
+    CHECK(eqhex(buf, "bbf316e8d940af0ad3"));
+    memcpy(buf, "pedia", 5);
+    wpa_rc4_skip((const u8 *)"Wiki\0", 4, 0, buf, 5);
+    CHECK(eqhex(buf, "1021bf0420"));
+    /* WPA RC4-drop-256: key and plaintext 00..1f, independently computed */
+    for (u32 i = 0; i < 32; i++) { k32[i] = (u8)i; buf[i] = (u8)i; }
+    wpa_rc4_skip(k32, 32, 256, buf, 32);
+    CHECK(eqhex(buf, "9f8b7fdda9150abbd319a32da0d9117d04c2809b6067c9e254a4681f9dab200a"));
+
+    u8 pmk[32], sn[32], an[32], sta[6] = { 2, 1, 2, 3, 4, 5 }, ap[6] = { 0x10, 9, 8, 7, 6, 5 };
+    u8 p48[48], p64[64];
+    wpa2_pmk("password", (const u8 *)"IEEE", 4, pmk);
+    for (u32 i = 0; i < 32; i++) { sn[i] = (u8)i; an[i] = (u8)(0x80 + i); }
+    wpa2_ptk(pmk, sta, ap, sn, an, p48);
+    wpa1_ptk(pmk, sta, ap, sn, an, p64);
+    CHECK(!memcmp(p48, p64, 48));                /* same PRF, TKIP asks for 64 */
+    CHECK(!eqhex(p64 + 48, "00000000000000000000000000000000"));
+}
+
+static void test_wpa1_parse(void)
+{
+    u8 ie[32], bad[32];
+    rsn_info_t r;
+    wpa2_t w;
+    memset(&w, 0, sizeof(w));
+    u32 n = wpa1_ie(&w, ie);
+    CHECK(n == 26 && ie[1] == 24 && ie[6] == 1);
+    CHECK(wpa1_ie_parse(ie, n, &r) == RSN_MODE_WPA1);
+    CHECK(r.ok && r.wpa1 && r.group == 2 && r.tkip && r.psk && !r.ccmp);
+    memcpy(bad, ie, n);
+    bad[5] = 0xF2;                                /* OUI type must be 01 */
+    CHECK(wpa1_ie_parse(bad, n, &r) == RSN_MODE_OTHER);
+    memcpy(bad, ie, n);
+    bad[23] = 3;                                  /* AKM 00:50:F2:03, not PSK */
+    CHECK(wpa1_ie_parse(bad, n, &r) == RSN_MODE_OTHER);
+    CHECK(wpa1_ie_parse(ie, 10, &r) == RSN_MODE_OTHER);
+}
+
+static void wpa1_mic(const u8 kck[16], u8 *f, u32 len)
+{
+    u8 m[16];
+    u8 c[512];
+    if (len > sizeof(c)) return;
+    memcpy(c, f, len);
+    memset(c + EK_MIC, 0, 16);
+    hmac_md5(kck, c, len, NULL, 0, m);
+    memcpy(f + EK_MIC, m, 16);
+}
+
+static int wpa1_mic_ok(const u8 kck[16], const u8 *f, u32 len)
+{
+    u8 c[512], m[16];
+    if (len > sizeof(c)) return 0;
+    memcpy(c, f, len);
+    memcpy(m, c + EK_MIC, 16);
+    wpa1_mic(kck, c, len);
+    return !memcmp(m, c + EK_MIC, 16);
+}
+
+static u32 wpa1_frame(u8 *f, u32 info, u64 replay, const u8 *nonce, const u8 *iv,
+                      const u8 *kd, u32 dlen, u32 keylen)
+{
+    u32 total = EK_DATA + dlen;
+    memset(f, 0, total);
+    f[0] = 1; f[1] = 3; f[2] = (u8)((total - 4) >> 8); f[3] = (u8)(total - 4);
+    f[4] = 0xFE; f[EK_INFO] = (u8)(info >> 8); f[EK_INFO + 1] = (u8)info;
+    f[EK_KEYLEN] = (u8)(keylen >> 8); f[EK_KEYLEN + 1] = (u8)keylen;
+    for (int i = 0; i < 8; i++) f[EK_REPLAY + i] = (u8)(replay >> (56 - 8 * i));
+    if (nonce) memcpy(f + EK_NONCE, nonce, 32);
+    if (iv) memcpy(f + EK_IV, iv, 16);
+    f[EK_DATALEN] = (u8)(dlen >> 8); f[EK_DATALEN + 1] = (u8)dlen;
+    if (dlen) memcpy(f + EK_DATA, kd, dlen);
+    return total;
+}
+
+static void test_wpa1_handshake(void)
+{
+    wpa2_t w;
+    u8 pmk[32], sn[32], an[32], iv[32], ptk[64], sta[6] = { 2, 1, 2, 3, 4, 5 };
+    u8 ap[6] = { 0x10, 9, 8, 7, 6, 5 }, gtk[32], kd[128], crypt[128], out[256], f[256];
+    u8 wpaie[26];
+    u32 olen = 0;
+    wpa2_pmk("mixed-mode-pass", (const u8 *)"wpa1-net", 8, pmk);
+    for (u32 i = 0; i < 32; i++) { sn[i] = (u8)(i * 3); an[i] = (u8)(i + 1); iv[i] = (u8)(0xA0 + i); }
+    for (u32 i = 0; i < 32; i++) gtk[i] = (u8)(0x40 + i);
+    memset(&w, 0, sizeof(w));
+    wpa1_start(&w, pmk, sta, ap, sn);
+    wpa1_ptk(pmk, sta, ap, sn, an, ptk);
+    {
+        wpa2_t tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        wpa1_ie(&tmp, wpaie);
+        memcpy(w.own_ie, wpaie, sizeof(wpaie));
+        w.own_ie_len = sizeof(wpaie);
+    }
+
+    /* M1: no MIC; WPA v1 is descriptor FE, version 0, Key Length 32 */
+    u32 n = wpa1_frame(f, 0x0088, 1, an, NULL, NULL, 0, 32);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_M2_SENT);
+    CHECK(olen == EK_DATA + sizeof(wpaie) && out[EK_DESC] == 0xFE && out[EK_KEYLEN + 1] == 32);
+    CHECK(out[EK_INFO] == 0x01 && out[EK_INFO + 1] == 0x08);
+    CHECK(!memcmp(out + EK_DATA, wpaie, sizeof(wpaie)));
+    CHECK(wpa1_mic_ok(ptk, out, olen));
+
+    /* M3: WPA IE + TKIP GTK KDE, RC4(key_iv||KEK) with 256-byte drop */
+    u32 k = 0;
+    memcpy(kd, wpaie, sizeof(wpaie)); k = sizeof(wpaie);
+    const u8 kde[8] = { 0xDD, 38, 0, 0x0F, 0xAC, 0x01, 0x01, 0 };
+    memcpy(kd + k, kde, 8); k += 8;
+    memcpy(kd + k, gtk, 32); k += 32;
+    u8 ek[32];
+    memcpy(ek, iv, 16);
+    memcpy(ek + 16, ptk + 16, 16);
+    memcpy(crypt, kd, k);
+    wpa_rc4_skip(ek, 32, 256, crypt, k);
+    n = wpa1_frame(f, 0x13A8, 2, an, iv, crypt, k, 32);
+    f[EK_RSC] = 0x17;
+    wpa1_mic(ptk, f, n);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_KEYS);
+    CHECK(!memcmp(w.tk, ptk + 32, 32) && w.gtk_len == 32 && w.gtk_idx == 1);
+    CHECK(!memcmp(w.gtk, gtk, 32) && w.rsc[0] == 0x17);
+    CHECK(out[EK_DESC] == 0xFE && out[EK_KEYLEN + 1] == 0 && !memcmp(out + EK_KEYLEN, "\0\0", 2));
+    CHECK(out[EK_INFO] == 0x03 && out[EK_INFO + 1] == 0x08);   /* pairwise|MIC|secure */
+    CHECK(wpa1_mic_ok(ptk, out, olen));
+    /* a wrong MIC is rejected */
+    u8 bad[256];
+    memcpy(bad, f, n); bad[EK_MIC] ^= 1;
+    wpa2_t w2;
+    memcpy(&w2, &w, sizeof(w2));
+    w2.have_replay = 0;                           /* allow the same counter again */
+    CHECK(wpa2_rx_eapol(&w2, bad, n, out, sizeof(out), &olen) == WPA2_ERR_MIC);
+
+    /* group rekey with a new 32-byte TKIP GTK */
+    k = 0;
+    const u8 kde2[8] = { 0xDD, 38, 0, 0x0F, 0xAC, 0x01, 0x02, 0 };
+    memcpy(kd, kde2, 8); k += 8;
+    for (u32 i = 0; i < 32; i++) kd[k++] = (u8)(0x80 + i);
+    memcpy(crypt, kd, k);
+    wpa_rc4_skip(ek, 32, 256, crypt, k);
+    n = wpa1_frame(f, 0x1380, 3, an, iv, crypt, k, 0);
+    wpa1_mic(ptk, f, n);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_GTK);
+    CHECK(w.gtk_idx == 2 && w.gtk[0] == 0x80);
+}
+
 int main(void)
 {
     test_ring();
@@ -538,6 +708,9 @@ int main(void)
     test_cfg();
     test_crypto();
     test_handshake();
+    test_wpa1_crypto();
+    test_wpa1_parse();
+    test_wpa1_handshake();
     test_rsn_parse();
     test_rsn_view();
     printf("%s: %d checks, %d failed\n", fails ? "FAIL" : "ok", checks, fails);
