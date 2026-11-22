@@ -77,23 +77,28 @@ static int stereo_px_class(u32 px)
    software compositor) has no class map and must stay flat. */
 static bool stereo_is_home(const u8 *src, u32 w, u32 h, u32 stride)
 {
-    u8 a[1024];
     const u32 *px;
+    unsigned seen = 0;
+    u32 stamped = 0;
     if (w < 32 || h < 32 || stride < w * 4 || ((u32)(uintptr_t)src & 3))
         return false;
     px = (const u32 *)src;
     for (u32 j = 0; j < 32; j++) {
-        u32 y = j * (h / 32);
-        if (y >= h) y = h - 1;
+        u32 y = j * (h - 1) / 31;
         for (u32 i = 0; i < 32; i++) {
-            u32 x = i * (w / 32);
-            if (x >= w) x = w - 1;
-            u32 v = px[y * (stride / 4) + x];
-            int cls = stereo_px_class(v);
-            a[j * 32 + i] = cls < 0 ? 0xFF : stereo_magic(cls);
+            u32 x = i * (w - 1) / 31;
+            int cls = stereo_px_class(px[y * (stride / 4) + x]);
+            if (cls > STC_FLAT) {
+                seen |= 1u << cls;
+                stamped++;
+            }
         }
     }
-    return stereo_alphas_stereo(a, (int)sizeof a) != 0;
+    /* CA's wipe leaves alpha 0 everywhere on non-home frames; on a stamped
+       home frame at least two depth classes cover a useful part of the grid.
+       Do not demand every sample be a class magic: untouched pixels keep
+       whatever alpha the compositor produced. */
+    return stamped >= 16 && (seen & (seen - 1)) != 0;
 }
 
 /* remember the register page as loaded; the mirror starts once the kernel
