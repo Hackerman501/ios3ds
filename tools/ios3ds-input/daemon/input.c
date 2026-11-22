@@ -120,6 +120,9 @@ static int opt_flipx, opt_flipy, opt_stretch, opt_debug;
 static IOHIDEventSystemClientRef client;
 static char app_id[256];                /* frontmost app the cached port belongs to */
 static mach_port_t app_port;            /* its PurpleSystemEventPort send right (+1) */
+static uint64_t home_grace_until;       /* touches go to SpringBoard after Menu */
+#define HOME_GRACE_US 1500000ull
+static uint64_t now_us(void);
 
 /* Replace the cached app port and release the old send right: GSCopyPurpleNamedPort
    returns +1 and the old code dropped that right on every app switch. */
@@ -370,9 +373,10 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
     if (touch && !(mask & kIOHIDDigitizerEventPosition)) {   /* new touch: re-resolve */
         char id[256] = "";
         int modal = sb_modal();
+        int grace = now_us() < home_grace_until;
         /* SpringBoard's lock screen or an alert over the app: the touch is
            SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
-        if (!modal) {
+        if (!modal && !grace) {
             int got = 0;
             if (sb_frontmost_copy) {
                 CFStringRef fs = sb_frontmost_copy();
@@ -448,6 +452,10 @@ static uint64_t key_t0[NKEYS];
 static uint64_t loops, slept_us;
 static uint64_t now_us(void) { return slept_us; }
 
+/* SpringBoard's frontmost-app state lags the Home animation: a touch sent
+   right after Home still resolves the app that is being closed (and in QEMU
+   the app-targeted GSEvent panics the kernel, re-log 85). Send touches to
+   SpringBoard for a moment after Menu; the app port is dropped then anyway. */
 static void key_send(unsigned i, int down)
 {
     if (opt_debug) say("[input] key %02x %s @%u", keymap[i].usage, down ? "down" : "up", (unsigned)loops);
@@ -462,6 +470,8 @@ static void key_edge(unsigned i, int down)
     } else {
         if (key_state[i] == 1) key_send(i, 1);
         if (key_state[i]) key_send(i, 0);
+        if (keymap[i].usage == kHIDUsage_Csmr_Menu)
+            home_grace_until = now_us() + HOME_GRACE_US;
         key_state[i] = 0;
     }
 }
