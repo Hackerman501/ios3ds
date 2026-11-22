@@ -1424,14 +1424,12 @@ register-level source is unverified on hardware.**
   light` line and the value stayed **79**. `make test`, `make userland` and
   `make sdimg` clean (the image was built `--no-cydia --no-tlsfix` to keep the
   shared Cydia cache untouched while several other workers were building).
-- **Soaks:** fresh image for each. `python3 emu/soak.py --cycles 5 --icount 2`
-  PASS and `--new3ds` PASS; the New-model log has the ambient lines, no
-  panic/stall/md0 errors. The host was under load average 10–15 during these
-  runs (another emulator and several compilers), which made the soak's
-  short synthetic key presses miss the ARM9 input polls: early runs failed
-  with "not home after Home" and lock rounds ending on the lock screen while
-  the SD log showed 0 panics, 0 stalls, 0 md0 errors. `emu/soak.py` now holds
-  keys 0.4 s (below the input daemon's 0.8 s long-press threshold), waits up
-  to 45 s for the screen to settle, retries Home before giving up, wakes with
-  two Home presses and retries the slide-to-unlock gesture. Those are harness
-  timing fixes, not changes to the pass criteria.
+- **Soak harness:** earlier runs on a loaded host (load average 10–15, other
+  emulators and compilers) failed with "not home after Home" and lock rounds
+  ending on the lock screen while the SD log showed 0 panics, 0 stalls, 0 md0
+  errors: short synthetic key presses missed the ARM9 input polls. `emu/soak.py`
+  now holds keys 0.4 s (below the input daemon's 0.8 s long-press threshold),
+  waits up to 45 s for the screen to settle, retries Home before giving up,
+  wakes with two Home presses and retries the slide-to-unlock gesture. Those
+  are harness timing fixes, not changes to the pass criteria. Fresh-image
+  soak results for this branch are recorded in the final report.
