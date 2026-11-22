@@ -17,7 +17,7 @@ $(OUT)/test_host: $(SRC) $(A9W)/wifi.h $(A9W)/wpa2.h shim/net_core.h $(ROOT)/boo
 	@mkdir -p $(OUT)
 	$(HOSTCC) -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
 	    -fsanitize=address,undefined -DWIFI_HOST_TEST \
-	    -I$(ROOT)/boot/common -I$(A9W) -Ishim $(SRC) -o $@
+	    -I$(ROOT)/boot/common -I$(ROOT)/boot/arm9 -I$(A9W) -Ishim $(SRC) -o $@
 
 $(OUT)/nwm_host: tests/nwm_host.c $(A9W)/nwmcode.c $(A9W)/wifi.h
 	@mkdir -p $(OUT)

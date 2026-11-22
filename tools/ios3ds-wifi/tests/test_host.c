@@ -15,12 +15,118 @@
 #include "wifi.h"
 #include "wpa2.h"
 
+/* Compile the AR6K driver into the test with its hardware boundary mocked
+   below, so the HTC credit path can be exercised without a 3DS. */
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define waitcycles host_waitcycles
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"   /* wifi_scratch_pa is an ARM9 address */
+#include "../../../boot/arm9/wifi/ar6k.c"
+#pragma GCC diagnostic pop
+#undef waitcycles
+#undef ARRAY_SIZE
+
 #define NET_DINVAL(p, len) ((void)(p), (void)(len))
 #define NET_DCLEAN(p, len) ((void)(p), (void)(len))
 #include "net_core.h"
 
 static int fails, checks;
 #define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
+
+/* ---- AR6K hardware boundary mocks ---------------------------------------
+   Only the mailbox and the SDIO writes are real enough for the credit path;
+   nothing here runs firmware or touches hardware. */
+static u32 host_wait_cycles;
+void host_waitcycles(u32 n) { host_wait_cycles += n; }
+
+static u8 mock_rx[0x680];
+static u32 mock_rx_frames, mock_rx_len;
+static int mock_write_err, mock_write_calls;
+static int mock_w8_err, mock_w8_calls;
+static u8 mock_tx[0x680];
+static u32 mock_tx_len;
+
+static void mock_reset(void)
+{
+    memset(mock_rx, 0, sizeof(mock_rx));
+    memset(mock_tx, 0, sizeof(mock_tx));
+    mock_rx_frames = mock_rx_len = mock_tx_len = 0;
+    mock_write_err = mock_write_calls = mock_w8_err = mock_w8_calls = 0;
+}
+
+static void mock_mailbox_frame(u32 ep, const u8 *body, u32 n, const u8 *trailer, u32 tn)
+{
+    u32 len = n + tn;
+    memset(mock_rx, 0, sizeof(mock_rx));
+    mock_rx_len = len;
+    mock_rx[0] = (u8)ep;
+    mock_rx[1] = tn ? HTC_FLG_RX_TRAILER : 0;
+    mock_rx[2] = (u8)len;
+    mock_rx[3] = (u8)(len >> 8);
+    mock_rx[4] = (u8)tn;
+    if (n) memcpy(mock_rx + 6, body, n);
+    if (tn) memcpy(mock_rx + 6 + n, trailer, tn);
+    mock_rx_frames++;
+}
+
+int sdio_init(void) { return 0; }
+int sdio_r8(u32 func, u32 addr)
+{
+    (void)func;
+    if (addr == F1_HOST_INT_STATUS) return mock_rx_frames ? 1 : 0;
+    if (addr >= F1_RX_LOOKAHEAD0 && addr < F1_RX_LOOKAHEAD0 + 4) {
+        u32 la = mock_rx_len << 16;
+        return (u8)(la >> (8 * (addr - F1_RX_LOOKAHEAD0)));
+    }
+    return 0;
+}
+int sdio_w8(u32 func, u32 addr, u8 val)
+{
+    (void)func; (void)addr; (void)val;
+    mock_w8_calls++;
+    return mock_w8_err;
+}
+int sdio_read_blocks(u32 func, u32 addr, u8 *buf, u32 len)
+{
+    (void)func; (void)addr;
+    if (!mock_rx_frames || len > sizeof(mock_rx)) return SDIO_ERR_CARD;
+    memset(buf, 0, len);
+    memcpy(buf, mock_rx, len);
+    mock_rx_frames--;
+    return 0;
+}
+int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len)
+{
+    (void)func; (void)addr;
+    mock_write_calls++;
+    mock_tx_len = len;
+    memcpy(mock_tx, buf, len);
+    return mock_write_err;
+}
+int sdio_read_bytes(u32 func, u32 addr, u8 *buf, u32 len)
+{
+    (void)func; (void)addr; (void)buf; (void)len;
+    return 0;
+}
+u32 sdio_last_status(void) { return 0; }
+const sdio_diag_t *sdio_diag(void) { static sdio_diag_t d; return &d; }
+int sdio_manfid(u16 *manf, u16 *card) { (void)manf; (void)card; return 0; }
+int sd_load(const char *path, void *dst, u32 maxsize, u32 *outsize)
+{
+    (void)path; (void)dst; (void)maxsize; (void)outsize;
+    return -4;
+}
+int nwm_extract(u8 *code, u32 len, u32 cap, u32 main_type, u8 *out, u32 outcap,
+                u32 *outlen, nwm_info_t *info)
+{
+    (void)code; (void)len; (void)cap; (void)main_type;
+    (void)out; (void)outcap; (void)outlen; (void)info;
+    return 0;
+}
+const char *nwm_strerror(int e) { (void)e; return ""; }
+u32 nwm_crc32(const u8 *p, u32 n) { (void)p; (void)n; return 0; }
+void log_color(u32 color, const char *fmt, ...) { (void)color; (void)fmt; }
+u32 wifi_scratch_pa, wifi_scratch_len;
 
 static void unhex(const char *h, u8 *out)
 {
@@ -703,12 +809,60 @@ static void test_wpa1_handshake(void)
     CHECK(w.gtk_idx == 2 && w.gtk[0] == 0x80);
 }
 
+/* ---- AR6K credit/defer path --------------------------------------------- */
+static void test_ar6k_credits(void)
+{
+    const u8 body[4] = { 1, 2, 3, 4 };
+    const u8 credit_rep[] = { 1, 4, 2, 1, 0, 0 };   /* trailer: ep2 +1 credit */
+    u8 eth[64], framed[64];
+    u32 waits;
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;
+    A.ep_data = 2;
+    d_head = d_count = 0;
+    eapol_pending_len = 0;
+    mock_reset();
+    host_wait_cycles = 0;
+
+    /* no report: one step's worth of waits, not the old ~4 s busy loop */
+    CHECK(credit_wait(2, 1) == SDIO_ERR_BUSY);
+    CHECK(host_wait_cycles == CREDIT_WAIT_POLLS * 3350);
+    CHECK(A.credit_busy == 1);
+
+    /* a trailer credit ends the wait at once; the packet is kept for pump() */
+    mock_mailbox_frame(2, body, sizeof(body), credit_rep, sizeof(credit_rep));
+    CHECK(credit_wait(2, 1) == 0);
+    CHECK(A.ep_credits[2] == 1 && d_count == 1);
+    CHECK(host_wait_cycles == CREDIT_WAIT_POLLS * 3350);
+    d_head = d_count = 0;
+
+    /* data frames report BUSY without waiting; EAPOL is retried, not lost */
+    A.state = NET_ST_UP;
+    A.ep_credits[2] = 0;
+    memset(eth, 0, sizeof(eth));
+    eth[12] = 0x08; eth[13] = 0x00;                 /* IPv4 Ethernet frame */
+    memset(framed, 0x5A, sizeof(framed));
+    waits = host_wait_cycles;
+    CHECK(ar6k_tx(eth, sizeof(eth)) == -1);
+    CHECK(host_wait_cycles == waits);
+    CHECK(eapol_send(framed, sizeof(framed)) == SDIO_ERR_BUSY);
+    CHECK(eapol_pending_len == sizeof(framed) && host_wait_cycles == waits);
+    A.ep_credits[2] = 2;
+    mock_reset();
+    eapol_pending_step();
+    CHECK(eapol_pending_len == 0 && mock_write_calls == 1);
+    CHECK(host_wait_cycles == waits);
+}
+
 int main(void)
 {
     test_ring();
     test_wlan();
     test_frames();
     test_htc_credits();
+    test_ar6k_credits();
     test_cfg();
     test_crypto();
     test_handshake();

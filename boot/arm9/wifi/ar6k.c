@@ -128,6 +128,7 @@ static struct {
     u16 ep_max_msg[8];
     u32 cred_sz, cred_pool;
     u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
+    u32 eapol_busy;                 /* EAPOL replies queued for lack of credits */
     u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
     u32 reconnect_at;               /* now_ms() for the next WMI_CONNECT, 0 = none */
@@ -422,13 +423,14 @@ static void pump_msg(u32 type, int n)
     defer_msg(type, pkt + 6, n);
 }
 
-/* Wait for a credit report. Credits come back in the trailer of the next
-   message the firmware sends (or in an empty endpoint-0 message after a
-   NEED_CREDIT_UPDATE), so drain the mailbox until one arrives. Bounded: a
-   wedged firmware fails its bring-up step later, not here. */
+/* One monitor step may spend at most ~20 ms here (20 x the 1 ms wait below):
+   md0, the GPU mirror and input must keep being polled. A control message
+   that cannot get credits returns BUSY to its caller, which retries on the
+   next pass; data frames never call this at all. */
+#define CREDIT_WAIT_POLLS 20u
 static int credit_wait(u32 ep, u32 need)
 {
-    for (u32 i = 0; i < 40000 && A.ep_credits[ep] < need; i++) {
+    for (u32 i = 0; i < CREDIT_WAIT_POLLS && A.ep_credits[ep] < need; i++) {
         u32 type;
         int n = mbox_recv(&type);
         if (n > 0) pump_msg(type, n);
@@ -682,9 +684,44 @@ static void snonce(u8 out[32])
     }
 }
 
+/* An EAPOL reply is a data-frame send: never wait for credits in the monitor
+   step (on_eapol() is called from pump()). wpa2_rx_eapol() has already
+   advanced the handshake when it produced the reply, so keep the framed
+   reply here and retry it once per pass until the target reports credits. */
+#define EAPOL_OUT_MAX (2 + 14 + 8 + 160)
+static u8 eapol_pending[EAPOL_OUT_MAX];
+static u32 eapol_pending_len;
+
+static int eapol_send(const u8 *out, u32 n)
+{
+    int r = n ? mbox_send(A.ep_data, 0, 0, out, n, 0) : SDIO_ERR_ARG;
+    if (r == SDIO_ERR_BUSY && n <= sizeof(eapol_pending)) {
+        memcpy(eapol_pending, out, n);
+        eapol_pending_len = n;
+        A.eapol_busy++;
+    }
+    return r;
+}
+
+static void eapol_pending_step(void)
+{
+    if (!eapol_pending_len) return;
+    if (A.state != NET_ST_AUTH && A.state != NET_ST_UP) {
+        eapol_pending_len = 0;              /* disconnected: AP retries the handshake */
+        return;
+    }
+    int r = mbox_send(A.ep_data, 0, 0, eapol_pending, eapol_pending_len, 0);
+    if (r == 0) {
+        eapol_pending_len = 0;
+    } else if (r != SDIO_ERR_BUSY) {
+        log_warn("[wifi] queued EAPOL reply failed: %d\n", r);
+        eapol_pending_len = 0;
+    }
+}
+
 static void on_eapol(const u8 *eth, u32 len)
 {
-    u8 frame[14 + 160], out[2 + 14 + 8 + 160];
+    u8 frame[14 + 160], out[EAPOL_OUT_MAX];
     u32 rlen = 0;
     /* PTK inputs straight from the frame: the authenticator is its source,
        the supplicant its destination (not what the CONNECT event parsing says) */
@@ -715,7 +752,7 @@ static void on_eapol(const u8 *eth, u32 len)
     memcpy(frame + 6, A.mac, 6);
     frame[12] = 0x88; frame[13] = 0x8E;
     u32 n = wifi_frame_to_wmi(frame, 14 + rlen, out, sizeof(out));
-    int r = n ? mbox_send(A.ep_data, 0, 0, out, n, 1) : SDIO_ERR_ARG;
+    int r = eapol_send(out, n);     /* data endpoint: queue on BUSY, never wait */
     if (ev == WPA2_EV_GTK && A.state == NET_ST_UP)
         logp("[wifi] group key renewed by the AP (index %u): %d\n", A.wpa.gtk_idx, r);
     else
@@ -1476,6 +1513,7 @@ static u32 ar6k_step(void)
         log_warn("[wifi] no SCAN_COMPLETE 10 s after the scan request: %u networks (%u BSSINFO)\n",
                  nscan, A.nbssinfo);
     }
+    eapol_pending_step();           /* one non-blocking retry per monitor pass */
     switch (A.state) {
     case NET_ST_POWER:
         /* libn3ds WIFI_init: CFG11 "wifi power" (really the MP regs), select
