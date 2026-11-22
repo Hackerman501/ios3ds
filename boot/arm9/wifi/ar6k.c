@@ -131,6 +131,7 @@ static struct {
     u32 credit_refund;              /* credits returned after a failed mailbox write */
     u32 defer_drop;                 /* packets that could not be queued at all */
     u32 defer_full;                 /* waits stopped with the deferred ring full */
+    u32 wmi_busy;                   /* WMI control sends queued for lack of credits */
     u32 eapol_busy;                 /* EAPOL replies queued for lack of credits */
     u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
@@ -200,6 +201,8 @@ static u32 nscan, scan_seq;
 static u8 user_scan;                /* a WLAN_CMD_SCAN is running */
 
 static int soc_read(u32 addr, u32 *v);
+static void wmi_queue_clear(void);
+static u32 eapol_pending_len;       /* also cleared by fail() */
 
 /* A bring-up step failed: log it, park the chip in reset (nRESET low), and
    stay "failed". iOS boots on; Settings shows Wi-Fi as unavailable. */
@@ -208,6 +211,8 @@ static u32 fail(int err, const char *what)
     u32 st = A.state;
     A.err = err;
     A.state = NET_ST_FAILED;
+    wmi_queue_clear();
+    eapol_pending_len = 0;
     log_err("[wifi] %s failed: %d (sdio status %08x)\n", what, err, sdio_last_status());
     DIAG("FAILED in stage %s: %s, error %d, sdio status %08x", st_name(st), what, err, sdio_last_status());
     if (A.diag && st >= NET_ST_BOOT && st <= NET_ST_WMI) {
@@ -358,6 +363,38 @@ static int mbox_recv(u32 *type);
 static int pump_msg(u32 type, int n);
 static int defer_msg(u32 type, const u8 *body, int n);
 
+/* A burst of WMI control messages (connect, pairwise/group key, synchronize)
+   can exhaust the endpoint's credits. The bounded credit wait may return
+   BUSY, so queue control messages in order and retry them on the next monitor
+   pass; dropping one (typically the group key) breaks DHCP and rekeys. */
+#define WMI_QUEUE_MAX 8
+static struct { u8 len; u8 b[72]; } WQ[WMI_QUEUE_MAX];
+static u8 wq_head, wq_count;
+
+static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wait);
+static void wmi_queue_clear(void) { wq_head = wq_count = 0; }
+
+static void wmi_queue_put(const u8 *b, u32 len)
+{
+    u8 i = (u8)((wq_head + wq_count) % WMI_QUEUE_MAX);
+    WQ[i].len = (u8)len;
+    memcpy(WQ[i].b, b, len);
+    wq_count++;
+}
+
+static int wmi_queue_flush(void)
+{
+    while (wq_count) {
+        u8 i = wq_head;
+        int r = mbox_send(A.ep_wmi, 1, 0, WQ[i].b, WQ[i].len, 0);
+        if (r == SDIO_ERR_BUSY) return r;       /* credits may return in this pass */
+        wq_head = (u8)((wq_head + 1) % WMI_QUEUE_MAX);
+        wq_count--;
+        if (r < 0) return r;                    /* hard error: the rest stay queued */
+    }
+    return 0;
+}
+
 static u32 credit_need(u32 padded)
 {
     return padded > A.cred_sz ? (padded + A.cred_sz - 1) / A.cred_sz : 1;
@@ -385,8 +422,9 @@ static void credit_init(u32 n, u32 sz)
     A.cred_sz = sz ? sz : 1664;
     A.cred_pool = n;
     A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
-    A.credit_refund = A.defer_drop = A.defer_full = A.eapol_busy = 0;
+    A.credit_refund = A.defer_drop = A.defer_full = A.wmi_busy = A.eapol_busy = 0;
     A.credit_log = 0;
+    wmi_queue_clear();
     credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
 }
 
@@ -531,8 +569,20 @@ static int wmi_send(u32 id, const void *params, u32 len)
     if (len + 2 > sizeof(b)) return SDIO_ERR_ARG;
     b[0] = (u8)id; b[1] = (u8)(id >> 8);
     if (len) memcpy(b + 2, params, len);
-    /* flag 1: credit update wanted; WMI waits for a report if it runs out */
-    return mbox_send(A.ep_wmi, 1, 0, b, len + 2, 1);
+    /* flag 1: credit update wanted; WMI waits briefly, then queues in order */
+    if (wq_count) {
+        if (wq_count >= WMI_QUEUE_MAX) return SDIO_ERR_BUSY;
+        A.wmi_busy++;
+        wmi_queue_put(b, len + 2);
+        return 0;
+    }
+    int r = mbox_send(A.ep_wmi, 1, 0, b, len + 2, 1);
+    if (r == SDIO_ERR_BUSY && wq_count < WMI_QUEUE_MAX) {
+        A.wmi_busy++;
+        wmi_queue_put(b, len + 2);
+        return 0;
+    }
+    return r;
 }
 
 /* Read one packet into pkt[]. Returns the payload length (bytes after the
@@ -733,7 +783,6 @@ static void snonce(u8 out[32])
    reply here and retry it once per pass until the target reports credits. */
 #define EAPOL_OUT_MAX (2 + 14 + 8 + 160)
 static u8 eapol_pending[EAPOL_OUT_MAX];
-static u32 eapol_pending_len;
 
 static int eapol_send(const u8 *out, u32 n)
 {
@@ -1556,7 +1605,8 @@ static u32 ar6k_step(void)
         log_warn("[wifi] no SCAN_COMPLETE 10 s after the scan request: %u networks (%u BSSINFO)\n",
                  nscan, A.nbssinfo);
     }
-    eapol_pending_step();           /* one non-blocking retry per monitor pass */
+    wmi_queue_flush();              /* one non-blocking retry per monitor pass */
+    eapol_pending_step();
     switch (A.state) {
     case NET_ST_POWER:
         /* libn3ds WIFI_init: CFG11 "wifi power" (really the MP regs), select

@@ -939,6 +939,29 @@ static void test_wpa2_long_frame(void)
     CHECK(olen == 0 && !w.have_replay && !w.done);
 }
 
+static void test_ar6k_wmi_queue(void)
+{
+    const u8 p[4] = { 1, 2, 3, 4 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;
+    A.ep_credits[1] = 0;
+    wmi_queue_clear();
+    mock_reset();
+
+    /* without credits WMI control is queued, not dropped, and stays ordered */
+    CHECK(wmi_send(0x22, p, sizeof(p)) == 0);
+    CHECK(wmi_send(0x16, p, sizeof(p)) == 0);
+    CHECK(wq_count == 2 && A.wmi_busy == 2 && mock_write_calls == 0);
+    A.ep_credits[1] = 1;
+    CHECK(wmi_queue_flush() == SDIO_ERR_BUSY);
+    CHECK(wq_count == 1 && mock_write_calls == 1 && mock_tx[6] == 0x22);
+    A.ep_credits[1] = 1;
+    CHECK(wmi_queue_flush() == 0);
+    CHECK(wq_count == 0 && mock_write_calls == 2 && mock_tx[6] == 0x16);
+}
+
 int main(void)
 {
     test_ring();
@@ -947,6 +970,7 @@ int main(void)
     test_htc_credits();
     test_ar6k_credits();
     test_ar6k_write_credits();
+    test_ar6k_wmi_queue();
     test_ar6k_defer_ring();
     test_cfg();
     test_crypto();
