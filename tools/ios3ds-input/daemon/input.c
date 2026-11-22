@@ -73,6 +73,9 @@ void IOHIDEventAppendEvent(IOHIDEventRef parent, IOHIDEventRef child);
 IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(const void *allocator);
 void IOHIDEventSystemClientDispatchEvent(IOHIDEventSystemClientRef client, IOHIDEventRef event);
 void CFRelease(const void *cf);
+typedef const struct __CFString *CFStringRef;
+unsigned char CFStringGetCString(CFStringRef s, char *buf, long size, uint32_t encoding);
+#define kCFStringEncodingUTF8 0x08000100u
 
 #define kIOHIDDigitizerTransducerTypeHand 3
 #define kIOHIDDigitizerEventRange    0x01
@@ -262,6 +265,7 @@ static void (*gs_send_event)(gsrec_t *, mach_port_t);
 static mach_port_t (*gs_named_port)(const char *);
 static mach_port_t (*sbs_port)(void);
 static void (*sb_frontmost)(mach_port_t, char *);
+static CFStringRef (*sb_frontmost_copy)(void);
 static void (*gs_send_system)(gsrec_t *);
 static uint64_t (*gs_timestamp)(void);
 
@@ -282,6 +286,10 @@ static void gs_load(void)
     if (h) {
         sbs_port = (mach_port_t (*)(void))dlsym(h, "SBSSpringBoardServerPort");
         sb_frontmost = (void (*)(mach_port_t, char *))dlsym(h, "SBFrontmostApplicationDisplayIdentifier");
+        /* The Copy variant returns NULL when SpringBoard/home is frontmost,
+           while the old identifier function can keep returning the app that
+           just went away (re-log 78/85). */
+        sb_frontmost_copy = (CFStringRef (*)(void))dlsym(h, "SBSCopyFrontmostApplicationDisplayIdentifier");
     }
     if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
 }
@@ -364,7 +372,18 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
         int modal = sb_modal();
         /* SpringBoard's lock screen or an alert over the app: the touch is
            SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
-        if (!modal && sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
+        if (!modal) {
+            if (sb_frontmost_copy) {
+                CFStringRef fs = sb_frontmost_copy();
+                if (fs) {
+                    if (!CFStringGetCString(fs, id, sizeof id, kCFStringEncodingUTF8))
+                        id[0] = 0;
+                    CFRelease(fs);
+                }
+            } else if (sbs_port && sb_frontmost) {
+                sb_frontmost(sbs_port(), id);
+            }
+        }
         /* Log every touch while modal: when SpringBoard covers the app its
            frontmost identifier can stay empty (QEMU), so a change-of-id test
            alone would hide the switch to the system event port.  A cached

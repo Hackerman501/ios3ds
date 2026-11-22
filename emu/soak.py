@@ -177,8 +177,30 @@ def main():
             c = {"cycle": i, "tap": [x, y]}
             tap(x, y)
             c["settle"] = settles[i % len(settles)]
-            time.sleep(c["settle"])
-            app = shot("c%03d_app" % i)
+            # Wait for the app to *render*, not for a fixed time: on a loaded
+            # --icount 2 host a tap can take far longer than the settle, and
+            # the app's uniform gray launch image differs from the home screen
+            # enough to look like a finished frame. Home pressed on a launch
+            # image is ignored, which then made the whole cycle "stuck".
+            start = time.time()
+            app, prev = None, None
+            while time.time() - start < 180:
+                time.sleep(4)
+                img = shot("c%03d_app" % i)
+                g = img.convert("L")
+                mean, sd = ImageStat.Stat(g).mean[0], ImageStat.Stat(g).stddev[0]
+                if mean > 90 and mean < 170 and sd < 8:
+                    prev = None             # a launch image / blank screen
+                    continue
+                if prev is not None and ImageStat.Stat(ImageChops.difference(
+                        g, prev.convert("L"))).mean[0] < 1.0:
+                    app = img
+                    break
+                prev = img
+            if app is None:
+                app = shot("c%03d_app" % i)
+                log("cycle %d: no rendered app within 180 s" % i)
+            c["app_wait"] = round(time.time() - start, 1)
             key("ret")                          # Home (START)
             # wait until the screen stops changing (up to 30 s) instead of a
             # fixed 6 s: with --icount the guest runs slower when the host is
