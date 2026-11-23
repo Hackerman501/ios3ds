@@ -467,4 +467,4 @@ log, crash, heartbeat, watchdog or GPU failures. The final report is in
 `build/emu/soak/report.md` (not committed); the earlier failures were host
 contention, not a regression.
 
-Main `docs/re-log.md` continues at §85 with the same story.
+Main `docs/re-log.md` continues at §87 with the same story.
