@@ -30,7 +30,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ✅ | Wi-Fi: scan, WPA2, WPA1 (TKIP) and WPA/WPA2 mixed networks (TKIP group), also routers in "WPA2 + WPA3" mode | needs the console's own Wi-Fi firmware, copied automatically by the launcher (or the GodMode9 script); stays connected through the router's key renewals; WPA1 is set up in `wifi.cfg` |
 | ✅ | Safari | loads pages; big pages can fail with "Cannot allocate memory" (a retry usually works), being worked on |
 | ✅ | Cydia | pre-installed, on the first home screen page |
-| ✅ | Screen rotation (accelerometer) | |
+| ✅ | Screen rotation (accelerometer) | apps rotate where iOS allows; the iPod home screen does not rotate (see [FAQ](#faq)) |
 | ✅ | D-pad, circle pad | turned 90° to match the upright iOS screen: ← → pages, ↑ ↓ and the stick scroll |
 | ✅ | Cameras (Camera.app, back and front, photos) | 320×240 live preview, about 12 fps; photos go to the Camera Roll. No video recording or 3D photos. Confirmed on an Old 3DS and a New 2DS XL |
 | 🧪 | Microphone | recording works in the emulator; Voice Memos records Apple Lossless (playback fixed after 0.4.0, 🧪) |
@@ -185,6 +185,29 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `diag=1` | extra diagnostics in the log |
   | `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
 
+### FAQ
+
+- **Why doesn't the home screen rotate (including 180°)?** Stock iOS 4 on an
+  iPod touch never rotates the SpringBoard home screen, regardless of the
+  accelerometer. Apps decide for themselves which orientations they draw: our
+  driver reports all four, including upside-down
+  (`UIDeviceOrientationPortraitUpsideDown = 2`), and QEMU confirms it; Safari's
+  bookmarks view, for example, ignores 2 and 4 on this iOS build. See
+  [docs/mcu.md](docs/mcu.md) §6.2.
+- **Why is the screen still lit with the brightness slider at 0?** Real iPods
+  never turn the backlight fully off from the slider. We clamp the minimum to
+  a readable level; locking or sleeping the device still switches the screen
+  off.
+- **Why is there a pause before XNU starts?** A 1 s grace period leaves time to
+  hold **B** and stay in the monitor; press **A** to skip it once, or set
+  `boot_delay=0` in `boot.cfg` to skip it every boot.
+- **Why is the wallpaper only on the lock screen?** Apple did not enable
+  home-screen wallpaper on the iPod touch 2G (`iPod2,1`): SpringBoard's
+  `homescreen-wallpaper` capability is absent from that device's capabilities
+  plist, although the key exists in iOS 4.2.1's SpringBoard/dyld cache. That
+  is stock behaviour, not a rendering bug; lock-screen wallpaper works and can
+  be set in Settings → Wallpaper.
+
 ### Fake GPS location
 
 The iPod has no GPS, so Maps and geolocation in Safari get no fix by default.
@@ -205,6 +228,7 @@ rebooting; details and limits: [docs/location.md](docs/location.md).
 - **Tweaks (Cydia Substrate):** Substrate is pre-installed and held at its version; don't remove or "upgrade" it in Cydia. Tweaks load into SpringBoard and apps, not into system daemons (injecting into launchd hangs iOS 4.2.1 on the 3DS, so ios3ds blocks it and repairs `/etc/launchd.conf` at boot).
 - **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
+- **Home-screen wallpaper:** not present on the iPod touch 2G in stock iOS 4.2.1 (Apple enabled it on newer devices); the lock screen does show the wallpaper you pick in Settings. See the [FAQ](#faq).
 - **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically by the installer; installed Cydia packages and the Music library are not (reinstall packages after updating). Use `--fresh` (installer) to start with a clean disk.
 - **No hardware for:** Bluetooth (the 3DS has none), GPS, IR, NFC. The 3D screen path is implemented but not yet confirmed on a console ([docs/stereo3d.md](docs/stereo3d.md)). A user-set fake location works in CoreLocation apps ([docs/location.md](docs/location.md)).
 - **Leaving iOS:** a short POWER press locks/unlocks; holding it for about 3 s now starts iOS's own clean shutdown (the same path as "slide to power off") and switches the 3DS off through the MCU. Holding it for ~10 s still forces a hard power cut if iOS is stuck. Apple's boot-time `fsck` cannot check the root disk (`/dev/md0` is already mounted, `EBUSY`); the ARM9 instead logs at boot whether `rootfs.hfs` was cleanly unmounted and sets that flag after a clean shutdown ([docs/mcu.md](docs/mcu.md) §12). A hard cut can still damage files: back up your card.

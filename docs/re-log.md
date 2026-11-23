@@ -1814,3 +1814,59 @@ newline/NUL, MBX2D's `Failed to open connection to MBX`) and `0x47bb470`
 (%d).`). The callee still fails and QuartzCore still falls back; only the
 console noise is gone. `tests/test_mbx2d.py` guards the recipe and the two
 patches. Docs: gpu.md §8, architecture.md §SpringBoard.
+
+## 91. Public issue #1 (New 2DS XL): brightness floor, "180° rotation", boot delay, wallpaper (2026-11-23)
+Four small reports, one commit each. No GitHub reply was posted; the answers
+are in the README FAQ and in mcu.md / m1-design.md.
+
+- **Brightness 0 = black.** `ios3ds-mcud` used to send `DisplayBrightness ×
+  DisplayBrightnessFactor` unchanged and the shim mapped level 0 to PWM 0.
+  Factor 0 is iOS' *screen off* (lock / sleep) and is also the ARM9's
+  `backlight == 1` (screen off) sentinel in `mcu_poll()`'s shell handling, so
+  it must stay 0. Level 0 with the screen *on* is now clamped to 0.12 in the
+  daemon and every lit level maps to at least `BL_PWM_MIN = 0x26` (libn3ds /
+  Luma's darkest readable preset) instead of 0x10. Both limits are in
+  `boot/common/backlight.h`; `tests/test_backlight.py` checks the whole range
+  and the off sentinel. QEMU still logs the normal path
+  `[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000` and
+  `LCD backlight as Luma left it: top 0x5f, bottom 0x5f`. Real iPods keep the
+  backlight lit at slider 0; a hardware check of the new minimum is welcome.
+- **"No 180° rotation."** Not a missing sensor event. `build/emu-rot2` (Safari
+  open, `qom-set /machine mcu-orient` 0/1/2/3, 40 s apart) logged
+  `0 -> 1`, `1 -> 4`, `4 -> 2`, `2 -> 3`: pose 2 is MCU x = −1 g, which
+  becomes iOS y = +1 g and `UIDeviceOrientationPortraitUpsideDown = 2`.
+  `build/emu-rot5` repeats `0 -> 1` -> `1 -> 2` with the final shim. The axis
+  map now lives in `boot/common/accel_axes.h`; `tests/test_orientation.py`
+  checks all six QEMU poses and that the shim uses the shared map. Stock iOS
+  4 on an iPod touch never rotates SpringBoard's home screen, and each app
+  picks the orientations it draws (Safari's bookmarks view stays upright for
+  2 and 4, rotates for 3 in the screenshots): no code change to the behaviour
+  was made.
+- **Wait before XNU.** The only ARM9 countdown is the 1 s grace period at the
+  end of `a9_main()` (generated `boot.cfg` used `countdown_ms=1000`; there is
+  no hardware reason for a longer one). It exists so **B** can stop the jump
+  and leave the monitor running. Boot.cfg parsing moved to `boot/arm9/bootcfg.c`
+  so it can be host-tested (`tests/test_bootcfg.py`): `boot_delay=N` is the
+  user-facing alias of `countdown_ms`, `boot_delay=0` skips the wait, and the
+  old key still works. **A** during the countdown jumps at once. QEMU: default
+  `New 3DS check 11.625 s -> countdown over 11.880 s -> XNU 11.958 s`;
+  `boot_delay=0` logs `boot.cfg boot_delay=0: no countdown` and
+  `8.957 s -> 8.980 s -> 9.043 s` (guest timestamps differ between runs);
+  with `boot_delay=60000` and A pressed at 8 s, `A pressed: skipping the rest
+  of the countdown`, `8.163 s -> XNU 8.215 s` instead of a 60 s wait.
+- **Wallpaper only on the lock screen.** SpringBoard's capability key is
+  `homescreen-wallpaper`: the string is in the n72 SpringBoard binary (file
+  offset 0x11fa88, CFString pointer at 0x15c794, object at VM 0x15d790) and
+  in the dyld cache (0x54ca560, 0x57c73f8, 0x5f30d24). The iPod2,1's
+  `/System/Library/CoreServices/SpringBoard.app/N72AP.plist` `capabilities`
+  dict has no such key (it lists gamekit, nike-ipod, stand-alone-contacts,
+  wifi, opengles-1, accelerometer, microphone, volume-buttons, …), so Apple
+  disabled home-screen wallpaper on this model. Lock-screen wallpaper works
+  after the DeviceClass fix (§62). `mkrootfs.py` already has a `plist_merge`
+  recipe hook that could enable the key, but no memory or frame-time numbers
+  exist for a full-screen wallpaper layer in SpringBoard on the 128 MB
+  device, so no opt-in switch was added.
+- **Verification:** `make test` passes (including the three new host tests);
+  `make userland` + `rm -f build/sd.img && make sdimg` + `python3 emu/soak.py
+  --cycles 5 --icount 2` on a fresh image: **Result: PASS** (5 cycles, no
+  panics, stalls, crashes or md0 errors).
