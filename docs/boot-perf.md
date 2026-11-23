@@ -164,7 +164,11 @@ aimed at Cydia/dpkg rather than boot (where UBC re-reads are rare):
   This keeps the crash behaviour of the original synchronous path.
 - **Cost:** a first attempt sorted dirty slots with an O(n²) scan per flush,
   which cost more ARM9 time than it saved; flushing is one linear pass now.
-  Host tests: `tests/test_blkcache.c` (`make test`).
+  The cache keeps a dirty-slot count, so `blkc_dirty()` is O(1): it used to
+  scan all 512 slots on every monitor loop (the idle check) and to test every
+  sector of every read request. With no dirty overlay at all, an md0 read is
+  one `f_read` as before; only a read that can see a dirty sector is split
+  into runs. Host tests: `tests/test_blkcache.c` (`make test`).
 
 With `ioprof=1` during a local-repo `dpkg -i` (same 32-file `.deb` before and
 after, guest seconds, [cydia.md](cydia.md) has the full timing table):
@@ -178,8 +182,13 @@ The bytes are the same — dpkg writes mostly distinct sectors, so there is
 little to coalesce — but there are 10 % fewer round trips and the small writes
 reach the card in batches instead of one `f_sync` each. QEMU's SD is instant,
 so this shows up as −0.07 s on the install; a real card's per-command cost is
-what makes it useful. The `[io]` summary now ends in
-`cache H hit E evict W flushed D direct F fail` (evictions, sectors written
-back, direct-write sectors and errors). For a real-hardware A/B, boot with
-`ioprof=1` and compare the ARM9 ms/KiB/chunk figures here with the old ones.
+what makes it useful. Re-runs under host load vary by ±1 s in guest wall time
+and by a few hundred chunks, so compare the chunks/KiB/ARM9 columns, not one
+wall-clock number. The `[io]` summary now ends in
+`cache H hit E evict W flushed D direct F fail` (`W` is the cumulative number
+of sectors written back, `D` direct-write sectors, `F` sync/idle-flush
+errors). For a real-hardware A/B, boot with `ioprof=1` and compare the ARM9
+ms/KiB/chunk figures here with the old ones; `[io] t=... rd/wr` and the
+`cache` fields are enough to see whether the card, not the CPU, is the
+bottleneck.
 

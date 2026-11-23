@@ -2315,7 +2315,46 @@ New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
   boot-args disable code signing (`amfi_allow_any_signature=1
   cs_enforcement_disable=1`). DNS/TLS timings for real HTTPS repos are in
   [certificates.md](certificates.md) §4 and are unchanged by this work.
-- **Verification:** `make test` passes (including the new cache test, the CI
-  stub-symbol check and the conflict-marker check); a fresh-image
-  `python3 emu/soak.py --cycles 5 --icount 2` after these changes printed
-  **Result: PASS**.
+- **Re-run after the rebase onto `origin/main` edf6444** (same harness, fresh
+  images, `fill=0`; guest wall time on this loaded host): refresh 2.993 →
+  **2.443 s**, download 0.132 → 0.277 s, `dpkg -i` 3.438 → **2.664 s**, total
+  6.563 → **5.384 s**. Guest CPU (user+sys): refresh 0.72 → 0.67 s, install
+  0.67 → 0.58 s. The first, quiet-host numbers above are the fairer picture of
+  the code change; the second run shows how far the wall clock moves with
+  host load, which is why the docs ask for chunks/KiB/ARM9 time.
+- **apt's Packages work** is CPU on the ARM11, not the local HTTP: 2,000
+  synthetic stanzas (440 KB) take 1.3–1.6 s of guest CPU in `apt-get update`
+  and another second or two of blocked md0 time. apt 0.7 prefers bz2: that
+  run was 5.121 s / 1.60 s CPU; with `Acquire::CompressionTypes::Order
+  { "gz"; ... }` shipped it takes 3.762–4.257 s / 1.30–1.43 s. Disabling
+  `Dir::Cache::pkgcache` looked faster for `update` alone (6.1 s real but the
+  later `--download-only` CPU went 0.07 → 0.47 s because the text lists are
+  re-parsed), so it is not shipped.
+- **Dead default sources** are the refresh outlier on real networks. Adding
+  one (`cydia.zodttd.com`, still resolving) to the local repo's list:
+  `apt-get update` **2.544 s** without a fix (apt followed a 308 redirect and
+  retried) vs **1.490 s** with the host pointed at 127.0.0.1 in
+  `/private/etc/hosts` (connection refused at once). The same entries cover
+  ModMyi and repo666.ultrasn0w.com; the 10 s timeout and `Retries 0` stay as
+  a backstop. A per-host `Acquire::http::Proxy` was tried first and had no
+  effect in this apt build (it still resolved the origin host).
+- **Cache read path:** `blkc_dirty()` used to scan all 512 slots on every
+  monitor loop (the idle check) and `blkc_dirty_lba()` every sector of every
+  read. A dirty-slot count makes both O(1); when no sector is dirty, a read
+  takes the old single-`f_read` path instead of being split into runs. Host
+  tests still pass. A coalescing flush (sort dirty sectors and write adjacent
+  runs with one CMD25) was prototyped; QEMU's counters and ARM9 time could
+  not show a reliable win, and its write-call accounting disagreed with the
+  sectors-written counter, so it was dropped rather than shipping an
+  unexplained cache change.
+- **Harness additions:** `--fill N` (synthetic index stanzas), `--bz2`
+  (offer bz2 next to gz), `--skip-refresh` (isolate dpkg), `--extra-source`
+  (a second/dead source), `--apt-extra` (override config as
+  `99zzios3ds-perf`) and per-phase guest CPU times. See
+  [cydia.md](cydia.md) for the resulting tables.
+- **Verification:** after the rebase, `make test` passes (cache test, CI
+  stub-symbol check and conflict-marker check) and a fresh-image
+  `python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**
+  (5 cycles, 0 panics/restarts after boot, 0 md0 errors). The rebase conflict
+  in this file was section 101 arriving at the same tail; the 4.1 section is
+  kept before this one.

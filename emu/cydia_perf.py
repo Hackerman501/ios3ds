@@ -22,6 +22,14 @@ source list, the .deb and the test daemon); QEMU is stopped with QMP when the
 script reports ALL DONE. The .deb has many small files on purpose: dpkg does
 one fsync per unpacked file on a real jailbroken device, which is the cost
 this harness is meant to expose.
+
+Each phase also logs `[cperf] <label> cpu real=... user=... sys=...` from
+bash's time. Options: --fill N adds synthetic Packages stanzas (apt parse and
+pkgcache cost), --bz2 offers Packages.bz2 next to gz (apt 0.7 prefers bz2),
+--extra-source adds a second source line (e.g. a dead default), --apt-extra
+installs extra apt.conf text as 99zzios3ds-perf (overrides the image's
+99ios3ds-speed), --skip-refresh installs only (isolates dpkg), --ioprof 2 adds
+one [blk] line per md0 chunk.
 """
 import argparse
 import gzip

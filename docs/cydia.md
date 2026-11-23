@@ -251,9 +251,18 @@ and puts a temporary launch daemon in the image that times apt and dpkg with
 or internet hosts are used; the source is added before the boot, so "refresh"
 below is apt's backend work, not Cydia's URL-entry UI.
 
-Run it on a fresh image (see the script's docstring for the exact commands).
+The harness also reports each phase's guest CPU (`bash time`, `[cperf] ...
+cpu real= user= sys=`), can synthesize a larger index (`--fill N`), serve
+`Packages.bz2` as well (`--bz2`), add a second (dead) source
+(`--extra-source`), override apt config (`--apt-extra`, installed as
+`99zzios3ds-perf`) and skip the refresh to isolate `dpkg -i`
+(`--skip-refresh`). Run it on a fresh image (the script's docstring has the
+commands).
+
+### First measurement
+
 Guest seconds from the ARM9's `log_ts=1` stamps, same image and same `.deb`
-except for the fixes:
+except for the fixes; host was otherwise idle:
 
 | Phase | before (`origin/main`) | after | change |
 |---|---:|---:|---:|
@@ -262,26 +271,76 @@ except for the fixes:
 | `dpkg -i` that `.deb` | 2.493 s | 2.423 s | −0.070 s |
 | **total** | **4.463 s** | **4.248 s** | **−0.215 s (−4.8 %)** |
 
-All three runs returned rc=0; no md0 errors, panic or ARM9 exception. The
-`[io]` lines during `dpkg -i` went from 618 md0 chunks / 316 ms ARM9 service
-time to 556 chunks / 288 ms with the same ~600 KiB written: the 64 KiB bounce
+All runs returned rc=0; no md0 errors, panic or ARM9 exception. During
+`dpkg -i` the `[io]` lines went from 618 md0 chunks / 316 ms ARM9 service time
+to 556 chunks / 288 ms with the same ~600 KiB written: the 64 KiB bounce
 removes about one mailbox round trip in ten, and the write-back cache batches
-the small writes instead of calling `f_sync` once per dpkg file. With QEMU's
-instant SD card the remaining ~2.4 s is mostly dpkg/apt CPU on the emulated
-400 MHz ARM11, so the gain here is modest; on a real card the saved `f_sync`
-commands and smaller request count matter much more (docs/boot-perf.md §5).
+the small writes instead of calling `f_sync` once per dpkg file.
 
-The default Cydia sources are a separate, larger cost: three of them (ModMyi,
-ZodTTD, repo666) no longer exist, and each dead host makes apt wait for its
-connect timeout. Images now ship
-`/private/etc/apt/apt.conf.d/99ios3ds-speed` with `Acquire::http::Timeout`/
-`Acquire::https::Timeout` = 10 s, `Acquire::Retries` = 0 and
-`Acquire::Languages "none"`, so a refresh cannot spend minutes on them or
-download unused translations. HTTPS handshakes are software work (TLSFix's
-OpenSSL; [certificates.md](certificates.md) §4 measures 2–9 s per fetch), not
-something a Cydia install can avoid. **Substrate re-signing is not a cost:**
-code signing is disabled in our boot-args and dpkg only unpacks the files;
-nothing in our build re-signs a tweak.
+A later re-run of the same A/B on a loaded host shows how much the guest wall
+clock moves with host load (same harness, fresh images, `fill=0`):
+
+| Phase | before (base 8fe190d) | after (this branch) | guest CPU before → after |
+|---|---:|---:|---:|
+| `apt-get update` | 2.993 s | 2.443 s | 0.72 → 0.67 s |
+| download | 0.132 s | 0.277 s | 0.07 → 0.10 s |
+| `dpkg -i` | 3.438 s | 2.664 s | 0.67 → 0.58 s |
+| **total** | **6.563 s** | **5.384 s** | **1.46 → 1.35 s** |
+
+QEMU's SD card is instant, so the remaining seconds are mostly apt/dpkg CPU on
+the emulated ARM11 plus emulator scheduling. On a real card the saved
+`f_sync` commands and smaller request count matter much more
+([boot-perf.md](boot-perf.md) §5, §8). Compare chunks/KiB/ARM9 time, not a
+single wall-clock run.
+
+### Where the time goes
+
+- **apt's index work is CPU, not network.** With a synthetic 2,000-package
+  `Packages` (440 KB; still built locally), `apt-get update` takes 3.8–5.1 s
+  and 1.3–1.6 s of guest CPU. Most of the rest is blocked time in md0 reads
+  (apt paging in its libraries and writing `/var/lib/apt/lists`) and QEMU
+  scheduling.
+- **Compression matters.** apt 0.7 prefers bzip2 over gzip when a source
+  offers both. Decompressing the same index as bz2 took 5.121 s / 1.60 s CPU;
+  with gzip it was 3.762–4.257 s / 1.30–1.43 s CPU. Images now order gzip
+  first (`Acquire::CompressionTypes::Order`).
+- **The dead default sources are the refresh outlier.** Cydia 1.1.30 still
+  writes its five 2011 sources on first launch; ModMyi, ZodTTD and
+  repo666.ultrasn0w.com are gone. Measured with one dead source
+  (`cydia.zodttd.com`) added to the local repo's list: refresh 2.544 s
+  without a fix (apt followed a redirect and retried) vs **1.490 s** when
+  `/private/etc/hosts` points the host at 127.0.0.1, so the connect is refused
+  at once. `apt.modmyi.com` already fails through DNS here but not on every
+  network; the hosts entry removes that variable. The 10 s
+  `Acquire::http::Timeout`/`Retries 0` stay as a backstop, and the sources are
+  still listed until the user removes them in Sources > Edit.
+- **`Dir::Cache::pkgcache` off is not a win:** it makes refresh look cheaper
+  by skipping the binary cache, but then `apt-get --download-only` and the
+  install re-parse the text lists (download phase CPU 0.07 → 0.47 s), so it is
+  not shipped.
+- **HTTPS handshakes** are software work in TLSFix's OpenSSL
+  ([certificates.md](certificates.md) §4 measures 2–9 s per Cydia fetch) and
+  are not removed by an apt option. **Substrate re-signing is not a cost:**
+  code signing is disabled in our boot-args and dpkg only unpacks the files;
+  nothing in our build re-signs a tweak.
+
+### What changed
+
+- `kernel/shim/blk.c` + `boot/common/ios3ds.h`: 127-sector (63.5 KiB) bounce
+  in the free FCRAM after the XNU log ring instead of 32 KiB.
+- `boot/arm9/blksrv.c` + `blkcache.c/h`: 256 KiB write-back cache, deferred
+  `f_sync` (500 ms idle / 2 s cap), flush-before-clean-flag, O(1) dirty count
+  and a one-`f_read` fast path when nothing is dirty.
+- `rootfs/cydia.json`: `/private/etc/hosts` fail-fast entries, gzip index
+  order, 10 s timeouts, no retries, no translations
+  (`/private/etc/apt/apt.conf.d/99ios3ds-speed`).
+- `emu/cydia_perf.py`: the measurement harness above; `tests/test_blkcache.c`
+  covers eviction, flush, invalidation and error retention.
+
+**Verification:** `make test` passes (including the cache test, the CI stub
+symbol check and the conflict-marker check) and a fresh-image
+`python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** after the
+rebase onto `origin/main`.
 
 ## Known issues
 
@@ -290,7 +349,7 @@ nothing in our build re-signs a tweak.
   depictions/repositories on TLS 1.2-only servers go through the same CFNetwork
   path that ios3ds-nettest tested (not tried in the Cydia UI). BigBoss's HTTPS host still
   fails: its certificate expired on 2026-06-15 (its repository is plain HTTP).
-- Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh.
+- Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh; they now fail at once (`/private/etc/hosts`).
 - The startup daemon re-runs `firmware.sh` on every boot (stock behaviour); it
   is a few seconds of background shell work.
 - Substrate is not in launchd daemons (only in SpringBoard and apps): tweaks
