@@ -1712,9 +1712,7 @@ the hardware's NPOT rule.
 
 
 
-## 95. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
-
-## 90. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
+## 96. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
 The hardware summary `fill VRAM ok->ok, fill FCRAM FAIL->FAIL` describes a
 PSC limit, not a fault in our setup (run 13, docs/pica200.md §13): a fill of
 FCRAM sets the done bit and its counter, but writes nothing. Audit of every
@@ -1738,7 +1736,7 @@ stays in the model and in `[gpu-diag]`.
 the diagnostic summary stays 0x7d (FCRAM fill still FAIL by design).
 >>>>>>> d0c5d5b (PICA: do arena fills on the CPU; PSC cannot write FCRAM)
 
-## 91. ES 1.1 compatibility for iOS 3/4 games (2026-11-23)
+## 97. ES 1.1 compatibility for iOS 3/4 games (2026-11-23)
 Games from that era probe for a handful of ES 1.1 extensions before they
 load assets. Audit against `tools/ios3ds-gl`:
 - `OES_draw_texture`, `OES_point_sprite`/`OES_point_size_array`,
@@ -1771,7 +1769,7 @@ checks that the ES1 context remains current.
 
 Docs: gpu.md §3/§5, README's OpenGL ES limitation.
 
-## 92. MBX2D: which framework prints the messages (2026-11-23)
+## 98. MBX2D: which framework prints the messages (2026-11-23)
 Every hardware log, including the New 2DS XL build 149 report, has:
 `Iterator had no matching services`, `Failed to open connection to MBX`,
 `Failed to initialized MBX2D driver (1).` — right after the first EAGL
