@@ -5,8 +5,9 @@
  * Register sequences follow libn3ds' gfx.c (hardwareReset, GX_memoryFill,
  * GX_displayTransfer, GX_processCommandList), minus the block reset: the
  * display controllers in the same block are live (Luma's framebuffers).
- * Completion is polled, not interrupt driven: PSC_FILLn_CNT bit 1, PPF_CNT
- * bit 8 and bit 31 of the GX interrupt status register (0x034).
+ * Completion is polled, not interrupt driven: PSC_FILLn_CNT bit 1 (only for
+ * the raw register diagnostics; see pica_drv_fill below), PPF_CNT bit 8 and
+ * bit 31 of the GX interrupt status register (0x034).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "pica_drv.h"
@@ -288,9 +289,31 @@ uint32_t pica_drv_submit(pica_drv_t *d, pica_uptr_t list, uint32_t bytes,
     return PICA_OK;
 }
 
+/* The PSC fill engine only writes VRAM (hardware runs 12/13: a fill into
+   FCRAM sets the done bit, increments its counter and changes nothing). The
+   arena is FCRAM, so PICA_OP_FILL is done by the CPU instead. Every value
+   the GL engine needs to clear (0, 0xFFFF, far depth) is a constant, and a
+   constant is identical in linear and tiled memory, so this is exactly the
+   same result a working fill would have had. P3D clears and the mirror's
+   VRAM fills do not take this path. */
+static void fill_bytes(uint8_t *p, uint32_t len, uint32_t v, uint32_t width)
+{
+    uint32_t i;
+    if ((width & 0x300) == PSC_FILL_32) {
+        for (i = 0; i < len / 4; i++)
+            ((uint32_t *)p)[i] = v;
+    } else if ((width & 0x300) == PSC_FILL_16) {
+        for (i = 0; i < len / 2; i++)
+            ((uint16_t *)p)[i] = (uint16_t)v;
+    } else {                                /* 24-bit: three bytes per word */
+        for (i = 0; i < len; i++)
+            p[i] = (uint8_t)(v >> (8 * (i % 3)));
+    }
+}
+
 uint32_t pica_drv_fill(pica_drv_t *d, const uint32_t a[8])
 {
-    uint32_t n, st = PICA_OK;
+    uint32_t n;
     if (d->state != PICA_OK)
         return d->state;
     for (n = 0; n < 2; n++) {
@@ -300,24 +323,15 @@ uint32_t pica_drv_fill(pica_drv_t *d, const uint32_t a[8])
     }
     for (n = 0; n < 2; n++) {
         const uint32_t *s = a + 4 * n;
-        uint32_t r = GXO(n ? GX_PSC_FILL1 : GX_PSC_FILL0);
+        uint8_t *p;
         if (!s[1])
             continue;
-        d->p->from_gpu(d->va + (s[0] - d->pa), s[1]);
-        d->p->wr(r + 0, s[0] >> 3);
-        d->p->wr(r + 4, (s[0] + s[1]) >> 3);
-        d->p->wr(r + 8, s[2]);
-        d->p->wr(r + 12, (s[3] & 0x300) | PSC_FILL_START);
+        p = d->va + (s[0] - d->pa);
+        d->p->from_gpu(p, s[1]);            /* drop stale lines over GPU output */
+        fill_bytes(p, s[1], s[2], s[3]);
+        d->p->to_gpu(p, s[1]);              /* and write the new constant back */
     }
-    for (n = 0; n < 2; n++) {
-        uint32_t r = GXO(n ? GX_PSC_FILL1 : GX_PSC_FILL0);
-        if (!a[4 * n + 1])
-            continue;
-        if (wait_bits(d, r + 12, PSC_FILL_DONE, n ? "memory fill 1 (PSC1)" : "memory fill 0 (PSC0)"))
-            st = PICA_ERR_TIMEOUT;
-        d->p->wr(r + 12, 0);
-    }
-    return st;
+    return PICA_OK;
 }
 
 uint32_t pica_drv_copy_page(pica_drv_t *d, uint32_t src_pa, uint32_t dst_va,

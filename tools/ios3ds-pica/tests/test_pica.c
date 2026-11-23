@@ -724,8 +724,9 @@ static void test_sim(void)
     CHECK_EQ(dev->write(info.arena_pa, vtx, 16), PICA_ERR_RANGE);       /* the driver's own block */
     CHECK_EQ(dev->write(info.arena_pa + info.arena_size - 8, vtx, 16), PICA_ERR_RANGE);
 
-    /* The fill engine does not write FCRAM (hardware run 13; the model does
-       the same): the arena is FCRAM, so a fill is "done" and changes nothing */
+    /* The PSC engine cannot write FCRAM (hardware run 13 and picasim), so
+       the driver now does PICA_OP_FILL on the CPU. A constant is the same
+       tiled or linear, so the result is what a working fill would give. */
     {
         static uint32_t pat[64 * 64];
         for (unsigned i = 0; i < 64 * 64; i++)
@@ -733,10 +734,22 @@ static void test_sim(void)
         CHECK_EQ(dev->write(lin, pat, sizeof pat), PICA_OK);
         CHECK_EQ(dev->fill(lin, 64 * 64 * 4, 0x0000FFFF, PSC_FILL_32, 0, 0, 0, 0), PICA_OK);
         CHECK_EQ(dev->read(lin, out, sizeof out), PICA_OK);
-        CHECK_EQ(out[0], 0x12345678u);
-        CHECK_EQ(out[64 * 64 - 1], 0x12345678u);
-        /* so: blue, alpha 255, and depth 1.0 are written by the CPU (constant
-           values look the same tiled or linear) */
+        CHECK_EQ(out[0], 0x0000FFFFu);
+        CHECK_EQ(out[64 * 64 - 1], 0x0000FFFFu);
+        /* 16- and 24-bit widths fill repeated halfwords / byte triples */
+        CHECK_EQ(dev->fill(lin, 64, 0xABCDABCDu, PSC_FILL_16, 0, 0, 0, 0), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 64), PICA_OK);
+        CHECK_EQ(out[0], 0xABCDABCDu);
+        CHECK_EQ(out[15], 0xABCDABCDu);
+        CHECK_EQ(dev->fill(lin, 64, 0xAABBCCDDu, PSC_FILL_24, 0, 0, 0, 0), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 64), PICA_OK);
+        CHECK_EQ(out[0], 0xDDBBCCDDu);       /* only the low 24 bits repeat */
+        CHECK_EQ(out[15], 0xDDBBCCDDu);
+        CHECK_EQ(dev->fill(lin, 64, 0, PSC_FILL_32, lin + 64, 64, 0x11223344, PSC_FILL_32), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 128), PICA_OK);
+        CHECK_EQ(out[0], 0u);
+        CHECK_EQ(out[16], 0x11223344u);
+        CHECK_EQ(dev->fill(info.arena_pa + 0x1000, 16, 0, PSC_FILL_32, 0, 0, 0, 0), PICA_ERR_RANGE);
         for (unsigned i = 0; i < 64 * 64; i++)
             pat[i] = 0x0000FFFFu;
         CHECK_EQ(dev->write(color, pat, sizeof pat), PICA_OK);

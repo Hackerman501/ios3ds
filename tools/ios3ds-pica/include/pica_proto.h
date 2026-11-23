@@ -50,8 +50,10 @@ enum {
     PICA_OP_READ,       /* a0 pa, a1 user destination, a2 bytes */
     PICA_OP_SUBMIT,     /* a0 user command list, a1 bytes (multiple of 16, ends in FINALIZE),
                            then optionally vertex data to copy first: a2 pa, a3 user source, a4 bytes */
-    PICA_OP_FILL,       /* PSC memory fill, two slots: a0 pa, a1 bytes, a2 value, a3 PSC_FILL_16/24/32;
-                           a4..a7 the same for slot 1 (bytes 0 = unused) */
+    PICA_OP_FILL,       /* constant fill of arena memory, two slots: a0 pa, a1 bytes, a2 value,
+                           a3 PSC_FILL_16/24/32; a4..a7 the same for slot 1 (bytes 0 = unused).
+                           Hardware runs 12/13: PSC fills do not write FCRAM, so the shim's
+                           driver does this one on the CPU (a constant is tiled-invariant) */
     PICA_OP_TRANSFER,   /* PPF display transfer: a0 src pa, a1 src h<<16|w, a2 dst pa, a3 dst h<<16|w, a4 flags */
     PICA_OP_FREE_ALL,   /* free every block the calling process owns */
     PICA_OP_CONFIG,     /* -> a0 PICA_CFG_* flags from boot.cfg (does not bring the GPU up) */

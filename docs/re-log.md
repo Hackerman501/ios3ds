@@ -1709,3 +1709,29 @@ Docs: [pica200.md](pica200.md) §12/§13. On a console the NPOT line should
 now say ok; if it doesn't, the fault is in padding/texcoords/tiling, not in
 the hardware's NPOT rule.
 >>>>>>> ef7d952 (GPU diag: check the NPOT-to-POT workaround instead of raw NPOT textures)
+
+
+
+## 95. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
+The hardware summary `fill VRAM ok->ok, fill FCRAM FAIL->FAIL` describes a
+PSC limit, not a fault in our setup (run 13, docs/pica200.md §13): a fill of
+FCRAM sets the done bit and its counter, but writes nothing. Audit of every
+call site:
+- GL clears, depth init and the GPU self-check have used P3D quads or CPU
+  writes since run 13 (`pica_be.c`) — no PSC fill on the GL hot path;
+- the display mirror's two fills are in VRAM (`pica_mirror.c`), which work;
+- the raw PSC fill is only in `[gpu-diag]`, to report the hardware rule;
+- `PICA_OP_FILL` (`kernel/shim/pica.c`) + `pica_drv_fill()` were the only way
+  a client could still ask for a fill of the FCRAM arena, and would silently
+  return success with the old contents.
+
+`pica_drv_fill()` now writes the constant into the mapped arena with the CPU
+(16/24/32-bit patterns, two slots, cache cleaned with `to_gpu`). A constant
+is the same in linear and tiled memory, so no GPU operation is needed and
+the caller gets what a working fill would have produced. The raw PSC quirk
+stays in the model and in `[gpu-diag]`.
+
+`make test`: 6691 pica checks + 39 mirror checks, 0 failures; the new
+`test_pica` checks both slots, 16/24/32-bit patterns and a rejected range;
+the diagnostic summary stays 0x7d (FCRAM fill still FAIL by design).
+>>>>>>> d0c5d5b (PICA: do arena fills on the CPU; PSC cannot write FCRAM)

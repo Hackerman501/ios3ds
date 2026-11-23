@@ -71,7 +71,7 @@ list. A top-level node goes straight to the OID tree, and works.
 | `ALLOC` / `FREE` / `FREE_ALL` | arena blocks (128-byte granules), owned by the calling pid |
 | `WRITE` / `READ` | copy between a user buffer and arena memory (+ cache clean / invalidate) |
 | `SUBMIT` | copy a command list into the driver's staging buffer (optionally vertex data first), run it, wait for the end marker |
-| `FILL` | PSC memory fill, two slots |
+| `FILL` | constant fill of two arena blocks (CPU copy; PSC cannot write FCRAM, §13) |
 | `TRANSFER` | PPF display transfer |
 | `CONFIG` | boot.cfg switches for userland (`ca_gpu`), no bring-up |
 | `PRESENT` | PPF display transfer from an arena buffer straight into a *user* buffer, after a page-table walk proves the caller may write it (§15) |
@@ -655,6 +655,15 @@ Run 13 (`eab9618` = §12's build, docs/hwlogs/run13.txt):
 - **PSC fills do not write FCRAM.** Done bit set after 1 tick, `fill0 +256`
   (the engine ran), `ext-wr +0` (no external-memory write), 0 of 1024 words.
   Into VRAM: `vramB-wr +266`, all words. Taken as a hardware rule.
+  The only PSC fill left in the GL path was already replaced by P3D quads in
+  run 13 (clears, depth init, self-check); the mirror's black margins are
+  VRAM fills, which work. `PICA_OP_FILL`, the remaining API that could have
+  filled the FCRAM arena, now writes the constant with the CPU (`pica_drv_fill`)
+  and cleans the cache lines, so a caller can never silently get an unfilled
+  buffer. The raw PSC fill stays only in `[gpu-diag]`, to report the hardware
+  rule. Host test: `test_pica` checks 16/24/32-bit fills, both slots and a
+  rejected out-of-arena range; `test_mirror` still expects the diagnostic's
+  FCRAM bit to fail.
 - **P3D works**, into VRAM and FCRAM (`col-wr +1088` / `ext-wr +2176`), with
   a 64x64 texture (`tex +1024`). Command lists, the fixed-function shader,
   vertex fetch, TEV and colour writes are right as encoded.
