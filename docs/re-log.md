@@ -2001,3 +2001,8 @@ nothing Apple-derived was committed.
   home screen at t=120 s (screenshot
   `build/fw-4.1/run-final41b/screen_120.0s.png`), 1 GL context (no crash loop),
   0 panics, heartbeats with 0 md0 errors. Cydia/TLSFix stay disabled for 4.1.
+- **Final soak:** the exact sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` on a fresh image printed
+  **Result: PASS**: 5 cycles, SpringBoard/input up after 90 s, 0 restarts,
+  no "not home after Home", no failed lock rounds. Default 4.2.1 kernel and
+  shim hashes are unchanged (`505f451a…`, `7906b596…`).
