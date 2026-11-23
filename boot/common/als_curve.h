@@ -13,7 +13,7 @@
  * The mapping is deliberately coarse: a camera's AE luma is gamma-encoded,
  * affected by auto-exposure and by what the camera sees, so these are *not*
  * calibrated lux.Smoothing and hysteresis are applied afterwards so a moving
- * scene never makes the backlight flicker. See docs/mcu.md section 12.
+ * scene never makes the backlight flicker. See docs/mcu.md section 13.
  *
  * Pure C, no floats on the ARM9 side: only the daemon and host tests include
  * this header. SPDX-License-Identifier: GPL-3.0-or-later

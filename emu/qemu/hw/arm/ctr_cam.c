@@ -141,7 +141,7 @@ static uint16_t sensor_read(Sensor *s, uint16_t idx)
     case 0x0990: {
         uint16_t a = s->reg[0x098C / 2];
         /* The inner camera's AE luminance is what the ARM9 reads for
-           auto-brightness on New models (docs/mcu.md section 12). Serving it
+           auto-brightness on New models (docs/mcu.md section 13). Serving it
            here keeps it live even across the sensor's soft reset. */
         if (s == &K.s[0] && (a & 0x7FFF) == 0x2218)
             return lux_to_luma(K.ambient_lux);

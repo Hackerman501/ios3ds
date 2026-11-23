@@ -185,7 +185,7 @@ camera's own auto-exposure luminance byte (`MCUREG_APT_AE_LAST_LUMA` 0x2218,
 Aptina MT9V113 on I2C bus 1 / 0x7A) and convert it to an approximate lux
 scale with smoothing in ios3ds-mcud. The register-level choice is a guess;
 the sensor's existence and the QTM service are documented. Full research,
-curve and hardware checklist: [mcu.md](mcu.md) section 12 and re-log §85.
+curve and hardware checklist: [mcu.md](mcu.md) section 13 and re-log §88.
 
 - **Model gate:** as with the C-stick (§3), this is armed only when
   `CFG11_SOCINFO` bit 1 says New. On an Old 3DS the camera bus is untouched;
@@ -210,4 +210,4 @@ curve and hardware checklist: [mcu.md](mcu.md) section 12 and re-log §85.
   model. With `auto_brightness=1`, changing it from 5 to 800 to 80 lux moved
   `lcd-backlight` 52 → 78 → 65 at 0.50 user brightness; with the switch off
   (or on an Old model) it stayed at 79. The curve host tests pass, as do both
-  fresh-image 5-cycle soaks (with and without `--new3ds`, see re-log §85).
+  fresh-image 5-cycle soaks (with and without `--new3ds`, see re-log §88).

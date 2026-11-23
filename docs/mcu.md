@@ -617,7 +617,7 @@ what a hardware run must show.
 
 ### 13.1 What the console actually uses for ambient light
 
-Research sources (also recorded in re-log §85):
+Research sources (also recorded in re-log §88):
 
 | Source | What it says |
 |---|---|

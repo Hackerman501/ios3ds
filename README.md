@@ -41,7 +41,7 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia and other unsandboxed apps; **not yet Safari**, see [Limitations](#limitations) |
 | 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
-| 🧪 | New 3DS: auto-brightness from the ambient light sensor | emulator only, off on Old models; `auto_brightness=0` to disable, see [docs/mcu.md](docs/mcu.md) §12 |
+| 🧪 | New 3DS: auto-brightness from the ambient light sensor | emulator only, off on Old models; `auto_brightness=0` to disable, see [docs/mcu.md](docs/mcu.md) §13 |
 | ❌ | 3D screen, IR, NFC, video recording | currently unplanned |
 
 ✅ works on a real 3DS · ⚠️ works on a real 3DS with known problems · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported

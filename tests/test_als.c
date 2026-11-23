@@ -1,4 +1,4 @@
-/* Host test for the auto-brightness curve (docs/mcu.md section 12).
+/* Host test for the auto-brightness curve (docs/mcu.md section 13).
    Build: cc -Wall -Wextra -O1 -Iboot/common -o build/test_als tests/test_als.c
    SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdio.h>

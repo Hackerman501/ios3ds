@@ -46,7 +46,7 @@ static bool enabled;
 static u32 handled_seq;
 static int active = -1;             /* camera whose parallel output is on */
 static bool powered;
-static bool als_want, als_ready;    /* ambient light sampling (New models, docs/mcu.md section 12) */
+static bool als_want, als_ready;    /* ambient light sampling (New models, docs/mcu.md section 13) */
 static u32 t_started, diag_step;    /* camera_poll's diagnostic dumps after a start */
 static u32 t_stat;                  /* last 10 s statistics line */
 static u32 t_watch;                 /* last independent CAM_STAT sample */
