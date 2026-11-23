@@ -2129,3 +2129,109 @@ BLZ-compressed `nwm.code`, full bring-up to HTTP fetch) all PASS. The UI test
 Settings > Wi-Fi scanned, listed three networks, joined the WPA2 AP by
 touchscreen and got a DHCP lease — i.e. the control the reporter missed is
 there once bring-up succeeds. No new EP0 refill lines in QEMU, as expected.
+
+## 104. Safari's memory wall and TLS 1.2 in Safari: /usr/lib copies, no kernel patch (2026-11-23)
+
+Two tester reports, measured with the QEMU `ctr-wifi` model and slirp, every run
+`--icount 2` (Old 3DS timing unless `--new3ds`): a local HTTP server on
+`10.0.2.2:18080` serves the generated pages, a TLS 1.2-only HTTPS server on
+`:18443` (RSA leaf) and `:18444` (P-256 ECDSA leaf) both reject TLS 1.0 (minimum
+and maximum TLSv1.2). The test CA was added to `rootfs/certs/roots.pem` only
+while measuring and then reverted; it is not in the tree. The pages and certs
+stay in `build/tlstest/` (gitignored). `ios3ds-diag -urlpoll` opens the URL in
+Safari; the harness adds `ios3ds_mem=1 ios3ds_applog=1 ios3ds_urltest=1`, the
+new `ios3ds_urlport=<port>` override (the host's 8080 is often busy) and
+`ios3ds_probe=1`.
+
+**1. Big pages on the 128 MiB device.** The old reports were "Cannot allocate
+memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
+- **Page A:** a 4,013,130-byte HTML (2,200 paragraphs) with 24 generated JPEG
+  images (320x240, 24-58 KB each). Safari fetched the HTML and all 24 images;
+  `MobileSafari` 7.9-12.9 MiB resident, free 43-46 MiB, `memorystatus_level` 59,
+  no alert. Screenshot `build/tlstest/shots/tls-big-final-page.png`.
+- **Page B:** a 3,648,172-byte HTML with 20 1024x1024 JPEGs (~480 KB each, ~3 MiB
+  decoded each), opened 5 s after the home screen to catch the boot-time
+  daemons. Safari fetched all 20 images; peak `MobileSafari` 27.7 MiB, free
+  **20.6 MiB**, level 49, 114/114 mbuf clusters, no jetsam, page loaded.
+- **What fails:** no allocation fails in QEMU. `vm_stat` and
+  `kern.memorystatus_level` are the only figures available: `host_get_host_priv_port`
+  and the `host_priv_self()` Mach trap are both refused to the root `[mem]` job,
+  so `host_zone_info` (kernel zone sizes) cannot be read, and none of
+  `vm.zone_map_size`, `vm.page_free_count`, `vm.pages`,
+  `vm.page_pageable_internal_count`, `vm.max_proc_mmap`, `vm.max_map_count`,
+  `kern.max_task`, `kern.max_task_pages` exist in 4.2.1's sysctl tree (the new
+  `[mem N] sysctl` line is empty). Nothing points at a zone/VM limit.
+- **GPU arena:** still **12 MiB** wired (`[pica] arena 12288 KiB`), by far the
+  largest single allocation we own. It is used: at 301 CA frames SpringBoard
+  held 4,887 KiB of GPU memory in 76 textures; the earlier 8 MiB arena fragmented
+  on hardware (hwlogs/README, 704 KiB texture, 290 KiB free in 90 blocks). The
+  fallbacks 8/4/2 MiB stay, the default does not shrink.
+- **Daemons:** `profiled` (com.apple.managedconfiguration.profiled) was resident
+  in every measurement (2,420-2,428 KiB) and nothing on ios3ds uses it, so it is
+  now in `disable_daemons`; the reports no longer list it (**-2.4 MiB** at boot).
+  The rest of the list is Apple's (mediaserverd 4.0, configd 2.8, lsd 1.9,
+  installd 1.3, mDNSResponder 1.3) or ours and small (ios3ds-mcud 1.16,
+  ios3ds-diag 0.65, ios3ds-wifid/input ~0.5); no further safe cut.
+- **Conclusion:** QEMU cannot reproduce the hardware alert even with 20.6 MiB
+  free and 28 MiB Safari. The 2.4 MiB from `profiled` and accurate accounting are
+  all that is ours to fix here; the `[applog] MobileSafari load error` line
+  (now also appended to `/private/var/tmp/ios3ds-applog.txt` when the sandbox
+  denies `/dev/console`) is what a hardware log needs to name the layer.
+- **New 3DS:** `--new3ds` (n3ds_ram=1) after boot: **172.6 MiB free**, level 79
+  (Old: 49.2 MiB, 65); the same TLS 1.2 page loads in Safari
+  (`build/tlstest/shots/tls-n3ds-final-page.png`).
+
+**2. TLS 1.2 in Safari.** The sandbox denies `/Library` and
+`/var/mobile/Library/ConfigurationProfiles` but allows `/usr/lib` (re-log 71/72).
+- **SANDBOX=1 is not the way.** With `make sdimg SANDBOX=1` (patch verified in
+  the image: `b` from 0x803ced98 to shim+0xF4, `shim_sb_evaluate` at that offset)
+  a probe in MobileSafari still got `EPERM` opening
+  `/Library/MobileSubstrate/MobileSubstrate.dylib`. A temporary shim that
+  returned allow for *every* `sb_evaluate` operation gave the same `EPERM`, so
+  the vnode-open check does not reach that function in this build. Safari showed
+  "could not establish a secure connection" and the TLS server saw no request;
+  no out-of-memory alert. The old "SANDBOX=1 OOMs" explanation was not
+  reproducible because TLSFix never loaded.
+- **Fix:** the build copies TLSFix's two dylibs to `/usr/lib` and rewrites the
+  strings that point at denied paths (same-length NUL padding, `scripts/cydia.py`
+  `sandbox_copies` / `sandbox_patch_load` / `sandbox_profile_copy` in
+  `rootfs/cydia.json`):
+  - `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` ->
+    `/usr/lib/ios3ds-CydiaSubstrate.dylib`;
+  - `tlsfix.dylib` -> `/usr/lib/ios3ds-tlsfix.dylib`, its CydiaSubstrate
+    `LC_LOAD_DYLIB` and its `/var/mobile/Library/ConfigurationProfiles` string
+    rewritten to the `/usr/lib` copies;
+  - the CA payload `ios3ds-roots.plist` -> `/usr/lib/ConfigurationProfiles/`.
+  `ios3ds-applog` still tries `/Library` first (SpringBoard, Cydia and other
+  unsandboxed apps unchanged); when that dlopen fails it loads
+  `/usr/lib/ios3ds-tlsfix.dylib` from a 0.25 s run-loop timer once CFNetwork is
+  up (constructors run before frameworks). No kernel patch, no change to the
+  sandbox profile.
+- **Results** (Old 3DS, same image; before = no copy fallback, after = final):
+  | | before | after |
+  |---|---|---|
+  | local TLS 1.2-only, RSA (Safari) | no connection, "could not establish a secure connection" (`tls-sandbox1-page.png`) | **loads**, host logs `TLSv1.2` (`tls-copy4-page.png`) |
+  | local TLS 1.2-only, P-256 ECDSA (Safari) | -9836 | **loads**, host logs `TLSv1.2`; TLSFix's OpenSSL check read `/usr/lib/ConfigurationProfiles` (`tls-ec1-page.png`) |
+  | MobileSafari resident, first page | 8.4 MiB (HTTP) | 11.0 MiB with TLSFix (EC), 12.9 MiB (big page) |
+  | free / level after the page | 49.2 MiB / 65 at boot | 41.4 MiB / 59, no OOM |
+  The old OOM did not reappear; TLSFix costs ~2.6 MiB resident, its text is
+  file-backed. Screenshots: `build/tlstest/shots/`.
+- **Tools left in the tree:** `ios3ds-diag` honours `ios3ds_urlport=PORT` for
+  `-urlpoll` (host 8080 conflicts); `ios3ds-applog` gained
+  `ios3ds_probe=1` (writes executable path, `DYLD_INSERT_LIBRARIES`, `open()`
+  results and dlopen handles to `/private/var/tmp/ios3ds-applog-probe.txt`) and
+  falls back to `/private/var/tmp/ios3ds-applog.txt` for alerts/load errors when
+  `/dev/console` is denied; `ios3ds-sample` tries `host_priv_self()` and prints
+  the VM sysctls at the first report.
+- **Files:** `scripts/cydia.py` (`sandbox_copies`, `sandbox_patch_load`,
+  `sandbox_profile_copy`), `rootfs/cydia.json`, `rootfs/recipe.json` (profiled
+  disabled), `tools/ios3ds-diag/applog.c` (fallback, probe, tmp logging),
+  `tools/ios3ds-diag/diag.c` (`ios3ds_urlport`), `tools/ios3ds-sample/sample.c`
+  (`host_priv_self`, VM sysctls); docs: README, certificates.md, cydia.md,
+  location.md, n3ds.md, this section.
+- **Validation:** `make test` green (Python, pica, gl, wifi, gps, cpad, n3ds, ALS,
+  stub symbols, no conflict markers); a fresh `make sdimg` + `emu/soak.py
+  --cycles 5 --icount 2` printed **Result: PASS** (boot 90 s, 5 cycles, 0 panics,
+  0 ARM11 stalls, 0 md0 I/O errors, 0 process crashes, 0 jetsam; the one
+  "SpringBoard restart" is the boot-time connection), and again after rebasing
+  onto main's 4.1 work (fresh image, boot 81 s, same checks).

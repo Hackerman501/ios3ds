@@ -78,7 +78,7 @@ the boot. Not debugged further (Substrate is closed source).
 | every app | SpringBoard inserts `/usr/lib/libgmalloc.dylib` (= ios3ds-applog, `SBGuardMallocAlways`) into each app, replacing anything else; ios3ds-applog's constructor `dlopen`s MobileSubstrate.dylib in executables inside a `.app` (after adding it to `DYLD_INSERT_LIBRARIES`, where Substrate's loader looks for and removes itself) | ios3ds-applog |
 | ios3ds-nettest | `dlopen` after it loads CFNetwork (TLSFix filters on CFNetwork) | |
 | configd, securityd, other daemons | none (nothing targets them; it would only cost memory) | configd: Wi-Fi bridge interposer; securityd: AES interposer (unchanged) |
-| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **none**: the sandbox refuses every file under `/Library` (`open` gives `EPERM` for `/Library/MobileSubstrate/...`, `/Library/Frameworks/CydiaSubstrate.framework/...`, and for `/var/mobile/Library/ConfigurationProfiles`), so the `dlopen` fails and the app runs without tweaks | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
+| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **the `/usr/lib` copies**: the sandbox refuses every file under `/Library`, so applog's `dlopen` of `MobileSubstrate.dylib` fails and it falls back to `/usr/lib/ios3ds-CydiaSubstrate.dylib` + `/usr/lib/ios3ds-tlsfix.dylib` (TLSFix only, loaded by a timer once CFNetwork is up; re-log `NEXT`) | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
 
 No launchd plist names `MobileSubstrate.dylib` (`substrate.daemons` is empty;
 `cydia.substrate_setup` can still append it to listed recipe jobs): a
@@ -95,33 +95,40 @@ extensions: `MobileSafety` (safe mode, SpringBoard) and `tlsfix` (any process wi
 `com.apple.CFNetwork`; TLSFix itself skips SpringBoard, launchd, lockdownd and
 securityd).
 
-## Reaching sandboxed apps (Safari): the sb_evaluate patch (opt-in, re-log 72)
+## Reaching sandboxed apps (Safari): /usr/lib copies (re-log `NEXT`)
 
 A sandboxed process (MobileSafari, App Store apps, Mail's helpers) runs under a
-Seatbelt profile that denies `open()` of everything under `/Library`, so Substrate
-and TLSFix can't load and Safari keeps iOS's TLS 1.0. The kernel patch
-`kernel/patches-sandbox.json` (`SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`)
-does what iOS 4 jailbreaks did: it hooks the Sandbox kext's `sb_evaluate`
-(`com.apple.security.sandbox` 0x803cd000, Sandbox-58.12; the central bytecode
-evaluator at 0x803ced98, found as the function 75 MAC-hooks funnel into, `r2` =
-operation index) via a shim trampoline (`shim_sb_evaluate`, `kernel/shim/entry.S`;
-the branch word is computed at build time from the shim ELF symbol, since the
-New-3DS work took the once-free `shim+0x0C` slot). It
-returns *allow* only for the file-read operations (op 1 `file*`, 6-9 `file-read*`
-and children, 11 `file-search`) and runs the real evaluator for everything else,
-so a sandboxed app can read the dylibs under `/Library` while write/exec/network/
-iokit/mach stay enforced. Operation indices are from the kext's `operation_names`
-table; the patch is verified against the original `push {r4,r5,r6,r7,lr}` bytes.
+Seatbelt profile that denies `open()` of everything under `/Library` and
+`/var/mobile/Library/ConfigurationProfiles`, but allows `/usr/lib` (that is where
+`ios3ds-applog` and our other interposers load from). So the build puts what
+TLSFix needs there, next to the dylibs from the pinned debs:
 
-**Why it is off by default:** with the patch Safari does load TLSFix, but on the
-128 MB device (`MEM_SIZE` 0x08000000, as the real iPod2,1) MobileSafari then dies
-with "The operation couldn't be completed. Cannot allocate memory" on the first
-HTTPS load — even for a 1 KB page (example.com) — because TLSFix's static OpenSSL
-1.1.1w (~1.9 MB text + its heap on the first handshake) does not fit in the WebKit
-content process's memory budget. So the patch turns Safari's "could not establish
-a secure connection" into an out-of-memory failure; it is left out by default and
-kept as an opt-in for a device with more RAM or a slimmer TLS library. Cydia and
-other unsandboxed apps get TLSFix without it.
+| Copy under `/usr/lib` | From |
+|---|---|
+| `ios3ds-CydiaSubstrate.dylib` | `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` |
+| `ios3ds-tlsfix.dylib` | `/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib`, with two strings rewritten: its CydiaSubstrate `LC_LOAD_DYLIB` and the `ConfigurationProfiles` directory path (same-length NUL padding inside the load command/string) |
+| `ConfigurationProfiles/ios3ds-roots.plist` | the CA payloads TLSFix's EC-chain check reads |
+
+`ios3ds-applog`'s `load_substrate()` first tries the `/Library` Substrate as
+before (SpringBoard and unsandboxed apps are unchanged). If that `dlopen` fails
+— a sandboxed app — it loads the `/usr/lib` TLSFix copy from a run-loop timer
+once CFNetwork is up (an app's constructors run before its frameworks), so
+TLSFix's hooks are installed before the first connection. This needs no kernel
+patch and no wider sandbox; it costs about 2.6 MiB of resident memory in
+MobileSafari (`--icount 2`: 8.4 MiB after a plain page, 11.0 MiB with TLSFix
+after an HTTPS page, 39-41 MiB still free of 128 MiB) and the old out-of-memory
+failure did not reappear (re-log `NEXT`).
+
+**The old sb_evaluate patch remains an opt-in** (`kernel/patches-sandbox.json`,
+`SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`; re-log 72): it replaces
+the Sandbox kext's `sb_evaluate` first instruction (`com.apple.security.sandbox`
+0x803cd000, Sandbox-58.12, 0x803ced98) with a branch to `shim_sb_evaluate`, which
+allows the file-read operations (op 1, 6-9, 11) and runs the real evaluator for
+everything else. It is no longer needed for TLSFix: in a QEMU run with it applied,
+MobileSafari's probe still got `EPERM` opening `/Library/MobileSubstrate/...`
+(even with a temporary shim that allowed every operation), so the vnode-open
+check evidently does not reach that function in this build. It stays as an
+experiment for other tweaks, off by default.
 
 ## Installing tweaks: Substrate stays as it is (re-log 73)
 

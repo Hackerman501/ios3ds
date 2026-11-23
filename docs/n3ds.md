@@ -173,6 +173,7 @@ A New 3DS has 256 MiB of FCRAM; the second half, 0x28000000-0x2FFFFFFF, is the "
 - **What must stay below 0x28000000:** memory a 3DS DMA engine reads. Only the GPU does that with memory XNU allocates: the shim takes the GPU arena with `IOMallocContiguous` and gives it back when it lands in the extension (whether the GPU reaches the extension is unverified), and `PICA_OP_PRESENT` still only accepts destinations below 0x28000000 (others are read back by the CPU). The CPU paths (page-table walks in `pica.c`, Apple's audio buffers in `audio.c`) accept all 256 MiB. md0, Wi-Fi, audio rings and the camera use fixed buffers below 0x20900000.
 - **QEMU:** `-M nintendo3ds,new3ds=on` has 256 MiB of FCRAM; the GPU model still only reaches the first 128 MiB.
 - `n3ds_ram=0`, or any `mem_size` other than 128 MiB in boot.cfg, keeps iOS at 128 MiB.
+- **Safari in QEMU** (`--icount 2`, after boot, before a page): 172.6 MiB free and `memorystatus_level` 79, against 49.2 MiB / 65 on the Old model; the same 1 KiB TLS 1.2 page loads on both (re-log `NEXT`).
 
 ## 7. Ambient light / auto-brightness (New models only, emulator only)
 

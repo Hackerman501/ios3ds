@@ -523,6 +523,18 @@ static void mem_report(struct pent *procs, int n, int top)
         hp = (host_priv_fn)dlsym(RTLD_DEFAULT, "host_get_host_priv_port");
         if (hp && hp(mach_host_self(), &priv) != 0)
             priv = 0;
+        if (!priv) {
+            /* root's own task can get host_priv through the host_priv_self()
+               mach trap (root, unsandboxed: exactly these jobs); the port
+               call host_get_host_priv_port wants a host_priv send right and
+               never succeeds here (re-log 75) */
+            mach_port_t (*hps)(void) = (mach_port_t (*)(void))dlsym(RTLD_DEFAULT, "host_priv_self");
+            if (hps) {
+                mach_port_t p = hps();
+                if (p && p != (mach_port_t)-1)
+                    priv = p;
+            }
+        }
         if (!zi || !priv) {
             lreset();
             lput("[mem %u] zones: no %s", seq, !zi ? "host_zone_info" : "host-priv port");
@@ -557,6 +569,24 @@ static void mem_report(struct pent *procs, int n, int top)
         }
     }
     lflush();
+
+    /* VM limits at the first report: the values that decide whether a large
+       Safari allocation can be satisfied (docs/re-log: memory) */
+    if (seq == 1) {
+        static const char *const names[] = {
+            "vm.zone_map_size", "vm.page_free_count", "vm.pages", "vm.page_pageable_internal_count",
+            "vm.max_proc_mmap", "vm.max_map_count", "kern.max_task", "kern.max_task_pages",
+        };
+        lreset();
+        lput("[mem %u] sysctl", seq);
+        for (i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) {
+            unsigned long long v = 0;
+            size_t l = sizeof v;
+            if (sysctlbyname(names[i], &v, &l, 0, 0) == 0)
+                lput(" %s=%llu", names[i], v);
+        }
+        lflush();
+    }
 
     /* kernel zones: total and the biggest few */
     if (zi && priv) {

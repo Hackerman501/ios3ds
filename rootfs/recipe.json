@@ -28,6 +28,7 @@
   "com.apple.usbptpd.plist",
   "com.apple.wapic.plist",
   "com.apple.locationd.plist",
+  "com.apple.managedconfiguration.profiled.plist",
   "com.apple.itunesstored.plist",
   "com.apple.dataaccess.dataaccessd.plist",
   "com.apple.gamed.plist",

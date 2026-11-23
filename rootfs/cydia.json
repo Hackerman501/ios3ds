@@ -316,6 +316,25 @@
   },
   "divert": {
    "/Library/Frameworks/CydiaSubstrate.framework/Commands/cynject": "/usr/libexec/ios3ds-cynject"
+  },
+  "sandbox_copies": {
+   "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate": "/usr/lib/ios3ds-CydiaSubstrate.dylib",
+   "/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib": "/usr/lib/ios3ds-tlsfix.dylib"
+  },
+  "sandbox_patch_load": {
+   "/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib": [
+    {
+     "old": "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate",
+     "new": "/usr/lib/ios3ds-CydiaSubstrate.dylib"
+    },
+    {
+     "old": "/var/mobile/Library/ConfigurationProfiles",
+     "new": "/usr/lib/ConfigurationProfiles"
+    }
+   ]
+  },
+  "sandbox_profile_copy": {
+   "/var/mobile/Library/ConfigurationProfiles/ios3ds-roots.plist": "/usr/lib/ConfigurationProfiles/ios3ds-roots.plist"
   }
  },
  "hold": [
