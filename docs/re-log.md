@@ -1960,7 +1960,7 @@ are in the README FAQ and in mcu.md / m1-design.md.
   the boot one). A later automated rerun timed out during boot because the
   host was loaded by other emulators; it logged no crash.
 
-## NEXT. iOS 4.1: rootfs recipe and shim KPI relocation, SpringBoard in QEMU (2026-11-23)
+## 101. iOS 4.1: rootfs recipe and shim KPI relocation, SpringBoard in QEMU (2026-11-23)
 
 Continues §87 / docs/multi-version.md §5.3–5.5. All Apple files were fetched
 again into `build/fw-4.1/` via the API/CDN URL (sha1 verified by fwprep);
