@@ -116,7 +116,7 @@ Alternatively, hold **START** while powering on and pick `ios3ds` in Luma's chai
 
 **First start:**
 - The launcher copies your console's Wi-Fi firmware to the card, reading it only. It shows `Wi-Fi firmware: reading NWM .code ...`, writes one file, `ios3ds/nwm.code`, and skips this step afterwards.
-- The bottom screen shows the version, `SD ok`, `ARM11 ok` and a short countdown. Hold **B** to stop there.
+- The bottom screen shows the version, `SD ok`, `ARM11 ok` and a short countdown (1 s). Press **A** to skip it and start XNU at once, or hold **B** to stop in the monitor. Set `boot_delay=0` in `boot.cfg` to skip it on every boot.
 - The top screen scrolls a boot log. After about a minute the iOS home screen appears.
 - iOS is upright, so turn the 3DS 90° clockwise. The bottom screen shows a copy of iOS that you tap with the stylus.
 
@@ -181,6 +181,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
   | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |
   | `wifi_led=0` | don't light the console's Wi-Fi LED while connected |
+  | `boot_delay=0` | skip the 1 s wait before XNU (or press **A** during it); the old name `countdown_ms` still works |
   | `diag=1` | extra diagnostics in the log |
   | `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
 

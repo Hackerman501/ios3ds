@@ -28,6 +28,7 @@
 #include "camera.h"
 #include "powersave.h"
 #include "exthid.h"
+#include "bootcfg.h"
 
 #define CFG9_SDMMCCTL (*(vu16 *)0x10000020u)
 
@@ -109,51 +110,7 @@ static void drain_a11_log(void)
     drain_ring((const volatile char *)sh->log_buf, SHARED_LOG_SIZE, &a11_log_tail, head, CON_CYAN, &bol);
 }
 
-/* ------------------------------------------------------------------------ */
-/* boot.cfg                                                                 */
-
-typedef struct {
-    char kernel[64], devtree[64], shim[64], rootfs[64];
-    u32 shim_pa;
-    u32 kernel_pa, entry_pa, devtree_pa, bootargs_pa, ring_pa, ring_size, top_pa;
-    u32 phys_base, virt_base, mem_size;
-    u32 video_pa, video_display, video_rowbytes, video_width, video_height, video_depth;
-    u32 jump, countdown_ms;
-    u32 ba_revision, ba_version;
-    u32 probes;
-    u32 display_regs;
-    u32 screen;          /* SCREEN_* start mode; X cycles it at run time */
-    u32 gpu, gpu_mirror, gpu_vbl_div, gpu_spin_us, gpu_clk, gpu_diag, ca_gpu;  /* PICA200 (gpumirror.c, docs/pica200.md) */
-    u32 mcu;             /* 0: never touch the MCU (docs/mcu.md) */
-    u32 mcu_acc;         /* 0: no accelerometer for iOS */
-    u32 gyro;            /* 0: no gyroscope for iOS (docs/mcu.md section 11) */
-    char gyro_axes[16];  /* iOS x,y,z from the gyro chip's axes, e.g. -y,x,z */
-    u32 powersave;       /* 0: no power saving while iOS' screen is off */
-    u32 notify_led;      /* 1: notification LED blinks red on low battery */
-    u32 wifi_led;        /* 1 (default): MCU Wi-Fi LED follows the link; 0 disables it */
-    u32 diag;            /* 1: diagnostics on (boot-arg ios3ds_diag=1 for the test daemons, docs/boot-perf.md) */
-    u32 ioprof;          /* md0 profile: 1 = [io] per second, 2 = + [blk] per request */
-    u32 log_ts;          /* 1: "[s.ms]" timestamps on forwarded console lines */
-    int32_t rtc_offset;  /* seconds added to the MCU RTC to get UTC */
-    u32 mic;             /* 0 = never touch the MIC block (docs/audio.md) */
-    u32 camera;          /* 0 = never touch the cameras (docs/camera.md) */
-    u32 cam_test;        /* 1 = camera self-test matrix before XNU (~6 s; docs/camera.md section 7) */
-    u32 hp_route;        /* 0 = iOS stays on its speaker route whatever the jack says */
-    u32 hp_codec;        /* 0 = CODEC headphone path as in 0.4.0 (audio.h audio_set_hp_codec) */
-    char gps[128];       /* boot.cfg gps=LAT,LON[,ACC]; passed to iOS as ios3ds_gps= */
-    u32 n3ds_clock;      /* New 3DS: 1 = ARM11 at 804 MHz (docs/n3ds.md) */
-    u32 n3ds_l2;         /* New 3DS: 1 = L2C-310 L2 cache on, write-through (experimental) */
-    u32 n3ds_hid;        /* New 3DS: 0 = never read the C-stick / ZL / ZR chip */
-    u32 n3ds_ram;        /* New 3DS: 1 = XNU gets the 128 MiB FCRAM extension too (256 MiB) */
-    u32 auto_brightness; /* New 3DS: 0 = never sample ambient light / never change the backlight */
-    u32 stereo3d;       /* 1 = experimental stereoscopic 3D home screen (docs/stereo3d.md) */
-    u32 nloads;
-    char load_path[4][64];
-    u32 load_pa[4];
-    char cmdline[256];
-} bootcfg_t;
-
-static bootcfg_t cfg;
+/* boot.cfg parsing and defaults: bootcfg.c / bootcfg.h */
 
 static const char *const screen_names[SCREEN_MODES] = { "top", "both", "bottom" };
 
@@ -165,131 +122,6 @@ static void apply_screen_mode(int m)
     con_show(CON_BOTTOM, m == SCREEN_TOP);
     log_target(m == SCREEN_TOP ? CON_BOTTOM : m == SCREEN_BOTTOM ? CON_TOP : -1);
     log_color(CON_CYAN, "[monitor] screen mode: %s (X = next)\n", screen_names[m]);
-}
-
-static int parse_bootcfg(char *txt)
-{
-    memset(&cfg, 0, sizeof(cfg));
-    strlcpy_(cfg.kernel, "0:/ios3ds/kernel.bin", sizeof(cfg.kernel));
-    strlcpy_(cfg.devtree, "0:/ios3ds/devtree.bin", sizeof(cfg.devtree));
-    cfg.jump = 1;
-    cfg.countdown_ms = 3000;
-    cfg.phys_base = FCRAM_BASE;
-    cfg.virt_base = 0x80000000u;
-    cfg.mem_size = FCRAM_SIZE;
-    cfg.ba_revision = 1;
-    cfg.probes = 1;
-    cfg.ba_version = 5;
-    cfg.screen = SCREEN_BOTH;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
-    cfg.gpu = 1;
-    cfg.gpu_mirror = 1;
-    cfg.gpu_vbl_div = 2;
-    cfg.gpu_clk = 1;
-    cfg.gpu_diag = 1;
-    cfg.ca_gpu = 1;
-    cfg.mcu = 1;
-    cfg.mcu_acc = 1;
-    cfg.gyro = 1;
-    cfg.powersave = 1;
-    cfg.wifi_led = 1;
-    cfg.mic = 1;
-    cfg.camera = 1;
-    cfg.hp_route = 1;
-    cfg.hp_codec = 1;
-    cfg.n3ds_clock = 1;
-    cfg.n3ds_hid = 1;
-    cfg.n3ds_ram = 1;
-    cfg.auto_brightness = 1;
-
-    static const struct { const char *k; u32 *v; } nums[] = {
-        { "kernel_pa", &cfg.kernel_pa }, { "entry_pa", &cfg.entry_pa },
-        { "devtree_pa", &cfg.devtree_pa }, { "bootargs_pa", &cfg.bootargs_pa },
-        { "shim_pa", &cfg.shim_pa }, { "ring_pa", &cfg.ring_pa }, { "ring_size", &cfg.ring_size }, { "top_pa", &cfg.top_pa },
-        { "phys_base", &cfg.phys_base }, { "virt_base", &cfg.virt_base }, { "mem_size", &cfg.mem_size },
-        { "video_pa", &cfg.video_pa }, { "video_display", &cfg.video_display },
-        { "video_rowbytes", &cfg.video_rowbytes }, { "video_width", &cfg.video_width },
-        { "video_height", &cfg.video_height }, { "video_depth", &cfg.video_depth },
-        { "jump", &cfg.jump }, { "countdown_ms", &cfg.countdown_ms },
-        { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
-        { "screen", &cfg.screen },
-        { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },
-        { "gpu_spin_us", &cfg.gpu_spin_us }, { "gpu_clk", &cfg.gpu_clk }, { "gpu_diag", &cfg.gpu_diag },
-        { "ca_gpu", &cfg.ca_gpu },
-        { "mcu", &cfg.mcu }, { "mcu_acc", &cfg.mcu_acc }, { "gyro", &cfg.gyro }, { "powersave", &cfg.powersave }, { "notify_led", &cfg.notify_led }, { "wifi_led", &cfg.wifi_led },
-        { "mic", &cfg.mic }, { "hp_route", &cfg.hp_route }, { "hp_codec", &cfg.hp_codec }, { "camera", &cfg.camera }, { "cam_test", &cfg.cam_test },
-        { "n3ds_clock", &cfg.n3ds_clock }, { "n3ds_l2", &cfg.n3ds_l2 }, { "n3ds_hid", &cfg.n3ds_hid },
-        { "n3ds_ram", &cfg.n3ds_ram }, { "auto_brightness", &cfg.auto_brightness },
-        { "stereo3d", &cfg.stereo3d },
-        { "diag", &cfg.diag }, { "ioprof", &cfg.ioprof }, { "log_ts", &cfg.log_ts },
-    };
-    int lineno = 0;
-    char *line = txt;
-    while (line && *line) {
-        char *nl = strchr(line, '\n');
-        if (nl) *nl = 0;
-        lineno++;
-        char *cr = strchr(line, '\r');
-        if (cr) *cr = 0;
-        while (*line == ' ' || *line == '\t') line++;
-        if (*line && *line != '#') {
-            char *eq = strchr(line, '=');
-            if (!eq) {
-                log_warn("boot.cfg:%d: no '=' - ignored\n", lineno);
-            } else {
-                *eq = 0;
-                const char *key = line, *val = eq + 1;
-                bool known = false;
-                if (!strncmp(key, "cmdline", 8)) {
-                    strlcpy_(cfg.cmdline, val, sizeof(cfg.cmdline));
-                    known = true;
-                } else if (!strncmp(key, "kernel", 7)) {
-                    strlcpy_(cfg.kernel, val, sizeof(cfg.kernel));
-                    known = true;
-                } else if (!strncmp(key, "load", 5)) {
-                    const char *comma = strchr(val, ',');
-                    if (!comma || cfg.nloads >= 4) {
-                        log_warn("boot.cfg:%d: load=path,pa (max 4)\n", lineno);
-                    } else {
-                        u32 n = comma - val < 63 ? comma - val : 63;
-                        memcpy(cfg.load_path[cfg.nloads], val, n);
-                        cfg.load_path[cfg.nloads][n] = 0;
-                        cfg.load_pa[cfg.nloads] = parse_u32(comma + 1, NULL);
-                        cfg.nloads++;
-                    }
-                    known = true;
-                } else if (!strncmp(key, "gyro_axes", 10)) {
-                    strlcpy_(cfg.gyro_axes, val, sizeof(cfg.gyro_axes));
-                    known = true;
-                } else if (!strncmp(key, "rootfs", 7)) {
-                    strlcpy_(cfg.rootfs, val, sizeof(cfg.rootfs));
-                    known = true;
-                } else if (!strncmp(key, "shim", 5)) {
-                    strlcpy_(cfg.shim, val, sizeof(cfg.shim));
-                    known = true;
-                } else if (!strncmp(key, "gps", 4)) {
-                    strlcpy_(cfg.gps, val, sizeof(cfg.gps));
-                    known = true;
-                } else if (!strncmp(key, "rtc_offset", 11)) {
-                    cfg.rtc_offset = *val == '-' ? -(int32_t)parse_u32(val + 1, NULL)
-                                                 : (int32_t)parse_u32(val + (*val == '+'), NULL);
-                    known = true;
-                } else if (!strncmp(key, "devtree", 8)) {
-                    strlcpy_(cfg.devtree, val, sizeof(cfg.devtree));
-                    known = true;
-                } else {
-                    for (u32 i = 0; i < ARRAY_SIZE(nums); i++) {
-                        if (!strncmp(key, nums[i].k, strlen(nums[i].k) + 1)) {
-                            *nums[i].v = parse_u32(val, NULL);
-                            known = true;
-                        }
-                    }
-                }
-                if (!known) log_warn("boot.cfg:%d: unknown key '%s'\n", lineno, key);
-            }
-        }
-        line = nl ? nl + 1 : NULL;
-    }
-    return 0;
 }
 
 static bool in_fcram(u32 pa, u32 len)
@@ -864,7 +696,7 @@ void a9_main(int argc, char **argv)
     status(0, CON_GREEN, "ios3ds %s", IOS3DS_VERSION);
     status(1, CON_GREY, "M1 loader - ARM9 monitor");
     status(3, CON_WHITE, "log: sd:/ios3ds/log.txt");
-    status(4, CON_WHITE, "hold B during countdown = no jump");
+    status(4, CON_WHITE, "A during countdown = jump now; B = cancel");
     status(5, CON_WHITE, "hold POWER to switch off");
 
     log_color(CON_GREEN, "ios3ds %s  (M1 loader)\n", IOS3DS_VERSION);
@@ -1118,8 +950,17 @@ void a9_main(int argc, char **argv)
         log_warn("boot.cfg says jump=0: not starting XNU\n");
         monitor("jump disabled");
     }
+    /* The wait is only a grace period (1 s by default): it gives a user time
+       to hold B and stay in the monitor, and leaves the bottom screen readable.
+       boot_delay=0 in boot.cfg or A during the countdown jumps at once. */
+    if (!cfg.countdown_ms)
+        log_ok("boot.cfg boot_delay=0: no countdown\n");
     for (u32 ms = cfg.countdown_ms; ms; ms = ms > 100 ? ms - 100 : 0) {
-        status(10, CON_YELLOW, "jump to XNU in %u.%u s (B = cancel)", ms / 1000, (ms % 1000) / 100);
+        status(10, CON_YELLOW, "jump to XNU in %u.%u s (A = skip, B = cancel)", ms / 1000, (ms % 1000) / 100);
+        if (!(HID_PAD & HID_A)) {
+            log_ok("A pressed: skipping the rest of the countdown\n");
+            break;
+        }
         if (!(HID_PAD & HID_B)) {
             log_warn("B held: jump cancelled\n");
             status(10, CON_YELLOW, "jump cancelled (B)");
