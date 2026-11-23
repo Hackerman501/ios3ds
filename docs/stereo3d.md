@@ -199,3 +199,14 @@ has not been seen on a real 3DS**. To test:
 
 Until that photo and log arrive, treat this as experimental; the README row
 stays 🧪.
+
+## Soak status at merge (2026-11-23)
+
+- `stereo3d=0` (default): fresh-image 5-cycle `--icount 2` soak PASS (boot 85 s).
+- `stereo3d=1`, slider 255, private QEMU build: boots (80 s), both eyes and the
+  barrier come up (`[monitor] stereo 3D: both eyes ..., parallax barrier on`),
+  no panic/stall/md0/crash, but the soak's timing checks FAIL: Home often takes
+  effect after the 6 s check (recoveries "second Home", one "stuck"). In QEMU the
+  ARM9's ~150 ms two-eye copy per frame shares the emulated time with iOS; on a
+  console the ARM9 runs in parallel, so this is not a hardware prediction. Keep
+  the flag experimental until a console test (section 8) says how it feels.
