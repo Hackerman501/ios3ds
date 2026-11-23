@@ -504,7 +504,7 @@ Results (2026-11-18, re-log 45): `ok` PASS in plain QEMU and with
 `--icount 2` (SpringBoard on screen, `[nettest] all steps passed`, the host's
 server logged `GET /ios3ds-nettest`); `open`, `nocfg` (full boot to
 SpringBoard), `nofw`, `wrongpsk`, `nofifo`, `hidden` PASS. Later runs
-(2026-11-22, re-log 85-87) with this branch's QEMU: `ok`, `tkip` and `wpa1`
+(2026-11-22, re-log 91-93) with this branch's QEMU: `ok`, `tkip` and `wpa1`
 PASS end to end, including the credit case's 4 MiB with 0 bad bytes,
 1,216 credits consumed and returned and 0 overflows. LED QOM checks matched
 `wifi_led` on/off. For a branch with its own QEMU build,
@@ -535,7 +535,7 @@ board ("backend qemu-vnic not available").
 ## 9. Open items
 
 - Hardware bring-up (section 6). The MCU Wi-Fi LED now follows the link
-  ([docs/mcu.md](mcu.md) §12), but it has only been checked in QEMU.
+  ([docs/mcu.md](mcu.md) §14), but it has only been checked in QEMU.
 - Status-bar Wi-Fi icon and Settings > Wi-Fi: done (section 10; it was
   listed here as "not feasible without a kernel IO80211 controller").
 - Data frames are sent with mailbox control word 0; dsiwifi uses `2008h` for

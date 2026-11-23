@@ -1595,7 +1595,7 @@ dummy firmware, soaked with `emu/soak.py --cycles 5 --icount 2 --settle 20`,
 printed **Result: PASS** (boot to SpringBoard 441 s, 5 cycles, no panics,
 stalls, md0 errors or crashes, no home/restore failures).
 
-## 86. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
+## 92. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
 
 **Firmware first.** GBATEK "WMI Connect Functions" lists the AR6014's
 WMI_CONNECT values: auth 3 = WPA-PSK, 5 = WPA2-PSK, crypto 3 = TKIP, 4 = AES;
@@ -1643,7 +1643,7 @@ comparison, `--case wpa1` PASS: `[wifi] connect ... WPA-PSK/TKIP`,
 `pairwise ... equals the AP's TK`, `4-way: message 4 OK` and `[nettest] all
 steps passed`. Host tests: 200 checks, 0 failed.
 
-## 87. Wi-Fi LED follows the link (2026-11-22)
+## 93. Wi-Fi LED follows the link (2026-11-22)
 
 The blue Wi-Fi LED is MCU register 0x2A (4 bits, any non-zero value turns it
 on; 3dbrew "I2C Registers", device 3). `boot/arm9/mcu.c` caches the value and
@@ -1657,9 +1657,9 @@ and `mcu-wifi-led-writes` are read-only QOM properties. Evidence (2026-11-22,
 `emu/wifi_test.py --case ok`, HMP `qom-get` at 180 guest seconds): default
 setting gave `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (initial 0 and one
 write of 1 at `[wifi] link up`); with `wifi_led=0` in `boot.cfg` both were 0
-and there was no `[mcu] Wi-Fi LED on` line (docs/mcu.md §12).
+and there was no `[mcu] Wi-Fi LED on` line (docs/mcu.md §14).
 
-## 88. Wi-Fi driver: end-of-task verification (2026-11-22)
+## 94. Wi-Fi driver: end-of-task verification (2026-11-22)
 
 `make test`: all suites pass, including 200 Wi-Fi host checks and the 8
 `nwmfw` tests. `emu/wifi_test.py` with this worktree's QEMU: `ok`, `credit`,

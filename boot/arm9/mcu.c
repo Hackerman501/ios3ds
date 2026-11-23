@@ -235,7 +235,7 @@ void mcu_set_powersave(bool on) { if (box) box->ps_on = on; }
 void mcu_screen_off(bool off) { if (box) box->screen_off = off; }
 
 /* Auto-brightness: only wired up after the model check found a New 3DS.
-   The sensor is the inner camera's AE luminance (docs/mcu.md section 12). */
+   The sensor is the inner camera's AE luminance (docs/mcu.md section 13). */
 void mcu_set_als(bool on)
 {
     if (!box) return;
