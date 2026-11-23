@@ -3,6 +3,7 @@ Synthetic data only: no Apple files or IPSWs are needed."""
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "kernel"))
 
+import kpi  # noqa: E402
 import mkrootfs  # noqa: E402
 import patcher  # noqa: E402
 import versions  # noqa: E402
@@ -48,11 +50,17 @@ class TestVersions(unittest.TestCase):
             with open(os.path.join(ROOT, "rootfs", "recipe.json")) as f:
                 base = json.load(f)
             self.assertEqual(recipe["write"]["/etc/fstab"], base["write"]["/etc/fstab"])
-            # the 4.1 overlay carries symbol-relocated file-patch offsets:
-            # inapplicable patches are dropped, the rest use fixed offsets
-            self.assertEqual(len(recipe["file_patches"]), 18)
+            # the 4.1 overlay carries symbol-relocated file-patch offsets keyed
+            # by the base recipe's 8C148 offset: inapplicable patches are
+            # dropped, the rest use fixed offsets. Two MBX patches were added
+            # to the base recipe after the original positional map and are
+            # relocated here too (unique string hits in the 8B117 cache).
+            self.assertEqual(len(recipe["file_patches"]), 22)
             self.assertTrue(all("offset" in fp and "search" not in fp
                                 for fp in recipe["file_patches"]))
+            offsets = [fp["offset"] for fp in recipe["file_patches"]]
+            self.assertIn("0x492c7cc", offsets)  # MBX2D failure string
+            self.assertIn("0xa899a4", offsets)   # QuartzCore MBX2D init string
 
 
 class TestPatcher(unittest.TestCase):
@@ -87,6 +95,24 @@ class TestPatcher(unittest.TestCase):
         p3 = dict(p, name="with-context")
         p3["find"] = {"orig": b"PATTERN".hex(), "before": b"abc".hex(), "after": b"def".hex()}
         self.assertEqual(patcher.locate(img, base, p3), base + 3)
+
+
+class TestShimKpi(unittest.TestCase):
+    def test_defaults_match_shim_header(self):
+        """The generated header must leave the 4.2.1 shim byte-identical."""
+        text = open(os.path.join(ROOT, "kernel", "shim", "kpi.h")).read()
+        for macro, (sym, fallback) in kpi.SYMBOLS.items():
+            m = re.search(r"#define IOS3DS_KPI_%s 0x([0-9a-f]+)" % macro, text)
+            self.assertIsNotNone(m, macro)
+            self.assertEqual(int(m.group(1), 16), fallback, macro)
+
+    def test_literals_have_defaults(self):
+        text = open(os.path.join(ROOT, "kernel", "shim", "kpi.h")).read()
+        for macro, (fallback, overrides) in kpi.LITERALS.items():
+            m = re.search(r"#define IOS3DS_KPI_%s 0x([0-9a-f]+)" % macro, text)
+            self.assertIsNotNone(m, macro)
+            self.assertEqual(int(m.group(1), 16), fallback, macro)
+        self.assertIn("8B117", kpi.LITERALS["GIO_PLATFORM"][1])
 
 
 class TestReleasePackaging(unittest.TestCase):

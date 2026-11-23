@@ -25,6 +25,8 @@
 @
 @ SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "kpi.h"
+
     .arch armv6k
     .arm
     .section .text, "ax"
@@ -623,7 +625,7 @@ shim_user_panic:
     mcr p15, 0, r1, c7, c14, 1      @ back to RAM: the line must not stay dirty here
     mcr p15, 0, r2, c7, c10, 4
     adr r0, panic_msg
-    ldr r12, =0x80015c7d            @ _panic (Thumb)
+    ldr r12, =IOS3DS_KPI_PANIC + 1  @ _panic (Thumb, address from the staged kernelcache)
     blx r12
     b .
 panic_msg:

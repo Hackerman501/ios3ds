@@ -116,9 +116,30 @@ def recipe_path(version=DEFAULT, workdir=None):
         overlay = json.load(f)
     search = overlay.pop("file_patches_search", False)
     replacements = overlay.pop("new_hex_replace", [])
+    extra = overlay.pop("extra_file_patches", [])
     fp_offsets = overlay.pop("file_patch_offsets", None)
+    by_base = overlay.pop("file_patch_offsets_by_base", None)
     recipe = _merge(base, overlay)
-    if fp_offsets is not None:
+    if by_base is not None:
+        # Key by the *base* recipe's fixed offset, not by list position: patches
+        # are added to rootfs/recipe.json in other branches/versions, and a
+        # positional list would silently apply one patch's bytes to another
+        # patch's location. Unmapped patches are skipped with a loud message.
+        relocated = []
+        for base_fp, fp in zip(base.get("file_patches", []), recipe.get("file_patches", [])):
+            key = base_fp.get("offset")
+            if key not in by_base:
+                print("[versions] no %s offset for base file patch %s: skipped"
+                      % (version, key))
+                continue
+            off = by_base[key]
+            if off is None:      # patch not applicable on this firmware
+                continue
+            fp["offset"] = off
+            fp.pop("search", None)
+            relocated.append(fp)
+        recipe["file_patches"] = relocated
+    elif fp_offsets is not None:
         relocated = []
         for fp, off in zip(recipe.get("file_patches", []), fp_offsets):
             if off is None:      # patch not applicable on this firmware
@@ -127,12 +148,13 @@ def recipe_path(version=DEFAULT, workdir=None):
             fp.pop("search", None)
             relocated.append(fp)
         recipe["file_patches"] = relocated
-    for fp in recipe.get("file_patches", []):
+    for fp in recipe.get("file_patches", []) + extra:
         h = fp["new"]
         for old, new in replacements:
             h = h.replace(old, new)
         fp["new"] = h
-    if search and fp_offsets is None:
+    recipe["file_patches"] = recipe.get("file_patches", []) + extra
+    if search and fp_offsets is None and by_base is None:
         # relocate every fixed-offset file patch by its verified original bytes
         for fp in recipe.get("file_patches", []):
             fp.pop("offset", None)

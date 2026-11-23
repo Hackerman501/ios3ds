@@ -275,7 +275,7 @@ make test                                            # offline unit tests
 Experimental: `make sd IOS=4.1` selects another iPod2,1 firmware from
 `scripts/versions.py` (firmware staged under `build/fw-4.1/`); 4.2.1 stays the
 default and unchanged. See [docs/multi-version.md](docs/multi-version.md) — 4.1
-does not reach the home screen yet.
+now boots to the home screen in QEMU (Cydia/TLSFix are disabled on that build).
 
 Optional:
 - `make qemu` builds the emulator, about 10 minutes.

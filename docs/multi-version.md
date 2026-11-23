@@ -1,9 +1,9 @@
 # Multi-version support: research and design (stage 1)
 
 Status: **design only** for the 1.x backend (not implemented in this task). The
-4.2.1 path stays the default and must stay byte-identical. Stage 2 adds the
-version switches; stage 3 brings up one other iPod2,1 firmware in QEMU and
-records the blockers at the end of this document.
+4.2.1 path stays the default and must stay byte-identical. Stage 2 added the
+version switches; stages 3–4 brought up iOS 4.1 in QEMU to the home screen
+(§5.5), with the remaining blockers recorded at the end of this document.
 
 Legend: **[V]** = verified in this task (a fetched API response, a file in
 this repository, or an actual build/boot); **[G]** = reasoned guess, needs a
@@ -410,7 +410,9 @@ GPIO register page — a 4.1-specific interrupt/function-pointer path we have no
 untangled. No 4.1 home screen yet. See `build/emu-4.1/last-4.1-log.txt` for the
 full panic dump (build/ artifacts are not committed).
 
-Remaining blockers, all **[V]** unless marked:
+Remaining blockers found in this run, all **[V]** unless marked (items 1–2
+were diagnosed and fixed in §5.5 — they were shim KPI addresses, not kernel or
+device-tree bugs):
 
 1. The optional 4.1 kernel patches need per-subsystem validation; at least one
    of the six relocated CLCD/audio/I2C patches causes the early
@@ -467,4 +469,95 @@ log, crash, heartbeat, watchdog or GPU failures. The final report is in
 `build/emu/soak/report.md` (not committed); the earlier failures were host
 contention, not a regression.
 
-Main `docs/re-log.md` continues at §87 with the same story.
+### 5.5 Stage 4: 4.1 reaches SpringBoard — recipe and shim relocation (2026-11-23)
+
+This section continues §5.3. The firmware was fetched again into
+`build/fw-4.1/` through the same API/CDN path (`sha1
+97abde6207660bd876fd476275dd526d0dcf3d19`, verified by `fwprep.py`), so every
+Apple file stays under `build/`.
+
+**Blocker 5: the rootfs overlay's positional file-patch list went stale.**
+**[V]** The first 4.1 rootfs build stopped at
+`file patch .../dyld_shared_cache_armv6 @0x4fbd98: original bytes differ`.
+`rootfs/recipe.json` had gained two MBX2D string patches on `main` after the
+4.1 overlay was written; `versions.py` zipped the overlay's 24 offsets onto the
+new 26-patch list, so every patch was applied at the wrong offset. It also
+failed later with `21132 matches for original bytes` when the
+`file_patches_search` fallback was used — a plain byte search is not unique in
+a 150 MB cache. Fixed by keying the relocation map on the **base recipe's
+8C148 offset** (`file_patch_offsets_by_base` in `rootfs/overlay-4.1.json`), so
+inserting patches into the base recipe can no longer shift it. The two new MBX
+strings have unique hits in 8B117 (`0x492c7cc`, `0xa899a4`) and their original
+bytes were verified. All 20 applicable 4.1 file patches now apply. An unknown
+base patch is skipped with a loud `[versions] no 4.1 offset ...` line.
+
+**Blocker 6: the shim called 4.2.1 KPI addresses.** **[V]** This was the actual
+cause of both panics in §5.3, not the fake GPIO pages. `kernel/shim/blk.c`
+called `buf_count`, `buf_map`, `lck_mtx_lock`, … at hard-coded 8C148 addresses;
+in 8B117 they all moved (e.g. `_buf_count` 0x800781c0 → 0x800781a0,
+`_lck_mtx_lock` 0x80063000 → 0x80062cc0). The same was true of the sysctl and
+IOKit calls in the input/Wi-Fi/MCU shims (`tools/ios3ds-*/shim/*.c`) and of
+`gIOPlatform`. Calls into arbitrary kernel functions corrupted a stack in
+FCRAM; QEMU's monitor showed the "fake GPIO page" PC `0xc38b3f3c` translating to
+FCRAM `0x20adef3c`, i.e. a wild stack, not device memory. With the old shim the
+early MCU hook (`PEGetGMTTimeOfDay`) also jumped into a wrong function and
+panicked in `OSDictionary::setOptions()+0x44` (far 0x4), before `launchd`.
+
+Fix: `scripts/kpi.py` resolves every KPI address by name from the staged
+kernelcache's `LC_SYMTAB` (C++ names included), writes an `ios3ds-kpi.h` into a
+temporary build directory, and `mkboot.build_shim()` passes it to the shim
+compiler. `kernel/shim/kpi.h` keeps the old 8C148 constants as defaults, and
+all shim sources now use those macros. `gIOPlatform` has no symbol; its 8B117
+address `0x8029c49c` comes from the PEGetGMTTimeOfDay literal pool (0x801c7a94)
+and is recorded in `kpi.py`. No shim layout/ABI changed.
+
+**Blocker 7: SpringBoard crash loop from the skipped `lockdown_copy_value`
+patch.** **[V]** A 900 s QEMU run with the relocated shim reached launchd and
+SpringBoard but stayed on the spinner; 58 GL contexts were created and every
+SpringBoard restarted after ~6 s. Crash reports in the image
+(`LatestCrash-SpringBoard.plist`) showed `EXC_BAD_ACCESS (SIGBUS)` at
+`liblockdown.dylib+0x2dfc` (0x304fbdfc), i.e. the unpatched
+`lockdown_copy_value` (offset 0x4fbde4 in the 8B117 dyld cache). Its body and
+table changed too much for the §5.2 symbol relocation, so the 4.1 overlay now
+carries a complete replacement: the verified 44-byte original at 0x4fbde4 is
+replaced by the 8C148 table-lookup stub (literal table VA 0x304f9650), and the
+160-byte table is written into a verified zero gap of liblockdown. The keys are
+the 8B117 addresses of the eight CFStringRef arrays (found by matching each
+CFString payload and its array), the values are 8B117's `Activated`,
+`kCFBooleanFalse` (0x3ebc182c) and `iPod` literals plus inline
+`iPod2,1`/`4.1`/`8B117`/`N72AP` CFStrings with 8B117's `__CFString` isa
+(0x3ebc28ac). Both original byte sequences are checked by `mkrootfs.py`.
+
+**4.2.1 stays unchanged.** **[V]** A fresh default build (`make userland`,
+`rm -f build/sd.img && make sdimg`) produced `kernel.bin`, `devtree.bin`,
+`fakeio.bin`, `shim.bin`, `gpu.bin`, `boot.cfg` with the same sha256 as an
+independent build from `origin/main` sources (`git archive HEAD`) using the
+same staged firmware and shim. In particular the 4.2.1 shim hash stayed
+`7906b596…` before and after the KPI change.
+
+**Boot evidence after the fix.** **[V]** QEMU `nintendo3ds`, `--icount 2`,
+4.1 patch set + relocated shim: XNU reaches `BSD root: md0`, starts launchd and
+SpringBoard, loads the relocated dyld-cache patches (`[gl]` contexts on the
+PICA200, `CA compositor: OpenGL ES on the PICA200`), serves md0 from the ARM9
+(thousands of requests, 0 errors) and keeps the heartbeat/GPU logs running. No
+`OSDictionary::setOptions` panic, no undefined-instruction exception. A control
+run with only the 15 core + md0 kernel patches also reaches `BSD root: md0` and
+SpringBoard with the relocated shim, confirming that the shim addresses, not a
+kernel patch, were the blockers.
+
+**Final 4.1 boot.** **[V]** `make sd IOS=4.1` plus `make sdimg IOS=4.1`, then
+`IOS3DS_QEMU=/tmp/opencode/qemu-compat2/b/qemu-system-arm python3 emu/run.py
+--sd build/sd.img --firm build/sd/ios3ds/ios3ds.firm --icount 2 --time 600
+--out build/fw-4.1/run-final41b`: the screenshot at t=120 s (and at t=180 s)
+shows the iPod touch home screen with the 4.1 stock icons (Contacts, Weather,
+App Store, iPod, Settings, Mail, Music, Videos, Safari, Game Center, Phone,
+Calendar, Notes, Camera...). `sd:/ios3ds/log.txt`: `BSD root: md0`, `launchd`
+startup, `[mcud]`, `[gl]` CA compositor on the PICA200, heartbeat at t=60 s
+(md0 3745 req / 79080 KiB / 0 err), **1** GL context (no restart loop) and
+**0** fatal exceptions. Screenshot: `build/fw-4.1/run-final41b/screen_120.0s.png`
+(build/ artifacts are not committed).
+
+Remaining known limits: Cydia/TLSFix are disabled for 4.1 (their 4.2.1 packages
+are in the overlay's skip list); six dyld-cache patches and six 4.1 kernel
+patches from §5.2/§5.3 are still skipped; the 4.2.1 userland binaries and our
+private-API hooks are only ABI-tested on 4.2.1.

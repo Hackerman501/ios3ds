@@ -48,6 +48,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 #include "pica_drv.h"
 #include "pica_regs.h"
 #include "pica_mirror.h"
@@ -75,20 +76,20 @@ struct sysctl_oid {
 
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))    /* Thumb */
 #define KPA(addr, ret, ...) ((ret (*)(__VA_ARGS__))(addr))          /* ARM */
-#define sysctl_register_oid   KPT(0x80159c54, void, struct sysctl_oid *)
-#define sysctl_handle_opaque  KPT(0x80159242, int, struct sysctl_oid *, void *, int, void *)
-#define SYSCTL_ROOT_CHILDREN  ((void *)0x8027f7a8)      /* _sysctl__children: top level */
-#define k_copyin              KPA(0x80067c84, int, u32, void *, u32)
-#define k_copyout             KPA(0x80067d04, int, const void *, u32, u32)
-#define IOMallocContiguous    KPT(0x801a70e0, void *, u32, u32, uint32_t *)
-#define IOFreeContiguous      KPT(0x801a727c, void, void *, u32)
-#define ml_io_map             KPT(0x80067780, void *, u32, u32)
-#define IODelay               KPT(0x801a6c2c, void, u32)
-#define IOSleep               KPT(0x801a6c40, void, u32)
-#define k_printf              KPT(0x8001c4c4, void, const char *, ...)
-#define proc_selfpid          KPT(0x8014f1be, int, void)
-#define proc_find             KPT(0x8014f94c, void *, int)
-#define proc_rele             KPT(0x8014f862, int, void *)
+#define sysctl_register_oid   KPT(IOS3DS_KPI_SYSCTL_REGISTER_OID, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPT(IOS3DS_KPI_SYSCTL_HANDLE_OPAQUE, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_ROOT_CHILDREN  ((void *)IOS3DS_KPI_SYSCTL__CHILDREN)      /* _sysctl__children: top level */
+#define k_copyin              KPA(IOS3DS_KPI_COPYIN, int, u32, void *, u32)
+#define k_copyout             KPA(IOS3DS_KPI_COPYOUT, int, const void *, u32, u32)
+#define IOMallocContiguous    KPT(IOS3DS_KPI_IOMALLOCCONTIGUOUS, void *, u32, u32, uint32_t *)
+#define IOFreeContiguous      KPT(IOS3DS_KPI_IOFREECONTIGUOUS, void, void *, u32)
+#define ml_io_map             KPT(IOS3DS_KPI_ML_IO_MAP, void *, u32, u32)
+#define IODelay               KPT(IOS3DS_KPI_IODELAY, void, u32)
+#define IOSleep               KPT(IOS3DS_KPI_IOSLEEP, void, u32)
+#define k_printf              KPT(IOS3DS_KPI_PRINTF, void, const char *, ...)
+#define proc_selfpid          KPT(IOS3DS_KPI_PROC_SELFPID, int, void)
+#define proc_find             KPT(IOS3DS_KPI_PROC_FIND, void *, int)
+#define proc_rele             KPT(IOS3DS_KPI_PROC_RELE, int, void *)
 
 #define GX_VA       0xBFE00000u         /* entry.S: 1 MiB device section over PA 0x10400000 */
 #define PRIV_VA     0xBFF00000u         /* entry.S: MPCore private region (watchdog = clock) */

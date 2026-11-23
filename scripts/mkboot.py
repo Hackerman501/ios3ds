@@ -70,9 +70,10 @@ def layout(kernel_va, kernel_len, dt_len):
             "shim_pa": shim_pa, "ring_pa": ring_pa, "ring_size": RING_SIZE, "top_pa": top_pa}
 
 
-def build_shim(outdir):
+def build_shim(outdir, staging=None, version=versions.DEFAULT):
     """Build kernel/shim (entry.S, blk.c, the input and GPU services) linked at its fixed kernel VA."""
     import subprocess
+    import kpi
     import tempfile
     cross = subprocess.run([os.path.join(ROOT, "scripts", "setup-toolchain.sh")],
                            capture_output=True, text=True).stdout
@@ -86,6 +87,7 @@ def build_shim(outdir):
              # iOS' ABI lets callees clobber r9; keep our C code off it so calls into the kernel are safe
              "-ffixed-r9",
              "-I" + os.path.join(ROOT, "boot", "common"),
+             "-I" + sd,
              "-I" + os.path.join(ROOT, "tools", "ios3ds-pica", "include")]
     srcs = [os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"), os.path.join(sd, "gpu_glue.c"),
             os.path.join(sd, "quiet.c"),        # IOKit quiet at boot (docs/boot-perf.md)
@@ -101,6 +103,10 @@ def build_shim(outdir):
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c"),
              os.path.join(sd, "cam.c")]                     # camera data side (docs/camera.md)
     with tempfile.TemporaryDirectory() as td:
+        # KPI call addresses are version-specific; generate them from the
+        # staged kernelcache. For 4.2.1 the values equal kpi.h's defaults.
+        kpi.write_header(staging or os.path.join(ROOT, "build", "staging"), td)
+        flags += ["-I" + td]
         elf = os.path.join(td, "shim.elf")
         objs = []
         for s in srcs:
@@ -200,7 +206,7 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
                        cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song,
                        recipe_path=versions.recipe_path(version, os.path.dirname(staging.rstrip("/"))))
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
-    shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
+    shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir, staging, version)
     # the DT size doesn't depend on the layout values, so two passes converge
     lay0 = layout(kva, len(kimg), len(template))
     lay0["ramdisk_len"] = ramdisk_len
@@ -219,8 +225,13 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         if os.environ.get("IOS3DS_SANDBOX_OPEN", "").lower() in ("1", "yes", "on", "true"):
             sandbox_open = True
         disabled = () if sandbox_open else ("sandbox-sb-evaluate",)
+        disabled += tuple(x for x in os.environ.get("IOS3DS_DISABLE_PATCHES", "").split(",") if x)
+        patch_files = versions.patch_files(version)
+        if os.environ.get("IOS3DS_PATCH_FILES"):
+            # bring-up only: an alternative recipe (e.g. a subset under build/)
+            patch_files = os.environ["IOS3DS_PATCH_FILES"].split(",")
         applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled,
-                                    files=versions.patch_files(version))
+                                    files=patch_files)
         if verbose and sandbox_open:
             print("[mkboot] sandbox-sb-evaluate applied (SANDBOX=1): TLSFix reaches sandboxed apps; "
                   "Safari OOMs on 128 MB (docs/cydia.md)")
@@ -382,7 +393,7 @@ def main():
     a = ap.parse_args()
     if a.shim_only:
         os.makedirs(a.shim_only, exist_ok=True)
-        build_shim(a.shim_only)
+        build_shim(a.shim_only, a.staging, a.ios)
         print("[mkboot] shim.bin + gpu.bin -> %s" % a.shim_only)
         return
     build(a.staging, a.out, a.cmdline, patches=not a.no_patches, version=a.ios)

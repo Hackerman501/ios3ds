@@ -23,6 +23,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 #include "cam_proto.h"
 #include "gpu_mirror.h"
 
@@ -43,13 +44,13 @@ struct sysctl_oid {
 #define EINVAL 22
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))    /* Thumb */
 #define KPA(addr, ret, ...) ((ret (*)(__VA_ARGS__))(addr))          /* ARM */
-#define sysctl_register_oid   KPT(0x80159c54, void, struct sysctl_oid *)
-#define sysctl_handle_opaque  KPT(0x80159242, int, struct sysctl_oid *, void *, int, void *)
-#define SYSCTL_ROOT_CHILDREN  ((void *)0x8027f7a8)
-#define k_copyin              KPA(0x80067c84, int, u32, void *, u32)
-#define k_copyout             KPA(0x80067d04, int, const void *, u32, u32)
-#define IOMallocContiguous    KPT(0x801a70e0, void *, u32, u32, uint32_t *)
-#define k_printf              KPT(0x8001c4c4, void, const char *, ...)
+#define sysctl_register_oid   KPT(IOS3DS_KPI_SYSCTL_REGISTER_OID, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPT(IOS3DS_KPI_SYSCTL_HANDLE_OPAQUE, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_ROOT_CHILDREN  ((void *)IOS3DS_KPI_SYSCTL__CHILDREN)
+#define k_copyin              KPA(IOS3DS_KPI_COPYIN, int, u32, void *, u32)
+#define k_copyout             KPA(IOS3DS_KPI_COPYOUT, int, const void *, u32, u32)
+#define IOMallocContiguous    KPT(IOS3DS_KPI_IOMALLOCCONTIGUOUS, void *, u32, u32, uint32_t *)
+#define k_printf              KPT(IOS3DS_KPI_PRINTF, void, const char *, ...)
 
 #define PHYS_BASE   0x20000000u
 #define VIRT_BASE   0x80000000u

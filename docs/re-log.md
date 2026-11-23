@@ -1959,3 +1959,45 @@ are in the README FAQ and in mcu.md / m1-design.md.
   two show/cancel rounds, `Result: PASS`, 0 panics, 0 `connected` lines beyond
   the boot one). A later automated rerun timed out during boot because the
   host was loaded by other emulators; it logged no crash.
+
+## NEXT. iOS 4.1: rootfs recipe and shim KPI relocation, SpringBoard in QEMU (2026-11-23)
+
+Continues §87 / docs/multi-version.md §5.3–5.5. All Apple files were fetched
+again into `build/fw-4.1/` via the API/CDN URL (sha1 verified by fwprep);
+nothing Apple-derived was committed.
+
+- **Recipe blocker.** The 4.1 dyld-cache patch list was positional. Two MBX2D
+  patches were added to `rootfs/recipe.json` on main afterwards, so the 24
+  relocated offsets were zipped onto 26 patches and every byte check failed
+  (`original bytes differ` / `21132 matches`). `rootfs/overlay-4.1.json` now
+  maps 8C148 base offsets → 8B117 offsets by key; the two new MBX strings have
+  unique verified hits (0x492c7cc / 0xa899a4). 20 patches apply, six skipped.
+- **Shim blocker, not the fake pages.** The earlier "undefined instruction in
+  the fake GPIO page" was a wild stack in FCRAM: QEMU `gva2gpa 0xc38b3f3c`
+  returned `0x20adef3c`. `kernel/shim/blk.c` and the input/Wi-Fi/MCU shims
+  called XNU KPIs at 8C148 addresses that all moved in 8B117; the early
+  PEGetGMTTimeOfDay hook also landed in the wrong function and produced the
+  `OSDictionary::setOptions()+0x44` panic. `scripts/kpi.py` now resolves the
+  addresses by LC_SYMTAB symbol (plus the gIOPlatform literal) and generates
+  `ios3ds-kpi.h` for the shim build; `kernel/shim/kpi.h` keeps the 4.2.1 values
+  as defaults.
+- **Byte-identical default.** A fresh 4.2.1 build was compared with one from
+  `git archive HEAD` sources: kernel/devtree/fakeio/shim/gpu/boot.cfg sha256
+  all match; the shim is `7906b596…` before and after the KPI change.
+- **QEMU.** With the relocated shim the full 8B117 patch set reaches
+  `BSD root: md0`, launchd, SpringBoard, `[gl]` PICA200 contexts and the CA
+  compositor, 0 md0 errors and live heartbeat/GPU logs; no early panic. The
+  control set (15 core + md0 patches) also gets past `BSD root: md0` now.
+- **SpringBoard crash loop (4.1):** with the relocated shim the boot no longer
+  panicked but never left the spinner. The image's
+  `LatestCrash-SpringBoard.plist` showed `EXC_BAD_ACCESS` at
+  `liblockdown.dylib+0x2dfc`: the 4.1 `lockdown_copy_value` patch had been
+  skipped in §87. 58 contexts/58 restarts in 900 s. The overlay now contains
+  the full 8B117 replacement (44-byte stub at 0x4fbde4 plus a 160-byte
+  key/value table at 0x4f9650), built from the 8B117 CFStringRef arrays and
+  CFString literals; all original bytes are verified at build time.
+- **4.1 home screen:** after that table patch, `make sd IOS=4.1` +
+  `make sdimg IOS=4.1` and `emu/run.py ... --icount 2` reached the stock iPod
+  home screen at t=120 s (screenshot
+  `build/fw-4.1/run-final41b/screen_120.0s.png`), 1 GL context (no crash loop),
+  0 panics, heartbeats with 0 md0 errors. Cydia/TLSFix stay disabled for 4.1.

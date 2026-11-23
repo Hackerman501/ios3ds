@@ -42,6 +42,7 @@ static inline void net_dinval(volatile void *p, u32 len)
 #define NET_DINVAL(p, len) net_dinval((volatile void *)(p), (u32)(len))
 #define NET_DCLEAN(p, len) net_dclean((volatile void *)(p), (u32)(len))
 #include "net_core.h"
+#include "kpi.h"
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -62,9 +63,9 @@ _Static_assert(sizeof(struct sysctl_oid) == 36, "xnu-1504 arm sysctl_oid");
 #define EBUSY           16
 
 #define KPI(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
-#define sysctl_register_oid   KPI(0x80159c54, void, struct sysctl_oid *)
-#define sysctl_handle_opaque  KPI(0x80159242, int, struct sysctl_oid *, void *, int, void *)
-#define SYSCTL_KERN_CHILDREN  ((void *)0x8027f7b8)
+#define sysctl_register_oid   KPI(IOS3DS_KPI_SYSCTL_REGISTER_OID, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPI(IOS3DS_KPI_SYSCTL_HANDLE_OPAQUE, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_KERN_CHILDREN  ((void *)IOS3DS_KPI_SYSCTL__KERN_CHILDREN)
 
 #define NETMBOX ((volatile netmbox_t *)NET_VA)
 #define NETIO   ((netio_t *)(NET_VA + NET_IO_OFF))
