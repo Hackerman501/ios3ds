@@ -31,11 +31,33 @@ static bool armed, touched;
 static bool stereo_cfg, stereo_hw, stereo_no_shim, stereo_warned;
 static u32 stereo_slider;
 
+/* Rebuilding both eyes is several times the cost of the normal copy: the
+   per-pixel class lookup and two shifted samples are done for every output
+   pixel. Cache one entry per screen column (the source row it was built
+   from) and rebuild a column only when that row changed. A bounded number
+   of columns is rebuilt per blit, so a frame that changed everywhere (a
+   page swipe, or returning to the home screen) costs at most the same as a
+   handful of normal columns instead of one very long ARM9 copy. */
+#define ST_ROWS   512                 /* source rows, 0..h-1 (h <= 511) */
+#define ST_COL_CAP 120                /* columns rebuilt per blit (360/3) */
+static u32 st_hash[ST_ROWS];
+static u8 st_hash_ok[ST_ROWS];
+static int st_cache_k = -1;
+static u32 st_rebuilt, st_skipped;
+
+static void stereo_cache_reset(void)
+{
+    memset(st_hash_ok, 0, sizeof st_hash_ok);
+}
+
 static void stereo_barrier(bool on);
 
 void display_set_stereo(bool on, u32 slider)
 {
+    bool was_cfg = stereo_cfg;
     stereo_cfg = on && top_fb[0] && top_fb[1] && top_fb[0] != top_fb[1];
+    if (was_cfg != stereo_cfg || stereo_slider != slider)
+        stereo_cache_reset();               /* a different k shifts every column */
     stereo_slider = slider;
     if (!on || !stereo_cfg || slider < STEREO_MIN_SLIDER)
         stereo_no_shim = false;                 /* retry a failed switch next time */
@@ -66,10 +88,21 @@ static void stereo_barrier(bool on)
    says B,G,R,A in memory, the original QEMU model used A,B,G,R), so accept
    the class magic in either end of the word. Colour bytes are masked out
    when the eye images are packed; the stamp never reaches the LCD. */
+/* A 256-byte table replaces the switch in the hot per-pixel loop: 0 means
+   "not a class stamp", otherwise class + 1 (so STC_FLAT is 1). */
+static const u8 st_class_lut[256] = {
+    [SA_FLAT]  = STC_FLAT + 1,
+    [SA_BG]    = STC_BG + 1,
+    [SA_ICONS] = STC_ICONS + 1,
+    [SA_FRONT] = STC_FRONT + 1,
+    [SA_ALERT] = STC_ALERT + 1,
+};
+
 static int stereo_px_class(u32 px)
 {
-    int cls = stereo_class_of((u8)(px >> 24));
-    return cls >= 0 ? cls : stereo_class_of((u8)px);
+    int cls = st_class_lut[(u8)(px >> 24)];
+    if (!cls) cls = st_class_lut[(u8)px];
+    return cls ? cls - 1 : STC_FLAT;
 }
 
 /* Sample the alpha plane of the iOS frame. The GL engine stamps a depth
@@ -116,6 +149,7 @@ void display_init(u8 *top0, u8 *top1, u8 *bot0, u8 *bot1)
     top_fb[1] = top1;
     bot_fb[0] = bot0;
     bot_fb[1] = bot1 != bot0 ? bot1 : NULL;
+    stereo_cache_reset();
 }
 
 /* A screen that starts showing iOS is cleared first: the copy never writes
@@ -131,6 +165,7 @@ void display_set_mode(int m)
         if (m != SCREEN_TOP && !bot_was && bot_fb[i]) memset(bot_fb[i], 0, 320 * SCR_H * 3);
     }
     shown = mode = m;
+    stereo_cache_reset();                   /* the eye frames land on other columns */
 }
 
 /* the LCD framebuffers as Luma set them up: top 0/1, bottom 0/1 (0 if absent) */
@@ -196,7 +231,13 @@ static void blit_bottom_slow(const u8 *src, u32 w, u32 h, u32 stride)
    (the ARM9 cannot reach them) and publishes them (gpu_mirror.h). Default:
    all four, as before. */
 static u32 shown = 0xF;
-void display_set_shown(u32 mask) { shown = mask & 0xF ? mask & 0xF : 0xF; }
+void display_set_shown(u32 mask)
+{
+    u32 m = mask & 0xF ? mask & 0xF : 0xF;
+    if (m != shown)
+        stereo_cache_reset();               /* the other framebuffer set needs all columns */
+    shown = m;
+}
 
 /*
  * The fast copy. On hardware the old byte-per-byte copy took 300-430 ms per
@@ -297,23 +338,46 @@ static void blit_top(const u8 *src, u32 w, u32 h, u32 stride)
    out(x) = in(x - stereo_eye_delta(cls, k, right)). The alpha byte is masked
    away, so the LCD always gets opaque BGR8. The bottom copy above is shared
    unchanged, including the touch map. */
+/* The source row is copied into eye_row+8 with eight pixels of padding on
+   each side, filled with the edge pixel. An eye offset is at most 2*k = 8
+   iOS pixels, so sampling never needs a clamp in the inner loop. */
+#define ST_PAD 8
+static u32 eye_row[ST_PAD + 320 + ST_PAD] __attribute__((aligned(32)));
 static u32 eye_col[2][SCR_H] __attribute__((aligned(32)));
+static int st_dl[STC_ALERT + 1], st_dr[STC_ALERT + 1];
 
-static void pack_eye_column(const u16 *ix, u32 w, int k)
+static void stereo_set_deltas(int k)
 {
-    int wm1 = (int)w - 1;
-    for (u32 rr = 0; rr < SCR_H; rr++) {
-        int x = ix[rr], s, d;
-        u32 px = rowbuf[x];
-        int cls = stereo_px_class(px);
-        /* class 0 (flat) and unknown alphas never move; out(x)=in(x-delta) */
-        d = stereo_eye_delta(cls, k, 0);
-        s = x - d;
-        eye_col[0][rr] = rowbuf[s < 0 ? 0 : (s > wm1 ? wm1 : s)] & 0xFFFFFF;
-        d = stereo_eye_delta(cls, k, 1);
-        s = x - d;
-        eye_col[1][rr] = rowbuf[s < 0 ? 0 : (s > wm1 ? wm1 : s)] & 0xFFFFFF;
+    for (int cls = 0; cls <= STC_ALERT; cls++) {
+        st_dl[cls] = stereo_eye_delta(cls, k, 0);
+        st_dr[cls] = stereo_eye_delta(cls, k, 1);
     }
+}
+
+static void pack_eye_column(const u16 *ix)
+{
+    const u32 *row = eye_row + ST_PAD;
+    for (u32 rr = 0; rr < SCR_H; rr++) {
+        int x = ix[rr];
+        int cls = stereo_px_class(row[x]);
+        eye_col[0][rr] = row[x - st_dl[cls]] & 0xFFFFFF;
+        eye_col[1][rr] = row[x - st_dr[cls]] & 0xFFFFFF;
+    }
+}
+
+/* A cheap signature of one source row: every pixel matters (including the
+   alpha stamp), but multiplication is expensive on the ARM9, so use shifts
+   and two accumulators. A collision would only leave one screen column
+   stale until its row changes again. */
+static u32 stereo_row_hash(const u32 *row, u32 n)
+{
+    u32 a = 0x12345678u, b = 0x87654321u;
+    for (u32 i = 0; i < n; i++) {
+        u32 v = row[i];
+        a = (a << 1 | a >> 31) + v;
+        b = (b << 3 | b >> 29) ^ v;
+    }
+    return a ^ b;
 }
 
 static void pack_bgr_column(const u32 *src)
@@ -332,10 +396,15 @@ static void blit_top_stereo(const u8 *src, u32 w, u32 h, u32 stride)
 {
     static u16 ix[SCR_H];
     static u32 ix_w;
-    u32 outw = h * 3 / 4, x0;
+    u32 outw = h * 3 / 4, x0, rebuilt = 0;
     int k = stereo_shift_k(stereo_slider);
     if (outw > SCR_W) outw = SCR_W;
     x0 = (SCR_W - outw) / 2;
+    if (k != st_cache_k || ix_w != w) {
+        stereo_cache_reset();
+        st_cache_k = k;
+    }
+    stereo_set_deltas(k);
     if (ix_w != w) {
         for (u32 rr = 0; rr < SCR_H; rr++) {
             u32 x = rr * 4 / 3;
@@ -344,16 +413,38 @@ static void blit_top_stereo(const u8 *src, u32 w, u32 h, u32 stride)
         ix_w = w;
     }
     for (u32 c = 0; c < outw; c++) {
+        u32 sy = c * 4 / 3, hash;
         if (c % POLL_EVERY == 0) poll_io();
-        wcopy(rowbuf, (const u32 *)(src + (c * 4 / 3) * stride), w);
-        pack_eye_column(ix, w, k);
+        wcopy(eye_row + ST_PAD, (const u32 *)(src + sy * stride), w);
+        hash = stereo_row_hash(eye_row + ST_PAD, w);
+        if (st_hash_ok[sy] && st_hash[sy] == hash) {
+            st_skipped++;
+            continue;                       /* this eye column is already current */
+        }
+        if (rebuilt >= ST_COL_CAP)
+            continue;                       /* finish it on a later blit */
+        for (u32 i = 0; i < ST_PAD; i++)
+            eye_row[i] = eye_row[ST_PAD];
+        for (u32 i = 0; i < ST_PAD; i++)
+            eye_row[ST_PAD + w + i] = eye_row[ST_PAD + w - 1];
+        pack_eye_column(ix);
         for (u32 eye = 0; eye < 2; eye++) {
             if (!top_fb[eye])
                 continue;
             pack_bgr_column(eye_col[eye]);
             wcopy((u32 *)(top_fb[eye] + (x0 + c) * SCR_H * 3), colbuf, SCR_H * 3 / 4);
         }
+        st_hash[sy] = hash;
+        st_hash_ok[sy] = 1;
+        rebuilt++;
     }
+    st_rebuilt += rebuilt;
+}
+
+void display_stereo_stats(u32 *rebuilt, u32 *skipped)
+{
+    *rebuilt = st_rebuilt;
+    *skipped = st_skipped;
 }
 
 bool display_active(u32 regs_pa)
@@ -430,6 +521,7 @@ void display_blit(u32 regs_pa)
                 stereo_warned = true;
             }
             stereo_no_shim = true;
+            stereo_cache_reset();       /* the flat copy replaced both eye images */
             stereo = false;
         }
         if (!stereo && stereo_hw) {

@@ -218,10 +218,15 @@ int stereo_end_frame(GC *gc)
     st_frames++;
     if (home) {
         st_home++;
-    } else {
+    } else if (st_f.phase == STP_FLAT || st_f.draws >= STEREO_MIN_ICONS) {
         st_flat++;
         st_wipes++;
         stereo_wipe(gc, &st_rt);
+    } else {
+        /* A tiny partial CA update (frame 2 in QEMU had two draws) carries no
+           information about the frame. Wiping it would erase the class map
+           left by the previous home frame on all the untouched pixels. */
+        st_flat++;
     }
     if (st_log) {
         for (i = 0; i < st_log_n; i++)

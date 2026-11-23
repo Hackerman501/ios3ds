@@ -16,5 +16,7 @@ void display_set_shown(u32 mask);   /* bit 0/1 top set 0/1, bit 2/3 bottom set 0
    loop: with a stamped home frame the ARM9 copy builds the two eyes and the
    top LCD goes into 3D mode; otherwise the normal copy stays untouched. */
 void display_set_stereo(bool on, u32 slider);
+/* cumulative work of the two-eye path: columns rebuilt vs reused unchanged */
+void display_stereo_stats(u32 *rebuilt, u32 *skipped);
 /* called with blksrv_poll() every few columns of a CPU copy */
 void display_set_poll(void (*fn)(void));

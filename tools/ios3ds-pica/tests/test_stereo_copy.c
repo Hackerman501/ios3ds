@@ -140,6 +140,49 @@ int main(void)
         diff += pixel(TOP0, 100, i) != pixel(TOP1, 100, i);
     CHECK(diff == 0, "app frame: both eyes identical (%u rows differ)", diff);
 
+    /* 5. Dirty-row cache: a full two-eye frame is built in a few bounded
+       blits; afterwards a change in one source row rebuilds only the screen
+       column fed by that row. Other columns keep the image they already had
+       until their own row changes. */
+    picture(1);
+    display_set_stereo(false, 255);
+    display_blit(CLCD_PA);                  /* flat copy, cache invalidated */
+    display_set_stereo(true, 255);
+    for (i = 0; i < 4; i++)
+        display_blit(CLCD_PA);              /* 360 columns / 120 per blit */
+    {
+        uint32_t keep = pixel(TOP1, 250, 100);
+        uint32_t was = pixel(TOP0, 170, 2);
+        uint32_t *src = (uint32_t *)vram;
+        src[200 * W + 2] ^= 0x123456u;      /* icon row 200 -> screen column 170, no eye shift */
+        display_blit(CLCD_PA);
+        CHECK(pixel(TOP0, 170, 2) != was, "dirty row: its column was rebuilt");
+        CHECK(pixel(TOP1, 250, 100) == keep, "clean row: other column untouched");
+        for (i = 0; i < 4; i++)
+            display_blit(CLCD_PA);
+        /* every column now matches a reference computed from the original
+           class/delta rules, for both eyes (sampled grid, all depth bands) */
+        for (uint32_t c = 0; c < 360; c += 7) {
+            uint32_t sy = c * 4 / 3;
+            for (i = 0; i < 240; i += 13) {
+                uint32_t x = i * 4 / 3;
+                uint32_t px = ((uint32_t *)vram)[sy * W + x];
+                int cls = stereo_class_of((u8)(px >> 24));
+                for (uint32_t eye = 0; eye < 2; eye++) {
+                    int d = stereo_eye_delta(cls, 4, eye ? 1 : 0);
+                    int s = (int)x - d;
+                    uint32_t want;
+                    if (s < 0) s = 0;
+                    if (s >= (int)W) s = (int)W - 1;
+                    want = ((uint32_t)s * 3 + sy * 7) & 0xFFFFFF;
+                    CHECK(pixel(eye ? TOP1 : TOP0, 20 + c, i) == want,
+                          "converged eye %u col %u row %u: %06x != %06x",
+                          eye, 20 + c, i, pixel(eye ? TOP1 : TOP0, 20 + c, i), want);
+                }
+            }
+        }
+    }
+
     printf("%d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

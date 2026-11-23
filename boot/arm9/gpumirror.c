@@ -258,4 +258,13 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
         logp("[monitor] CPU screen copy: %u copies in %u s, %u.%u ms each (ARM9)\n", nb, secs,
              t * 1000u / hz, t * 10000u / hz % 10);
     }
+    static u32 last_rb, last_sk;
+    u32 rb, sk;
+    display_stereo_stats(&rb, &sk);
+    if ((rb | sk) != (last_rb | last_sk)) {
+        logp("[monitor] stereo eye columns: %u rebuilt, %u reused in %u s (cached two-eye copy)\n",
+             rb - last_rb, sk - last_sk, secs);
+        last_rb = rb;
+        last_sk = sk;
+    }
 }

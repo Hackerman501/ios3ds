@@ -21,6 +21,7 @@
 #include "engine.h"
 #include "pica.h"
 #include "pica_dev.h"
+#include "stereo.h"
 
 #define MAX_TARGETS 4
 #define MAX_DEPTHS  4
@@ -832,7 +833,13 @@ static PTarget *get_target(const RT *rt)
             warn_once(WARN_BIG, "render target larger than 1024: drawn by the software rasterizer");
             return NULL;
         }
-        int present = (rt->surface || getenv("IOS3DS_GL_PRESENT_ALL")) && !P.no_present && !(rt->w & 7) && !(rt->h & 7) && rt->pitch == rt->w &&
+        /* With stereo3d=1 the depth class lives in the render target's alpha
+           byte. The GPU's direct present uses that byte for the surface's B
+           channel, so the class map would be lost: use the CPU read-back for
+           this target, which writes BGRA (class in alpha) unchanged. Flag off
+           keeps the direct present path byte-for-byte. */
+        int present = !stereo_enabled() &&
+                      (rt->surface || getenv("IOS3DS_GL_PRESENT_ALL")) && !P.no_present && !(rt->w & 7) && !(rt->h & 7) && rt->pitch == rt->w &&
                       !((uintptr_t)rt->color & 7) && !getenv("IOS3DS_GL_NO_PRESENT");
         t = lru;
         if (t->key) {

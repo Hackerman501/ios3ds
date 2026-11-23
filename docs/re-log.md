@@ -2363,3 +2363,77 @@ New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
   a second fresh-image 5-cycle soak again printed **Result: PASS**. The
   `[io]` counters over the install still show the cache absorbing the small
   dpkg writes (0 direct-write sectors, 0 sync errors).
+
+## 106. Both eyes without the 8x ARM9 copy (2026-11-23)
+
+Section 90 left the flag-on path at 120-186 ms per ARM9 screen copy in QEMU
+(section 90's numbers: 15.4 ms with the flag off), enough to break the soak's
+timing checks. This entry makes the two-eye copy incremental instead of
+rebuilding all 360 screen columns on every blit.
+
+- **What is cached:** `boot/arm9/display.c` keeps a two-accumulator signature
+  of the source row that feeds each screen column (all 320 pixels, including
+  the alpha depth stamp). A column whose row signature is unchanged keeps the
+  eye pixels already in `top_fb[0]`/`top_fb[1]`. When the frame changes
+  everywhere (a page swipe, a return to the home screen), at most 120 columns
+  are rebuilt per blit, so the extra work is spread over three copies rather
+  than spent in one long ARM9 turn. The cache is dropped on a slider,
+  `stereo3d`, screen-mode or shown-framebuffer-set change.
+- **Hot loop:** a 256-byte alpha→class table replaces `stereo_class_of`'s
+  switch per pixel; the two eye offsets are computed once per class per frame
+  instead of twice per pixel; the source row is copied into a buffer with
+  eight edge pixels of padding on each side, which removes the per-sample
+  clamps (the largest offset is 2*k = 8 iOS pixels). The maths and pixel
+  values are the same as section 90's; the host test compares a sampled grid
+  of both eyes with the original class/delta rules after convergence.
+- **Flag off:** none of this is reached. The normal `blit_top()`/`blit_bottom()`
+  pair is untouched, as are the flat/slider-down and unstamped-frame
+  fallbacks; `tools/ios3ds-pica/tests/test_stereo_copy.c` still checks the
+  byte-for-byte flag-off and flat copies.
+- **Why QEMU had no two-eye path at all:** instrumenting the CA frame
+  classifier showed `50 draws, phase START, 0 icons, 0 stamps` on the first
+  home frame: CA draws SpringBoard's wallpaper as many small layers, not as
+  one full-screen quad, and `stereo_draw()` refused to classify anything
+  while `phase == STP_START`. `stereo_draw()` now treats the first full-screen
+  draw (opaque or not) or the first `STEREO_MIN_ICONS` small draws as the
+  background; the following 46 draws of the QEMU home frame are stamped as
+  icons/dock. A tiny partial update (the next CA frame had two draws) no
+  longer wipes the class map from untouched pixels. `stereo_frame_t` gained a
+  `stamps` counter so a phase reached without any stamps is not called home.
+  Apps and the lock screen still go flat on a second full-screen opaque draw;
+  new host tests cover all three cases.
+- **Getting the stamp to the ARM9:** the PICA200's direct present swizzle uses
+  the render target's alpha byte for the surface's blue channel, so the
+  class map never reached `/vram` (a QEMU memory dump showed alpha 0 in every
+  sampled word). `tools/ios3ds-gl/pica_be.c` now uses the CPU read-back for
+  the display target when `stereo_enabled()`, which writes BGRA with the
+  stamp intact. Sending the stamp through the swizzle's alpha instead was
+  tried first: it broke the blue channel and the GPU present check (147199 of
+  153600 pixels, `0xff0000ff` vs `0xff000000`), so that approach was dropped.
+  With the flag off the direct present stays exactly as before.
+- **Logging:** `gm_report()` now adds `[monitor] stereo eye columns: R rebuilt,
+  U reused in N s` next to the 30-second CPU-copy line, so a log shows how
+  much of the two-eye work was actually done.
+- **Frame times, private QEMU, `--icount 2 --slider3d 255`:** before this work
+  section 90 logged `42 copies in 30 s, 120.3 ms each` and, on a longer run,
+  `33 copies in 38 s, 186.4 ms each` with the flag on, against `15.4 ms each`
+  with the flag off. After the fixes and the cache, a 360 s run first logged
+  `70 copies in 30 s, 14.3 ms each` (before the stamped home frame arrived)
+  and `[monitor] stereo 3D: both eyes ... barrier on`, then `382 copies in
+  30 s, 6.9 ms each` with `384 eye columns rebuilt, 4623 reused`, and
+  `401/409/409 copies, 6.6/6.4/6.4 ms each` with `9/0/9` columns rebuilt per
+  30 s. So the two-eye path is now cheaper than the old one-eye average:
+  almost every column is reused frame after frame. The GL side still pays
+  for the CPU read-back when the flag is on (the direct GPU present cannot
+  carry the stamp); that is ARM11 work, not the ARM9 copy measured here. The
+  flag-on soak logged `273 copies, 10.0 ms each` and `347 copies, 8.1 ms each`
+  while cycling apps (4253/4080 columns rebuilt and ~80-113k reused per 30 s).
+- **Soaks:** fresh `build/sd.img` each time, private QEMU, `emu/soak.py --cycles
+  5 --icount 2`: `stereo3d=0` PASS (boot 90 s); `stereo3d=1 --slider3d 255` PASS
+  (boot 80 s). One earlier flag-on run failed only its lock-round screenshot
+  check: the unlock ended on Spotlight, which the harness had treated as a
+  failed unlock after a single Home. `emu/soak.py` now dismisses Spotlight
+  after that Home (page swipe + Home), the same recovery the normal cycle
+  path already used; the final flag-on run passed with no lock-round failures.
+  Both runs had 0 panic/stall/md0/crash/GPU failures, and no "not home after
+  Home" failures.

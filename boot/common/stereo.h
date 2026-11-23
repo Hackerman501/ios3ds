@@ -123,12 +123,13 @@ typedef struct {
     uint8_t icons;      /* icon-grid draws seen (saturating) */
     uint8_t bg;         /* a full-screen background was seen */
     uint8_t draws;      /* draws into the display target (saturating) */
+    uint8_t stamps;     /* draws that actually wrote a class (saturating) */
 } stereo_frame_t;
 
 static inline void stereo_frame_begin(stereo_frame_t *f)
 {
     f->phase = STP_START;
-    f->icons = f->bg = f->draws = 0;
+    f->icons = f->bg = f->draws = f->stamps = 0;
 }
 
 /* One draw into the display target. x0..y1 is the draw's bounding box in
@@ -138,20 +139,22 @@ static inline void stereo_frame_begin(stereo_frame_t *f)
    class to stamp into the alpha channel, or -1 = leave the alpha alone.
 
    Rules (docs/stereo3d.md section 4):
-     - the first full-screen opaque draw is the background (wallpaper, or an
-       app window when CA culls what is behind it);
+     - the first full-screen draw (opaque or translucent: SpringBoard's
+       wallpaper has translucent texels) is the background;
      - a later full-screen opaque draw covers everything: the frame is flat
        (apps, the lock screen), nothing is stamped and the frame is wiped;
      - a later full-screen translucent draw is a backdrop: it keeps the
        classes below it, and content drawn after it (a folder or alert)
        becomes STC_ALERT;
-     - a full-screen draw before any background is not stamped;
+     - when CA draws the wallpaper as many small layers instead of one
+       full-screen quad, the first few small draws establish the background
+       too (but are not stamped themselves);
      - everything else is classified by where it sits: within the status-bar
        band or the dock band = STC_FRONT, the icon grid = STC_ICONS. */
 static inline int stereo_draw(stereo_frame_t *f, int x0, int y0, int x1, int y1,
                              const int vp[4], int full, int opaque)
 {
-    int h = vp[3];
+    int h = vp[3], cls = -1;
     (void)x0;
     (void)x1;
     if (f->draws < 255)
@@ -160,35 +163,51 @@ static inline int stereo_draw(stereo_frame_t *f, int x0, int y0, int x1, int y1,
         return -1;
     if (full) {
         if (!f->bg) {
-            if (!opaque)
-                return -1;
+            /* Requiring an opaque full-screen draw did not work in QEMU:
+               SpringBoard's first frame had 50 draws, all in phase START
+               and none stamped. Treat the first full-screen draw (opaque or
+               not) as the background; apps still go flat at the second one. */
             f->bg = 1;
             f->phase = STP_HOME;
-            return STC_BG;
-        }
-        if (!opaque) {                      /* backdrop or container */
+            cls = STC_BG;
+        } else if (!opaque) {               /* backdrop or container */
             if (f->phase != STP_ALERT && f->icons)
                 f->phase = STP_ALERT;
-            return -1;
+        } else {
+            f->phase = STP_FLAT;            /* an opaque full screen covers all */
         }
-        f->phase = STP_FLAT;                /* an opaque full screen covers all */
-        return -1;
+    } else if (f->phase == STP_START) {
+        /* No full-screen wallpaper quad: count small draws until enough of
+           them look like an icon grid. Those early draws are not stamped,
+           but all the later icons and dock items are. */
+        if (f->icons < 255)
+            f->icons++;
+        if (f->icons >= STEREO_MIN_ICONS) {
+            f->bg = 1;
+            f->phase = STP_HOME;
+        }
+    } else {
+        /* status bar: entirely in the top ~1/16; dock: entirely in the bottom quarter */
+        if (y1 <= vp[1] + h / 16 || y0 >= vp[1] + h - h / 4)
+            cls = f->phase == STP_ALERT ? STC_ALERT : STC_FRONT;
+        else {
+            if (f->icons < 255)
+                f->icons++;
+            cls = f->phase == STP_ALERT ? STC_ALERT : STC_ICONS;
+        }
     }
-    if (f->phase == STP_START)
-        return -1;
-    /* status bar: entirely in the top ~1/16; dock: entirely in the bottom quarter */
-    if (y1 <= vp[1] + h / 16 || y0 >= vp[1] + h - h / 4)
-        return f->phase == STP_ALERT ? STC_ALERT : STC_FRONT;
-    if (f->icons < 255)
-        f->icons++;
-    return f->phase == STP_ALERT ? STC_ALERT : STC_ICONS;
+    if (cls >= 0 && f->stamps < 255)
+        f->stamps++;
+    return cls;
 }
 
-/* The frame keeps its class map only if it really is the home screen. */
+/* The frame keeps its class map only if it really is the home screen. At
+   least a few draws must actually have stamped a class: a phase reached by
+   counting small draws alone, with no stamps, is not a class map. */
 static inline int stereo_frame_home(const stereo_frame_t *f)
 {
     return (f->phase == STP_HOME || f->phase == STP_ALERT) && f->bg &&
-           f->icons >= STEREO_MIN_ICONS;
+           f->icons >= STEREO_MIN_ICONS && f->stamps >= STEREO_MIN_ICONS;
 }
 
 /* The screen copy's frame decision: every sampled alpha byte must be a

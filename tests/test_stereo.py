@@ -66,6 +66,30 @@ int main(void) {
     cls = stereo_draw(&f, 0, 0, 319, 20, vp, 0, 1);
     CHECK(cls == STC_FRONT, "status bar band => front");
 
+    /* SpringBoard's wallpaper is a full-screen *translucent* draw: it still
+       establishes the background, so the icon grid after it is stamped */
+    stereo_frame_t f4;
+    stereo_frame_begin(&f4);
+    cls = stereo_draw(&f4, 0, 0, 319, 479, vp, 1, 0);
+    CHECK(cls == STC_BG, "translucent wallpaper still sets the background");
+    for (int i = 0; i < 6; i++)
+        stereo_draw(&f4, 10 + i * 40, 100, 40 + i * 40, 130, vp, 0, 1);
+    CHECK(stereo_frame_home(&f4), "translucent background + icons => home");
+
+    /* SpringBoard can also draw the wallpaper as small layers: the first
+       four small draws establish the background, the rest get stamped */
+    stereo_frame_t f5;
+    stereo_frame_begin(&f5);
+    for (int i = 0; i < 10; i++)
+        cls = stereo_draw(&f5, 10 + i * 30, 100, 35 + i * 30, 130, vp, 0, 1);
+    CHECK(cls == STC_ICONS, "small draws after the background are icons");
+    CHECK(stereo_frame_home(&f5), "small-draw wallpaper + icons => home");
+    stereo_frame_t f6;                  /* an app with a few small draws stays flat */
+    stereo_frame_begin(&f6);
+    for (int i = 0; i < 3; i++)
+        stereo_draw(&f6, 10 + i * 30, 100, 35 + i * 30, 130, vp, 0, 1);
+    CHECK(!stereo_frame_home(&f6), "three small draws are not a home frame");
+
     /* an opaque full-screen draw after bg flips to flat */
     stereo_frame_t f2;
     stereo_frame_begin(&f2);

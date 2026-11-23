@@ -374,8 +374,20 @@ def main():
                         u0, home_ref.convert("L"))).mean[0] > 12:
                     key("ret")
                     time.sleep(2)
-                    settled("c%03d_unlock_home" % i)
-                    u0 = shot("c%03d_unlock" % i).convert("L")
+                    u0, _ = settled("c%03d_unlock_home" % i)
+                    # Home on page 1 opens Spotlight on iOS 4 (re-log 100):
+                    # the single Home above can leave the keyboard up after a
+                    # wake, which looks exactly like a failed unlock to the
+                    # comparison below. Dismiss it the same way as in the
+                    # normal cycle path.
+                    if is_spotlight(u0):
+                        drag(280, 240, 40, 240)
+                        time.sleep(3)
+                        key("ret")
+                        time.sleep(4)
+                        u0, _ = settled("c%03d_unspotlight_unlock" % i)
+                        c["unlock_spotlight_dismissed"] = True
+                    u0 = u0.convert("L")
                 # iOS fades the screen in after an unlock (and the emulated
                 # backlight dims it): compare at the reference's brightness so
                 # only content differences count (re-log 63)

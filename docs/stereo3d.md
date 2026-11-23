@@ -66,13 +66,13 @@ when the boot-arg `ios3ds_stereo=1` is present; otherwise the flag is ignored
 and `gltest`/apps are unaffected. Each draw into the display target is
 classified by `stereo_draw()`:
 
-- the first full-screen opaque draw is the background (wallpaper, or an app
-  window when CA culls what is behind it);
+- the first full-screen draw is the background, even when its texture has
+  translucent texels (SpringBoard's wallpaper does); when the wallpaper is
+  drawn as many small layers instead, the first few small draws establish it;
 - a later full-screen opaque draw covers everything: the frame is flat (apps,
   the lock screen), nothing is stamped and the frame is wiped;
 - a later full-screen translucent draw is a backdrop: it keeps the classes
   below it, and content drawn after it (a folder or alert) becomes `STC_ALERT`;
-- a full-screen draw before any background is not stamped;
 - everything else is classified by position: the status-bar band or the dock
   band => `STC_FRONT`, otherwise the icon grid => `STC_ICONS`.
 
@@ -85,6 +85,14 @@ copy sees a uniform frame and gives both eyes the same image.
 Pass 1 is CoreAnimation's own draw, untouched. Pass 2 stamps alpha only.
 `gl_be_triangles()` runs pass 1 then, when classified, pass 2.
 
+The final CA frame normally goes straight from the render target into the
+display IOSurface through the GPU (`PICA_OP_PRESENT`, docs/gpu.md §7). That
+swizzle uses the render target's alpha byte for the surface's blue channel,
+so it would throw the class map away. With `stereo3d=1` the display target
+therefore uses the CPU read-back instead: it writes BGRA with the stamped
+alpha intact, which is what the ARM9 copy reads. Only that target takes the
+detour; with the flag off the direct GPU present is unchanged.
+
 ## 5. Real hardware: the two-eye copy and the display registers
 
 **ARM9 copy** (`boot/arm9/display.c`, `blit_top_stereo()`): one source row is
@@ -94,6 +102,18 @@ samples `x - delta(cls,k,left)`, the right eye `x + delta(cls,k,right)`,
 clamped to the source width. Both samples are packed as BGR8 (low 24 bits
 only) into `top_fb[0]` (left eye) and `top_fb[1]` (right eye). The bottom
 copy and the touch map are the ordinary `blit_bottom()`, unchanged.
+
+The two-eye copy caches one signature per screen column, taken from the
+source row that feeds it (all 320 pixels, alpha stamp included). A column
+whose row has not changed keeps the eye pixels already in the LCD buffers;
+only changed columns are rebuilt, at most 120 per copy so a frame that
+changed everywhere is finished over three copies instead of spending one
+very long turn on the ARM9. The class lookup is a 256-byte table, the eye
+offsets are looked up per class instead of computed per pixel, and the
+source row is copied with eight pixels of padding on each side so sampling
+never needs a clamp. The cache is dropped when the slider, screen mode,
+framebuffer set or `stereo3d` flag changes. `stereo3d=0` never enters this
+code; its copy is still the original byte-for-byte path.
 
 **PDC0 2D/3D switch** (`kernel/shim/pica_stereo.c`, ARM11 GPU part): the PDC
 registers are ARM11-only, so the ARM9 publishes the requested mode in the
@@ -142,7 +162,10 @@ per-draw classifier log). The ARM9 logs each stereo transition and its
 cost is the alpha-only stamp pass on home frames, one wipe quad on other
 frames, and writing both eye framebuffers instead of one; the GPU mirror is
 off in this mode, so this replaces the GPU copy rather than adding to it.
-Measured numbers from this branch are in docs/re-log.md, section 90.
+The two-eye ARM9 work is now cached per screen column (§5): only rows that
+changed are rebuilt, at most 120 columns per copy, and every 30 s the log adds
+`[monitor] stereo eye columns: N rebuilt, N reused` next to the CPU-copy
+average. Measured numbers are in docs/re-log.md, sections 90 and NEXT.
 
 ## 7. QEMU
 
@@ -202,11 +225,15 @@ stays 🧪.
 
 ## Soak status at merge (2026-11-23)
 
-- `stereo3d=0` (default): fresh-image 5-cycle `--icount 2` soak PASS (boot 85 s).
-- `stereo3d=1`, slider 255, private QEMU build: boots (80 s), both eyes and the
-  barrier come up (`[monitor] stereo 3D: both eyes ..., parallax barrier on`),
-  no panic/stall/md0/crash, but the soak's timing checks FAIL: Home often takes
-  effect after the 6 s check (recoveries "second Home", one "stuck"). In QEMU the
-  ARM9's ~150 ms two-eye copy per frame shares the emulated time with iOS; on a
-  console the ARM9 runs in parallel, so this is not a hardware prediction. Keep
-  the flag experimental until a console test (section 8) says how it feels.
+- `stereo3d=0` (default): fresh-image 5-cycle `--icount 2` soak PASS (boot 90 s).
+- `stereo3d=1`, slider 255, private QEMU build: fresh-image 5-cycle
+  `--icount 2` soak PASS (boot 80 s). Both eyes and the barrier come up
+  (`[monitor] stereo 3D: both eyes ..., parallax barrier on`), the flag-off
+  copy stays byte-for-byte the same, and there are no panic/stall/md0/crash
+  failures. The two-eye ARM9 copy now takes about 6-10 ms per blit in QEMU
+  (before: 120-186 ms), because only changed source rows are rebuilt. Some
+  cycles still need a repeated Home or a Spotlight dismissal; that is the
+  known iOS 4 home/Spotlight race in the harness, not a display stall. On a
+  console the ARM9 runs in parallel with iOS, so QEMU is not a hardware
+  prediction. Keep the flag experimental until a console test (section 8) says
+  how it feels.
