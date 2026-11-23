@@ -14,6 +14,7 @@ void blkc_init(blkcache_t *c, u8 *data, u32 *lba, u32 *map, u8 *dirty, u32 slots
     c->map = map;
     c->dirty = dirty;
     c->hits = c->misses = c->evictions = c->written = c->direct_writes = c->flushes = 0;
+    c->ndirty = 0;
     for (u32 i = 0; i < slots * 2; i++) map[i] = 0;
     for (u32 i = 0; i < slots; i++) {
         c->lba[i] = ~0u;
@@ -74,6 +75,7 @@ int blkc_put(blkcache_t *c, u32 lba, const u8 *src, blkc_write_fn wb, void *ctx)
             c->evictions++;
             c->written++;
             c->dirty[slot] = 0;
+            c->ndirty--;
         }
         if (c->lba[slot] != ~0u) {
             c->lba[slot] = ~0u;
@@ -85,6 +87,7 @@ int blkc_put(blkcache_t *c, u32 lba, const u8 *src, blkc_write_fn wb, void *ctx)
         c->hits++;
     }
     memcpy(c->data + (u32)slot * BLKC_SECTOR, src, BLKC_SECTOR);
+    if (!c->dirty[slot]) c->ndirty++;
     c->dirty[slot] = 1;
     return 0;
 }
@@ -105,6 +108,7 @@ int blkc_flush(blkcache_t *c, blkc_write_fn wb, void *ctx)
         }
         c->dirty[i] = 0;
         c->written++;
+        c->ndirty--;
     }
     if (!first_err) c->flushes++;
     return first_err;
@@ -119,15 +123,11 @@ void blkc_invalidate_range(blkcache_t *c, u32 lba, u32 count)
                dropping the overlay (the caller syncs the file later). */
             c->dirty[i] = 0;
             c->lba[i] = ~0u;
+            c->ndirty--;
             changed = true;
         }
     }
     if (changed) map_rehash(c);
 }
 
-u32 blkc_dirty(const blkcache_t *c)
-{
-    u32 n = 0;
-    for (u32 i = 0; i < c->slots; i++) n += c->dirty[i] != 0;
-    return n;
-}
+u32 blkc_dirty(const blkcache_t *c) { return c->ndirty; }

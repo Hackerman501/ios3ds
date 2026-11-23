@@ -54,23 +54,35 @@ SCRIPT = r'''#!/bin/bash
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export HOME=/var/root
 log() { echo "[cperf] $*" > /dev/console; }
+# Run one command with its stdout/stderr on the console and bash's `time`
+# (real/user/sys, i.e. the guest's own CPU split) in a [cperf] line after it.
+timed() {
+    local label=$1; shift
+    TIMEFORMAT="[cperf] $label cpu real=%3R user=%3U sys=%3S"
+    { time "$@" > /dev/console 2>&1; } 2>/tmp/cperf.time
+    local rc=$?
+    cat /tmp/cperf.time > /dev/console
+    return $rc
+}
 for i in $(seq 1 240); do
     (echo > /dev/tcp/10.0.2.2/@PORT@) 2>/dev/null && break
     sleep 1
 done
 log "network ready after ${i}s"
 OPTS="-o Dir::Etc::sourcelist=/private/etc/apt/sources.list.d/perf.list -o Dir::Etc::sourceparts=/nonexistent -o APT::Get::AllowUnauthenticated=true"
-log "refresh start"
-/usr/bin/apt-get update $OPTS > /dev/console 2>&1
-log "refresh done rc=$?"
-log "download start"
-/usr/bin/apt-get -y --download-only install $OPTS $PKG > /dev/console 2>&1
-log "download done rc=$?"
+@PRE@
 log "install start"
-/usr/bin/dpkg -i /private/var/cache/apt/archives/%s > /dev/console 2>&1
+timed dpkg-install /usr/bin/dpkg -i /private/var/cache/apt/archives/@DEB@
 log "install done rc=$?"
 log "ALL DONE"
-''' % DEB
+'''
+
+PRE_REFRESH = '''log "refresh start"
+timed apt-update /usr/bin/apt-get update $OPTS
+log "refresh done rc=$?"
+log "download start"
+timed apt-download /usr/bin/apt-get -y --download-only install $OPTS @PKG@
+log "download done rc=$?"'''
 
 PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -115,8 +127,12 @@ def dummy_fw(path):
         f.write(nwmfw.pack(parts))
 
 
-def make_deb(outdir):
-    """A tiny tweak-like package with 32 small files (dpkg fsync amplification)."""
+def make_deb(outdir, fill=0, bz2=False):
+    """A tiny tweak-like package with 32 small files (dpkg fsync amplification).
+
+    fill adds that many extra stanzas to Packages/Packages.gz (no .deb, never
+    installed): apt still parses and indexes them on `update`, which is the
+    400 MHz ARM11 cost a real Cydia source pays."""
     # build/ is on a filesystem without usable chmod(); dpkg-deb checks modes.
     tmp = tempfile.mkdtemp(prefix="ios3ds-deb-", dir="/tmp/opencode")
     root = os.path.join(tmp, "deb")
@@ -157,20 +173,36 @@ def make_deb(outdir):
                 (PKG, VERSION, DEB, os.path.getsize(deb),
                  hashlib.md5(open(deb, "rb").read()).hexdigest(),
                  hashlib.sha256(open(deb, "rb").read()).hexdigest()))
+    for i in range(fill):
+        packages += ("Package: ios3ds-perf-fill%05d\nVersion: 1.0\n"
+                     "Architecture: iphoneos-arm\n"
+                     "Maintainer: ios3ds test <test@example.invalid>\n"
+                     "Description: synthetic stanza for Packages parsing\n"
+                     " Only the index is served; no .deb exists for it.\n\n" % i)
     with open(os.path.join(outdir, "Packages"), "w") as f:
         f.write(packages)
     gz = gzip.compress(packages.encode(), mtime=0)
     with open(os.path.join(outdir, "Packages.gz"), "wb") as f:
         f.write(gz)
+    files = [("Packages", packages.encode()), ("Packages.gz", gz)]
+    if bz2:
+        # apt 0.7 prefers bz2 over gz; serving both shows the decompression
+        # cost on the ARM11 and whether Acquire::CompressionTypes::Order
+        # (shipped as gz in 99ios3ds-speed) avoids it.
+        import bz2 as bz2mod
+        body = bz2mod.compress(packages.encode(), compresslevel=9)
+        with open(os.path.join(outdir, "Packages.bz2"), "wb") as f:
+            f.write(body)
+        files.append(("Packages.bz2", body))
     # apt 0.7 asks for Release first; without it rc=100 even with
-    # AllowUnauthenticated. Hashes are for the two index files only.
+    # AllowUnauthenticated. Hashes are for the index files only.
     rel = ["Origin: ios3ds-local-test", "Label: ios3ds-local-test",
            "Suite: stable", "Codename: stable", "Architectures: iphoneos-arm",
            "Components: main", "Description: local timing-only repository"]
     for field, fn in (("MD5Sum", lambda b: hashlib.md5(b).hexdigest()),
                       ("SHA256", lambda b: hashlib.sha256(b).hexdigest())):
         rel.append(field + ":")
-        for name, body in (("Packages", packages.encode()), ("Packages.gz", gz)):
+        for name, body in files:
             rel.append(" %s %d %s" % (fn(body), len(body), name))
     with open(os.path.join(outdir, "Release"), "w") as f:
         f.write("\n".join(rel) + "\n")
@@ -182,7 +214,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         name = os.path.basename(path)
         full = os.path.join(self.server.repo, name)
-        if name not in (DEB, "Packages", "Packages.gz", "Release") or not os.path.exists(full):
+        if name not in (DEB, "Packages", "Packages.gz", "Packages.bz2", "Release") or \
+                not os.path.exists(full):
             self.send_error(404)
             return
         body = open(full, "rb").read()
@@ -196,7 +229,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print("[http] %s" % (fmt % args), flush=True)
 
 
-def patch_image(sd, out, port, hfs_tool):
+def patch_image(sd, out, port, hfs_tool, apt_extra="", ioprof=1, skip_refresh=False,
+                extra_source=""):
     """Put wifi, timing daemon, source list and repo files on the image."""
     hfs = os.path.join(out, "rootfs-perf.hfs")
     # extract the HFS+ volume from the FAT partition. -b is essential: mtype's
@@ -210,8 +244,10 @@ def patch_image(sd, out, port, hfs_tool):
         return run(hfs_tool, hfs, *args)
     script = os.path.join(out, "ios3ds-cydia-perf")
     plist = os.path.join(out, "com.ios3ds.cydia-perf.plist")
+    pre = 'log "refresh skipped (--skip-refresh)"' if skip_refresh else PRE_REFRESH
     with open(script, "w") as f:
-        f.write(SCRIPT.replace("@PORT@", str(port)))
+        f.write(SCRIPT.replace("@PRE@", pre).replace("@PORT@", str(port))
+                .replace("@PKG@", PKG).replace("@DEB@", DEB))
     with open(plist, "w") as f:
         f.write(PLIST)
     h("rm", "/usr/libexec/ios3ds-cydia-perf")
@@ -223,9 +259,18 @@ def patch_image(sd, out, port, hfs_tool):
     source = os.path.join(out, "perf.list")
     with open(source, "w") as f:
         f.write("deb http://10.0.2.2:%d/repo ./\n" % port)
+        if extra_source:
+            f.write(extra_source.rstrip("\n") + "\n")
     h("rm", "/private/etc/apt/sources.list.d/perf.list")
     h("add", source, "/private/etc/apt/sources.list.d/perf.list")
     h("chmod", "644", "/private/etc/apt/sources.list.d/perf.list")
+    if apt_extra:
+        extra = os.path.join(out, "99zzios3ds-perf")
+        with open(extra, "w") as f:
+            f.write(apt_extra if apt_extra.endswith("\n") else apt_extra + "\n")
+        h("rm", "/private/etc/apt/apt.conf.d/99zzios3ds-perf")
+        h("add", extra, "/private/etc/apt/apt.conf.d/99zzios3ds-perf")
+        h("chmod", "644", "/private/etc/apt/apt.conf.d/99zzios3ds-perf")
     h("mkdir", "/private/var/cache/apt/archives")
     h("rm", "/private/var/cache/apt/archives/" + DEB)
     h("add", os.path.join(out, DEB), "/private/var/cache/apt/archives/" + DEB)
@@ -248,7 +293,7 @@ def patch_image(sd, out, port, hfs_tool):
         subprocess.run(["mtype", "-b", "-i", "%s@@%d" % (sd, PART), "::/ios3ds/boot.cfg"],
                        stdout=f, check=True)
     with open(boot, "a") as f:
-        f.write("\nlog_ts=1\nioprof=1\n")
+        f.write("\nlog_ts=1\nioprof=%d\n" % ioprof)
     mtools(sd, "mcopy", "-b", "-o", boot, "::/ios3ds/boot.cfg")
 
 
@@ -270,16 +315,28 @@ def main():
     ap.add_argument("--icount", default="2")
     ap.add_argument("--time", type=float, default=1500, help="wall-clock timeout in seconds")
     ap.add_argument("--port", type=int, default=0, help="host port (0 = random free high port)")
+    ap.add_argument("--fill", type=int, default=0,
+                    help="extra synthetic Packages stanzas (apt parse/index cost)")
+    ap.add_argument("--bz2", action="store_true",
+                    help="also serve Packages.bz2 (apt 0.7 prefers it over gz)")
+    ap.add_argument("--apt-extra", default="",
+                    help="extra apt.conf text, installed as 99zzios3ds-perf (overrides 99ios3ds-speed)")
+    ap.add_argument("--ioprof", type=int, default=1, help="md0 profile level (1 or 2)")
+    ap.add_argument("--extra-source", default="",
+                    help="extra line for perf.list (e.g. a dead default source)")
+    ap.add_argument("--skip-refresh", action="store_true",
+                    help="only dpkg -i the preloaded .deb (isolates install time)")
     ap.add_argument("--no-boot", action="store_true", help="prepare the image and server only")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    make_deb(a.out)
+    make_deb(a.out, a.fill, a.bz2)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     srv.repo = a.out
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print("[cperf] HTTP repo on 127.0.0.1:%d (guest 10.0.2.2:%d)" % (port, port), flush=True)
-    patch_image(a.sd, a.out, port, a.hfsplus)
+    patch_image(a.sd, a.out, port, a.hfsplus, a.apt_extra, a.ioprof, a.skip_refresh,
+                a.extra_source)
     if a.no_boot:
         return 0
     sock = os.path.join(a.out, "qmp.sock")

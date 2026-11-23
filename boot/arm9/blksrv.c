@@ -280,9 +280,16 @@ bool blksrv_poll(void)
     UINT bx = 0;
     if (cnt == 0 || cnt * 512 > SHIM_BOUNCE_SIZE || (u64)lba + cnt > m->dev_sectors) {
         st = 1000;
+    } else if (op == BLK_READ && !blkc_dirty(&cache)) {
+        /* No overlay at all: one f_read for the whole request. The dirty hash
+           lookup per read sector would cost more ARM9 time than the
+           write-back cache saves (docs/boot-perf.md 8). */
+        FRESULT r = f_lseek(&f, (FSIZE_t)lba * BLKC_SECTOR);
+        if (r == FR_OK) r = f_read(&f, BOUNCE, cnt * BLKC_SECTOR, &bx);
+        if (r != FR_OK) st = (int)r;
+        else if (bx != cnt * BLKC_SECTOR) st = 1001;
     } else if (op == BLK_READ) {
-        /* most reads miss the cache: one f_read for the whole request. If a
-           dirty sector is in the overlay, read the runs around it and copy
+        /* A dirty sector is in the overlay: read the runs around it and copy
            the cached sector into the bounce buffer. */
         u32 done = 0;
         while (done < cnt && !st) {

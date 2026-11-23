@@ -21,6 +21,7 @@ typedef struct {
     u32 *map;               /* 2 * slots open-addressing index, slot+1 or 0 */
     u8 *dirty;
     u32 hits, misses, evictions, written, direct_writes, flushes;
+    u32 ndirty;             /* dirty slots: blkc_dirty() and the read fast path are O(1) */
 } blkcache_t;
 
 void blkc_init(blkcache_t *c, u8 *data, u32 *lba, u32 *map, u8 *dirty, u32 slots);
@@ -31,8 +32,8 @@ bool blkc_dirty_lba(const blkcache_t *c, u32 lba);
 /* Cache one sector; evicts (and writes back) a victim if needed.
    Returns 0 or the writeback callback's error. */
 int blkc_put(blkcache_t *c, u32 lba, const u8 *src, blkc_write_fn wb, void *ctx);
-/* Write back every dirty sector, oldest-LBA first. Returns 0 or the first
-   callback error; sectors that failed stay dirty for the next flush. */
+/* Write back every dirty sector (one linear pass, slot order). Returns 0 or
+   the first callback error; sectors that failed stay dirty for the next flush. */
 int blkc_flush(blkcache_t *c, blkc_write_fn wb, void *ctx);
 /* Drop overlays superseded by a write that bypasses the cache. */
 void blkc_invalidate_range(blkcache_t *c, u32 lba, u32 count);
