@@ -108,6 +108,7 @@ test:
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_cpad tools/ios3ds-input/tests/test_cpad.c && $(BUILD)/test_cpad
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_n3ds tools/ios3ds-input/tests/test_n3ds.c && $(BUILD)/test_n3ds
 	$(CC) -Wall -Wextra -O1 -Iboot/common -o $(BUILD)/test_als tests/test_als.c -lm && $(BUILD)/test_als
+	$(PYTHON) scripts/check-stub-symbols.py
 
 release:
 	$(PYTHON) scripts/mkrelease.py $(if $(VERSION),--version $(VERSION))
