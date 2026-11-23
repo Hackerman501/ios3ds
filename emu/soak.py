@@ -10,6 +10,7 @@ Writes build/emu/soak/report.md + report.json, one screenshot per cycle
 (upright iOS view) and the final log. Exit status 1 if any check failed.
 """
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -57,6 +58,32 @@ def read_log(sd):
     return r.stdout
 
 
+def soak_slot(slots=2):
+    """Hold one of `slots` machine-wide soak slots (flock, released when the
+    process exits). Many parallel soaks overload the host: --icount guests then
+    boot in 8 minutes instead of 1 and the screenshot checks fail. Waits for a
+    free slot; IOS3DS_SOAK_SLOTS overrides the count, 0 disables the lock."""
+    slots = int(os.environ.get("IOS3DS_SOAK_SLOTS", slots))
+    if slots <= 0:
+        return None
+    d = os.path.join(os.path.expanduser("~"), ".cache", "ios3ds-soak")
+    os.makedirs(d, exist_ok=True)
+    t = time.time()
+    while True:
+        for n in range(slots):
+            f = open(os.path.join(d, "slot%d.lock" % n), "w")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if time.time() - t > 1:
+                    print("[soak] got soak slot %d after %.0f s" % (n, time.time() - t), flush=True)
+                return f
+            except OSError:
+                f.close()
+        if time.time() - t < 1:
+            print("[soak] all %d soak slots busy (other worktrees); waiting" % slots, flush=True)
+        time.sleep(10)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
@@ -84,6 +111,7 @@ def main():
            "-display", "none", "-qmp", "unix:%s,server,nowait" % sock]
     if a.icount:
         cmd += ["-icount", "shift=%s,sleep=off" % a.icount]
+    slot = soak_slot()  # noqa: F841 (held until exit)
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     q = viewer.QMP(sock)
     t0 = time.time()
@@ -169,9 +197,13 @@ def main():
                 home_ref = img
                 break
             prev = img
+        dark_ref = False
         if home_ref is None:
-            log("no stable, non-black home screen within 300 s")
-            home_ref = prev
+            # A busy host can keep the first frame black for minutes. Comparing
+            # later, lit screenshots with a black reference reports every cycle
+            # as "not home"; re-acquire once the display comes up instead.
+            log("no stable, non-black home screen within 300 s; re-acquiring later")
+            home_ref, dark_ref = prev, True
         for i in range(a.cycles):
             x, y = targets[i % len(targets)]
             c = {"cycle": i, "tap": [x, y]}
@@ -215,6 +247,12 @@ def main():
             # animation halfway, then the recovery's second Home opens Spotlight
             home, t_wait = settled("c%03d_home" % i)
             c["home_wait"] = round(t_wait, 1)
+            if dark_ref and ImageStat.Stat(home.convert("L")).mean[0] > 20:
+                # the display finally came up: this shot is just after Home,
+                # so it is a valid home reference from now on
+                home_ref, dark_ref = home.copy(), False
+                c["home_reference_reacquired"] = True
+                log("cycle %d: re-acquired a lit home screen reference" % i)
             diff = ImageStat.Stat(ImageChops.difference(home.convert("L"), home_ref.convert("L"))).mean[0]
             c["home_diff"] = round(diff, 2)
             c["app_diff"] = round(app_diff, 2)
@@ -222,8 +260,11 @@ def main():
             # a Home press seen as a hold shows the "Edit Home Screen" alert
             # (needs Dismiss). Recover, but record what it took.
             def dist():
+                # wait for the screen to settle: a fixed sleep was too short on
+                # a busy host (Spotlight still sliding away when compared)
+                img, _ = settled("c%03d_recover" % i, first=2.0)
                 return ImageStat.Stat(ImageChops.difference(
-                    shot("c%03d_recover" % i).convert("L"), home_ref.convert("L"))).mean[0]
+                    img.convert("L"), home_ref.convert("L"))).mean[0]
             if diff > 12:
                 c["recovered_with"] = "stuck"
                 for step, act in (("second Home", lambda: key("ret")),
@@ -242,7 +283,10 @@ def main():
                         break
             if i % 4 == 3:                      # page swipes there and back
                 drag(280, 240, 40, 240)
-                time.sleep(3)
+                # the second swipe must start on page 2: on a busy host a fixed
+                # 3 s ran it while page 1 was still showing, which opened
+                # Spotlight (soak FAIL 'stuck' with the keyboard up)
+                settled("c%03d_swipe" % i)
                 drag(40, 240, 280, 240)
                 # until the page has stopped moving: a tap on a scrolling page
                 # only stops it, and with the CA frames presented on the GPU
