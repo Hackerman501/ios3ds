@@ -258,6 +258,24 @@ Safari's bookmarks view turns to landscape, to the other landscape, and back
 to portrait in the screenshots. SpringBoard and the home screen behave as
 before (the home screen does not rotate on an iPod touch).
 
+**Issue #1: the missing 180° rotation.** Checked again with `build/emu-rot2`
+(Safari open, `mcu-orient` set to 0/1/2/3 in turn, 40 s apart):
+```
+[mcud] SpringBoard device orientation 0 -> 1
+[mcud] SpringBoard device orientation 1 -> 4
+[mcud] SpringBoard device orientation 4 -> 2     (pose 2 = upside down)
+[mcud] SpringBoard device orientation 2 -> 3
+```
+So `UIDeviceOrientationPortraitUpsideDown = 2` **is** reported by our
+accelerometer path: pose 2 is MCU x = −1 g, which the shared axis map
+(`boot/common/accel_axes.h`, host-tested in `tests/test_orientation.py`) turns
+into iOS y = +1 g. No mapping fix was needed. The screenshots show that the
+*app* stays upright for orientations 2 and 4 and turns only for 3: that is
+iOS 4 on an iPod touch, where SpringBoard never rotates the home screen and
+each app decides which of the orientations it reports it will draw. The
+camera app, games and other apps that accept upside-down get state 2; if a
+built-in view does not use it, that is Apple's UI, not a missing sensor event.
+
 Kill switch: `mcu_acc=0` in boot.cfg. The shim then answers the driver's
 probe with kIOReturnNoDevice, so no accelerometer service exists. Without a
 working MCU it does the same.

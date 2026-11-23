@@ -35,6 +35,7 @@
 #include "ios3ds.h"
 #include "mcu_proto.h"
 #include "backlight.h"
+#include "accel_axes.h"
 
 /* ---- kernel KPIs (Thumb unless noted) ---------------------------------- */
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
@@ -366,17 +367,18 @@ static int nub_is_acc(void *nub)
     return 0;
 }
 
-/* newest MCU sample -> LIS302DL counts in iOS device axes (iOS x = -3DS y,
-   y = -3DS x, z = -3DS z; docs/mcu.md section 5). The sign of y was flipped
-   after the first hardware test: landscape was right, portrait upside down. */
+/* newest MCU sample -> LIS302DL counts. The axis map (including the y sign
+   fixed after the first hardware test) is shared with the host orientation
+   test in boot/common/accel_axes.h; all four portrait/landscape poses,
+   including the 180 degree one, are checked there. */
 static void acc_sample(int8_t out[3])
 {
     volatile mcubox_t *b = BOX;
     int v[3], g;
+    int16_t raw[3];
     dinval(b->acc, 32);
-    v[0] = -b->acc[1];
-    v[1] = -b->acc[0];
-    v[2] = -b->acc[2];
+    raw[0] = b->acc[0]; raw[1] = b->acc[1]; raw[2] = b->acc[2];
+    ios_accel_axes(raw, v);
     g = (int)isqrt((u32)(v[0] * v[0]) + (u32)(v[1] * v[1]) + (u32)(v[2] * v[2]));
     if (g > 64)
         acc_g = acc_g ? acc_g - (acc_g >> 4) + ((u32)g >> 4) : (u32)g;
