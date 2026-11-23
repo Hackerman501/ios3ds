@@ -1444,11 +1444,8 @@ register-level source is unverified on hardware.**
   unfinished in the interim; these final runs complete them.
 
 ## 89. Experimental stereoscopic 3D home screen (2026-11-22)
-Design: docs/stereo3d.md. Status: experimental, emulator only, off by default.
-
-## 89. Experimental stereoscopic 3D home screen (2026-11-22)
 Design: docs/stereo3d.md. Status: experimental, off by default; the hardware
-path described in section 86 is implemented but still needs a console test.
+path described in section 90 is implemented but still needs a console test.
 
 - **Mechanism:** CoreAnimation composites SpringBoard through our GL engine
   (`tools/ios3ds-gl`), which stamps a depth class into the composed frame's
@@ -1470,8 +1467,8 @@ path described in section 86 is implemented but still needs a console test.
 - **Tests:** `make test` passes (host tests for the depth/offset logic);
   soak with the flag off and on both PASS.
 
-## 86. Stereoscopic 3D on real hardware: two eyes and the parallax barrier (2026-11-22)
-Review of section 85 found that `stereo3d=1` only made the display slower on
+## 90. Stereoscopic 3D on real hardware: two eyes and the parallax barrier (2026-11-22)
+Review of section 89 found that `stereo3d=1` only made the display slower on
 an actual console: the ARM9 copied one image to both top-screen framebuffers,
 the top LCD stayed in 2D mode and nothing ever enabled the parallax barrier.
 This section closes that gap. The verdict on a console is still pending; the

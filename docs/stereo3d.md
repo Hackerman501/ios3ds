@@ -142,7 +142,7 @@ per-draw classifier log). The ARM9 logs each stereo transition and its
 cost is the alpha-only stamp pass on home frames, one wipe quad on other
 frames, and writing both eye framebuffers instead of one; the GPU mirror is
 off in this mode, so this replaces the GPU copy rather than adding to it.
-Measured numbers from this branch are in docs/re-log.md, section 86.
+Measured numbers from this branch are in docs/re-log.md, section 90.
 
 ## 7. QEMU
 

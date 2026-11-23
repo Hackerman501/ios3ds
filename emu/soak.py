@@ -91,7 +91,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "emu", "soak"))
     ap.add_argument("--cycles", type=int, default=40)
     ap.add_argument("--boot-timeout", type=float, default=1200)
-    ap.add_argument("--settle", type=float, default=35, help="seconds an app gets after its tap (busy hosts need longer than 15)")
+    ap.add_argument("--settle", type=float, default=15, help="seconds an app gets after its tap")
     ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--icount", default="")
     ap.add_argument("--slider3d", type=int, default=-1,
@@ -135,7 +135,7 @@ def main():
         img.save(os.path.join(a.out, name + ".png"))
         return img
 
-    def settled(name, first=4.0, limit=90.0):
+    def settled(name, first=4.0, limit=30.0):
         """screenshot once two shots 2 s apart (after `first` s) are the same
         and lit: a still-black screen (backlight fading in after an unlock)
         would otherwise pass here and fail the unlock comparison"""
@@ -153,7 +153,7 @@ def main():
             prev, bright = img, b
         return prev, time.time() - t_start
 
-    def tap(x, y, hold=0.5):
+    def tap(x, y, hold=0.15):
         dx, dy = viewer.ios_to_display(x / 320.0, y / 480.0)
         q.pointer(dx, dy, True)
         time.sleep(hold)
@@ -174,7 +174,7 @@ def main():
         time.sleep(0.05)
         q.pointer(dx, dy, False)
 
-    def key(qcode, hold=0.5):
+    def key(qcode, hold=0.2):
         q.key(qcode, True)
         time.sleep(hold)
         q.key(qcode, False)
