@@ -181,8 +181,8 @@ static const Mat4 *mvp_get(GC *gc)
 /* Transform vertices [lo, hi] of the enabled arrays into gc->vcache[0 .. hi-lo]. */
 static int transform(GC *gc, int lo, int hi)
 {
-    Fetch fv, fc, fn, ft[MAX_TEX_UNITS];
-    int has_c, has_n, has_t[MAX_TEX_UNITS], use_t[MAX_TEX_UNITS], i, u, n = hi - lo + 1;
+    Fetch fv, fc, fn, ft[MAX_TEX_UNITS], fi, fw;
+    int has_c, has_n, has_t[MAX_TEX_UNITS], use_t[MAX_TEX_UNITS], has_pal, i, u, n = hi - lo + 1;
     float rect_w[MAX_TEX_UNITS], rect_h[MAX_TEX_UNITS];
     const Mat4 *mvp = mvp_get(gc), *mv = &gc->mv[gc->mv_depth];
     float nm[9];
@@ -202,6 +202,8 @@ static int transform(GC *gc, int lo, int hi)
     }
     has_c = fetch_init(gc, &fc, &gc->a_color);
     has_n = gc->lighting && fetch_init(gc, &fn, &gc->a_normal);
+    has_pal = gc->a_matrix_idx.enabled && gc->a_weight.enabled &&
+              fetch_init(gc, &fi, &gc->a_matrix_idx) && fetch_init(gc, &fw, &gc->a_weight);
     for (u = 0; u < MAX_TEX_UNITS; u++) {
         Tex *tx = gl_bound_tex(gc, u);
         use_t[u] = gc->tu[u].enabled;
@@ -213,8 +215,34 @@ static int transform(GC *gc, int lo, int hi)
         normal_matrix(mv, nm);
     out = gc->vcache;
     for (i = 0; i < n; i++, out++) {
-        float p[4] = {0, 0, 0, 1}, c[4], eye[3] = {0, 0, 0};
+        float p[4] = {0, 0, 0, 1}, c[4], eye[3] = {0, 0, 0}, pn[3] = {0, 0, 0};
+        int has_pn = 0;
         fetch(&fv, lo + i, p, 0);
+        if (has_pal) {
+            /* OES_matrix_palette: blend up to four object-space matrices
+               with the per-vertex indices and weights, then use the blended
+               position / normal as if it came from the vertex arrays. */
+            float idx[4] = {0, 0, 0, 0}, wt[4] = {0, 0, 0, 0}, bp[4] = {0, 0, 0, 0}, bn[3] = {0, 0, 0};
+            int k, j;
+            fetch(&fi, lo + i, idx, 0);
+            fetch(&fw, lo + i, wt, 0);
+            for (k = 0; k < gc->a_matrix_idx.size && k < 4; k++) {
+                int mi = (int)idx[k];
+                const Mat4 *m;
+                if (mi < 0 || mi >= MAX_PALETTE_MATRICES)
+                    continue;
+                m = &gc->palette[mi];
+                for (j = 0; j < 4; j++)
+                    bp[j] += wt[k] * (m->m[j] * p[0] + m->m[4 + j] * p[1] +
+                                      m->m[8 + j] * p[2] + m->m[12 + j] * p[3]);
+                for (j = 0; j < 3; j++)
+                    bn[j] += wt[k] * (m->m[j] * p[0] + m->m[4 + j] * p[1] +
+                                      m->m[8 + j] * p[2] + m->m[12 + j] * p[3]);
+            }
+            memcpy(p, bp, sizeof p);
+            memcpy(pn, bn, sizeof pn);
+            has_pn = 1;
+        }
         out->x = mvp->m[0] * p[0] + mvp->m[4] * p[1] + mvp->m[8] * p[2] + mvp->m[12] * p[3];
         out->y = mvp->m[1] * p[0] + mvp->m[5] * p[1] + mvp->m[9] * p[2] + mvp->m[13] * p[3];
         out->z = mvp->m[2] * p[0] + mvp->m[6] * p[1] + mvp->m[10] * p[2] + mvp->m[14] * p[3];
@@ -231,7 +259,9 @@ static int transform(GC *gc, int lo, int hi)
             memcpy(c, gc->color, sizeof c);
         if (gc->lighting) {
             float nv[3], ne[3];
-            if (has_n)
+            if (has_pn)
+                memcpy(nv, pn, sizeof nv);
+            else if (has_n)
                 fetch(&fn, lo + i, nv, 1);
             else
                 memcpy(nv, gc->normal, sizeof nv);

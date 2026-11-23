@@ -19,6 +19,7 @@
 
 #include "engine.h"
 #include "gl_slots.h"
+#include "pvrtc.h"
 
 void gl_draw(GC *gc, GLenum mode, int first, int count, GLenum type, const void *indices);
 void gl_draw_tex(GC *gc, float x, float y, float z, float w, float h);
@@ -159,17 +160,23 @@ const Backend *gl_pick_backend(void)
 
 void gl_tex_drop_image(Tex *t)
 {
+    int i;
     gl_be_forget(t->px);
     if (t->surface)
         tex_release_surface(t);
     else if (t->own_px)
         free(t->px);
+    for (i = 1; i < t->n_mip; i++)
+        free(t->mip[i]);
     t->px = NULL;
     t->own_px = 0;
     t->surface = NULL;
     t->w = t->h = t->pitch = 0;
     t->base = 0;
     t->stereo_opq = 0;
+    for (i = 0; i < MAX_MIP_LEVELS; i++)
+        t->mip[i] = NULL;
+    t->n_mip = 0;
 }
 
 static Tex *tex_lookup(GC *gc, GLuint name, int create)
@@ -661,6 +668,8 @@ static Array *client_array(GC *gc, GLenum a)
     case GL_COLOR_ARRAY:            return &gc->a_color;
     case GL_TEXTURE_COORD_ARRAY:    return &gc->a_texcoord[gc->client_tex];
     case GL_POINT_SIZE_ARRAY_OES:   return &gc->a_psize;
+    case GL_MATRIX_INDEX_ARRAY_OES: return &gc->a_matrix_idx;
+    case GL_WEIGHT_ARRAY_OES:       return &gc->a_weight;
     }
     return NULL;
 }
@@ -728,6 +737,34 @@ static void api_ColorPointer(GC *gc, GLint size, GLenum type, GLsizei stride, co
 static void api_TexCoordPointer(GC *gc, GLint size, GLenum type, GLsizei stride, const GLvoid *p) { set_array(gc, &gc->a_texcoord[gc->client_tex], size, type, stride, p); }
 static void api_NormalPointer(GC *gc, GLenum type, GLsizei stride, const GLvoid *p) { set_array(gc, &gc->a_normal, 3, type, stride, p); }
 static void api_PointSizePointerOES(GC *gc, GLenum type, GLsizei stride, const GLvoid *p) { set_array(gc, &gc->a_psize, 1, type, stride, p); }
+static void api_MatrixIndexPointerOES(GC *gc, GLint size, GLenum type, GLsizei stride, const GLvoid *p)
+{
+    if (size < 1 || size > 4) {
+        gl_set_error(gc, GL_INVALID_VALUE);
+        return;
+    }
+    set_array(gc, &gc->a_matrix_idx, size, type, stride, p);
+}
+static void api_WeightPointerOES(GC *gc, GLint size, GLenum type, GLsizei stride, const GLvoid *p)
+{
+    if (size < 1 || size > 4) {
+        gl_set_error(gc, GL_INVALID_VALUE);
+        return;
+    }
+    set_array(gc, &gc->a_weight, size, type, stride, p);
+}
+static void api_CurrentPaletteMatrixOES(GC *gc, GLuint matrix)
+{
+    if (matrix >= MAX_PALETTE_MATRICES) {
+        gl_set_error(gc, GL_INVALID_VALUE);
+        return;
+    }
+    gc->palette_cur = (int)matrix;
+}
+static void api_LoadPaletteFromModelViewMatrixOES(GC *gc)
+{
+    gc->palette[gc->palette_cur] = gc->mv[gc->mv_depth];
+}
 
 /* --------------------------------------------------------- lighting, fog */
 static void xform_dir(const Mat4 *m, const float *in, float *out)
@@ -1025,6 +1062,7 @@ void gl_tex_dirty(GC *gc, Tex *t)
 static int tex_alloc(GC *gc, Tex *t, int w, int h, GLenum base)
 {
     uint32_t *px = NULL;
+    int i;
     if (w && h) {
         px = malloc((size_t)w * h * 4);
         if (!px) {
@@ -1038,6 +1076,10 @@ static int tex_alloc(GC *gc, Tex *t, int w, int h, GLenum base)
     t->w = t->pitch = w;
     t->h = h;
     t->base = base;
+    t->mip[0] = px;
+    t->n_mip = px ? 1 : 0;
+    for (i = 1; i < MAX_MIP_LEVELS; i++)
+        t->mip[i] = NULL;
     return 1;
 }
 
@@ -1102,7 +1144,8 @@ static void api_TexSubImage2D(GC *gc, GLenum target, GLint level, GLint x, GLint
     gl_tex_dirty(gc, t);
 }
 
-/* OES_compressed_paletted_texture (the one compressed format ES 1.1 requires) */
+/* OES_compressed_paletted_texture (the one compressed format ES 1.1 requires)
+   and IMG_texture_compression_pvrtc, the format iOS games actually ship. */
 static void api_CompressedTexImage2D(GC *gc, GLenum target, GLint level, GLenum ifmt, GLsizei w, GLsizei h,
                                      GLint border, GLsizei size, const GLvoid *data)
 {
@@ -1113,7 +1156,27 @@ static void api_CompressedTexImage2D(GC *gc, GLenum target, GLint level, GLenum 
     const uint8_t *s = data;
     Tex *t;
     int k, bits, n, i;
-    (void)border; (void)size;
+    (void)border;
+    if (ifmt >= GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG && ifmt <= GL_COMPRESSED_RGBA_PVRTC_2BPPV1_IMG) {
+        int fmt = (int)(ifmt - GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG);
+        int bw = fmt < PVRTC_RGB_2BPP ? 4 : 8;
+        GLsizei need = (GLsizei)((size_t)((w + bw - 1) / bw) * ((h + 3) / 4) * 8);
+        GLenum base = (fmt == PVRTC_RGBA_4BPP || fmt == PVRTC_RGBA_2BPP) ? GL_RGBA : GL_RGB;
+        if (target != GL_TEXTURE_2D || w < 8 || h < 8 || w > MAX_TEX_SIZE || h > MAX_TEX_SIZE ||
+            w % bw || h % 4 || level > 0 || !data || size < need) {
+            gl_set_error(gc, GL_INVALID_VALUE);
+            return;
+        }
+        t = gl_bound_tex(gc, gc->active_tex);
+        if (!t || !tex_alloc(gc, t, w, h, base))
+            return;
+        if (!pvrtc_decode(data, w, h, fmt, t->px)) {
+            gl_set_error(gc, GL_INVALID_VALUE);
+            return;
+        }
+        gl_tex_dirty(gc, t);
+        return;
+    }
     if (target != GL_TEXTURE_2D || ifmt < GL_PALETTE4_RGB8_OES || ifmt > GL_PALETTE8_RGB5_A1_OES) {
         gl_log("CompressedTexImage2D: unsupported format %#x", ifmt);
         gl_set_error(gc, GL_INVALID_ENUM);
@@ -1223,7 +1286,62 @@ static void api_GetTexParameterfv(GC *gc, GLenum target, GLenum pname, GLfloat *
         out[i] = (GLfloat)v[i];
 }
 
-static void api_GenerateMipmap(GC *gc, GLenum target) { (void)gc; (void)target; }
+/* OES_framebuffer_object's glGenerateMipmapOES: build a chain of box-filtered
+   levels from the base image. Both back ends still sample level 0 for
+   minification (docs/gpu.md); generating the chain is enough for games that
+   call it at load time and for apps that inspect GL_TEXTURE_MAX_LEVEL. */
+static void api_GenerateMipmap(GC *gc, GLenum target)
+{
+    Tex *t = gl_bound_tex(gc, gc->active_tex);
+    int level, w, h, pw, ph, pitch, x, y, i;
+    if (!IS_TEX_TARGET(target) || !t || !t->px) {
+        gl_set_error(gc, GL_INVALID_OPERATION);
+        return;
+    }
+    w = t->w;
+    h = t->h;
+    pw = w;
+    ph = h;
+    pitch = t->pitch;
+    for (level = 1; (pw > 1 || ph > 1) && level < MAX_MIP_LEVELS; level++) {
+        int nw = pw > 1 ? pw / 2 : 1, nh = ph > 1 ? ph / 2 : 1;
+        uint32_t *out = malloc((size_t)nw * nh * 4);
+        if (!out) {
+            gl_set_error(gc, GL_OUT_OF_MEMORY);
+            return;
+        }
+        for (y = 0; y < nh; y++)
+            for (x = 0; x < nw; x++) {
+                unsigned a = 0, r = 0, g = 0, b = 0, n = 0;
+                int j, k;
+                for (j = 0; j < 2; j++)
+                    for (k = 0; k < 2; k++) {
+                        int sx = x * 2 + k, sy = y * 2 + j;
+                        uint32_t p;
+                        if (sx >= pw || sy >= ph)
+                            continue;              /* odd sizes: clamp the edge */
+                        p = t->mip[level - 1][(size_t)sy * pitch + sx];
+                        a += p >> 24 & 255;
+                        r += p >> 16 & 255;
+                        g += p >> 8 & 255;
+                        b += p & 255;
+                        n++;
+                    }
+                out[(size_t)y * nw + x] = (a / n) << 24 | (r / n) << 16 | (g / n) << 8 | (b / n);
+            }
+        free(t->mip[level]);
+        t->mip[level] = out;
+        pw = nw;
+        ph = nh;
+        pitch = nw;
+    }
+    for (i = level; i < t->n_mip; i++) {
+        free(t->mip[i]);
+        t->mip[i] = NULL;
+    }
+    t->n_mip = level;
+    gl_tex_dirty(gc, t);
+}
 
 static void texenv_fv(GC *gc, GLenum target, GLenum pname, const GLfloat *v)
 {
@@ -1857,7 +1975,8 @@ static const char gl_extensions[] =
     "GL_OES_framebuffer_object GL_OES_rgb8_rgba8 GL_OES_depth24 GL_OES_draw_texture "
     "GL_OES_blend_subtract GL_OES_blend_func_separate GL_OES_blend_equation_separate "
     "GL_OES_mapbuffer GL_OES_point_sprite GL_OES_point_size_array GL_OES_read_format "
-    "GL_OES_compressed_paletted_texture GL_OES_texture_mirrored_repeat "
+    "GL_OES_compressed_paletted_texture GL_IMG_texture_compression_pvrtc "
+    "GL_OES_matrix_palette GL_OES_texture_mirrored_repeat "
     "GL_EXT_texture_format_BGRA8888 GL_APPLE_texture_format_BGRA8888 GL_IMG_read_format "
     "GL_IMG_texture_format_BGRA8888 GL_APPLE_texture_2D_limited_npot GL_APPLE_framebuffer_multisample "
     "GL_EXT_discard_framebuffer GL_APPLE_fence ";
@@ -1893,6 +2012,8 @@ static int get_values(GC *gc, GLenum pname, float *v, int *kind)
     case 0x84FD:              v[0] = 4; return 1;               /* GL_MAX_TEXTURE_LOD_BIAS_EXT */
     case GL_MAX_RENDERBUFFER_SIZE: v[0] = 2048; return 1;
     case GL_MAX_TEXTURE_UNITS: v[0] = MAX_TEX_UNITS; return 1;
+    case GL_MAX_VERTEX_UNITS_OES: case GL_MAX_PALETTE_MATRICES_OES: v[0] = MAX_PALETTE_MATRICES; return 1;
+    case GL_MAX_WEIGHTS_OES: v[0] = 4; return 1;
     case GL_MAX_LIGHTS: v[0] = MAX_LIGHTS; return 1;
     case GL_MAX_CLIP_PLANES: v[0] = MAX_CLIP_PLANES; return 1;
     case GL_MAX_MODELVIEW_STACK_DEPTH: v[0] = MV_STACK; return 1;
@@ -1906,11 +2027,13 @@ static int get_values(GC *gc, GLenum pname, float *v, int *kind)
     case GL_STENCIL_BITS: v[0] = 0; return 1;
     case GL_SAMPLE_BUFFERS: v[0] = 0; return 1;
     case GL_SAMPLES: v[0] = 0; return 1;
-    case GL_NUM_COMPRESSED_TEXTURE_FORMATS: v[0] = 10; return 1;
+    case GL_NUM_COMPRESSED_TEXTURE_FORMATS: v[0] = 14; return 1;
     case GL_COMPRESSED_TEXTURE_FORMATS:
         for (i = 0; i < 10; i++)
             v[i] = GL_PALETTE4_RGB8_OES + i;
-        return 10;
+        for (i = 0; i < 4; i++)
+            v[10 + i] = GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG + i;
+        return 14;
     case GL_IMPLEMENTATION_COLOR_READ_TYPE_OES: v[0] = GL_UNSIGNED_BYTE; return 1;
     case GL_IMPLEMENTATION_COLOR_READ_FORMAT_OES: v[0] = GL_BGRA_EXT; return 1;
     case GL_TEXTURE_BINDING_2D: v[0] = tu->bound; return 1;
@@ -2054,6 +2177,8 @@ GC *gl_gc_new(Share *sh)
     gc->be = gl_pick_backend();
     gc->matrix_mode = GL_MODELVIEW;
     gc->mv[0] = gc->proj[0] = mat_identity;
+    for (i = 0; i < MAX_PALETTE_MATRICES; i++)
+        gc->palette[i] = mat_identity;
     gc->mvp_dirty = 1;
     gc->depth_far = 1;
     gc->color[0] = gc->color[1] = gc->color[2] = gc->color[3] = 1;
@@ -2143,8 +2268,21 @@ int gl_unimpl(int slot)
 static int unimpl_host(void) { return gl_unimpl(-1); }
 #endif
 
+/* ES 2.0-only entry points: EAGL refuses an ES2 context before our engine is
+   reached (docs/gpu.md §1), but a game can still call one through an ES1
+   context. Fail with GL_INVALID_OPERATION, not the thunk's silent 0, so a
+   failed ES2 probe is unambiguous and an ES1 fallback keeps running. */
+static GLuint api_es2_u(GC *gc) { gl_set_error(gc, GL_INVALID_OPERATION); return 0; }
+static void api_es2_v(GC *gc) { gl_set_error(gc, GL_INVALID_OPERATION); }
+
 #define H(name, fn) {SLOT_##name, #name, (void *)(fn)}
 static const struct { unsigned short slot; const char *name; void *fn; } handlers[] = {
+    H(glCreateShader, api_es2_u), H(glCreateProgram, api_es2_u),
+    H(glShaderSource, api_es2_v), H(glCompileShader, api_es2_v),
+    H(glLinkProgram, api_es2_v), H(glUseProgram, api_es2_v),
+    H(glEnableVertexAttribArray, api_es2_v), H(glDisableVertexAttribArray, api_es2_v),
+    H(glVertexAttribPointer, api_es2_v), H(glUniform1f, api_es2_v),
+    H(glGetShaderiv, api_es2_v), H(glGetProgramiv, api_es2_v),
     H(glActiveTexture, api_ActiveTexture), H(glAlphaFunc, api_AlphaFunc), H(glAlphaFuncx, api_AlphaFuncx),
     H(glBindBuffer, api_BindBuffer), H(glBindFramebufferOES, api_BindFramebuffer),
     H(glBindRenderbufferOES, api_BindRenderbuffer), H(glBindTexture, api_BindTexture),
@@ -2190,6 +2328,9 @@ static const struct { unsigned short slot; const char *name; void *fn; } handler
     H(glLightModelf, api_LightModelf), H(glLightModelfv, api_LightModelfv), H(glLightModelx, api_LightModelx),
     H(glLightModelxv, api_LightModelxv), H(glLightf, api_Lightf), H(glLightfv, api_Lightfv),
     H(glLightx, api_Lightx), H(glLightxv, api_Lightxv), H(glLineWidth, api_LineWidth),
+    H(glCurrentPaletteMatrixOES, api_CurrentPaletteMatrixOES),
+    H(glLoadPaletteFromModelViewMatrixOES, api_LoadPaletteFromModelViewMatrixOES),
+    H(glMatrixIndexPointerOES, api_MatrixIndexPointerOES), H(glWeightPointerOES, api_WeightPointerOES),
     H(glLineWidthx, api_LineWidthx), H(glLoadIdentity, api_LoadIdentity), H(glLoadMatrixf, api_LoadMatrixf),
     H(glLoadMatrixx, api_LoadMatrixx), H(glLogicOp, api_LogicOp), H(glMapBufferOES, api_MapBuffer),
     H(glMaterialf, api_Materialf), H(glMaterialfv, api_Materialfv), H(glMaterialx, api_Materialx),

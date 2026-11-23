@@ -1713,6 +1713,8 @@ the hardware's NPOT rule.
 
 
 ## 95. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
+
+## 90. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
 The hardware summary `fill VRAM ok->ok, fill FCRAM FAIL->FAIL` describes a
 PSC limit, not a fault in our setup (run 13, docs/pica200.md §13): a fill of
 FCRAM sets the done bit and its counter, but writes nothing. Audit of every
@@ -1735,3 +1737,36 @@ stays in the model and in `[gpu-diag]`.
 `test_pica` checks both slots, 16/24/32-bit patterns and a rejected range;
 the diagnostic summary stays 0x7d (FCRAM fill still FAIL by design).
 >>>>>>> d0c5d5b (PICA: do arena fills on the CPU; PSC cannot write FCRAM)
+
+## 91. ES 1.1 compatibility for iOS 3/4 games (2026-11-23)
+Games from that era probe for a handful of ES 1.1 extensions before they
+load assets. Audit against `tools/ios3ds-gl`:
+- `OES_draw_texture`, `OES_point_sprite`/`OES_point_size_array`,
+  `OES_framebuffer_object`, `OES_mapbuffer`, separate blend func/equation and
+  `APPLE_fence` were already implemented (gpu.md §3).
+- **PVRTC** was the one texture format games actually ship that we rejected.
+  `pvrtc.c` now decodes all four `IMG_texture_compression_pvrtc` formats
+  (RGB/RGBA, 2/4 bpp) to the engine's RGBA texels in
+  `api_CompressedTexImage2D`; 4bpp endpoints, 2-bit modulation and punch-
+  through alpha follow the documented 64-bit block layout. 2bpp uses the
+  neighbouring blocks' endpoint average as its low-frequency signal (an
+  approximation, not the PowerVR reference filter). The extension string and
+  `GL_COMPRESSED_TEXTURE_FORMATS` now list the four formats.
+- **`OES_matrix_palette`**: four new entry points fill per-context palette
+  matrices and index/weight arrays; `draw.c` blends 1..4 matrices per vertex
+  in object space (in addition to modelview) for positions and normals.
+- **`glGenerateMipmapOES`** now builds a box-filtered chain (level 0 stays the
+  sampled level, as documented).
+- **ES 2.0**: `EAGLSharegroup initWithAPI:` only uses our engine for api 1,
+  so an ES2 context request is refused. Shader/program/vertex-attribute
+  entry points reached through an ES1 context now set
+  `GL_INVALID_OPERATION` instead of the dispatch stub's silent 0.
+
+Tests: `make -C tools/ios3ds-gl host-test` passes a standalone PVRTC unit
+test (hand-encoded blocks) and, on both back ends, the new gltest checks for
+PVRTC upload, extension lists, palette-driven vertex motion, mipmap
+generation and the ES2 error. `make userland` cross-builds the engine and
+iOS gltest. `ios3ds-gltest` on iOS additionally probes EAGL with api 2 and
+checks that the ES1 context remains current.
+
+Docs: gpu.md §3/§5, README's OpenGL ES limitation.

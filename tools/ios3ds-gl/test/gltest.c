@@ -504,6 +504,147 @@ static int offscreen(void)
     return st == GL_FRAMEBUFFER_COMPLETE;
 }
 
+/* Compressed textures: the extension must be advertised and 2bpp/4bpp
+   PVRTC images must decode at upload on both back ends. The blocks are
+   encoded here (no app or image files are used). */
+static void put64(uint8_t *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++)
+        p[i] = (uint8_t)(v >> (8 * i));
+}
+
+static void pvrtc_check(const char *backend)
+{
+    static const GLfloat tn[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
+    uint8_t data[64];
+    GLuint t[2];
+    GLubyte c[4];
+    const char *ext = (const char *)glGetString(GL_EXTENSIONS);
+    GLint n = 0, fmt[16];
+    int bad = 0, i, has = 0;
+    glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &n);
+    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, fmt);
+    for (i = 0; i < n && i < 16; i++)
+        if (fmt[i] >= 0x8C00 && fmt[i] <= 0x8C03)
+            has++;
+    if (!ext || !strstr(ext, "GL_IMG_texture_compression_pvrtc") || n != 14 || has != 4)
+        bad++;
+    glBindFramebufferOES(GL_FRAMEBUFFER, off_fb);
+    glViewport(0, 0, W, H);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrthof(0, W, 0, H, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_TEXTURE_2D);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexCoordPointer(2, GL_FLOAT, 0, tn);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glGenTextures(2, t);
+    for (i = 0; i < 4; i++)                 /* RGB 4bpp, endpoints both opaque red */
+        put64(data + i * 8, (uint64_t)0 | ((uint64_t)(31u << 10) << 33) |
+              ((uint64_t)1 << 48) | ((uint64_t)(31u << 9) << 49) | ((uint64_t)1 << 63));
+    glBindTexture(GL_TEXTURE_2D, t[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glCompressedTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG, 8, 8, 0, sizeof data, data);
+    quad(10, 10, 70, 70, 0);
+    glReadPixels(40, 40, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c);
+    if (abs(c[0] - 255) > 4 || c[1] > 4 || c[2] > 4)
+        bad++;
+    for (i = 0; i < 2; i++)                 /* RGB 2bpp, endpoints both blue */
+        put64(data + i * 8, ((uint64_t)31u << 33) | ((uint64_t)31u << 49));
+    glBindTexture(GL_TEXTURE_2D, t[1]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glCompressedTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG, 8, 8, 0, 16, data);
+    quad(100, 10, 160, 70, 0);
+    glReadPixels(130, 40, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c);
+    if (abs(c[2] - 255) > 4 || c[0] > 4 || c[1] > 4)
+        bad++;
+    /* a truncated PVRTC image must fail cleanly, not read past the buffer */
+    glCompressedTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG, 8, 8, 0, 8, data);
+    if (glGetError() != GL_INVALID_VALUE)
+        bad++;
+    glDeleteTextures(2, t);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisable(GL_TEXTURE_2D);
+    printf("gltest: %s: PVRTC 2bpp/4bpp decode and extension list: %s\n", backend, bad ? "FAIL" : "ok");
+    fails += bad;
+}
+
+/* OES_matrix_palette: the index/weight arrays must move the vertices, and
+   glGenerateMipmapOES must build a chain instead of logging an error. */
+static void matrix_palette_check(const char *backend)
+{
+    static const GLubyte idx[4] = {0, 0, 0, 0};
+    static const GLfloat wt[4] = {1, 1, 1, 1};
+    GLubyte at140[4] = {0, 0, 0, 0}, at40[4] = {0, 0, 0, 0};
+    const char *ext = (const char *)glGetString(GL_EXTENSIONS);
+    GLenum miperr;
+    int bad = 0;
+    glBindFramebufferOES(GL_FRAMEBUFFER, off_fb);
+    glViewport(0, 0, W, H);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrthof(0, W, 0, H, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glTranslatef(100, 0, 0);
+    glCurrentPaletteMatrixOES(0);
+    glLoadPaletteFromModelViewMatrixOES();
+    glLoadIdentity();
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_LIGHTING);
+    glColor4f(1, 1, 1, 1);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_MATRIX_INDEX_ARRAY_OES);
+    glEnableClientState(GL_WEIGHT_ARRAY_OES);
+    glMatrixIndexPointerOES(1, GL_UNSIGNED_BYTE, 0, idx);
+    glWeightPointerOES(1, GL_FLOAT, 0, wt);
+    quad(10, 10, 70, 70, 0);
+    glDisableClientState(GL_MATRIX_INDEX_ARRAY_OES);
+    glDisableClientState(GL_WEIGHT_ARRAY_OES);
+    glReadPixels(140, 40, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, at140);
+    if (at140[0] < 250 || at140[1] < 250 || at140[2] < 250)
+        bad++;                                  /* the translated quad covers (140,40) */
+    glReadPixels(40, 40, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, at40);
+    if (at40[0] > 5 || at40[1] > 5 || at40[2] > 5)        /* ... and not (40,40) */
+        bad++;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glGenerateMipmapOES(GL_TEXTURE_2D);
+    miperr = glGetError();
+    if (miperr != GL_NO_ERROR)
+        bad++;
+    if (!ext || !strstr(ext, "GL_OES_matrix_palette"))
+        bad++;
+    printf("gltest: %s: matrix palette (at 140:%d,%d,%d; at 40:%d,%d,%d) + mipmap (err 0x%x, ext %s): %s\n",
+           backend, at140[0], at140[1], at140[2], at40[0], at40[1], at40[2], miperr,
+           ext && strstr(ext, "GL_OES_matrix_palette") ? "yes" : "no", bad ? "FAIL" : "ok");
+    fails += bad;
+}
+
+/* An ES2-only call through an ES1 context must fail with an error instead of
+   a silent 0: games probe for ES2 and fall back to ES1 when it is refused. */
+static void es2_check(const char *backend)
+{
+    GLuint sh = glCreateShader(0x8B30);          /* GL_FRAGMENT_SHADER */
+    GLenum e = glGetError();
+    printf("gltest: %s: ES 2.0 shader request: shader %u, error 0x%x %s\n", backend, sh, e,
+           sh == 0 && e == GL_INVALID_OPERATION ? "ok" : "FAIL");
+    fails += sh != 0 || e != GL_INVALID_OPERATION;
+    glGetError();                               /* leave a clean error state */
+}
+
 #ifdef GL_HOST
 void host_gl_init(void);
 extern int setenv(const char *, const char *, int);
@@ -642,6 +783,9 @@ static void one_pass(const char *backend, const char *ppm, unsigned char *out[2]
     out[1] = grab();
     rect_texture_check(backend);
     arena_churn_check(backend);
+    pvrtc_check(backend);
+    matrix_palette_check(backend);
+    es2_check(backend);
 }
 
 int main(int argc, char **argv)
@@ -763,6 +907,16 @@ int main(int argc, char **argv)
            "mach_absolute_time %llu ticks = %.0f ms\n", rc0, last_tv_rc, e0, last_tv_errno,
            tv0.tv_sec, tv0.tv_usec, last_tv.tv_sec, last_tv.tv_usec, m1 - m0, mach_ms(m1 - m0));
     run_checks();
+    es2_check("sw");
+    {   /* a game's usual ES2 probe: EAGL must return nil, not a context our
+           ES1-only engine cannot serve; ES1 is still current afterwards */
+        id alloc2 = MSG(id (*)(id, SEL), cls, "alloc"));
+        id es2 = MSG(id (*)(id, SEL, int), alloc2, "initWithAPI:"), 2);
+        printf("gltest: EAGL ES2 context request: %s (ES1 fallback continues)\n", es2 ? "ACCEPTED" : "refused");
+        fails += es2 != NULL;
+        if (es2)
+            MSG(void (*)(id, SEL), es2, "release"));
+    }
     if (argc > 3)
         write_ppm(argv[3]);
     printf("gltest: %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
@@ -774,6 +928,8 @@ int main(int argc, char **argv)
         unsigned char *sw = grab(), *sw2, *hw;
         id ctx2;
         int before = fails;
+        pvrtc_check("sw");
+        matrix_palette_check("sw");
         draw_scene2(off_fb);
         sw2 = grab();
         setenv("IOS3DS_GL", "pica", 1);
@@ -795,6 +951,8 @@ int main(int argc, char **argv)
                 if (sw && hw)
                     compare("scene 1", sw, hw);
                 free(hw);
+                pvrtc_check("pica");
+                matrix_palette_check("pica");
                 draw_scene2(off_fb);
                 hw = grab();
                 if (sw2 && hw)

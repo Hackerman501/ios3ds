@@ -24,6 +24,9 @@
     F(void, glClearColor, (GLclampf r, GLclampf g, GLclampf b, GLclampf a), (r, g, b, a)) \
     F(void, glColor4f, (GLfloat r, GLfloat g, GLfloat b, GLfloat a), (r, g, b, a)) \
     F(void, glColorPointer, (GLint s, GLenum t, GLsizei st, const GLvoid *p), (s, t, st, p)) \
+    F(void, glCompressedTexImage2D, (GLenum t, GLint l, GLenum i, GLsizei w, GLsizei h, GLint b, GLsizei sz, const GLvoid *d), (t, l, i, w, h, b, sz, d)) \
+    F(GLuint, glCreateShader, (GLenum t), (t)) \
+    F(void, glCurrentPaletteMatrixOES, (GLuint m), (m)) \
     F(void, glCullFace, (GLenum m), (m)) \
     F(void, glDepthFunc, (GLenum f), (f)) \
     F(void, glDisable, (GLenum c), (c)) \
@@ -39,6 +42,7 @@
     F(void, glGenFramebuffersOES, (GLsizei n, GLuint *o), (n, o)) \
     F(void, glGenRenderbuffersOES, (GLsizei n, GLuint *o), (n, o)) \
     F(void, glGenTextures, (GLsizei n, GLuint *o), (n, o)) \
+    F(void, glGenerateMipmapOES, (GLenum t), (t)) \
     F(void, glDeleteTextures, (GLsizei n, const GLuint *o), (n, o)) \
     F0(GLenum, glGetError) \
     F(void, glGetIntegerv, (GLenum p, GLint *o), (p, o)) \
@@ -46,7 +50,9 @@
     F(const GLubyte *, glGetString, (GLenum n), (n)) \
     F(void, glLightfv, (GLenum l, GLenum p, const GLfloat *v), (l, p, v)) \
     F0(void, glLoadIdentity) \
+    F0(void, glLoadPaletteFromModelViewMatrixOES) \
     F(void, glMaterialfv, (GLenum f, GLenum p, const GLfloat *v), (f, p, v)) \
+    F(void, glMatrixIndexPointerOES, (GLint s, GLenum t, GLsizei st, const GLvoid *p), (s, t, st, p)) \
     F(void, glMatrixMode, (GLenum m), (m)) \
     F(void, glNormalPointer, (GLenum t, GLsizei st, const GLvoid *p), (t, st, p)) \
     F(void, glOrthof, (GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat n, GLfloat f), (l, r, b, t, n, f)) \
@@ -65,6 +71,7 @@
     F(void, glTexParameteriv, (GLenum t, GLenum p, const GLint *v), (t, p, v)) \
     F(void, glTranslatef, (GLfloat x, GLfloat y, GLfloat z), (x, y, z)) \
     F(void, glVertexPointer, (GLint s, GLenum t, GLsizei st, const GLvoid *p), (s, t, st, p)) \
+    F(void, glWeightPointerOES, (GLint s, GLenum t, GLsizei st, const GLvoid *p), (s, t, st, p)) \
     F(void, glViewport, (GLint x, GLint y, GLsizei w, GLsizei h), (x, y, w, h))
 
 #define GLTEST_DECL(ret, name, params, args) ret name params;

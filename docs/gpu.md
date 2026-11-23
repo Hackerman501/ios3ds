@@ -112,15 +112,26 @@ buffer.
 (checked against QuartzCore's import list). So is the rest of ES 1.1 common
 profile, plus `OES_framebuffer_object`, `OES_draw_texture`, `OES_point_size_array`, `OES_mapbuffer`, blend equation/func separate,
 `APPLE_fence`, the `APPLE` multisample entry points (single-sampled) and
-`EXT_discard_framebuffer` (a no-op). Paletted compressed textures are decoded.
+`EXT_discard_framebuffer` (a no-op). `OES_compressed_paletted_texture` and
+`IMG_texture_compression_pvrtc` (all four 2bpp/4bpp RGB/RGBA formats) are
+decoded to RGBA words at upload (`pvrtc.c`); 2bpp uses an averaged
+low-frequency signal rather than the PowerVR reference interpolation.
+`OES_matrix_palette` is implemented: `glCurrentPaletteMatrixOES`,
+`glLoadPaletteFromModelViewMatrixOES`, `glMatrixIndexPointerOES` and
+`glWeightPointerOES` feed a per-vertex 1..4 matrix blend in object space, in
+addition to the modelview matrix. `glGenerateMipmapOES` builds a box-filtered
+level chain, but sampling still uses level 0. ES 2.0-only entry points
+(shaders, programs, vertex attributes) set `GL_INVALID_OPERATION` instead of
+silently returning 0; `EAGLContext initWithAPI:2` is refused before our
+engine is reached, so a game's ES2 probe fails and its ES1 fallback works.
 
 **Not done:**
-- PVRTC compressed textures (`glCompressedTexImage2D` logs and fails);
-- mipmap levels > 0: minification samples the base level;
+- mipmap sampling: minification uses level 0 even after `glGenerateMipmapOES`;
 - stencil: the state is kept, but there is no stencil buffer;
 - user clip planes (the state is kept, but nothing is clipped);
 - logic op, multisampling, smooth points and lines;
-- `matrix_palette` and `weight_pointer`.
+- bit-exact PVRTC 2bpp low-frequency interpolation;
+- ES 2.0 (deliberately: ES1 games must keep running).
 
 ## 4. Back ends
 
@@ -163,6 +174,14 @@ software GPU model used to test it are described in [pica200.md](pica200.md).
 
 The test is `tools/ios3ds-gl/test/gltest.c`. It uses only the public API: an
 `EAGLContext` through the ObjC runtime, plus `gl*` from OpenGLES.framework.
+
+It also checks the ES 1.1 compatibility paths a 3/4-era game probes:
+hand-encoded PVRTC 4bpp/2bpp images, the compressed-format and extension
+lists, `OES_matrix_palette` index/weight arrays, `glGenerateMipmapOES`, and a
+clean `GL_INVALID_OPERATION` for an ES2-only shader call. The extra checks
+run after the two frame grabs, so the compared frames stay the same. On iOS
+it also asks EAGL for an ES2 context and verifies the request is refused
+before continuing on the ES1 context.
 
 1. It renders the test scene into an offscreen FBO (RGBA8 colour + DEPTH16). The
    scene has:

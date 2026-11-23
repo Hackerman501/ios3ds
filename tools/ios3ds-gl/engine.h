@@ -20,6 +20,8 @@
 #define PROJ_STACK 2
 #define TEX_STACK 2
 #define MAX_TEX_SIZE 1024
+#define MAX_PALETTE_MATRICES 16
+#define MAX_MIP_LEVELS 11
 
 typedef struct GC GC;
 
@@ -33,6 +35,8 @@ typedef struct Tex {
     GLenum min_filter, mag_filter, wrap_s, wrap_t;
     int crop[4];
     int gen_mipmap;
+    uint32_t *mip[MAX_MIP_LEVELS];  /* glGenerateMipmapOES: 0 = base image */
+    int n_mip;                      /* number of levels stored (1 = base only) */
     void *be_priv;              /* back end's copy (PICA200: texture in linear memory) */
     unsigned be_seq;            /* bumped whenever px changes */
     int rect;                   /* last bound as GL_TEXTURE_RECTANGLE (0x84F5): texcoords in texels */
@@ -159,6 +163,8 @@ struct GC {
     /* transform */
     GLenum matrix_mode;
     Mat4 mv[MV_STACK], proj[PROJ_STACK];
+    Mat4 palette[MAX_PALETTE_MATRICES];      /* OES_matrix_palette */
+    int palette_cur;
     int mv_depth, proj_depth;
     Mat4 mvp;
     int mvp_dirty;
@@ -170,6 +176,7 @@ struct GC {
     /* current values, arrays */
     float color[4], normal[3], texcoord[MAX_TEX_UNITS][4];
     Array a_vertex, a_normal, a_color, a_texcoord[MAX_TEX_UNITS], a_psize;
+    Array a_matrix_idx, a_weight;            /* OES_matrix_palette */
     GLuint array_buf, elem_buf;
     int active_tex, client_tex;
 
