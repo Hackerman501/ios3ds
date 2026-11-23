@@ -177,8 +177,15 @@ _Static_assert(offsetof(boot_args_t, deviceTreeP) == 0x30, "boot_args layout");
 #define SHIM_PANIC_REQ   0x6500u        /* offset: ARM9 writes 1 -> XNU panics with a thread dump; a
                                             cache line only the ARM9 writes (kernel/shim/entry.S) */
 #define SHIM_BLK_OFF     0x6000u        /* blkmbox_t */
-#define SHIM_BOUNCE_OFF  0x8000u        /* bounce buffer for block I/O */
-#define SHIM_BOUNCE_SIZE 0x8000u
+/* md0 bounce buffer. It used to be the upper half of the 64 KiB shim region
+   (0x80840000+0x8000, 32 KiB). There is 64 KiB of unused FCRAM between the
+   XNU log ring (0x20850000 + 256 KiB + its 16-byte header, ends 0x20890010)
+   and the Wi-Fi mailbox (NET_PA 0x208A0000); XNU maps that whole 1 MiB section
+   at PA+0x60000000, so we can use it for a 64 KiB bounce (twice the old
+   transfer size, half the mailbox round trips). Start 32 bytes into the free
+   area for cache-line maintenance and end exactly at NET_PA. */
+#define SHIM_BOUNCE_OFF  0x50020u       /* VA 0x80890020 */
+#define SHIM_BOUNCE_SIZE 0xFFE0u
 #define SHIM_RING_PA     (SHIM_PA + SHIM_SIZE)
 
 /*

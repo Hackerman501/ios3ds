@@ -2257,3 +2257,65 @@ RSA (`:18443`) and P-256 ECDSA (`:18444`) certificates; the host logged
 (`build/tlstest/shots/tls-tls-verify2-page.png`, `tls-ec-verify-page.png`).
 New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
 64. No code changed in the continuation.
+
+## 105. Cydia refresh/install time: local repo, md0 chunks, write-back (2026-11-23)
+
+- **Report:** public issue #1, New 2DS XL: adding a Cydia repository and
+  installing a tweak take "a really long time". The question was which part
+  is ours: software TLS/DNS, apt's Packages parse on the 400 MHz ARM11,
+  dpkg's `f_sync` storm on md0, the ARM9's block server, or Substrate
+  re-signing.
+- **Harness** (`emu/cydia_perf.py`): builds a 32-file `iphoneos-arm` `.deb`
+  with host `dpkg-deb -Zgzip` (no downloads), writes `Packages`, `Packages.gz`
+  and a `Release` with matching hashes, and serves them from a random high
+  host port through slirp (`http://10.0.2.2:<port>/repo`). It copies
+  `rootfs.hfs` out of a fresh `build/sd.img` with `mtype -b`, adds a launch
+  daemon (`/usr/libexec/ios3ds-cydia-perf`,
+  `com.ios3ds.cydia-perf.plist`), the source list, the `.deb` and
+  `wifi.cfg`/dummy firmware, copies the image back, boots with
+  `-icount shift=2,sleep=off`, and stops with QMP when `[cperf] ALL DONE`
+  appears in `sd:/ios3ds/log.txt`. `boot.cfg` gets `log_ts=1` and `ioprof=1`.
+  Two harness bugs bit the first runs and are fixed: `mtype` without `-b`
+  truncated the 1 GiB HFS image at the first `^Z` (only 914 MB was copied),
+  and host `dpkg-deb`'s
+  default zstd-compressed members are unreadable by iOS's dpkg 1.18
+  (`unknown compression for member 'control.tar.zst'`). The guest's bash has
+  no `ifconfig`, so network-ready is a `/dev/tcp/10.0.2.2:<port>` probe.
+- **Before** (stashed tree = `origin/main`, 215 s wall, guest times from the
+  ARM9 stamps): network ready 19.584 s; `apt-get update` 19.584→21.381 =
+  **1.797 s**; `--download-only install` 0.173 s; `dpkg -i` 21.555→24.048 =
+  **2.493 s**; total **4.463 s**, rc=0 everywhere. Host HTTP log: 404s for
+  `Release.gpg`/`Packages.bz2`/`Packages.lzma`, then 200 for `Release` and
+  `Packages.gz`. `ioprof=1`: during `dpkg -i` 618 md0 chunks, ~584 KiB
+  written, 316 ms ARM9 service time.
+- **First after run:** the new 64 KiB bounce made the shim compute
+  `secs = (0xFFE0 + 511) / 512 = 128`, i.e. 64 KiB, while the ARM9 accepts at
+  most 0xFFE0 bytes: large page-ins failed with
+  `[blk] read lba 287720 x128 ... failed (1000)` and iOS never reached
+  SpringBoard. Fixed by masking the chunk length down to a
+  whole 512-byte sector in `kernel/shim/blk.c`.
+- **Second after run** (256-slot cache, O(n²) flush, 183 ms idle): rc=0 but
+  *slower* than before (refresh 3.07 s, install 3.35 s). The `[io]` counter
+  showed 2,143 sectors written back in 29 guest seconds; sorting up to 256
+  dirty slots on every flush cost more than the saved SD commands.
+- **Final after run** (104 s wall): refresh 19.696→21.443 = **1.747 s**;
+  download **0.078 s**; `dpkg -i` 21.522→23.945 = **2.423 s**; total
+  **4.248 s** (−4.8 %). rc=0, no `[blk] ... failed`, panic or ARM9 exception.
+  During install: 556 chunks, ~612 KiB, 288 ms ARM9; the cache logged 0
+  direct writes and 0 errors. The remaining seconds are dpkg/apt CPU in
+  QEMU, where the SD is instant; the saved `f_sync` commands are worth much
+  more on the tester's card.
+- **Changes:** 64 KiB bounce in the FCRAM gap (docs/boot-perf.md §8);
+  512-sector write-back cache with deferred `f_sync`, clean-flag ordering and
+  host tests (`tests/test_blkcache.c`, `make test`); apt timeouts/retries and
+  no translation downloads in `/etc/apt/apt.conf.d/99ios3ds-speed`. The dead
+  2011 Cydia sources are still listed in Cydia, they now fail fast; HTTPS
+  root store and TLSFix are untouched.
+- **Not a cost:** no code path in our build re-signs Substrate or tweaks;
+  boot-args disable code signing (`amfi_allow_any_signature=1
+  cs_enforcement_disable=1`). DNS/TLS timings for real HTTPS repos are in
+  [certificates.md](certificates.md) §4 and are unchanged by this work.
+- **Verification:** `make test` passes (including the new cache test, the CI
+  stub-symbol check and the conflict-marker check); a fresh-image
+  `python3 emu/soak.py --cycles 5 --icount 2` after these changes printed
+  **Result: PASS**.

@@ -165,7 +165,12 @@ void shim_mdevstrategy(buf_t bp)
         while (done < total) {
             u32 n = total - done;
             if (n > SHIM_BOUNCE_SIZE) n = SHIM_BOUNCE_SIZE;
-            u32 secs = (n + 511) / 512;
+            /* The bounce area is 32-byte aligned but ends 16 bytes before the
+               Wi-Fi mailbox (SHIM_BOUNCE_SIZE = 0xFFE0): rounding *up* here
+               would send 128 sectors = 64 KiB and the ARM9 would reject the
+               request. Always transfer whole sectors that fit. */
+            n &= ~511u;
+            u32 secs = n / 512;
             int sleeping = blk_lock != 0;
             u32 xflags = bflags | (done ? 0 : 0x80000000u);
             u32 flags = sleeping ? 0 : irq_save();

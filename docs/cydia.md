@@ -239,6 +239,50 @@ still carry an armv6 (or generic ARM) slice.
   leaves `cpio 2.9-2p` "install ok installed" with `/usr/bin/cpio`.
 - `emu/soak.py --cycles 10` on the image after all of the above.
 
+## Refresh and install time (re-log NEXT)
+
+A tester on a New 2DS XL (public issue #1) reported that adding a repository
+and installing a tweak take "a really long time". QEMU with `--icount 2` can
+separate the parts; the local-repo harness `emu/cydia_perf.py` builds one small
+`.deb` itself (32 files, gzip, `iphoneos-arm`), serves `Release`/`Packages.gz`
+and the `.deb` from the host over slirp (`http://10.0.2.2:<random port>/repo`),
+and puts a temporary launch daemon in the image that times apt and dpkg with
+`[cperf] ... start/done` lines in `sd:/ios3ds/log.txt`. No third-party packages
+or internet hosts are used; the source is added before the boot, so "refresh"
+below is apt's backend work, not Cydia's URL-entry UI.
+
+Run it on a fresh image (see the script's docstring for the exact commands).
+Guest seconds from the ARM9's `log_ts=1` stamps, same image and same `.deb`
+except for the fixes:
+
+| Phase | before (`origin/main`) | after | change |
+|---|---:|---:|---:|
+| add source + `apt-get update` | 1.797 s | 1.747 s | −0.050 s |
+| download the one `.deb` | 0.173 s | 0.078 s | −0.095 s |
+| `dpkg -i` that `.deb` | 2.493 s | 2.423 s | −0.070 s |
+| **total** | **4.463 s** | **4.248 s** | **−0.215 s (−4.8 %)** |
+
+All three runs returned rc=0; no md0 errors, panic or ARM9 exception. The
+`[io]` lines during `dpkg -i` went from 618 md0 chunks / 316 ms ARM9 service
+time to 556 chunks / 288 ms with the same ~600 KiB written: the 64 KiB bounce
+removes about one mailbox round trip in ten, and the write-back cache batches
+the small writes instead of calling `f_sync` once per dpkg file. With QEMU's
+instant SD card the remaining ~2.4 s is mostly dpkg/apt CPU on the emulated
+400 MHz ARM11, so the gain here is modest; on a real card the saved `f_sync`
+commands and smaller request count matter much more (docs/boot-perf.md §5).
+
+The default Cydia sources are a separate, larger cost: three of them (ModMyi,
+ZodTTD, repo666) no longer exist, and each dead host makes apt wait for its
+connect timeout. Images now ship
+`/private/etc/apt/apt.conf.d/99ios3ds-speed` with `Acquire::http::Timeout`/
+`Acquire::https::Timeout` = 10 s, `Acquire::Retries` = 0 and
+`Acquire::Languages "none"`, so a refresh cannot spend minutes on them or
+download unused translations. HTTPS handshakes are software work (TLSFix's
+OpenSSL; [certificates.md](certificates.md) §4 measures 2–9 s per fetch), not
+something a Cydia install can avoid. **Substrate re-signing is not a cost:**
+code signing is disabled in our boot-args and dpkg only unpacks the files;
+nothing in our build re-signs a tweak.
+
 ## Known issues
 
 - **HTTPS:** the current root store ([certificates.md](certificates.md)) and

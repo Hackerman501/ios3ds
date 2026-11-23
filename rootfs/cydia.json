@@ -298,7 +298,8 @@
  ],
  "write": {
   "/.cydia_no_stash": "",
-  "/var/lib/cydia/firmware.ver": "6\n"
+  "/var/lib/cydia/firmware.ver": "6\n",
+  "/etc/apt/apt.conf.d/99ios3ds-speed": "// Cydia refresh on a 400 MHz ARM11: do not spend minutes on the 2011\n// default sources' dead hosts, and do not download translation files.\nAcquire::http::Timeout \"10\";\nAcquire::https::Timeout \"10\";\nAcquire::Retries \"0\";\nAcquire::Languages \"none\";\n"
  },
  "substrate": {
   "_comment": "Substrate's own boot hook (extrainst_ writes 'bsexec .. cynject 1 SubstrateLauncher.dylib' to /etc/launchd.conf and runs it) hangs every process launchd starts on 4.2.1, and so does a launchd-wide DYLD_INSERT_LIBRARIES (re-log 71). So Substrate is loaded by ios3ds-applog.dylib in every .app executable, SpringBoard included (SpringBoard inserts applog through its plist, apps through SBGuardMallocAlways' libgmalloc.dylib; tools/ios3ds-diag/applog.c), and by ios3ds-nettest after CFNetwork. No launchd plist names MobileSubstrate.dylib ('daemons' is empty): a (re)installed mobilesubstrate's extrainst_ strips that entry from the plists (re-log 73). cynject is diverted behind a guard that refuses pid 1, Substrate is held + pinned, and com.ios3ds.substrate-guard cleans launchd.conf at boot. docs/cydia.md",

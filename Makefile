@@ -108,6 +108,7 @@ test:
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_cpad tools/ios3ds-input/tests/test_cpad.c && $(BUILD)/test_cpad
 	$(CC) -Wall -Wextra -O1 -o $(BUILD)/test_n3ds tools/ios3ds-input/tests/test_n3ds.c && $(BUILD)/test_n3ds
 	$(CC) -Wall -Wextra -O1 -Iboot/common -o $(BUILD)/test_als tests/test_als.c -lm && $(BUILD)/test_als
+	$(CC) -Wall -Wextra -O1 -Iboot/common -Iboot/arm9 -o $(BUILD)/test_blkcache tests/test_blkcache.c boot/arm9/blkcache.c && $(BUILD)/test_blkcache
 	$(PYTHON) scripts/check-stub-symbols.py
 
 release:

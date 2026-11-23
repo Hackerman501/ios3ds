@@ -409,6 +409,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             }
         }
         drain_a11_log();
+        blksrv_tick(clk_ticks());   /* idle write-back of dirty md0 sectors */
         blksrv_prof_tick();
         if (ring && ring->magic == XNU_RING_MAGIC && ring->size) {
             u32 head = ring->head;
