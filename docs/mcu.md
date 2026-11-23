@@ -131,8 +131,14 @@ RE details: [re-log.md](re-log.md) §33–34.
   console off when the battery is empty.
 - **Backlight.** `kern.ios3ds_mcuctl` carries `{acc, backlight}` from the
   daemon. The shim maps the LCD registers with `ml_io_map(0x10202000)`, logs
-  the values Luma left, and writes `0x10 + level × (0x8F − 0x10)` to both
-  screens' backlight PWM (0 when iOS' screen is off).
+  the values Luma left, and writes `BL_PWM_MIN + level × (0x8F − BL_PWM_MIN)`
+  to both screens' backlight PWM (`BL_PWM_MIN = 0x26`, Luma's darkest readable
+  setting; 0 only when iOS' screen is off). The level floor (0.12) is applied
+  by the daemon while the screen is on, so a brightness slider at 0 still
+  leaves a readable picture, like a real iPod. `factor = 0` (lock / sleep)
+  stays level 0, which is also the ARM9's `backlight == 1` "screen off"
+  sentinel for shell open/close. Both limits live in
+  `boot/common/backlight.h` and are host-tested (`tests/test_backlight.py`).
 
 ## 5. Userland (tools/ios3ds-mcu/daemon/mcud.c)
 
@@ -144,7 +150,10 @@ polls `kern.ios3ds_mcu` every 100 ms:
 - **Brightness:** twice a second it reads `DisplayBrightness` and
   `DisplayBrightnessFactor` from SpringBoard's HID event system
   (`IOHIDEventSystemClientCopyProperty`; SpringBoard keeps its backlight
-  state there) and sends `brightness × factor` to the shim.
+  state there) and sends `brightness × factor` to the shim, clamped to at
+  least 0.12 while the screen is on (`boot/common/backlight.h`). A slider at
+  0 is reported as `[mcud] iOS brightness 0.00 x factor 1.00 -> LCD backlight
+  120/1000 (minimum)`; a factor of 0 still means screen off.
 - **Accelerometer, old route** (only with the `acc` argument; superseded by
   the kernel driver, §6.2): while the screen is on it asks the ARM9 for
   samples and sends `IOHIDEventCreateAccelerometerEvent(x, y, z)` (type 13) into
@@ -305,7 +314,7 @@ settles it on the first hardware run:
 | Writing the IRQ mask (0x18) unmasks HOME/POWER/shell events; reading 0x10 clears them | libn3ds `MCU_init` | `IRQ mask set`; `[mcud] … irq 0000000c home 1 …` after pressing HOME |
 | POWER "held" (bit 1) comes while still pressed, early enough before the MCU's own forced power-off | 3dbrew | `[mcu] POWER held: iOS power-off slider` and the slider sheet |
 | Volume slider 0x09 is 0..63 | libn3ds | `[mcud] volume slider N/63 -> iOS volume …` while moving the slider |
-| 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x10..0x8F a safe range | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
+| 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x26..0x8F a readable range (0 = off) | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
 | MCU reg 0x22 bits 2-5 switch the backlights | libn3ds `MCU_LCD_PWR_*` | closing the shell darkens both screens: `[mcu] shell closed: …; LCD backlights off` |
 | Accelerometer: reg 0x40 bit 0 enables it, 0x45-0x4A are x/y/z s16; axes as in the QEMU model (x right, y hinge, z out of the lower screen) | 3dbrew, libn3ds | `[mcu] accelerometer on`; `ios3ds-mcu: accelerometer sample #1: x y z counts (|a| = …)` (about 55 on the gravity axis, `|a|` = the MCU's 1 g); `[mcud] SpringBoard device orientation …` while turning the console in Safari. Wrong axes: the map in `acc_sample()` (tools/ios3ds-mcu/shim/mcu.c); off: `mcu_acc=0` |
 | Gyro: an ITG-3200-family chip at bus 3 / 0xD0 (Old 3DS, libn3ds "ITG-3270"), or an ST L3G at 0xD6, or something at 0xD2; the ARM9 can drive bus 3 (0x10148000) | libn3ds device table, Horizon's 14.375 LSB/(deg/s) | `[gyro] ITG-3200 family at I2C 3:d0 (WHO_AM_I 68), asleep, …` (good), `[gyro] no gyroscope on I2C bus 3` (then CoreMotion gets no rates); `gyro=0` in boot.cfg if bus 3 misbehaves |

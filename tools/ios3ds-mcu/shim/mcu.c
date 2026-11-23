@@ -34,6 +34,7 @@
  */
 #include "ios3ds.h"
 #include "mcu_proto.h"
+#include "backlight.h"
 
 /* ---- kernel KPIs (Thumb unless noted) ---------------------------------- */
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
@@ -256,8 +257,8 @@ static void ps_update(void)
 #define LCD_PA          0x10202000u
 #define LCD_ABL0        0x240u
 #define LCD_ABL1        0xA40u
-#define BL_MIN          0x10u
-#define BL_MAX          0x8Fu       /* Luma's brightest preset is 0x5F; keep headroom but stay below 0x90 */
+/* BL_PWM_MIN / BL_PWM_MAX and the iOS level floor are in backlight.h, shared
+   with ios3ds-mcud (the daemon), and host-tested in tests/test_backlight.py. */
 
 static vu32 *lcd;
 static u32 bl_luma[2], bl_cur = 0xFFFFFFFFu;
@@ -273,7 +274,7 @@ static void backlight_set(u32 level)   /* level 0..1000 (iOS brightness x factor
         IOLog("ios3ds-mcu: LCD backlight as Luma left it: top 0x%x, bottom 0x%x\n",
               (unsigned)bl_luma[0], (unsigned)bl_luma[1]);
     }
-    u32 v = level == 0 ? 0 : BL_MIN + (level > 1000 ? 1000 : level) * (BL_MAX - BL_MIN) / 1000;
+    u32 v = ios_backlight_pwm(level);   /* 0 = screen off; any lit level >= BL_PWM_MIN */
     if (v == bl_cur) return;
     bl_cur = v;
     lcd[LCD_ABL0 / 4] = v;

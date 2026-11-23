@@ -33,6 +33,7 @@
 
 #include "mcu_proto.h"
 #include "als_curve.h"
+#include "backlight.h"
 
 /* ---- libSystem ----------------------------------------------------------- */
 typedef unsigned int mach_port_t;
@@ -390,18 +391,19 @@ int main(int argc, char **argv)
             float b = -1, fa = -1;
             int hb = copy_float(k_bright, &b), hf = copy_float(k_factor, &fa);
             if (hb && !hf) fa = 1;
+            float af = als_on ? als_factor : 1.0f;
             if (hb && (fabsf(b - bright) > 0.005f || fabsf(fa - factor) > 0.005f)) {
-                say("[mcud] iOS brightness %.2f x factor %.2f%s -> LCD backlight %u/1000", b, fa,
-                    als_on ? " x auto-brightness" : "",
-                    (unsigned)(b * fa * (als_on ? als_factor : 1.0f) * 1000.0f + 0.5f));
                 bright = b;
                 factor = fa;
+                say("[mcud] iOS brightness %.2f x factor %.2f%s -> LCD backlight %u/1000%s", b, fa,
+                    als_on ? " x auto-brightness" : "",
+                    (unsigned)ios_backlight_level(b, fa * af),
+                    fa > 0.0f && b * fa * af < (float)IOS_BL_MIN_LEVEL / 1000.0f ? " (minimum)" : "");
             }
             if (hb) {
-                float l = bright * factor * (als_on ? als_factor : 1.0f);
-                if (l < 0) l = 0;
-                if (l > 1) l = 1;
-                ctl.backlight = 1 + (uint32_t)(l * 1000.0f + 0.5f);
+                /* level 0 stays "screen off" (factor 0); a slider at 0 with
+                   the screen on is clamped so the LCD is still readable. */
+                ctl.backlight = 1 + ios_backlight_level(bright, factor * af);
             } else if (bright < -0.5f && loops == 50) {
                 say("[mcud] SpringBoard reports no DisplayBrightness: LCD backlight left as Luma set it");
             }
