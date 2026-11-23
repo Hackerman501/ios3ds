@@ -1771,7 +1771,7 @@ checks that the ES1 context remains current.
 
 Docs: gpu.md §3/§5, README's OpenGL ES limitation.
 
-## 88. MBX2D: which framework prints the messages (2026-11-23)
+## 92. MBX2D: which framework prints the messages (2026-11-23)
 Every hardware log, including the New 2DS XL build 149 report, has:
 `Iterator had no matching services`, `Failed to open connection to MBX`,
 `Failed to initialized MBX2D driver (1).` — right after the first EAGL
@@ -1805,7 +1805,14 @@ build/tools/hfsplus build/staging/rootfs.hfs cat \
 
 The failure is benign in SpringBoard but not necessarily for a game that
 reaches the MBX2D path. SpringBoard's environment now sets
-`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0` in `rootfs/recipe.json`, so
-QuartzCore never probes a driver the 3DS does not have; GL compositing and
-`MBX2D_PAGE_FLIP=0` are unchanged. `tests/test_mbx2d.py` guards the recipe.
-Docs: gpu.md §8, architecture.md §SpringBoard.
+`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0` in `rootfs/recipe.json`; GL
+compositing and `MBX2D_PAGE_FLIP=0` are unchanged. A QEMU boot with those
+variables set still printed both lines (a test with `CA_ENABLE_OGL=0` also
+left our `IOS3DS_CA` GL compositor in charge), so this 8C148 QuartzCore does
+not skip the probe from those variables. The two format strings are
+therefore patched to empty in the dyld cache: `0x7707cc` (32 bytes +
+newline/NUL, MBX2D's `Failed to open connection to MBX`) and `0x47bb470`
+(40 bytes + newline/NUL, QuartzCore's `Failed to initialized MBX2D driver
+(%d).`). The callee still fails and QuartzCore still falls back; only the
+console noise is gone. `tests/test_mbx2d.py` guards the recipe and the two
+patches. Docs: gpu.md §8, architecture.md §SpringBoard.

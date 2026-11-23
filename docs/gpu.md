@@ -438,10 +438,22 @@ besides QuartzCore's layer blits.
 On hardware the failure is only logged and SpringBoard carries on, but a game
 that reaches the MBX2D path can treat the failed driver as fatal.
 
-Fix: SpringBoard's `EnvironmentVariables` in `rootfs/recipe.json` now set
-`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0`. Apps launched by SpringBoard
-inherit the environment, so QuartzCore skips the probe instead of opening a
-service that does not exist on the 3DS. `CA_ENABLE_OGL=1`,
-`MBX2D_PAGE_FLIP=0` and `IOS3DS_CA=1` are unchanged. `tests/test_mbx2d.py`
-checks the recipe. Only the native MBX2D framework's own strings were read
-from the dyld cache; no Apple binary or private file is shipped.
+Fix, in two parts (both in `rootfs/recipe.json`):
+1. SpringBoard's `EnvironmentVariables` set `CA_ENABLE_MBX2D=0` and
+   `LK_ENABLE_MBX2D=0`, so a QuartzCore version that honours them skips the
+   probe. `CA_ENABLE_OGL=1`, `MBX2D_PAGE_FLIP=0` and `IOS3DS_CA=1` are
+   unchanged.
+2. A QEMU boot with those variables set still printed both lines: this
+   8C148 QuartzCore attempts the probe regardless (the GL compositor is
+   selected by our own `IOS3DS_CA` gate, not by `CA_ENABLE_OGL`). Rather than
+   fake an `AppleMBXDevice` user client the
+   cache's two format strings are patched to empty
+   (`0x7707cc` in MBX2D, `0x47bb470` in QuartzCore, verified against the
+   bytes from the user's own cache). The init call still fails and
+   QuartzCore still falls back to the working GL/software renderer; only
+   the alarming console lines disappear. A future iOS build with a real
+   MBX2D user client does not need the patches.
+
+`tests/test_mbx2d.py` checks the recipe. Only the native MBX2D framework's
+own strings were read from the dyld cache; no Apple binary or private file
+is shipped.

@@ -183,6 +183,20 @@
  "file_patches": [
   {
    "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x7707cc",
+   "orig": "4661696c656420746f206f70656e20636f6e6e656374696f6e20746f204d42580a00",
+   "new": "00000000000000000000000000000000000000000000000000000000000000000000",
+   "why": "MBX2D: AppleMBXDevice does not exist on the 3DS, so its connection attempt can only fail; QuartzCore already falls back, make the benign failure silent (docs/gpu.md section 8)"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x47bb470",
+   "orig": "4661696c656420746f20696e697469616c697a6564204d425832442064726976657220282564292e0a00",
+   "new": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "why": "QuartzCore CA::RenderMBX2D: same missing driver; keep the working GL/software compositor fallback, drop the scary console line"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
    "offset": "0x684b894",
    "orig": "90402de904708de2",
    "new": "0000a0e31eff2fe1",
