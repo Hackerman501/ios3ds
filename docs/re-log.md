@@ -1708,7 +1708,6 @@ already includes a 48x24 CLAMP texture, compared pixel by pixel).
 Docs: [pica200.md](pica200.md) §12/§13. On a console the NPOT line should
 now say ok; if it doesn't, the fault is in padding/texcoords/tiling, not in
 the hardware's NPOT rule.
->>>>>>> ef7d952 (GPU diag: check the NPOT-to-POT workaround instead of raw NPOT textures)
 
 
 
@@ -1734,7 +1733,6 @@ stays in the model and in `[gpu-diag]`.
 `make test`: 6691 pica checks + 39 mirror checks, 0 failures; the new
 `test_pica` checks both slots, 16/24/32-bit patterns and a rejected range;
 the diagnostic summary stays 0x7d (FCRAM fill still FAIL by design).
->>>>>>> d0c5d5b (PICA: do arena fills on the CPU; PSC cannot write FCRAM)
 
 ## 97. ES 1.1 compatibility for iOS 3/4 games (2026-11-23)
 Games from that era probe for a handful of ES 1.1 extensions before they
