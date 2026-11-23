@@ -577,7 +577,7 @@ int main(int argc, char **argv)
     }
     /* The pid makes a KeepAlive restart unambiguous in a console log: a
        SpringBoard restart and an input-daemon crash otherwise print the same
-       line (re-log 91). */
+       line (re-log 100). */
     say("[input] connected to SpringBoard's HID event system (pid %d)", getpid());
 
     memset(&state, 0, sizeof state);

@@ -292,7 +292,7 @@ def main():
             # stuck app. Dismiss it before measuring (re-log 63/86).
             if is_spotlight(home):
                 # A second Home can leave Spotlight up on a loaded guest;
-                # a page swipe then Home is what dismisses it (re-log 91).
+                # a page swipe then Home is what dismisses it (re-log 100).
                 drag(280, 240, 40, 240)
                 time.sleep(3)
                 key("ret")

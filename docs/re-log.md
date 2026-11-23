@@ -1871,7 +1871,7 @@ are in the README FAQ and in mcu.md / m1-design.md.
   --cycles 5 --icount 2` on a fresh image: **Result: PASS** (5 cycles, no
   panics, stalls, crashes or md0 errors).
 
-## 91. App Store tap and power-off slider: input port lifetime, crash reports from a card (2026-11-23)
+## 100. App Store tap and power-off slider: input port lifetime, crash reports from a card (2026-11-23)
 
 - **Report** (New 2DS XL, build 149; `docs/hwlogs/n2dsxl-run1.txt` lines 816-846):
   `down 220,262`, `touch target com.apple.AppStore`, a Wi-Fi scan timeout, 21
