@@ -171,6 +171,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 ## Troubleshooting
 
 - **Logs:** every boot writes **`sd:/ios3ds/log.txt`**, and the previous one is kept as `log_prev.txt`. Please [open an issue](https://github.com/devilAPI/ios3ds/issues/new/choose) and attach `log.txt`.
+- **Crash reports:** when an app or SpringBoard dies, iOS writes a `.plist`, `.crash` or `.panic` file into `sd:/ios3ds/rootfs.hfs` at `/private/var/mobile/Library/Logs/CrashReporter`. To send them, put the SD card in your PC and run `python3 scripts/crashlogs.py /path/to/SD_CARD crash-reports` (Linux: the whole card device, e.g. `/dev/sdX`; macOS: `/dev/disk2`) or point the script at a copy of `ios3ds/rootfs.hfs`. It writes every report into `crash-reports/` and prints the file names; attach those files to the issue. It only reads the image; for a raw card image it makes a temporary 1 GiB copy of the iOS disk under `build/` (`--tmpdir` changes that), because the HFS+ editor needs a plain file. The card itself is never written. Needs `build/tools/hfsplus` (`make hfsplus`) and `mtools`.
 - **Settings:** they live in **`sd:/ios3ds/boot.cfg`**, a text file. Useful switches:
 
   | Switch | Effect |
@@ -225,6 +226,8 @@ rebooting; details and limits: [docs/location.md](docs/location.md).
 - **iOS 4.2.1 is the newest possible:** later versions need an ARMv7 CPU, and the 3DS's ARM11 is ARMv6.
 - **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out, so by default they still speak TLS 1.0 only (GitHub, Wikipedia, apple.com, … don't open there). A kernel patch can relax the sandbox (`make sd SANDBOX=1`), but then Safari runs out of memory loading TLSFix on the 128 MB device, so it is off by default ([docs/cydia.md](docs/cydia.md)). Sites with expired or untrusted certificates are refused everywhere.
 - **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. PVRTC 2bpp/4bpp textures are decoded in software, and the ES 1.1 extensions games probe (`OES_draw_texture`, `OES_point_sprite`, `OES_framebuffer_object`, `OES_matrix_palette`, mipmap generation) are implemented. There is no ES 2.0: EAGL refuses ES2 contexts and ES2-only calls fail with `GL_INVALID_OPERATION`, so games that fall back to ES1 keep running. Mipmap *sampling* still uses the base level. See [docs/gpu.md](docs/gpu.md) §3.
+- **HTTPS:** iOS 4.2.1 itself speaks TLS 1.0 at most. The pre-installed TLSFix tweak adds TLS 1.2/1.3 and EC certificates for apps that use iOS's networking (Cydia, ...), and current root certificates are added ([docs/certificates.md](docs/certificates.md)); leave it out with `--no-tlsfix`. **Safari and App Store apps** run in Apple's sandbox, which keeps Cydia Substrate (and so TLSFix) out, so by default they still speak TLS 1.0 only (GitHub, Wikipedia, apple.com, … don't open there). A kernel patch can relax the sandbox (`make sd SANDBOX=1`), but then Safari runs out of memory loading TLSFix on the 128 MB device, so it is off by default ([docs/cydia.md](docs/cydia.md)). Sites with expired or untrusted certificates are refused everywhere. The App Store icon opens the app, but the store's own requests now fail with an error (Apple's 2010-era store endpoints are gone); that is expected, and SpringBoard stays up.
+- **OpenGL ES apps and games:** 3D runs through our own OpenGL ES 1.1 engine. There is no ES 2.0 and no PVRTC textures.
 - **Tweaks (Cydia Substrate):** Substrate is pre-installed and held at its version; don't remove or "upgrade" it in Cydia. Tweaks load into SpringBoard and apps, not into system daemons (injecting into launchd hangs iOS 4.2.1 on the 3DS, so ios3ds blocks it and repairs `/etc/launchd.conf` at boot).
 - **Memory:** iOS gets the iPod's 128 MB. Big pages can fail in Safari with "Cannot allocate memory" (a retry usually works); this is being worked on. New 3DS models' extra RAM and CPU cores are not used yet.
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
@@ -296,6 +299,7 @@ Optional:
 | [wifi.md](docs/wifi.md) · [certificates.md](docs/certificates.md) | Wi-Fi driver, WPA2, iOS integration; HTTPS roots |
 | [camera.md](docs/camera.md) | cameras in Camera.app |
 | [input-design.md](docs/input-design.md) | touch, buttons, circle pad |
+| [app-matrix.md](docs/app-matrix.md) | one launch of every stock app icon in QEMU |
 | [cydia.md](docs/cydia.md) | the pre-installed Cydia |
 | [location.md](docs/location.md) | fake GPS location: boot key, runtime tool, CoreLocation hooks |
 | [re-log.md](docs/re-log.md) | the reverse-engineering log, step by step |

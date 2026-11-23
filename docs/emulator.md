@@ -122,6 +122,22 @@ or a long POWER press leaves it set, and the same image boots again
 ([mcu.md](mcu.md) §12). Each test needs a fresh `build/sd.img`:
 `rm -f build/sd.img && make sdimg`.
 
+### Crash reports from an image: `scripts/crashlogs.py`
+
+`python3 scripts/crashlogs.py build/sd.img build/crashlogs` copies every
+`*.plist`, `*.crash` and `*.panic` under `/private/var/mobile/Library/Logs/CrashReporter`
+(and the other standard CrashReporter folders) out of a QEMU SD image or a
+`rootfs.hfs`, flattening the HFS paths into a host directory. It uses
+`build/tools/hfsplus` (`make hfsplus`) and, for a raw SD image, `mcopy` to make
+a temporary copy of `::/ios3ds/rootfs.hfs` under `build/` (delete it afterwards).
+`emu/soak.py --crashlogs` runs it automatically into the soak report directory.
+`python3 emu/slider_test.py --icount 2` wakes the device, shows the power-off
+slider and cancels it twice, and fails if SpringBoard/input restarts; its
+screenshots and report go to `build/emu-slider/`.
+The same command works on a real card or a copy of its `rootfs.hfs`, so a
+console user can send the reports that explain a process crash
+([README troubleshooting](../README.md#troubleshooting)).
+
 ### Scripted debugging: `emu/gdb/`
 The Arm gdb 14.2 has no Python and the host gdb has no ARM target, so the
 scripts talk to QEMU's gdbstub directly through `emu/gdb/rsp.py`:

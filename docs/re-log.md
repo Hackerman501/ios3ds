@@ -1870,3 +1870,94 @@ are in the README FAQ and in mcu.md / m1-design.md.
   `make userland` + `rm -f build/sd.img && make sdimg` + `python3 emu/soak.py
   --cycles 5 --icount 2` on a fresh image: **Result: PASS** (5 cycles, no
   panics, stalls, crashes or md0 errors).
+
+## 91. App Store tap and power-off slider: input port lifetime, crash reports from a card (2026-11-23)
+
+- **Report** (New 2DS XL, build 149; `docs/hwlogs/n2dsxl-run1.txt` lines 816-846):
+  `down 220,262`, `touch target com.apple.AppStore`, a Wi-Fi scan timeout, 21
+  lines of `AMFI: Invalid signature but permitting execution` (the app launch),
+  then `[input] connected to SpringBoard's HID event system`. There is no
+  `panic(cpu`, no `[probe]` stall and — importantly — no
+  `[input] SpringBoard went away; restarting` line. The last line is printed
+  by `ios3ds-input` when *it* starts (`main()` in `input.c`, launchd `KeepAlive`); if
+  SpringBoard's HID port had died, the daemon would first print "went away".
+  So the reconnect alone does not prove a SpringBoard crash: the input daemon
+  died and was restarted (the finger-up event is missing from the log too).
+  The same signature appears in older hardware logs without an App Store tap:
+  run19 line 527 (right after `down 49,308`), run23 line 699 (camera start),
+  run28 line 761 (during gyrotest) — always a second `connected` with no
+  `went away`. CrashReporter reports on the user's card would name the process;
+  the new startup line includes the pid so two boots are unmistakable.
+- **Making that checkable:** `scripts/crashlogs.py IMAGE OUTDIR` reads a raw SD
+  image (FAT at 1 MiB, like `emu/session.py`), a mounted card directory or a
+  `rootfs.hfs` and copies every `*.plist`/`*.crash`/`*.panic` under
+  `/private/var/mobile/Library/Logs/CrashReporter` (plus the other standard
+  CrashReporter locations) into OUTDIR. It is shipped with releases and
+  documented in README's Troubleshooting and docs/emulator.md; `emu/soak.py
+  --crashlogs` runs it after a QEMU session. Only reads: for a raw image it
+  makes a temporary HFS copy under `build/`. Host tests cover the HFS+ header,
+  `ls` parsing, recursion and extraction from a real small HFS+ image.
+- **Fix:** the app touch path in `tools/ios3ds-input/daemon/input.c` cached the
+  frontmost app's `PurpleSystemEventPort` send right without ever releasing it
+  (`GSCopyPurpleNamedPort` returns +1, so one port name leaked per app switch),
+  reused a dead name when an app was relaunched under the same bundle id, and
+  trusted `SBFrontmostApplicationDisplayIdentifier`, which keeps returning the
+  app that just went away. With a finite 4.2.1 port-name table a misrouted hand
+  event can kill the receiving process; app launch and the power-off slider
+  (modal touch while an app is frontmost) both take that path. The daemon now
+  releases the old right (`app_port_set`), checks `MACH_PORT_TYPE_DEAD_NAME`
+  before reuse, prefers `SBSCopyFrontmostApplicationDisplayIdentifier`, and
+  routes touches to SpringBoard for 1.5 s after a HOME press, while
+  SpringBoard's frontmost state lags the close animation. A diagnostic
+  `[input] stale touch port ...` / `[input] no touch port ...` line names a
+  repeat of the original failure in a future log.
+- **Restart detection:** `emu/soak.py` used to print "SpringBoard restart" for
+  the first `[input] connected` line of every boot (re-log 63). It now fails
+  the run only when a *second* one appears, and prints the count in the report.
+- **QEMU app survey:** three 19-icon runs with the final input daemon on fresh
+  images (`emu/soak.py --unlock-first --no-extras --crashlogs --icount 2`,
+  `--targets` listing all 15 icons on page 1 plus the 4 dock slots; 12 s per
+  app, Home, wait for a settled screen). Every icon was tapped in every run;
+  no run logged a panic, process crash, watchdog, md0 error or *second*
+  `[input] connected` line. `scripts/crashlogs.py` found no CrashReporter file
+  in any of the three images — nothing crashed in QEMU, so the hardware
+  reports are still needed to name the process there. The App Store opened in
+  run 2 (`build/emu/apps-survey/c011_app.png`: the gray "Loading…" screen)
+  and Home brought the icons back; that is the expected "store servers are
+  gone" outcome. Screenshots/reports: `build/emu/soak/` (run 1),
+  `build/emu/apps-survey/` (run 2), `build/emu/apps-survey3/` (run 3).
+  Two runs had a harness-only issue: when a tap landed while SpringBoard was
+  still settling, the following Home opened Spotlight on page 1, so the next
+  few screenshots show the keyboard instead of an app. No process died; the
+  runs were not used as evidence for the affected apps.
+
+  | App (icon) | QEMU result | Notes |
+  |---|---|---|
+  | Game Center | opened | run 2, app/home diff 29/0 |
+  | Calendar | opened | run 1, 93/0 |
+  | Photos | opened | run 1, 95/4 |
+  | Contacts | opened | run 1, 96/0 |
+  | YouTube | opened | run 1, 95/2 |
+  | Stocks | opened | run 1, 45/2 |
+  | Maps | opened | run 1, 65/0; Spotlight on the next tap in runs 2/3 |
+  | Weather | opened | run 1, 41/0; Spotlight on the next tap in runs 2/3 |
+  | Notes | opened | run 1, 83/2 |
+  | Utilities (folder) | opened | run 1, 23/8 (folder close still animating) |
+  | iTunes Store | opened | run 2, 76/0 |
+  | App Store | opened, "Loading…" | run 2, 61/3; store requests fail, no restart |
+  | Settings | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home); needs a console check |
+  | Camera | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home) |
+  | Cydia | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home) |
+  | Music (dock) | opened | run 1, 95/2 |
+  | Mail (dock) | opened | run 1, 94/3 |
+  | Safari (dock) | opened | run 1, 94/2 |
+  | Videos (dock) | opened | run 2, 26/3; run 1 screenshot was still gray |
+
+- **Power-off slider:** `docs/re-log.md` §81 fixed the touch routing; this
+  change covers the restart report. On the final image, holding POWER brought
+  up the slider and tapping **Cancel** dismissed it, then the same sequence
+  ran a second time: `build/emu-session/{pre_slider,slider_cancel,slider2,
+  slider2_cancel}.png` and `build/emu-slider/` (`emu/slider_test.py --icount 2`,
+  two show/cancel rounds, `Result: PASS`, 0 panics, 0 `connected` lines beyond
+  the boot one). A later automated rerun timed out during boot because the
+  host was loaded by other emulators; it logged no crash.

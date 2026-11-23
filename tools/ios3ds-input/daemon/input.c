@@ -393,14 +393,15 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
         }
         /* Log every touch while modal: when SpringBoard covers the app its
            frontmost identifier can stay empty (QEMU), so a change-of-id test
-           alone would hide the switch to the system event port.  A cached
-           port that has become a dead name (the app exited or was relaunched
-           with the same bundle id) is re-resolved too. */
-        if (modal || strcmp(id, app_id) || (app_port && !mach_port_alive(app_port))) {
-            mach_port_t p;
+           alone would hide the switch to the system event port. Re-resolve a
+           dead port too, and force the system port during the Home grace:
+           an app-targeted hand event after Home can kill the app/SB. */
+        if (modal || grace || strcmp(id, app_id) || (app_port && !mach_port_alive(app_port))) {
             if (opt_debug && app_port && !mach_port_alive(app_port))
                 say("[input] stale touch port for %s: re-resolving", app_id[0] ? app_id : "SpringBoard");
-            p = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+            mach_port_t p = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+            if (opt_debug && id[0] && !p)
+                say("[input] no touch port for %s; using SpringBoard", id);
             app_port_set(p);
             strncpy(app_id, id, sizeof app_id - 1);
             app_id[sizeof app_id - 1] = 0;
@@ -574,7 +575,10 @@ int main(int argc, char **argv)
         sleep(2);
         return 1;                           /* launchd KeepAlive restarts us */
     }
-    say("[input] connected to SpringBoard's HID event system");
+    /* The pid makes a KeepAlive restart unambiguous in a console log: a
+       SpringBoard restart and an input-daemon crash otherwise print the same
+       line (re-log 91). */
+    say("[input] connected to SpringBoard's HID event system (pid %d)", getpid());
 
     memset(&state, 0, sizeof state);
     for (idle = 0;; idle++) {

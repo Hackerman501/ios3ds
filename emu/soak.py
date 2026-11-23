@@ -99,6 +99,9 @@ def main():
     ap.add_argument("--long-lock", type=float, default=130, help="seconds locked on every 10th cycle")
     ap.add_argument("--targets", default="", help="x,y;x,y;... iOS points to tap instead of the icon grid + dock")
     ap.add_argument("--settles", default="", help="comma list of per-cycle settle seconds (cycled)")
+    ap.add_argument("--unlock-first", action="store_true", help="press Home and slide to unlock before taking the home-screen reference (use when the image boots to a lock screen)")
+    ap.add_argument("--no-extras", action="store_true", help="skip the page swipes and lock rounds (for a one-tap-per-icon app survey)")
+    ap.add_argument("--crashlogs", action="store_true", help="run scripts/crashlogs.py on the SD image afterwards and copy CrashReporter reports into --out")
     a = ap.parse_args()
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
@@ -153,6 +156,11 @@ def main():
             prev, bright = img, b
         return prev, time.time() - t_start
 
+    def is_spotlight(img):
+        """Spotlight's light search field fills the top 40 points; the home
+        screen's status bar is dark (measured on both GPU and CPU copies)."""
+        return ImageStat.Stat(img.convert("L").crop((0, 0, 320, 40))).mean[0] > 35
+
     def tap(x, y, hold=0.15):
         dx, dy = viewer.ios_to_display(x / 320.0, y / 480.0)
         q.pointer(dx, dy, True)
@@ -193,6 +201,22 @@ def main():
         log("boot did not reach SpringBoard in %.0f s" % a.boot_timeout)
     else:
         log("SpringBoard + input up after %.0f s; waiting for a stable home screen" % booted)
+        if a.unlock_first:
+            # Some images come up locked (or with Spotlight left open): wake,
+            # slide to unlock, retry a swallowed slide, then return from any
+            # Spotlight page with a page swipe + Home (re-log 63/78).
+            key("ret")
+            time.sleep(3)
+            for attempt in range(3):
+                drag(40, 420, 300, 420, 0.8)
+                time.sleep(5)
+                if ImageStat.Stat(shot("unlock_first").convert("L")).mean[0] > 10:
+                    break
+            drag(280, 240, 40, 240)
+            time.sleep(3)
+            key("ret")
+            time.sleep(4)
+            log("unlock-first: %d slide attempt(s)" % (attempt + 1))
         # reference: not black (the screen copy may be switching to the GPU,
         # soak 3) and unchanged across two shots 5 s apart.  On a loaded host
         # with --icount 2 SpringBoard's first lit frame came ~220 s after the
@@ -264,6 +288,17 @@ def main():
                 home_ref, dark_ref = home.copy(), False
                 c["home_reference_reacquired"] = True
                 log("cycle %d: re-acquired a lit home screen reference" % i)
+            # Home on the first page opens Spotlight on iOS 4; it is not a
+            # stuck app. Dismiss it before measuring (re-log 63/86).
+            if is_spotlight(home):
+                # A second Home can leave Spotlight up on a loaded guest;
+                # a page swipe then Home is what dismisses it (re-log 91).
+                drag(280, 240, 40, 240)
+                time.sleep(3)
+                key("ret")
+                time.sleep(4)
+                home, _ = settled("c%03d_unspotlight" % i)
+                c["spotlight_dismissed"] = True
             diff = ImageStat.Stat(ImageChops.difference(home.convert("L"), home_ref.convert("L"))).mean[0]
             c["home_diff"] = round(diff, 2)
             c["app_diff"] = round(app_diff, 2)
@@ -278,7 +313,9 @@ def main():
                     img.convert("L"), home_ref.convert("L"))).mean[0]
             if diff > 12:
                 c["recovered_with"] = "stuck"
-                for step, act in (("second Home", lambda: key("ret")),
+                for step, act in (("page swipe + Home", lambda: (drag(280, 240, 40, 240),
+                                                                 time.sleep(3), key("ret"))),
+                                  ("second Home", lambda: key("ret")),
                                   ("Dismiss", lambda: tap(160, 333)),
                                   # On a slow --icount 2 host a cycle can take
                                   # longer than iOS' auto-lock: Home wakes the
@@ -292,7 +329,7 @@ def main():
                     if dist() <= 12:
                         c["recovered_with"] = step
                         break
-            if i % 4 == 3:                      # page swipes there and back
+            if not a.no_extras and i % 4 == 3:  # page swipes there and back
                 drag(280, 240, 40, 240)
                 # the second swipe must start on page 2: on a busy host a fixed
                 # 3 s ran it while page 1 was still showing, which opened
@@ -304,7 +341,7 @@ def main():
                 # QEMU's PICA200 model makes a scroll take longer than 4 s of
                 # wall time (re-log 77)
                 settled("c%03d_swipe" % i)
-            if i % 5 == 4:                      # lock, wake, slide to unlock
+            if not a.no_extras and i % 5 == 4:  # lock, wake, slide to unlock
                 key("backspace")
                 # every 10th cycle a long lock: iOS used to put the whole
                 # system to sleep ~1 min after a lock with no way to wake it
@@ -363,6 +400,12 @@ def main():
     text = read_log(a.sd)
     with open(os.path.join(a.out, "log.txt"), "w") as f:
         f.write(text)
+    if a.crashlogs:
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "crashlogs.py"),
+                            a.sd, os.path.join(a.out, "crashlogs")], capture_output=True,
+                           text=True, errors="replace")
+        log("crashlogs: %s" % (r.stdout.strip() or r.stderr.strip()))
+
     failed = booted is None
     for name, rx, is_fail in CHECKS:
         hits = [l for l in text.splitlines() if re.search(rx, l)]
@@ -370,6 +413,12 @@ def main():
                                    "failure": is_fail}
         if is_fail and hits:
             failed = True
+    # The first "[input] connected" is the boot connection, not a restart
+    # (re-log 63). A second one means SpringBoard or the input daemon died.
+    sb_restarts = results["checks"]["SpringBoard restart"]["count"] - 1
+    results["springboard_restarts"] = max(0, sb_restarts)
+    if results["springboard_restarts"]:
+        failed = True
     hb = [l for l in text.splitlines() if l.startswith("[hb] t=")]
     results["last_heartbeat"] = hb[-1] if hb else None
     # home screen not restored after Home = stuck app or broken compositor
@@ -392,6 +441,7 @@ def main():
     lines = ["# Soak report", "", "- boot to SpringBoard + input: %s" %
              ("%.0f s" % booted if booted else "**not reached**"),
              "- cycles run: %d" % len(results["cycles"]),
+             "- SpringBoard/input daemon restarts after boot: %d" % results["springboard_restarts"],
              "- not home after Home (cycle lists by what it took to recover): %s" % (rec or "never"),
              "- lock rounds not ending on the home screen (cycles 9, 19, ... lock for %g s): %s" % (a.long_lock, bad_unlock or "none"),
              "- last heartbeat: `%s`" % results["last_heartbeat"], "", "| check | count | first |", "|---|---|---|"]
