@@ -405,3 +405,43 @@ Results (QEMU, re-log 51): CA frames have 0 read-backs; render thread CPU per
 frame under `--icount 2` dropped from 19–27 ms to about 8 ms; screenshots
 match the software compositor except for the status-bar clock and moments
 where the runs are at different animation times.
+
+## 8. MBX2D: the messages in every hardware log
+
+The New 2DS XL log (and every earlier run) has:
+
+```
+Iterator had no matching services
+Failed to open connection to MBX
+Failed to initialized MBX2D driver (1).
+```
+
+The dyld cache was searched with `hfsplus cat` on `build/staging/rootfs.hfs`
+and the image table at file offset 0xa8 (362 `dyld_cache_image_info` entries,
+32 bytes each, `pathFileOffset` at +24; VA = file offset + 0x30000000). This
+attributes the messages precisely:
+
+| string | file offset / VA | image |
+|---|---|---|
+| `Iterator had no matching services`, `AppleMBXDevice`, `Failed to open connection to MBX` | 0x770c68 / 0x30770c68 and nearby | `/System/Library/PrivateFrameworks/MBX2D.framework/MBX2D` (base 0x3076a000) |
+| `Failed to initialized MBX2D driver (%d).`, `CA_ENABLE_MBX2D`, `LK_ENABLE_MBX2D`, `CA_ENABLE_OGL`, `MBX2D_PAGE_FLIP` | 0x47bfe0 / 0x347bfe0 and nearby | `/System/Library/Frameworks/QuartzCore.framework/QuartzCore` (base 0x346dc000) |
+
+So MBX2D itself prints the first two when its `IOServiceMatching("AppleMBXDevice")`
+returns nothing — the same missing service OpenGLES sees before our one-file
+string patch (§1) — and **QuartzCore** prints the third when its
+`CA::RenderMBX2D` 2D blit renderer fails to initialise. That renderer is the
+accelerated blit path CoreAnimation can pick for layer contents, images and
+video frames; it is not the GL compositor, which uses our engine instead.
+MBX2D's own strings mention `YUV420 texturing ... mbx3DQuadCopy*` and surface
+mapping, i.e. CoreVideo/IOSurface-backed video frames are a likely user,
+besides QuartzCore's layer blits.
+On hardware the failure is only logged and SpringBoard carries on, but a game
+that reaches the MBX2D path can treat the failed driver as fatal.
+
+Fix: SpringBoard's `EnvironmentVariables` in `rootfs/recipe.json` now set
+`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0`. Apps launched by SpringBoard
+inherit the environment, so QuartzCore skips the probe instead of opening a
+service that does not exist on the 3DS. `CA_ENABLE_OGL=1`,
+`MBX2D_PAGE_FLIP=0` and `IOS3DS_CA=1` are unchanged. `tests/test_mbx2d.py`
+checks the recipe. Only the native MBX2D framework's own strings were read
+from the dyld cache; no Apple binary or private file is shipped.

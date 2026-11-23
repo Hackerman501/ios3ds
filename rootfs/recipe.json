@@ -103,6 +103,8 @@
    "StandardOutPath": "/dev/console",
    "EnvironmentVariables": {
     "MBX2D_PAGE_FLIP": "0",
+    "CA_ENABLE_MBX2D": "0",
+    "LK_ENABLE_MBX2D": "0",
     "CA_ENABLE_OGL": "1",
     "IOS3DS_GL_TRACE": "1",
     "IOS3DS_CA": "1",

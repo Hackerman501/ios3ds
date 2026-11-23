@@ -1770,3 +1770,42 @@ iOS gltest. `ios3ds-gltest` on iOS additionally probes EAGL with api 2 and
 checks that the ES1 context remains current.
 
 Docs: gpu.md §3/§5, README's OpenGL ES limitation.
+
+## 88. MBX2D: which framework prints the messages (2026-11-23)
+Every hardware log, including the New 2DS XL build 149 report, has:
+`Iterator had no matching services`, `Failed to open connection to MBX`,
+`Failed to initialized MBX2D driver (1).` — right after the first EAGL
+context is created. No Apple file is kept in the tree, so the search was run
+against the dyld cache in `build/staging/rootfs.hfs` (a build product made
+from the user's own IPSW):
+
+```
+build/tools/hfsplus build/staging/rootfs.hfs cat \
+  /System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6 > build/dyld-cache.tmp
+# header: mappingOffset 0x48, mappingCount 3, imagesOffset 0xa8, 362 images,
+# dyld_cache_image_info = {uint64 address, modTime, inode; uint32 pathOffset, pad}
+# VA = file offset + 0x30000000 (0x4ff9458 -> OpenGLES VA 0x34ff9458)
+```
+
+- offset 0x770c68 (VA 0x30770c68) is inside `MBX2D.framework` (base
+  0x3076a000): its `AppleMBXDevice` string and, at 0x7707d0+, `Iterator had
+  no matching services`, `Failed to open connection to MBX`, `Failed to find
+  an AppleMBXDevice service, error 0x%X`, `Failed to open the shared user
+  client...`. That is the same service lookup OpenGLES patched in gpu.md §1;
+  MBX2D's copy was deliberately left alone because GL no longer needed it.
+- offset 0x47bb418 / 0x47bb470 (VA 0x347bb418 / 0x347bb470) is inside
+  `QuartzCore.framework` (base 0x346dc000), next to `CA_ENABLE_MBX2D`,
+  `LK_ENABLE_MBX2D`, `CA_ENABLE_OGL`, `MBX2D_PAGE_FLIP` and the
+  `Failed to initialized MBX2D driver (%d).` format. QuartzCore's
+  `CA::RenderMBX2D` class and its `blit_*` methods are in the same image:
+  this is CoreAnimation's 2D blit renderer (layer images / video frames),
+  distinct from the GL compositor. MBX2D's own strings mention YUV420
+  texturing and `mbx3DQuadCopy*`, so CoreVideo/IOSurface frames are the other
+  likely consumer.
+
+The failure is benign in SpringBoard but not necessarily for a game that
+reaches the MBX2D path. SpringBoard's environment now sets
+`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0` in `rootfs/recipe.json`, so
+QuartzCore never probes a driver the 3DS does not have; GL compositing and
+`MBX2D_PAGE_FLIP=0` are unchanged. `tests/test_mbx2d.py` guards the recipe.
+Docs: gpu.md §8, architecture.md §SpringBoard.
