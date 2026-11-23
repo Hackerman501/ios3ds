@@ -239,18 +239,28 @@ int main(int argc, char **argv)
         }
         off = (off + bytes + 15) & ~15u;
     }
-    /* diagnostics (pica_diag.c): one solid quad, one 64x64 and one 48x40
-       texture drawn 1:1, all into a 64x64 VRAM target */
+    /* diagnostics (pica_diag.c): one solid quad, one 64x64 texture drawn 1:1
+       and one 48x40 image in a padded 64x64 texture with scaled texcoords
+       (what the GL back end does for NPOT images on the real GPU), all into a
+       64x64 VRAM target */
     {
         MVtx v[12];
         uint32_t dv = off, k, w;
+        int j;
         gl_quad(v, GD_RT_W, GD_RT_W, 0, GD_RT_W, 0, GD_RT_W);
         gl_quad(v + 6, GD_RT_W, GD_RT_W, 0, GD_NPOT_W, 0, GD_NPOT_H);
+        /* gl_quad made t = x/48, y/40; the texture is 64x64, so scale the
+           coordinates down to the used corner. At each target pixel centre
+           floor(t * 64) is then exactly the 48x40 image's texel (fill rule). */
+        for (j = 0; j < 6; j++) {
+            v[6 + j].t0[0] *= (float)GD_NPOT_W / GD_RT_W;
+            v[6 + j].t0[1] *= (float)GD_NPOT_H / GD_RT_W;
+        }
         memcpy(blob + off, v, sizeof v);
         off = (off + sizeof v + 15) & ~15u;
         for (i = 0; i < 3; i++) {
-            const Pass p = { GD_RT_PA, GD_RT_W, GD_RT_W, i ? GD_TEX_PA : 0, i == 2 ? GD_NPOT_W : GD_RT_W,
-                             i == 2 ? GD_NPOT_H : GD_RT_W, i ? 2 : 1, i == 2 ? 6 : 0, 6 };
+            const Pass p = { GD_RT_PA, GD_RT_W, GD_RT_W, i ? GD_TEX_PA : 0, GD_RT_W, GD_RT_W,
+                             i ? 2 : 1, i == 2 ? 6 : 0, 6 };
             uint32_t bytes = build_list((uint32_t *)(blob + off), (GM_BLOB_MAX - off) / 4, GM_BLOB_PA + dv, &p, 1);
             if (!bytes) {
                 fprintf(stderr, "genmirror: diagnostic list %u does not fit\n", i);

@@ -279,9 +279,10 @@ int main(int argc, char **argv)
     /* 4a. the staged hardware diagnostics (pica_diag.c) pass on the model */
     {
         pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
-        /* what hardware run 13 reported, and what the model now does too:
-           everything but FCRAM fills and NPOT textures */
-        uint32_t r, all = PD_FILL_VRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT;
+        /* FCRAM PSC fills still fail (a hardware rule, run 13); the NPOT
+           check now uploads a padded POT texture with scaled texcoords, the
+           same workaround the GL back end uses, so it passes on hardware. */
+        uint32_t r, all = PD_FILL_VRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT | PD_TEX_NPOT;
         pd_dump_regs(&e, "host");
         r = pd_fill_tests(&e, "host") | pd_gpu_tests(&e);
         CHECK(r == all, "diagnostics on the model: 0x%x, hardware run 13 gave 0x%x", r, all);

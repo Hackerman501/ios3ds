@@ -1679,3 +1679,33 @@ branch's own QEMU binary produced only the same home-screen heuristic
 false positives (1-3 cycles per run needed recovery, while every crash and
 I/O check stayed at 0); the Wi-Fi cases above all used that branch QEMU.
 `IOS3DS_QEMU` now selects the binary for both `emu/run.py` and `emu/soak.py`.
+
+## 95. NPOT textures: test the workaround, not the hardware quirk (2026-11-23)
+Hardware log (New 2DS XL, build 149; `docs/hwlogs/n2dsxl-run1.txt` and the
+user's report) says `[gpu-diag] summary: … texture POT ok, NPOT FAIL`. That is
+run 13's confirmed rule, not a new fault: the PICA200 samples a texture whose
+size registers are not powers of two as noise. The GL engine already works
+around it (`pica_be.c use_texture()` pads the image to a power of two and
+scales the texture matrix), and the display mirror has used a 512x512 texture
+since run 13, so no rendering path sends an NPOT size to the GPU.
+
+The diagnostic itself was still sending one. It drew a raw 48x40 texture and
+so could only ever fail on hardware, which made the summary useless for
+checking the workaround. Now:
+- `genmirror.c` diag list 2 uses a 64x64 texture, with the gl_quad texcoords
+  scaled by 48/64 and 40/64 (at a pixel centre, floor(t·64) is the used
+  image's texel);
+- `pica_diag.c` writes the 48x40 image into the used corner of the padded
+  texture (zeros elsewhere) and compares the same 1920 texels;
+- `test_mirror`'s expected diagnostic mask is now 0x7d (`PD_TEX_NPOT` set;
+  only the FCRAM fill bit remains FAIL as the hardware rule), and picasim
+  still produces noise for raw NPOT sizes.
+
+`make test`: 6678 pica checks and 39 mirror checks, 0 failures; diagnostic
+summary `0x7d` on the model; `gltest: PASS` on both back ends (scene 2
+already includes a 48x24 CLAMP texture, compared pixel by pixel).
+
+Docs: [pica200.md](pica200.md) §12/§13. On a console the NPOT line should
+now say ok; if it doesn't, the fault is in padding/texcoords/tiling, not in
+the hardware's NPOT rule.
+>>>>>>> ef7d952 (GPU diag: check the NPOT-to-POT workaround instead of raw NPOT textures)

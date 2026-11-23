@@ -246,11 +246,24 @@ uint32_t pd_gpu_tests(const pd_env_t *e)
             r |= PD_SOLID_FCRAM;
     }
 
-    /* 4./5. a 64x64 and a 48x40 texture drawn 1:1 (nearest, replace) */
+    /* 4./5. a 64x64 texture drawn 1:1, then a 48x40 image in a padded 64x64
+       texture with scaled texcoords. The real PICA200 samples NPOT sizes as
+       noise (run 13), so the second check exercises the workaround the GL
+       back end uses (pica_be.c use_texture): pad/stretch to a power of two
+       and map [0..used] to [0..padded]. Raw NPOT remains a documented
+       hardware rule, not something this check asks the GPU to do. */
     for (int k = 1; k <= 2; k++) {
         uint32_t tw_ = k == 1 ? GD_RT_W : GD_NPOT_W, th = k == 1 ? GD_RT_W : GD_NPOT_H, x, y;
-        for (i = 0; i < tw_ * th; i++)
-            tex[i] = pattern(i + 77);
+        if (k == 2) {
+            for (i = 0; i < GD_RT_W * GD_RT_W; i++)
+                tex[i] = 0;
+            for (y = 0; y < th; y++)
+                for (x = 0; x < tw_; x++)
+                    tex[tw(x, GD_RT_W - 1 - y, GD_RT_W)] = pattern(tw(x, th - 1 - y, tw_) + 77);
+        } else {
+            for (i = 0; i < tw_ * th; i++)
+                tex[i] = pattern(i + 77);
+        }
         for (i = 0; i < n; i++)
             rt[i] = 0;
         counters(e, c0);
@@ -259,7 +272,7 @@ uint32_t pd_gpu_tests(const pd_env_t *e)
         /* GL row y of the texture is stored row th-1-y; of the target 63-y */
         for (ok = 0, first = ~0u, got = want = 0, y = 0; y < th; y++)
             for (x = 0; x < tw_; x++) {
-                uint32_t wv = tex[tw(x, th - 1 - y, tw_)], gv = rt[tw(x, GD_RT_W - 1 - y, GD_RT_W)];
+                uint32_t wv = tex[tw(x, GD_RT_W - 1 - y, GD_RT_W)], gv = rt[tw(x, GD_RT_W - 1 - y, GD_RT_W)];
                 if (wv == gv)
                     ok++;
                 else if (first == ~0u) {
@@ -268,7 +281,7 @@ uint32_t pd_gpu_tests(const pd_env_t *e)
                     want = wv;
                 }
             }
-        say_draw(e, k == 1 ? "texture 64x64 1:1" : "texture 48x40 (NPOT) 1:1", t, last, c0, c1, ok, tw_ * th,
+        say_draw(e, k == 1 ? "texture 64x64 1:1" : "texture 48x40 in padded 64x64", t, last, c0, c1, ok, tw_ * th,
                  first, got, want);
         if (ok == tw_ * th)
             r |= k == 1 ? PD_TEX_POT : PD_TEX_NPOT;

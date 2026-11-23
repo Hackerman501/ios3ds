@@ -636,7 +636,10 @@ How to read the outcomes:
   (list/attribute setup); `col-wr +0` with vertices read: nothing reached
   the colour buffer (shader output map, viewport, TEV, colour buffer setup).
 - solid ok, texture FAIL: texture unit (address, format, tiling); POT ok and
-  NPOT FAIL: the mirror needs a 512x512 texture instead.
+  NPOT FAIL: the GPU cannot sample a non-power-of-two texture at all. The
+  diagnostic's NPOT step now checks the *workaround* (§13), not a raw NPOT
+  texture: a padded 64x64 texture with scaled texcoords, as the GL back end
+  uploads it.
 
 ## 13. Hardware run 13: the diagnostics' answer, and what changed
 
@@ -673,6 +676,18 @@ noise (each said once in the log, not counted as a model error). With that,
 the old mirror and the old GL self-check failed in the host tests and in
 QEMU exactly as on hardware (re-log 30), and the model reproduces run 13's
 diagnostic summary bit for bit (`test_mirror`).
+
+**NPOT diagnostic check.** Since the hardware rule is confirmed, the second
+texture step no longer asks the GPU for a raw 48x40 texture. `genmirror.c`
+now builds its vertex array for a 64x64 texture with texcoords scaled by
+48/64 and 40/64; `pica_diag.c` writes the 48x40 image into the used corner
+of the padded texture (zero elsewhere) and compares the 1920 drawn texels.
+This is the same padding/coordinate path `pica_be.c use_texture()` uses for
+NPOT GL textures, so `PD_TEX_NPOT` now means "the engine's NPOT workaround
+renders on the GPU" and should read **ok** on hardware. A failure there
+points at tiling, scaled texcoords or the nearest-sampling fill rule; a
+raw NPOT texture is still expected to sample noise (the quirk stays in the
+model). `test_mirror` checks all diagnostic bits except the FCRAM fill.
 
 **Mirror.** The texture is 512x512 (power of two) in the FCRAM arena. The
 upload still goes linear → tiled into VRAM (320 wide), then a PPF texture
