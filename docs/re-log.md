@@ -2006,3 +2006,64 @@ nothing Apple-derived was committed.
   **Result: PASS**: 5 cycles, SpringBoard/input up after 90 s, 0 restarts,
   no "not home after Home", no failed lock rounds. Default 4.2.1 kernel and
   shim hashes are unchanged (`505f451a…`, `7906b596…`).
+
+## NEXT. Older iPod2,1 firmwares: 3.1.3 and 2.2.1 in QEMU (2026-11-23)
+
+See docs/multi-version.md §6 for the full tables and hashes. All Apple files
+were downloaded into `build/fw-3.1.3/` and `build/fw-2.2.1/` and are never
+committed.
+
+- **Firmware.** Apple retired the public 7E18 IPSW link (403); the archived
+  Apple IPSW from archive.org was used instead (sha1 `5f4f5c01…`, pinned in
+  `versions.py`). Its public keys decrypt kernel, device tree and HFSX rootfs,
+  so the archive copy is authentic. 5H11a still comes from Apple's CDN with
+  the published sha1 `9af5625e…`. `fwprep.py` learned `Restore.plist` (2.x)
+  and basename-only key filenames (old img3 paths).
+- **Epoch and memory map.** Disassembling `_pe_identify_machine` gave
+  `ba_version=5` for 7E18 and `ba_version=3` for 5H11a. Both caches are linked
+  at `0xC0000000` (entry `0xc0069040` / `0xc00657f0`), so `mkboot.py`, the
+  shim linker script and `kpi.py` now take the base from `versions.py`; the
+  shim still sits at PA `0x20840000` but is linked at `0xC0840000`.
+  2.2.1's `__PAGEZERO` segment forced a `flat_kernel()` fix (ignore
+  file-size-zero segments).
+- **Shim VA bug.** The first 7E18 boot panicked in the shim at
+  `pc 0xc084310c`, `far 0x808c8020`: `audio.c`, `cam.c` and `pica.c` still
+  converted PA->VA with hardcoded `0x80000000`. They now use the generated
+  `IOS3DS_KPI_VIRT_BASE`; PEGetGMTTimeOfDay's `gIOPlatform` literal is also
+  per-build (`0xc025f53c` / `0xc02064a0`). All KPI *functions* resolve by
+  symbol on both old kernels; no symbol fallback was needed.
+- **Patches.** 24 of 37 8C148 kernel patches relocated to 7E18, 15 to 5H11a,
+  each with verified original bytes (new `kernel/patchsets/*.json`). Timer
+  hooks, `_fleh_irq`, `mdevstrategy` and the UART functions needed completely
+  new byte patterns. The 13/22 skipped patches are enumerated in §6.4 with
+  what each is needed for (gyro, CLCD wake, power waits, etc.).
+- **Rootfs/userland.** New overlays drop every 4.2.1 file patch, binary,
+  interposer and Cydia/TLSFix entry: 7E18 has a 96 MB dyld cache but no
+  relocated offsets yet, 5H11a has no dyld cache at all. One large stale cache
+  file is removed first so xpwn's `grow` has free allocation-map blocks. Our
+  4.2.1-linked userland tools need per-version stub symbols and a reduced
+  tool set before they can be installed (§6.5).
+- **QEMU (7E18):** after the shim fix, XNU boots the S5L8720 drivers, mounts
+  `BSD root: md0`, starts AppleFSCompression/AMFI, and then retries the root
+  mount forever with **0** md0 requests served by the ARM9; no launchd,
+  SpringBoard, panic or stall. That is the exact stop point: the memdev path
+  is patched but no buffer reaches the block server (§6.6).
+- **QEMU (5H11a):** first run used the pre-fix image and hit the same
+  `far=0x808c8020` shim fault. With the fixed shim XNU starts, brings up the
+  S5L8720 VIC/GPIO/clock/DMA drivers and then panics at `pc 0xc05fc55c`,
+  `far=0x0` in a prelinked USB/OTG kext right after
+  `AppleSynopsysOTG2::start` (backtrace through `IOService::startCandidate`);
+  no BSD root, launchd or md0 requests. Deleting `/arm-io/usb-otg` through a
+  per-version `dt_delete` override gets past that panic: 5H11a then reaches
+  `BSD root: md0`, AMFI and `mDNSResponder[11]` with 1,630 md0 requests and
+  0 errors, but never starts SpringBoard (black screenshots, no crash
+  reports) - the exact stop point is activation/userland, not the block server.
+- **4.x unchanged.** A `git archive origin/main` tree and this branch produced
+  byte-identical 4.2.1 *and* 4.1 kernel/devtree/fakeio/shim/gpu/boot.cfg
+  hashes from the same staged firmware (§6.7). Cydia/TLSFix and the skipped
+  4.1 patches are documented as open items, not changed (§6.8).
+- **Final soak.** The exact sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` on a fresh default image printed
+  **Result: PASS**: SpringBoard/input up after 80 s, 5 app/home cycles, zero
+  panics, stalls, md0/log/crash/hang/GPU failures; `make test` passed (94
+  offline tests plus all host harnesses and the stub-symbol check).

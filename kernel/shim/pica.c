@@ -134,7 +134,8 @@ static void l2_inv_kbuf(const volatile void *p, uint32_t len)
 {
     uint32_t v = (uint32_t)p;
     if (v - arena_va < arena_size) shim_l2_inv(arena_pa + (v - arena_va), len);
-    else if (v - 0x80000000u < FCRAM_N3DS_SIZE) shim_l2_inv(v - 0x60000000u, len);
+    else if (v - IOS3DS_KPI_VIRT_BASE < FCRAM_N3DS_SIZE)
+        shim_l2_inv(v - (IOS3DS_KPI_VIRT_BASE - 0x20000000u), len);
 }
 static void dc_inval(volatile void *p, uint32_t len)
 {
@@ -297,7 +298,8 @@ static void bringup(void)
 static uint32_t fcram_va(uint32_t pa, int *ok)
 {
     *ok = pa >= 0x20000000u && pa < 0x20000000u + FCRAM_N3DS_SIZE;    /* New 3DS: page tables up there too */
-    return pa + 0x60000000u;            /* XNU's linear map of FCRAM at 0x80000000 */
+    /* XNU's linear map of FCRAM: VA = PA + (virtBase - physBase) */
+    return pa + (IOS3DS_KPI_VIRT_BASE - 0x20000000u);
 }
 
 static uint32_t last_l1, last_l2;          /* descriptors of the last walk (for the log) */

@@ -53,7 +53,7 @@ struct sysctl_oid {
 #define k_printf              KPT(IOS3DS_KPI_PRINTF, void, const char *, ...)
 
 #define PHYS_BASE   0x20000000u
-#define VIRT_BASE   0x80000000u
+#define VIRT_BASE   IOS3DS_KPI_VIRT_BASE
 #define PRIV_VA     0xBFF00000u
 #define WD_COUNT    0x624
 #define IO_PA       0x10100000u     /* CAM registers at +0x20000 (same section as audio.c's) */

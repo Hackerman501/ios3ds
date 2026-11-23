@@ -67,6 +67,22 @@ def progress_printer(label):
     return cb
 
 
+def key_for(keys, name):
+    """Find a key by its IPSW path, falling back to its basename.
+
+    4.x keys use the full firmware/... path, while the older firmwares'
+    published key lists name only e.g. DeviceTree.n72ap.img3. The exact
+    match always wins, so the default 4.2.1 path is unchanged.
+    """
+    if name in keys:
+        return keys[name]
+    base = os.path.basename(name)
+    hits = [v for k, v in keys.items() if os.path.basename(k) == base]
+    if len(hits) != 1:
+        sys.exit("[fwprep] ERROR: %d key entries for %s (basename %s)" % (len(hits), name, base))
+    return hits[0]
+
+
 def load_keys(args, product, build):
     cache = os.path.join(args.out, "keys-%s-%s.json" % (product, build))
     src = args.keys or (cache if os.path.exists(cache) else None)
@@ -103,10 +119,21 @@ def main():
     log("crypto backend: %s" % BACKEND)
 
     z = zipfile.ZipFile(args.ipsw)
-    bm = plistlib.loads(z.read("BuildManifest.plist"))
-    product = bm["SupportedProductTypes"][0]
-    build = bm["ProductBuildVersion"]
-    version = bm["ProductVersion"]
+    names = z.namelist()
+    # iOS 2.x IPSWs predate BuildManifest.plist: Restore.plist has the same
+    # identity fields (ProductType instead of SupportedProductTypes).
+    if "BuildManifest.plist" in names:
+        bm = plistlib.loads(z.read("BuildManifest.plist"))
+        product = bm["SupportedProductTypes"][0]
+        build = bm["ProductBuildVersion"]
+        version = bm["ProductVersion"]
+    elif "Restore.plist" in names:
+        bm = plistlib.loads(z.read("Restore.plist"))
+        product = bm.get("ProductType", bm.get("SupportedProductTypes", [None])[0])
+        build = bm["ProductBuildVersion"]
+        version = bm["ProductVersion"]
+    else:
+        sys.exit("[fwprep] ERROR: IPSW has neither BuildManifest.plist nor Restore.plist")
     log("IPSW: %s iOS %s (%s)" % (product, version, build))
     expected = ("iPod2,1", want["build"])
     if (product, build) != expected:
@@ -125,13 +152,12 @@ def main():
         log("IPSW sha1 %s (%s)" % (digest, status))
 
     keys = load_keys(args, product, build)
-    names = z.namelist()
     manifest = {"source": {"product": product, "version": version, "build": build,
                            "ipsw": os.path.basename(args.ipsw)}, "outputs": {}}
 
     # --- kernelcache ---------------------------------------------------------
     kname = next(n for n in names if re.match(r"kernelcache\.release\.", n))
-    k = keys[kname]
+    k = key_for(keys, kname)
     img = Img3(z.read(kname))
     raw = img.data(k["key"], k["iv"])
     kernel, info = unpack_complzss(raw)
@@ -157,7 +183,7 @@ def main():
 
     # --- device tree ---------------------------------------------------------
     dname = next(n for n in names if re.search(r"/DeviceTree\.[^/]+\.img3$", n))
-    d = keys[dname]
+    d = key_for(keys, dname)
     dt = Img3(z.read(dname)).data(d["key"], d["iv"])
     root = appledt.parse(dt)
     if appledt.serialise(root) != dt[: len(appledt.serialise(root))]:

@@ -100,7 +100,8 @@ def fakeio_image():
     return bytes(img)
 
 
-def generate(template, lay, phys_base, virt_base, mem_size, kernel_len, debug_enabled=True):
+def generate(template, lay, phys_base, virt_base, mem_size, kernel_len, debug_enabled=True,
+             lenient=False, extra_delete=()):
     root = appledt.parse(template)
     chosen = root.find("chosen")
     _set_same_size(chosen, "debug-enabled", _u32(1 if debug_enabled else 0))
@@ -136,11 +137,16 @@ def generate(template, lay, phys_base, virt_base, mem_size, kernel_len, debug_en
     _set_same_size(root.find("pram"), "reg", struct.pack("<II", *PRAM))
     _set_same_size(root.find("vram"), "reg", struct.pack("<II", *VRAM))
 
-    for path in DELETE:
+    for path in list(DELETE) + list(extra_delete):
         parent_path, _, leaf = path.rpartition("/")
         parent = root.find(parent_path) if parent_path else root
         child = parent.find(leaf) if parent else None
         if child is None:
+            if lenient:
+                # Older n72ap templates do not have every 4.x node (usb-complex,
+                # backlight, xmc). Nodes we depend on are still checked below.
+                print("[dtgen] no node /%s to delete (older firmware)" % path)
+                continue
             raise KeyError("dtgen: no node /%s to delete" % path)
         parent.children.remove(child)
 

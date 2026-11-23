@@ -80,9 +80,25 @@ SYMBOLS = {
 }
 
 # Data symbols with no LC_SYMTAB entry: gIOPlatform is a private global of
-# AppleARMPE. 8C148's literal at 0x801c84d4 is 0x8029d490; in 8B117 the same
-# PEGetGMTTimeOfDay literal pool at 0x801c7a94 holds 0x8029c49c.
-LITERALS = {"GIO_PLATFORM": (0x8029d490, {"8B117": 0x8029c49c})}
+# AppleARMPE. The address is the literal PEGetGMTTimeOfDay loads: 8C148
+# 0x801c84f0 -> 0x8029d490, 8B117 -> 0x8029c49c, 7E18 -> 0xc025f53c,
+# 5H11a -> 0xc02064a0.
+LITERALS = {"GIO_PLATFORM": (0x8029d490, {"8B117": 0x8029c49c,
+                                            "7E18": 0xc025f53c,
+                                            "5H11a": 0xc02064a0})}
+
+
+def layout_consts(staging):
+    """Virtual base and the kernel IRQ continuation for this firmware.
+
+    The shim adds its own L1 map to the kernel page tables using VIRT_BASE and
+    returns from shim_irq to the instruction after the two patched ones. Both
+    values are per-build; 4.x keeps the original constants.
+    """
+    import versions
+    build = _build(staging)
+    info = next((v for v in versions.VERSIONS.values() if v["build"] == build), {})
+    return (info.get("virt_base", 0x80000000), info.get("irq_cont", 0x80066494))
 
 
 def _build(staging):
@@ -113,6 +129,7 @@ def resolve(staging):
     build = _build(staging)
     for macro, (fallback, overrides) in LITERALS.items():
         out[macro] = overrides.get(build, fallback)
+    out["VIRT_BASE"], out["KERNEL_IRQ_CONT"] = layout_consts(staging)
     return out
 
 

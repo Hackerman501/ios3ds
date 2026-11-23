@@ -31,6 +31,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 #include "audio.h"
 
 /* ---- PL080 register map (ARM DDI 0196) ---------------------------------- */
@@ -112,7 +113,7 @@ static struct {
 #ifndef AUD_HOST_TEST
 
 #define PHYS_BASE   0x20000000u
-#define VIRT_BASE   0x80000000u
+#define VIRT_BASE   IOS3DS_KPI_VIRT_BASE
 #define AXI_PA      0x1FF00000u     /* 1 MiB device sections added by kernel/shim/entry.S shim_init */
 #define AXI_VA      0xBFD00000u
 #define PRIV_VA     0xBFF00000u

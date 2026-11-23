@@ -30,7 +30,7 @@ def locate(img, base_va, p):
     if "va" in p:
         return int(p["va"], 16) if isinstance(p["va"], str) else p["va"]
     f = p.get("find")
-    if not f:
+    if f is None:
         raise ValueError("patch %s: neither va nor find" % p["name"])
     pat = bytes.fromhex(f.get("orig", p["orig"]).replace(" ", ""))
     before = bytes.fromhex(f.get("before", "").replace(" ", ""))

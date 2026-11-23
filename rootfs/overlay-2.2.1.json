@@ -1,0 +1,22 @@
+{
+ "_comment": "iOS 2.2.1 (5H11a) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-2.2.1/recipe.json; the 4.2.1 recipe is never changed. 2.x has no dyld shared cache (frameworks are individual dylibs) and no MBXGLEngine/Substrate, so all cache patches, interposers, Cydia and TLSFix are left out. /System/Library/Caches/com.apple.dyld does not exist on this rootfs, so the 4.2.1 'enable-dylibs-to-override-cache' marker is not written either.",
+ "cydia": false,
+ "tlsfix": false,
+ "trust_store": null,
+ "write": {
+  "_replace": true,
+  "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
+  "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
+  "/var/log/syslog": ""
+ },
+ "remove": ["/System/Library/Caches/com.apple.kernelcaches/kernelcache.s5l8720x"],
+ "symlink": {"_replace": true},
+ "plist_set": {"_replace": true},
+ "plist_merge": {"_replace": true},
+ "add": {"_replace": true},
+ "chmod": {"_replace": true},
+ "cydia_plist_write": {"_replace": true},
+ "file_patches": [],
+ "disable_daemons": [],
+ "_todo": "2.x needs separate liblockdownd.dylib / bool override patches (no shared cache) and a 2.x SDK stub-symbol list. Darwin 9 lacks IOSurface, CoreMotion and Celestial's 4.x API: our 4.2.1 userland binaries cannot simply be copied here."
+}

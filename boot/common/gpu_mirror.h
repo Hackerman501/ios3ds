@@ -147,11 +147,17 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
      0x208B8000  gpumirror blob (tools/ios3ds-pica/mirror/genmirror.c): the
                  command lists and vertex arrays; the GPU reads them in place. */
 #define GPU_PART_PA       0x208B0000u
-#define GPU_PART_VA       0x808B0000u
+#ifndef IOS3DS_GPU_PART_VA
+#define IOS3DS_GPU_PART_VA 0x808B0000u
+#endif
+#define GPU_PART_VA       IOS3DS_GPU_PART_VA
 #define GPU_PART_SIZE     0x8000u
 #define GPU_PART_MAGIC    0x30555047u   /* 'GPU0' */
 #define GM_BLOB_PA        0x208B8000u
-#define GM_BLOB_VA        0x808B8000u
+#ifndef IOS3DS_GM_BLOB_VA
+#define IOS3DS_GM_BLOB_VA 0x808B8000u
+#endif
+#define GM_BLOB_VA        IOS3DS_GM_BLOB_VA
 #define GM_BLOB_MAX       0x8000u
 #define GM_BLOB_MAGIC     0x424D4D47u   /* 'GMMB' */
 #define GM_BLOB_VERSION   3u

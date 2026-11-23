@@ -38,7 +38,7 @@
     .equ RING_BUF_OFF,  16
 
     .equ PHYS_BASE,     0x20000000
-    .equ VIRT_BASE,     0x80000000
+    .equ VIRT_BASE,     IOS3DS_KPI_VIRT_BASE
     .equ PRIV_PA,       0x17E00000      @ MPCore private region (SCU/GIC/timers)
     .equ PRIV_VA,       0xBFF00000      @ 1 MiB section we add to the kernel L1
     .equ PRIV_SECTION,  (PRIV_PA | (1 << 10) | (1 << 4) | (1 << 2) | 2)  @ AP=01 XN B (device), section
@@ -71,7 +71,7 @@
     .equ PDC0,       0x400
     .equ AXI_PA,     0x1FF00000                     @ DSP RAM + AXI WRAM (fake S5L register pages)
     .equ AXI_VA,     0xBFD00000
-    .equ KERNEL_IRQ_CONT, 0x80066494                @ kernel IRQ handler after the 2 patched insns
+    .equ KERNEL_IRQ_CONT, IOS3DS_KPI_KERNEL_IRQ_CONT @ kernel IRQ handler after the 2 patched insns
 
     .global _shim_base
 _shim_base:

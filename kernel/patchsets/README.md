@@ -23,3 +23,13 @@ controller's voltage lookup and the RTC wait literal) are deliberately absent;
 see the stage-3 blocker log in `docs/multi-version.md`. No Apple code is stored
 here beyond the same short verification patterns already used by 8C148's
 recipes.
+
+`3.1.3.json` (7E18) and `2.2.1.json` (5H11a) are the Darwin 10.0 / Darwin 9
+sets. Even though those kernelcaches are linked at `0xC0000000` instead of
+`0x80000000`, their patches are still keyed by original bytes: a `va` entry is
+the relocated address in *that* cache, and `find` entries use unique
+surrounding context. Where the instruction itself changed (three 7E18/5H11a
+timer hooks, the UART init/ready functions, `_fleh_irq`, `mdevstrategy` and
+`commpage_set_timestamp`), the recipe carries the verified target bytes and a
+target-specific replacement. Patches that could not be located uniquely were
+left out; the exact lists and reasons are in `docs/multi-version.md` §6.4.

@@ -188,5 +188,12 @@
 #ifndef IOS3DS_KPI_GIO_PLATFORM
 #define IOS3DS_KPI_GIO_PLATFORM 0x8029d490
 #endif
+/* Firmware layout constants (Darwin 9/10 caches are linked at 0xC0000000). */
+#ifndef IOS3DS_KPI_VIRT_BASE
+#define IOS3DS_KPI_VIRT_BASE 0x80000000
+#endif
+#ifndef IOS3DS_KPI_KERNEL_IRQ_CONT
+#define IOS3DS_KPI_KERNEL_IRQ_CONT 0x80066494
+#endif
 
 #endif /* IOS3DS_SHIM_KPI_H */

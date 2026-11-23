@@ -272,10 +272,12 @@ make sd                                              # SD card tree -> build/sd/
 make test                                            # offline unit tests
 ```
 
-Experimental: `make sd IOS=4.1` selects another iPod2,1 firmware from
-`scripts/versions.py` (firmware staged under `build/fw-4.1/`); 4.2.1 stays the
-default and unchanged. See [docs/multi-version.md](docs/multi-version.md) — 4.1
-now boots to the home screen in QEMU (Cydia/TLSFix are disabled on that build).
+Experimental: `make sd IOS=VERSION` selects another iPod2,1 firmware from
+`scripts/versions.py` (firmware staged under `build/fw-VERSION/`); 4.2.1 stays
+the default and unchanged. See [docs/multi-version.md](docs/multi-version.md) —
+4.1 boots to the home screen in QEMU (Cydia/TLSFix are disabled there), while
+the older 3.1.3 and 2.2.1 builds are earlier bring-up experiments with no
+userland tools installed.
 
 Optional:
 - `make qemu` builds the emulator, about 10 minutes.

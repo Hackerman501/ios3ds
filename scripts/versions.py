@@ -28,8 +28,11 @@ VERSIONS = {
             "sha1": "34a0a489605f34d6cc6c9954edcaaf9a050deedc", "ba_version": None,
             "patch_set": None, "overlay": None, "status": "inventory only"},
     "2.2.1": {"build": "5H11a", "ipsw": "iPod2,1_2.2.1_5H11a_Restore.ipsw",
-              "sha1": "9af5625ea34acdd8abeb6fce71a72651d0c815d5", "ba_version": None,
-              "patch_set": None, "overlay": None, "status": "inventory only"},
+              "sha1": "9af5625ea34acdd8abeb6fce71a72651d0c815d5", "ba_version": 3,
+              "virt_base": 0xC0000000, "irq_cont": 0xC006540C,
+              "dt_delete": ["arm-io/usb-otg"],
+              "patch_set": "kernel/patchsets/2.2.1.json", "overlay": "rootfs/overlay-2.2.1.json",
+              "status": "experimental: Darwin 9, no dyld cache; see docs/multi-version.md"},
     "3.0": {"build": "7A341", "ipsw": "iPod2,1_3.0_7A341_Restore.ipsw", "sha1": None,
             "ba_version": None, "patch_set": None, "overlay": None,
             "status": "inventory only; keys no longer published by ipsw.me"},
@@ -42,9 +45,15 @@ VERSIONS = {
     "3.1.2": {"build": "7D11", "ipsw": "iPod2,1_3.1.2_7D11_Restore.ipsw", "sha1": None,
               "ba_version": None, "patch_set": None, "overlay": None,
               "status": "inventory only"},
-    "3.1.3": {"build": "7E18", "ipsw": "iPod2,1_3.1.3_7E18_Restore.ipsw", "sha1": None,
-              "ba_version": None, "patch_set": None, "overlay": None,
-              "status": "keys available; Apple IPSW no longer listed by ipsw.me"},
+    "3.1.3": {"build": "7E18", "ipsw": "iPod2,1_3.1.3_7E18_Restore.ipsw",
+              # The Apple CDN link published for 7E18 now returns 403; this is
+              # the sha1 of the archived Apple IPSW used for the bring-up
+              # (archive.org/ipod-touch-2g-ipsw). Its keys decrypt the kernel,
+              # device tree and HFS+ rootfs, so it is the genuine restore file.
+              "sha1": "5f4f5c01eda2f811f73167e7d1f82dbeed82367b", "ba_version": 5,
+              "virt_base": 0xC0000000, "irq_cont": 0xC0068458,
+              "patch_set": "kernel/patchsets/3.1.3.json", "overlay": "rootfs/overlay-3.1.3.json",
+              "status": "experimental: Darwin 10.0, archived IPSW; see docs/multi-version.md"},
     "4.0": {"build": "8A293", "ipsw": "iPod2,1_4.0_8A293_Restore.ipsw",
             "sha1": "c026c373bc535496a6f901de2ba37d4a487413bf", "ba_version": 5,
             "patch_set": None, "overlay": None, "status": "inventory only"},
@@ -87,12 +96,26 @@ def ba_version(version=DEFAULT):
     return v
 
 
+def virt_base(version=DEFAULT):
+    """Kernel virtual base: Darwin 9/10 pre-4.x caches use 0xC0000000.
+
+    Versions without an override get the 4.2.1 value, so their boot.cfg and
+    shim link address are unchanged.
+    """
+    return get(version).get("virt_base", 0x80000000)
+
+
 def _merge(base, overlay):
     out = dict(base)
     for k, v in overlay.items():
         if k.startswith("_"):
             continue
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
+        if isinstance(v, dict) and v.get("_replace") is True:
+            # Older firmwares have no MBXGLEngine/Substrate/etc.; dropping a
+            # whole base-recipe dictionary needs an explicit marker, because a
+            # plain {} would normally merge nothing.
+            out[k] = {kk: vv for kk, vv in v.items() if not kk.startswith("_")}
+        elif isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _merge(out[k], v)
         else:
             out[k] = v

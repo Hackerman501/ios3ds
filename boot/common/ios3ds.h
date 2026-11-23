@@ -167,7 +167,12 @@ _Static_assert(offsetof(boot_args_t, deviceTreeP) == 0x30, "boot_args layout");
 
 /* ---- kernel shim (kernel/shim), fixed placement inside XNU's RAM ---- */
 #define SHIM_PA          0x20840000u
-#define SHIM_VA          0x80840000u
+/* Older kernelcaches are linked at 0xC0000000; their shim needs the matching
+   VA. The default is 4.2.1's, and only the shim build passes an override. */
+#ifndef IOS3DS_SHIM_VA
+#define IOS3DS_SHIM_VA   0x80840000u
+#endif
+#define SHIM_VA          IOS3DS_SHIM_VA
 #define SHIM_SIZE        0x10000u
 #define SHIM_PANIC_REQ   0x6500u        /* offset: ARM9 writes 1 -> XNU panics with a thread dump; a
                                             cache line only the ARM9 writes (kernel/shim/entry.S) */

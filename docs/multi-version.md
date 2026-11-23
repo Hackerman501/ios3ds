@@ -561,3 +561,228 @@ Remaining known limits: Cydia/TLSFix are disabled for 4.1 (their 4.2.1 packages
 are in the overlay's skip list); six dyld-cache patches and six 4.1 kernel
 patches from §5.2/§5.3 are still skipped; the 4.2.1 userland binaries and our
 private-API hooks are only ABI-tested on 4.2.1.
+
+## 6. Older iPod2,1 firmwares: 3.1.3 (7E18) and 2.2.1 (5H11a)
+
+Continues §5.5. Everything in this section was built and booted in QEMU from
+Apple files under `build/fw-3.1.3/` and `build/fw-2.2.1/`; no Apple files are
+committed. **[V]** marks a verified build/boot/byte check, **[G]** a reasoned
+conclusion that still needs more work.
+
+### 6.1 Firmware source and prep
+
+- **[V]** 7E18 is no longer served by the Apple CDN links in ipsw.me's public
+  list (`403 Forbidden`). The archived Apple IPSW in
+  `archive.org/details/ipod-touch-2g-ipsw` (263,275,211 bytes, sha1
+  `5f4f5c01eda2f811f73167e7d1f82dbeed82367b`) was downloaded to
+  `build/fw-3.1.3/`. It identifies itself as `iPod2,1 / 3.1.3 / 7E18`, and the
+  *public* 7E18 keys decrypt its kernelcache, device tree and HFSX rootfs
+  (440 MiB) with valid complzss/adler32, device-tree round-trip and HFS+
+  signature. That is strong evidence the archive copy is the genuine restore
+  file, but it is not an Apple-served sha1: the archive hash is pinned in
+  `versions.py` so builds are reproducible.
+- **[V]** 5H11a still comes from Apple's CDN URL published by ipsw.me; its
+  sha1 `9af5625ea34acdd8abeb6fce71a72651d0c815d5` matches the API. Its keys
+  decrypt the kernelcache (Darwin 9.4.1), n72ap device tree and 476 MiB HFSX
+  rootfs.
+- **[V]** `scripts/fwprep.py` needed two older-firmware fixes: 2.x IPSWs have
+  `Restore.plist` instead of `BuildManifest.plist`, and the published key lists
+  name e.g. `DeviceTree.n72ap.img3` while the IPSW stores it under
+  `Firmware/all_flash/all_flash.n72ap.production/`. Key lookup now tries the
+  exact path first, then a unique basename; the 4.2.1 path is unchanged.
+
+### 6.2 Boot_args epoch and the 0xC0000000 kernel layout
+
+- **[V]** Both caches are linked at `virtBase=0xC0000000` (3.1.3 entry
+  `0xc0069040`, 2.2.1 entry `0xc00657f0`; `__TEXT` starts at
+  `0xc0008000`). 4.x uses `0x80000000`. `versions.virt_base()` now feeds the
+  value into `mkboot.layout()`, `dtgen.generate()`, the shim's jump-table
+  symbols, `boot.cfg` and the generated KPI header.
+- **[V]** The shim is still loaded at physical `0x20840000`, but for these
+  firmwares it is linked at `0xC0840000` (GPU part `0xC08B0000`): `mkboot`
+  generates a temporary linker script and passes `IOS3DS_SHIM_VA`,
+  `IOS3DS_GPU_PART_VA` and `IOS3DS_GM_BLOB_VA` overrides. Boot/common headers
+  keep the 4.2.1 defaults, so the default shim bytes do not change.
+- **[V]** The boot_args epoch was read from the kernels, not guessed: in
+  Thumb `_pe_identify_machine` 7E18 has `ldrh r3,[r0,#2]; cmp r3,#5` at
+  `0xc01a7f22`, 5H11a has `cmp r3,#3` at `0xc017ab94`. The registry therefore
+  sets `ba_version=5` for 3.1.3 and `ba_version=3` for 2.2.1 (4.x stays 5).
+- **[V]** `mkboot.flat_kernel()` now ignores segments with `vmsize > 0` but
+  `filesize == 0`: 2.2.1's `__PAGEZERO` at VA 0 otherwise made a 3.2 GiB flat
+  image with a zero base. 4.2.1 has no such segment; its image and hashes are
+  unchanged.
+- **[V]** `dtgen.generate()` is lenient for nodes that only exist in newer
+  templates (7E18 lacks `usb-complex`/`backlight`, 5H11a also lacks `xmc`);
+  fields we actually depend on remain strict. 5H11a additionally deletes
+  `/arm-io/usb-otg` via `versions.py:dt_delete` after its USB kext panicked.
+- **[V]** `kernel/shim/entry.S` took `VIRT_BASE` and the IRQ continuation from
+  hard-coded 8C148 constants. They now come from the generated KPI header
+  (`0xC0000000` / `0xc0068458` for 7E18, `0xC0000000` / `0xc006540c` for
+  5H11a). The first boot attempt panicked at shim+0x310c with
+  `far=0x808c8020`: `audio.c`, `cam.c` and `pica.c` had their own hardcoded
+  `0x80000000` VA for PA->VA and L2 maintenance. They now use the generated
+  `IOS3DS_KPI_VIRT_BASE`; 4.2.1 expands to the same constants.
+
+### 6.3 KPI resolution and fallbacks
+
+**[V]** `scripts/kpi.py` resolves every shim call by `LC_SYMTAB` name; all 59
+symbols used by the shim are present in both old kernelcaches (no symbol
+fallback was needed for 7E18 or 5H11a). The data symbol `gIOPlatform` has no
+LC_SYMTAB entry; its address is the literal loaded by PEGetGMTTimeOfDay:
+
+| Firmware | PEGetGMTTimeOfDay literal | `gIOPlatform` |
+|---|---|---|
+| 8C148 | `0x801c84f0` | `0x8029d490` |
+| 8B117 | `0x801c7a94` | `0x8029c49c` |
+| 7E18 | `0xc01953f8` | `0xc025f53c` |
+| 5H11a | `0xc016b4a0` | `0xc02064a0` |
+
+**[G]** If a future kernelcache is stripped of `LC_SYMTAB`, or drops one of
+these KPIs, the current fallback is still the 8C148 address and would call a
+random function. A stripped cache needs a new locator (vtable/anchor matching)
+per symbol, or a version-tagged KPI table with verified addresses; do *not*
+silently reuse the defaults. PEGetGMTTimeOfDay, PESetGMTTimeOfDay,
+IOKitInitTime's IORTC wait and PEHaltRestart are the critical ones for boot.
+
+### 6.4 Kernel patch sets
+
+**[V]** `kernel/patchsets/3.1.3.json` (24 patches) and
+`kernel/patchsets/2.2.1.json` (15 patches) were derived from the 37 8C148
+patches by: unique original bytes, surrounding-context search, or a symbol
+address plus the 8C148 delta; every original byte sequence is checked at build
+time by `kernel/patcher.py`. Examples where offsets moved:
+
+| Patch | 8C148 | 7E18 | 5H11a |
+|---|---|---|---|
+| `ppmr-read` | `0x80060274` | `0xc0209938` | `0xc01d8e34` |
+| `timer-get-abstime` | `0x80068038` | `0xc006a078` | `0xc0066750` |
+| `irq-entry` (`_fleh_irq`) | `0x8006648c` | `0xc0068450` | `0xc0065404` |
+| `mdevstrategy` | `0x80072bf8` | `0xc0073f94` | `0xc007056c` |
+
+- **[V]** 7E18's `cpu_data` timer offsets are 4 bytes higher than 8C148's
+  (`+0x78` instead of `+0x74`), so those three hooks carry target-specific
+  original bytes rather than the 8C148 pattern. The IRQ handler's second
+  instruction is `mrs sp,spsr` instead of `mrs sp,apsr`; the shim's
+  `KERNEL_IRQ_CONT` is set to the instruction after both patched ones.
+- **[V]** Skipped on 7E18: `uart-baud` (the init stub returns first),
+  `clcd-sync-swap`, the three CLCD backlight log/retry patches, the I2S LRCK
+  sync patch, the clock-controller voltage and performance-state waits, the
+  watchdog PMU wait, `iortc-wait-mcu` (wait literal's meaning changed; the 2 s
+  wait is patched), gyro usage/dispatch (driver differs), and Seatbelt
+  (disabled by default). None of these is needed to reach BSD root; the CLCD
+  ones matter for wake, the clock ones for power management, and gyro for
+  CoreMotion.
+- **[V]** Skipped on 5H11a: the same group plus IFAR/ACTLR (Darwin 9's fault
+  path differs), all PE/RTC MCU hooks (the functions exist but their Thumb
+  prologues and vtable slot indices changed), `iortc-wait-2s` and
+  `clcd-backlight-log-set`. Needed for a *complete* port: PE GMT/time/halt
+  (time and clean shutdown), IORTC wait (boot latency), and CLCD backlight
+  messages (log spam on wake). Not needed for the first boot stage reached here.
+
+### 6.5 Rootfs and userland
+
+- **[V]** `rootfs/overlay-3.1.3.json` and `rootfs/overlay-2.2.1.json` use
+  `{"_replace": true}` to drop the whole 4.2.1 `add`, `file_patches`,
+  `plist_set`, `chmod` and Cydia sets. Both keep only `/etc/fstab`, syslog and
+  the grow step. One large cache file is removed first (7E18's
+  DataDetectors cache, 5H11a's stale kernelcache copy): xpwn's `grow` needs
+  free allocation-map blocks and both stock images are 100 % full.
+- **[V]** 7E18 has `/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6`
+  (96,117,081 bytes), so a later port *can* use the 4.1 symbol-relocation
+  technique for its liblockdown/MBX patches. None of the 8C148 offsets apply
+  unchanged, so this build applies none. 5H11a has no `com.apple.dyld`
+  directory at all: its frameworks are separate dylibs, so cache patches and
+  the `enable-dylibs-to-override-cache` marker are meaningless there; pin the
+  replacement `liblockdownd.dylib` / `OpenGLES.framework` files instead **[G]**.
+- **[V]** Our userland binaries are ARMv6 Mach-O linked against 4.2.1's
+  exported symbol list (`scripts/ios-sdk-symbols.json`) and use private APIs
+  (IOSurface, IOKit, Celestial, CoreMotion, Substrate). They are **not**
+  installed on either old build: Darwin 10.0 renamed/moved many of those
+  selectors, and Darwin 9 lacks several frameworks entirely. A real port needs
+  a per-version stub-symbol list generated from that rootfs, a version-tagged
+  subset of tools (applog/input/mcu first, GL/gps/camera later), and install-
+  time missing-symbol checks. Cydia and TLSFix stay disabled for both versions.
+
+### 6.6 Boot results and exact blockers
+
+**[V]** Build outputs (sha256, generated with `make userland` + the version's
+`mksd.py`):
+
+| File | 3.1.3 | 2.2.1 |
+|---|---|---|
+| `kernel.bin` | `129e7d02…` | `48678cac…` |
+| `devtree.bin` | `73191b10…` | `af606820…` |
+| `boot.cfg` | `a3ed4593…` | `e6accdda…` |
+
+- **[V]** 3.1.3, first QEMU run with the relocated shim: `BSD root: md0`,
+  AppleFSCompression and AMFI start, then the root mount retries forever
+  ("BSD root: md0" every ~1 s) with **0** md0 requests served by the ARM9 and
+  no launchd/SpringBoard. Heartbeats, timers and the screen copy stay alive;
+  there is no panic, stall or watchdog. This is the exact stop point: the
+  memdev block path is patched but no buffer ever reaches the ARM9's md0
+  server. An HMP dump of the block mailbox at PA `0x20846000` showed
+  `magic=BLKM`, `dev_sectors=0x200000`, but `seq/nreq/nerr = 0`, so the shim
+  strategy is not issuing a transfer (the patched mdevsw slot still points at
+  the patched function). **[G]** Likely a Darwin 10.0 `buf_t`/`mdevstrategy` ABI difference
+  inside `shim_mdevstrategy` (the first KPI call that returns an unusable
+  value, or a sysctl registration that fails before `xfer()`); needs an
+  instrumented shim run or a 7E15-era xnu source comparison.
+- **[V]** 2.2.1, first QEMU run used a stale `sd.img` built before the shim's
+  `VIRT_BASE` fix and panicked at shim+0x310c with `far=0x808c8020`, the same
+  audio/cam PA->VA bug as 3.1.3's first run.
+- **[V]** With the fixed shim, 2.2.1 starts XNU and the S5L8720 drivers (VIC,
+  GPIO, power, clock controller, DMAC) but panics at `pc 0xc05fc55c`,
+  `fault_addr=0x0` in a prelinked USB/OTG kext immediately after
+  `AppleSynopsysOTG2::start` (`IOService::startCandidate` in the backtrace).
+  It never reaches BSD root, launchd or any md0 request. A per-version DT
+  override now removes `/arm-io/usb-otg` (5H11a's 2.2-era USB stack expects
+  nodes/properties the n72ap 4.x template we generate no longer satisfies).
+- **[V]** With `/arm-io/usb-otg` deleted, 5H11a gets much further: `BSD root:
+  md0`, Jettisoning kernel linker, AMFI, and userland starts
+  (`mDNSResponder[11]` seatbelt profiles). The ARM9 serves 1,630 md0 requests
+  (32 MiB, **0** errors) and heartbeats/VBlank/screen copy run for the whole
+  run, with no panic or stall. It stops there: **no SpringBoard and no UI**
+  (screenshots are black; no crash report was written). The rootfs overlay
+  deliberately omits the 4.2.1 liblockdown activation patches and interposers,
+  and 2.x needs its own dylib-level activation fix **[G]**; that is the exact
+  blocker at which this task stops.
+
+*(boot results updated below when the final runs finish)*
+
+### 6.7 4.2.1 and 4.1 stay byte-identical
+
+**[V]** Six boot files were generated twice from the same staged firmware:
+once with this branch and once from a `git archive origin/main` source tree
+(both under `build/verify-*/`, with the copied tree on a space-free path so the
+PICA host build works). Every hash matched:
+
+| File | 4.2.1 (branch = main) | 4.1 (branch = main) |
+|---|---|---|
+| `kernel.bin` | `505f451a44d9da6aae7034d427d5524d7392d9fc70640ec997c374b0b5a70e38` | `e26135779d1b2f88aa912cd6afdea38dfc3eb6daad2bd780179b21b8210dfdc8` |
+| `devtree.bin` | `25b1bd233447ddfc60eb69e30ad4cbd085c1963f86e77052fda969469d8327cc` | `29ebba25ac24b6fe7fcf2f3ba9597f96ab4c2368c4089f9771cf8b58e665f002` |
+| `fakeio.bin` | `e5fecd6645b3bc44d6510d7af7397c667fdc25da4517e2cd9fabc42fb673570d` | `e5fecd6645b3bc44d6510d7af7397c667fdc25da4517e2cd9fabc42fb673570d` |
+| `shim.bin` | `7906b59655035f16d988f6ad6d7cce64d20fd219a9e3734bfa763dc1bded4d4d` | `3ffe091c33a4f34f785d31ca6c6e247b1d0ab61ce4826047b62964d9c740a116` |
+| `gpu.bin` | `1b62d38b658e529cb143e4f20663f5747c3f0abf10ab25a6204b4d7e4c68a764` | `cddc7d670eb2b6928921991a85ded4b2c0d12a0f3932aedeb050959f2752a74e` |
+| `boot.cfg` | `414fa594325b7dd5b8805380d5df6f5908c6d45254ee8eae910a743d6096314d` | `ee3c9bff4c812a7f15c0c812463cc66f3995500fee728ab4493465b629366893` |
+
+(The `gpu.bin`/`boot.cfg` values differ from the older table in §5.1 because
+main gained GPU/boot-option changes after that table was written; both trees
+here produce the same bytes.)
+
+### 6.8 4.1 open items (not changed here)
+
+- **Cydia/TLSFix:** still disabled. The downloaded `.deb` files and Substrate
+  tweak are built against 8C148's dyld cache and SpringBoard; making a 8B117
+  set needs new packages and a 4.1-specific install recipe, not a flag.
+  Needed for HTTPS in Cydia/Safari on 4.1, not for booting.
+- **Six skipped kernel patches** (`gyro-usage`, `gyro-dispatch`, CLCD
+  backlight log-enable and retry-off, clock voltage lookup, IORTC wait
+  literal): gyro only for CoreMotion, CLCD ones cosmetic/wake, the last two
+  can add boot/shutdown waits but the MCU shim already supplies time. None is
+  needed for the home screen 4.1 already reaches.
+- **Six skipped dyld patches:** `lockdown_copy_buid_identity` and
+  `lockdown_copy_value`'s lookup body/string table (the activation table was
+  replaced wholesale in §5.5, so only the BUID identity lookup is still
+  open), VirtualAudio routing, CoreMotion capability mask, MusicLibrary
+  signing check. Needed for activation, audio routing, gyro and Music
+  respectively; not for the home screen.
