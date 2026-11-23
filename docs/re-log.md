@@ -1815,7 +1815,7 @@ newline/NUL, MBX2D's `Failed to open connection to MBX`) and `0x47bb470`
 console noise is gone. `tests/test_mbx2d.py` guards the recipe and the two
 patches. Docs: gpu.md §8, architecture.md §SpringBoard.
 
-## 91. Public issue #1 (New 2DS XL): brightness floor, "180° rotation", boot delay, wallpaper (2026-11-23)
+## 99. Public issue #1 (New 2DS XL): brightness floor, "180° rotation", boot delay, wallpaper (2026-11-23)
 Four small reports, one commit each. No GitHub reply was posted; the answers
 are in the README FAQ and in mcu.md / m1-design.md.
 
