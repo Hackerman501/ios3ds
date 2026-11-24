@@ -156,6 +156,15 @@ def main():
             prev, bright = img, b
         return prev, time.time() - t_start
 
+    def is_bootlog(img):
+        """The M1 boot console is green text on black; on a loaded host it can
+        stay lit long after SpringBoard's input daemon connected, so the old
+        'stable and bright' reference test accepted it and every later home
+        screenshot failed with a ~70 diff. Home/wallpaper colours are not
+        green-dominant. (re-log NEXT, 4.1 soak.)"""
+        rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in img.convert("RGB").split())
+        return gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90
+
     def is_spotlight(img):
         """Spotlight's light search field fills the top 40 points; the home
         screen's status bar is dark (measured on both GPU and CPU copies)."""
@@ -254,8 +263,9 @@ def main():
             time.sleep(5)
             img = shot("home_ref")
             bright = ImageStat.Stat(img.convert("L")).mean[0]
-            if prev is not None and bright > 20 and ImageStat.Stat(ImageChops.difference(
-                    img.convert("L"), prev.convert("L"))).mean[0] < 1.0:
+            if (prev is not None and bright > 20 and not is_bootlog(img) and
+                    ImageStat.Stat(ImageChops.difference(
+                        img.convert("L"), prev.convert("L"))).mean[0] < 1.0):
                 home_ref = img
                 break
             prev = img
@@ -309,7 +319,9 @@ def main():
             # animation halfway, then the recovery's second Home opens Spotlight
             home, t_wait = settled("c%03d_home" % i)
             c["home_wait"] = round(t_wait, 1)
-            if dark_ref and ImageStat.Stat(home.convert("L")).mean[0] > 20:
+            if ((dark_ref or is_bootlog(home_ref)) and
+                    ImageStat.Stat(home.convert("L")).mean[0] > 20 and
+                    not is_bootlog(home)):
                 # the display finally came up: this shot is just after Home,
                 # so it is a valid home reference from now on
                 home_ref, dark_ref = home.copy(), False
