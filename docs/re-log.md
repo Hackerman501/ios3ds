@@ -2978,7 +2978,12 @@ long sessions, but it is not claimed as a fix for the alert.
 `scripts/ios-sdk-symbols.json`); `make userland` + fresh `make sdimg` shows
 `[pica] arena 10240 KiB`, `[cam] reserved 3 x 150 KiB in the GPU arena`,
 `[mkrootfs] added ... com.apple.mobilesafari.plist`, GPU shim 32,656/32,768
-bytes; the required fresh-image soak is reported below.
+bytes. The required fresh-image soak `rm -f build/sd.img && make sdimg &&
+python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** (boot 90 s,
+5 cycles, 0 panics, 0 ARM11 stalls, 0 md0 errors, 0 crashes, 0 jetsam, 0 GPU
+CPU fallbacks, 0 camera failures; the one "SpringBoard restart" is the
+boot-time HID connection). The GPU self-test and scene check passed with the
+10 MiB arena.
 
 **Still needs hardware:** reflash the Old 3DS, open Safari with `diag=1` and
 repeat the big page that shows the alert. The log must contain `[pica] arena
