@@ -3262,7 +3262,7 @@ worktree's `build/` (no Apple files are committed).
   up after 60 s, five cycles, zero failures. The 4.2.1 exact-sequence PASS is
   recorded just above.
 
-## NEXT. Harness conflict after the perf2 rebase, and older-version bring-up (2026-11-24)
+## 115. Harness conflict after the perf2 rebase, and older-version bring-up (2026-11-24)
 
 ### Harness: restore the warm-up gate beside the console-colour test
 

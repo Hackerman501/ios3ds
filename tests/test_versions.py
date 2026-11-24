@@ -101,7 +101,7 @@ class TestVersions(unittest.TestCase):
                                       "0x176a210", "0x176a260"])
                 elif v == "2.2.1":
                     # 2.x has no dyld cache. Patching + re-signing liblockdown
-                    # made dyld stop after CoreSurface (re-log NEXT), so the
+                    # made dyld stop after CoreSurface (re-log 115), so the
                     # stock signed dylib is kept and no file patches apply.
                     self.assertEqual(recipe["file_patches"], [])
                     self.assertNotIn("resign", recipe)
