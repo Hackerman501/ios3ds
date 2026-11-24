@@ -2460,3 +2460,72 @@ rebuilding all 360 screen columns on every blit.
   later attempts, plus a "clear query + Home" step in the "not home"
   recovery list. The passing runs above use that harness; screenshots and
   reports are in `build/emu/soak-on3/` and `build/emu/soak-off2/`.
+## 107. Silent 3DS mic and a Music library that looked empty after carry-over (2026-11-24)
+
+Design: docs/audio.md §7 (microphone), §10 (Music). Hardware input:
+`issue-reports/run-2026-11-24.txt` (excerpts only): `mic on: 11901 Hz`,
+`rx stop words=219806 mic jumps>16=9 maxd=cd underruns=0 resyncs=4c`,
+`[music] 1 song(s)`, carry-over `partial`. The earlier run 14 has the same
+`maxd=ab`, so this is reproducible, not a one-off.
+
+**Mic, trace.** Samples really reach iOS: `rx start ch4`, 219,806 words,
+0 underruns, and the shim's own `mic jumps`/`maxd` are computed from what it
+delivered. On hardware the delivered frame-to-frame delta never exceeded
+0xcd/0xb4. With `AUD_MIC_GAIN_Q15` (x0.0657) that implies raw MIC halfwords of
+roughly 2000-3000, i.e. something reaches the ADC, but the absolute level is
+far below what the QEMU sine path needs. Two concrete differences from
+libn3ds `CODEC_init` were found:
+- `microphoneInit()` writes three coefficient-RAM filter sets: page 4 reg 8
+  (10 Hz high-pass), page 5 reg 8 and page 5 reg 72 (PRB_P25 chains). ios3ds
+  skipped all three on the assumption that reset coefficients pass audio
+  through; GBATEK's 3DS TSC summary lists exactly these as the 3DS microphone
+  filters. They must be written before the DACs power up: page 100 reg 118
+  then locks the coefficient RAM. `boot/arm9/audio.c` now writes them in the
+  unlocked window, plus page 100 reg 49's non-GBA bit.
+- MIC_CNT bits 0-1 were 0: GBATEK's "MakeStereo" duplicates every mono sample
+  into both halves of MIC_DATA. The shim reads the halves as *consecutive*
+  samples, so it must ask for format 2 ("Normal"). `mic_hw_start()` now writes
+  0x0e rather than 0x0c; the QEMU MIC model honors the format bits and logs
+  them at enable. The default CODEC bias, PGA (21.5 dB), ADC input selection
+  and page 0 0x51/0x52 power/mute already matched libn3ds.
+
+**Mic, diagnostics.** `aud_mic_t` gained a one-second report (three extra
+cache lines, written by the shim): raw MIC peak/sum-of-squares/sample count and
+delivered peak/sum-of-squares/frame count, plus a sequence number. The ARM9
+prints `[mic] 1 s: FIFO peak ... rms ..., iOS peak ... rms ... (N frames)`
+with one decimal and `[mic] CODEC on: ...` with the ADC/mute, MICBIAS/PGA,
+input-select, coefficient-lock, gain and I2S registers at ADC power-up.
+The next card run with `diag=1` decides it:
+- small FIFO peak (tens) but normal CODEC registers -> analog/bias/PGA path,
+  raise page 1 reg 47 or check the board's mic;
+- FIFO peak in the thousands and small iOS peak -> the +23.65 dB compensation
+  or the VirtualAudio route is wrong for RecordAudio, not the CODEC;
+- both peaks similar to a spoken voice -> the fix worked; listen to the memo.
+
+**Music, reproduction and fix.** A fresh `make sdimg CARRY_FROM=<old image>`
+in QEMU reproduced the report: `[music] 1 song(s)`, `carry-over result:
+carried`, Music.app opens, shows "Updating Library..." for ~45 s, then the
+Playlists tab contains only "Add Playlist...". Forcing a `partial` result by
+putting a symlink in the carried tree (hfsplus verification sees a different
+target size) reproduced the user's `partial` too; the new image still has
+1 `item`, a decodable ALAC `.m4a` and all post-processed DBs. So carry-over is
+not the missing-song cause. `scripts/music.py` only wrote the *hidden* master
+playlist ("iPod", `is_hidden=1`); no visible playlist existed. It now also
+writes one ordinary `ios3ds` playlist with every track, following libgpod's
+`itdb_sqlite.c` (`distinguished_kind=0`, `is_hidden=0`, `media_kinds=1`) and a
+`container_ui` row. QEMU on a `CARRY_FROM` image with a forced `partial` now
+shows `ios3ds` in the Playlists tab (`build/emu-session/music-visible.png`);
+host `tests/test_music.py` checks the row and its track membership.
+
+**Verification without hardware:** `make test` green (incl.
+`tests/test_audio.py`'s new MIC_CNT-format and one-second-report checks and
+`tests/test_music.py`'s visible-playlist check); `make userland` and
+`make sdimg` clean; shim main part 24268/24320 bytes, GPU part 31680/32768.
+A fresh QEMU image boots to SpringBoard with the local, format-aware MIC model
+(built only under `build/qemu-local`; the shared `build/qemu` symlink was left
+alone). `rm -f build/sd.img && make sdimg && python3 emu/soak.py --cycles 5
+--icount 2` on a fresh image: **Result: PASS** (5 cycles, 0 panics, stalls,
+md0 errors or crashes).
+A full Voice Memos tap sequence in `emu/tap.py` was timing-dependent under the
+shared host's load (the folder animation missed the scheduled tap), so the
+`[mic]` lines still need a real console run; host tests cover the shim side.

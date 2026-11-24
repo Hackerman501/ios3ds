@@ -291,7 +291,7 @@ Two things decide it:
 - `dt_audio.py` adds `ain2b-intmic` to `audio0`, so the codec has an internal mic data source.
 - `rootfs/recipe.json` patches the plug-in's product table: the N81 slot (iPod touch 4G: speaker, headphones, built-in mic, no receiver) reads `N72`, and the N72 slot `X72`. iOS then reports input available 1 with route `SpeakerAndMicrophone`. Output stays on the speaker, and volume still comes as amp steps.
 - **Shim** (`kernel/shim/audio.c` `mic_want`/`mic_drain`/`mic_fill`):
-  - When iOS's input DMA starts, the shim enables the MIC block at I2S2 / 4 = 11,901 Hz.
+  - When iOS's input DMA starts, the shim enables the MIC block at I2S2 / 4 = 11,901 Hz with data format 2 ("Normal": two consecutive 16-bit samples per MIC_DATA word). GBATEK's format 0 would duplicate every mono sample into both halves; the shim reads the halves as consecutive samples.
   - On every service it drains the 16-word FIFO (2.7 ms) into the ring. While an input stream runs the shim services every 1 ms (`RX_STEP_TICKS`); without that the HAL read the newest input before it was written.
   - The RX emulation reads the ring instead of writing zeros. It interpolates linearly to the I2S frame rate, sends the same value to L and R, and trails the writer by 20 ms. An empty ring repeats the last value; a reader that fell more than half a ring behind jumps (`mic_underruns`, `mic_resyncs`).
   - Which word of a frame (L or R) is being written comes from the destination address (frames are 4 bytes), not from the previous stream. Carrying the phase over put an odd-length stream's successor half a frame off, and iOS's input chain turned that into spikes; it showed as recordings that were bit-identically good or bad depending on the stream before.
@@ -301,9 +301,9 @@ Two things decide it:
   - Safety, each case logged once (`ios3ds-audio: mic: ... input stays silent`; ring state FAILED, reason in `why`), then silence: no sample within 250 ms, a FIFO that never reports empty (> 64 words in one service), the block disabling itself, or no IO window.
   - Draining from the ARM11 is deliberate. The 3DS's own mic service runs there, while ARM9 access to 0x10162000 is unverified. A first version drained from the ARM9 monitor loop and overran the FIFO constantly in QEMU.
 - **ARM9** (`boot/arm9/audio.c` `mic_poll`):
-  - At boot, `audio_init` applies the CODEC side of libn3ds `microphoneInit` (ADC select, input impedance, bias, PGA, without the calibration filters).
+  - At boot, `audio_init` applies the CODEC side of libn3ds `microphoneInit` (ADC select, input impedance, bias, PGA) and writes its coefficient-RAM filters: page 4 reg 8 (10 Hz high-pass), page 5 reg 8 and reg 72 (pass-through PRB_P25 chains), plus page 100 reg 49's non-GBA bit. The filter writes happen before the DACs power up and lock the coefficient RAM (page 100 reg 118), as in libn3ds; skipping them was a plausible cause of the near-silent hardware recordings in runs 14/32/34.
   - While `aud_mic_t.want` is set, it powers and unmutes the CODEC's ADC (page 0 registers 81/82).
-  - It logs the shim's mic state changes (`[audio] mic on/off/...`).
+  - It logs the shim's mic state changes (`[audio] mic on/off/...`), a CODEC register readback when the ADC is powered (`[mic] CODEC on: ...`: page 0 0x51/0x52 mute and power, page 1 0x2e-0x31 bias/PGA/ADC inputs, page 100 0x22/0x31/0x77, page 101 0x33/0x41/0x42, I2S1/2_CNT) and one level report per second: `[mic] 1 s: FIFO peak ... rms ..., iOS peak ... rms ... (N frames)`. The FIFO numbers are raw MIC samples before the shim's gain compensation; the iOS numbers are what was actually handed to the input stream. RMS is printed with one decimal. These lines settle whether a silent recording is a CODEC/analog problem (small FIFO peak) or a gain-route problem (large FIFO peak, small iOS peak).
   - `boot.cfg mic=0` sets `disabled` in its own cache line, and the shim then never touches the MIC block.
 - **QEMU:** `ctr_mic_init` (in `ctr_csnd.c`) models the MIC block (GBATEK layout).
   - Its source is set with `IOS3DS_MIC=ramp|sine:HZ:AMP|file.wav`.
@@ -420,3 +420,11 @@ computer has it, else the file name. `--no-test-song` leaves out the test song.
   have only `_IOA2` (S5L8720 hardware) decoders, so such files will not play.
 - **QEMU:** see re-log 80 for the run (library loaded, post-processing
   completed, songs listed and played).
+- **Visible playlist (carry-over report 2026-11-24):** the library had only the
+  hidden master playlist (`is_hidden=1`, "iPod"), so Music.app's default
+  Playlists tab showed just "Add Playlist..." even though the item, the .m4a
+  and the post-processed DB were present. Carry-over is not the cause: a QEMU
+  build with `CARRY_FROM` (including a forced `partial` result) still has the
+  one item and the song decodes. `music.py` now also writes one ordinary
+  playlist (`is_hidden=0`, `distinguished_kind=0`, name "ios3ds") with every
+  track and a `container_ui` row, following libgpod's `itdb_sqlite.c`.

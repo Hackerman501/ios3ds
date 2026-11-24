@@ -132,7 +132,18 @@ typedef struct {
     uint32_t starts;
     uint32_t want;          /* 1 = iOS records: the ARM9 keeps the CODEC's ADC powered */
     uint32_t why;           /* AUD_MIC_FAILED: 1 no data, 2 FIFO never empties, 3 block off, 4 no IO window */
-    /* written by the ARM9 (cache line 1) */
+    /* written by the shim (cache lines 1-2): one-second level report, see [mic]
+       in the ARM9 log. The ARM9 computes RMS from the sum of squares (u64) so
+       the interrupt-time shim needs no 64-bit division or integer sqrt. */
+    uint32_t diag_seq;      /* incremented when the report below changes */
+    uint32_t diag_raw_peak; /* at the MIC FIFO (before the shim's gain compensation) */
+    uint32_t diag_raw_n;    /* raw halfwords accumulated */
+    uint32_t diag_raw_sq_lo, diag_raw_sq_hi;
+    uint32_t diag_out_peak; /* delivered to iOS's input stream (after compensation) */
+    uint32_t diag_out_sq_lo, diag_out_sq_hi;
+    uint32_t diag_frames;   /* frames accumulated */
+    uint32_t diag_pad[3];
+    /* written by the ARM9 (cache line 3) */
     uint32_t arm9_magic;    /* AUD_MIC_MAGIC: the next field is valid */
     uint32_t disabled;      /* boot.cfg mic=0: the shim never touches the MIC block */
     uint32_t adc_on;        /* the ARM9 has powered the ADC */
@@ -145,6 +156,12 @@ typedef struct {
 #define MIC_CNT_PA        0x10162000u   /* u16 */
 #define MIC_DATA_PA       0x10162004u   /* u32: two samples, older one low */
 #define MIC_CNT_EN        (1u << 15)
+/* MIC_CNT bits 0-1 = data format (GBATEK DSi Microphone): 0 duplicates each
+   mono sample ("MakeStereo"), 2 = Normal (two consecutive 16-bit samples).
+   The shim reads both halves of MIC_DATA as consecutive samples, so it must
+   ask for Normal; MakeStereo would play every sample twice at half rate. */
+#define MIC_CNT_FMT(n)    ((n) & 3u)
+#define MIC_CNT_FMT_NORMAL 2u
 #define MIC_CNT_CLEAR     (1u << 12)
 #define MIC_CNT_OVERRUN   (1u << 11)
 #define MIC_CNT_EMPTY     (1u << 8)
