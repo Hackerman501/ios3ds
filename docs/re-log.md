@@ -2598,7 +2598,7 @@ shared host's load (the folder animation missed the scheduled tap), so the
   absent/full or the fallback also failed. Video, 3D photos and New 3DS models
   are not re-verified by this run (the change is common to both models).
 
-## NEXT. Stereo 3D on hardware: keep the GPU mirror on, build both eyes on the PICA200 (2026-11-24)
+## 109. Stereo 3D on hardware: keep the GPU mirror on, build both eyes on the PICA200 (2026-11-24)
 
 Hardware run 3 (`issue-reports/run3-3d.txt`, git-excluded) answered the console
 question from section 90: with `stereo3d=1` the 3D slider did **nothing**.
