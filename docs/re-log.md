@@ -2821,3 +2821,17 @@ shim. It was not: the kernel patch was on the wrong function.
   the recipe's `resign` map (`ldid -Hsha1 -S`); only the 2.2.1 overlay sets it.
   Boot now has no `CODESIGNING` faults, but still no SpringBoard output and a
   black screen: activation alone is not the 2.x blocker.
+
+### NEXT.md (same section, continued): default build stays byte-identical
+
+- **[V]** `make userland` + a fresh `make sdimg` produced the same six 4.2.1
+  boot-file sha256 values as before any of this version work:
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`, `fakeio.bin e5fecd66…`,
+  `shim.bin 25b7721c…`, `gpu.bin 94909f36…`, `boot.cfg 414fa594…`.
+  All version-specific changes are in patch sets/overlays and one optional
+  `resign` step that only the 2.2.1 recipe sets.
+- **[V]** The exact fresh-image sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**
+  (boot to SpringBoard + input 70 s, five app/home cycles, 0 panics, stalls,
+  md0/log/crash/watchdog/GPU failures). The 4.1 soak and the two older-version
+  runs are recorded below as they finish.
