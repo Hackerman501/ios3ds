@@ -3256,3 +3256,8 @@ worktree's `build/` (no Apple files are committed).
   app). A fresh 4.1 image then printed **Result: PASS**: SpringBoard + input
   up after 60 s, five cycles with `home diff 0.0`, no failures. The harness
   change affects no boot files.
+- **[V]** The exact documented sequence was rerun on a fresh image after the
+  harness fix (`rm -f build/sd.img && make sdimg IOS=4.1 && python3
+  emu/soak.py --cycles 5 --icount 2`): **Result: PASS**, SpringBoard + input
+  up after 60 s, five cycles, zero failures. The 4.2.1 exact-sequence PASS is
+  recorded just above.
