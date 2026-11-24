@@ -3018,8 +3018,9 @@ their purpose (runs 12/13 pinned the NPOT-texture and GX-clock facts), and
 the source + the picasim host tests stay, so `gpu_diag=1` in boot.cfg is now
 a no-op. That freed 6.7 KiB.
 
-`make shim`: main **24268/24320**, GPU part **26256/32768** bytes (after all
-four commits below).
+`make shim` on the final rebased tree: main **24268/24320**, GPU part
+**26304/32768** bytes (after all the changes below; the arena-size work from
+section 112 adds 32 bytes).
 
 ### Mirror: skip unchanged frames (damage tracking)
 A GL present/scatter now sets `m_dirty` (`kernel/shim/pica.c`); the
@@ -3071,38 +3072,70 @@ either buffer is not 32-bit aligned. Host test: byte-identical.
 
 ### Before / after (`emu/perf.py`, fresh image each)
 
-| metric | before | after |
+| metric | before (round 1) | after (final tree, fresh image) |
 |---|---|---|
 | boot to SpringBoard + input | 70 s | 70 s |
-| folder open (wall s, 3 runs) | 12.2 / 14.2 / 12.2 | 12.2 / 6.2 / 14.2 (host-load noisy) |
-| `[perf] CA:` frame ms (avg) | 23 / 24 | 22–24 |
-| `[gl] CA:` render thread CPU | 14–24 ms/frame (re-log 110, range) | **16066 us**, 3.0 lists, 1.1 presents, 0.1 read-backs, 1.9 uploads (112 KiB) |
+| folder open (wall s, 3 runs) | 12.2 / 14.2 / 12.2 | **6.1 / 8.1 / 8.1** (host-load noisy) |
+| folder close (wall s, 3 runs) | 12.2 / 12.2 / 12.2 | 12.2 / 12.4 / 14.2 |
+| Safari cold launch (s) | not measured | 4.0 |
+| `[perf] CA:` frames per ~1 s window | 40–43, avg 23–24 ms | 43–47, avg 22–23 ms (same pace in QEMU) |
+| `[gl] CA:` render thread CPU | 14–24 ms/frame (re-log 110, range) | **16066 us**, 3.0 lists, 1.1 presents, 0.1 read-backs, 1.9 uploads (112 KiB) in the 8-run window; a later 301-frame window read 7633 us with 0.5 uploads (30 KiB) |
 
-The `[perf]` folder-open histogram is unchanged because QEMU's folder open is
-vsync/CA-paced at ~22–24 ms (~45 fps), and the render thread (16.1 ms) is
-already under that budget; the tiling win shows as fewer guest instructions
-per upload, not as a faster histogram. On the Old 3DS the render thread and
-the 19 ms mirror are serialised on the GPU, which is why the hardware
-`[perf] CA:` average (54 ms in run2) tracks the mirror's 18 fps: the fixes
-that matter there are the damage tracking and the scheduling above, and they
-are GPU-side, so QEMU cannot show them (QEMU's GPU model finishes every
-operation instantly).
+The `[perf]` folder-open histogram keeps the same ~23–24 ms average because
+QEMU's folder open is vsync/CA-paced, and the render thread (7.6–16.1 ms) is
+already under that budget; the tiling win shows as fewer uploads and guest
+instructions per upload, not as a faster histogram. The wall times are host-
+load noisy (the same image has produced 4–16 s opens on this PC). On the Old
+3DS the render thread and the 19 ms mirror are serialised on the GPU, which is
+why the hardware `[perf] CA:` average (54 ms in run2) tracks the mirror's
+18 fps: the fixes that matter there are the damage tracking and the
+scheduling above, and they are GPU-side, so QEMU cannot show them (QEMU's GPU
+model finishes every operation instantly). The soak log does show the damage
+tracking working: a 30 s window with **901 idle VBlanks and no GPU work**.
 
 ### Validation
 `make test` green (6698 + 59 + 2469 pica checks, gl host-test, wifi, gps,
-input, blkcache); `make shim` and `make userland` clean. Fresh-image
-`emu/soak.py --cycles 5 --icount 2` soaks: TODO.
+input, blkcache); `make shim` clean: main **24268/24320**, GPU part
+**26304/32768** bytes (PICA_OP_DIRTY added 16 bytes; the section-112 arena
+change adds another 32 on the rebased tree).
+`make userland` and fresh `make sdimg` clean.
+
+Fresh-image `emu/soak.py --cycles 5 --icount 2` soaks on the final rebased
+tree (`build/emu/soak-rebased-off/` and `soak-rebased-on/`):
+- `stereo3d=0` (shared QEMU): **Result: PASS**, boot 70 s, 0
+  panic/stall/md0/crash/GPU-timeout findings, no "not home after Home" or
+  failed lock rounds. The 30 s log shows the damage tracker explicitly:
+  `[gpu] mirror: 901 idle VBlanks in 30 s (no new CA frame, no GPU work)`
+  next to a window with 5 GPU frames.
+- `stereo3d=1`, `--slider3d 255` (private QEMU with the slider property):
+  **Result: PASS**, boot 70 s, no guest failures or failed lock rounds; two
+  cycles needed the harness's known "second Home" recovery for Spotlight.
+  The log has `[stereo] switch: PDC0 3D, PICA200 two-eye mirror`,
+  `[stereo] 3D LED on`, `[monitor] stereo 3D: both eyes … parallax barrier on`
+  and the matching 2D switches when an app opens; `active path: PICA200
+  two-eye mirror (k=4)`. No "reading surfaces back through the CPU" or GPU
+  present-check failure: protocol 5's dirty notification from the stereo
+  read-back path works.
+
+Both harnesses had to be repaired for a loaded host: the soak/perf home
+reference used to accept the still-lit boot console as "home" (greyscale
+stddev ~92 against ~54 for the icons), which made every cycle look stuck.
+`emu/soak.py` now waits for the `[sbwarm]` marker and `emu/perf.py` rejects
+the console's texture; with that the flag-off soak and all perf runs recovered
+in zero cycles (the flag-on soak only needed two Spotlight dismissals). The
+final perf numbers above are in `build/emu/perf-rebased/`.
 
 ### Needs hardware
 A card run with `diag=1` on the Old 3DS to confirm:
-- `[gpu] mirror: … fps` should now show **0 frames / 0 busy skips** on an
-  idle home screen (damage tracking) and fewer busy skips during a folder
-  open/scroll, with the `[perf] CA:` histogram avg dropping from 54 ms toward
-  30 ms;
+- `[gpu] mirror: … idle VBlanks …` on an idle home screen (damage tracking)
+  and fewer busy skips during a folder open/scroll, with the `[perf] CA:`
+  histogram avg dropping from 54 ms toward 30 ms;
 - `[gpu] display mirror ACTIVE` and the spot check still pass; the stereo
   path (re-log 109) still opens the barrier when the slider moves on an idle
   home screen (`[stereo] switch: PDC0 3D`, one stereo frame before the
-  barrier);
+  barrier). With `stereo3d=1`, or after a refused present switches a process
+  to CPU read-backs, the display must keep changing every CA frame: that is
+  the new `PICA_OP_DIRTY` path, which QEMU cannot timing-test;
 - the remaining mirror per-frame cost (upload 9388 + read-out 6475 us) is
   still there: the upload is linear→tiled + a texture re-stride (NPOT
   textures are broken, run 13), and the read-out writes both framebuffer sets
