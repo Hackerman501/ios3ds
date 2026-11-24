@@ -140,7 +140,7 @@ The deciding unknown is the real SD card: what one md0 chunk costs (fixed comman
 | `[io] ...` (with `ioprof=1`) | Real md0 cost per second: ARM9 ms vs KiB and chunks, i.e. the cost model §5 needs. |
 | `[wifid] waiting ...` right after `Running fsck` | No 5 s gap between launchctl and the first daemons. |
 
-## 8. Bigger md0 chunks and a write-back cache (re-log NEXT)
+## 8. Bigger md0 chunks and a write-back cache (re-log 105)
 
 §5 listed bigger transfers and an ARM9 cache as "not done". Both are now in,
 aimed at Cydia/dpkg rather than boot (where UBC re-reads are rare):

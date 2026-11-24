@@ -239,7 +239,7 @@ still carry an armv6 (or generic ARM) slice.
   leaves `cpio 2.9-2p` "install ok installed" with `/usr/bin/cpio`.
 - `emu/soak.py --cycles 10` on the image after all of the above.
 
-## Refresh and install time (re-log NEXT)
+## Refresh and install time (re-log 105)
 
 A tester on a New 2DS XL (public issue #1) reported that adding a repository
 and installing a tweak take "a really long time". QEMU with `--icount 2` can
