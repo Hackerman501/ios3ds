@@ -2849,3 +2849,20 @@ shim. It was not: the kernel patch was on the wrong function.
   **Result: PASS**: five cycles, `not home after Home: never`, 0 panics,
   stalls, md0/log/crash/watchdog/GPU failures. The change affects only the
   harness; no firmware or userland payload was altered.
+
+### NEXT.md (same section, final hash check after the rebase)
+
+- **[V]** Rebasing onto current `origin/main` brought in the stereo/GPU changes
+  from `agent/stereogpu` (`dd54b1a`), which legitimately change `shim.bin`,
+  `gpu.bin` and `boot.cfg`: after the rebase they are `c9791ac3…`, `ac5ea097…`
+  and `8d4079cf…` instead of the pre-rebase `25b7721c…`, `94909f36…` and
+  `414fa594…`. `kernel.bin`, `devtree.bin` and `fakeio.bin` are unchanged.
+- **[V]** To prove those six files are still *our* 4.2.1 payload unchanged, a
+  space-free `git archive origin/main` tree generated all six from the same
+  staged firmware: every hash matched the branch build byte for byte. None of
+  this task's files are on the 4.2.1 boot-file path (only patch sets/overlays
+  for older versions, a recipe-gated `resign` step, docs and the soak harness).
+- **[V]** Final fresh-image 4.2.1 soak after the rebase: **Result: PASS**,
+  five cycles, 70 s to SpringBoard + input, no failures. Final 4.1 soak:
+  **Result: PASS**, five cycles, 60 s to SpringBoard + input, no failures.
+  `make test` passes after the final rebase.
