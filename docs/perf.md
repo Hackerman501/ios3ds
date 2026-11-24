@@ -113,6 +113,13 @@ These are CPU-side trims; the dominant Old 3DS costs in §1 (the mirror's
 ~20 ms/frame and the GPU split with CoreAnimation) are GPU-side and need the
 hardware `[perf]`/`[gpu]` lines to confirm, which is why §5 lists them.
 
+Round 2 ([re-log.md](re-log.md) `NEXT`) attacks those GPU-side costs: the
+mirror only runs after a present or a display-config change (damage tracking),
+starts in the free slot right after a CoreAnimation present, and is told about
+CPU-written surface frames through `PICA_OP_DIRTY`. The self-test and CA's
+texture tiling were also made cheaper. QEMU's GPU model has no timing, so the
+frame-rate gain has to be confirmed by the hardware histogram in §5.
+
 ## 5. What the next hardware run shows
 
 | log line | checks |
