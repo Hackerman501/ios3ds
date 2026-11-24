@@ -2835,3 +2835,17 @@ shim. It was not: the kernel patch was on the wrong function.
   (boot to SpringBoard + input 70 s, five app/home cycles, 0 panics, stalls,
   md0/log/crash/watchdog/GPU failures). The 4.1 soak and the two older-version
   runs are recorded below as they finish.
+
+### NEXT.md (same section, continued): 4.1 soak PASS after a harness fix
+
+- **[V]** The first two 4.1 fresh-image soaks printed `Result: FAIL` with
+  `not home after Home: {'stuck': [0..4]}` and a ~70 home diff. The cycle
+  screenshots showed a normal 4.1 home screen, but `home_ref.png` was the
+  green-on-black M1 boot console: on a loaded host the console stayed lit
+  past the input daemon's connect, so the harness's "stable and bright"
+  reference test accepted it. This is a harness bug, not a 4.1 regression.
+- **[V]** `emu/soak.py` now rejects green-dominant console frames when picking
+  (or re-acquiring) the home reference. A third fresh image then printed
+  **Result: PASS**: five cycles, `not home after Home: never`, 0 panics,
+  stalls, md0/log/crash/watchdog/GPU failures. The change affects only the
+  harness; no firmware or userland payload was altered.

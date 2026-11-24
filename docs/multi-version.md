@@ -810,7 +810,7 @@ here produce the same bytes.)
 | Version | QEMU state | Fresh-image 5-cycle soak |
 |---|---|---|
 | 4.2.1 (8C148) | home screen, apps, input, Cydia/TLSFix | **PASS** (70 s to SpringBoard + input, 0 failures) |
-| 4.1 (8B117) | home screen with stock icons; Cydia/TLSFix disabled | first run **FAIL** only on "not home after Home" while two other worktrees' QEMU/ninja jobs loaded the host; retry in progress |
+| 4.1 (8B117) | home screen with stock icons; Cydia/TLSFix disabled | **PASS** after the soak harness stopped accepting the green boot console as a home reference (60 s to SpringBoard + input, 0 failures) |
 | 3.1.3 (7E18) | `/dev/md0` mounts, launchd + mDNSResponder, display; boot spinner, no SpringBoard | not meaningful until the home screen appears |
 | 2.2.1 (5H11a) | `/dev/md0` mounts, launchd + mDNSResponder, display; no SpringBoard | not meaningful until the home screen appears |
 
