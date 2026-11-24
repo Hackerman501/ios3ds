@@ -25,9 +25,25 @@ u32 cam_test_newest(u32 *seq, u32 *reading);
 void cam_test_stats(u32 *frames, u32 *overruns);
 u32 cam_test_resyncs(void);
 u32 cam_test_variant(u32 *probing);
+void cam_test_alloc_reset(void);
+u32 cam_test_alloc(u32 arena_ok, u32 alloc_ok, u32 *src, u32 *pa);
 
 #define FIFO_WORDS (CAM_FIFO_UNITS * 2)
 volatile cammbox_t cam_host_mbox;
+
+/* host stand-ins for the GPU arena reservation and IOMallocContiguous */
+u32 cam_host_arena_ok, cam_host_alloc_ok, cam_host_alloc_calls, cam_host_free_calls, cam_host_fail_at;
+void *cam_host_contig(u32 size, u32 align, u32 *pa)
+{
+    void *p;
+    (void)align;
+    cam_host_alloc_calls++;
+    if (!cam_host_alloc_ok || (cam_host_fail_at && cam_host_alloc_calls == cam_host_fail_at)) return NULL;
+    p = malloc(size);
+    *pa = (u32)(uintptr_t)p;
+    return p;
+}
+void cam_host_contig_free(void *p, u32 size) { (void)size; cam_host_free_calls++; free(p); }
 static struct {
     u32 cnt, q[FIFO_WORDS], head, count, last_i, last_w, frame, line, armed, overrun, dead;
     u32 popped, lossy;
@@ -206,9 +222,36 @@ static void test_convert(void)
           cam_pattern_word(1, 167, 130, 97, 320, 240) == cam_yuyv(47, 47, 128, 128), "frame counter patch");
 }
 
+/* The Old 3DS failure was status 3 at START: no frame-buffer memory. The
+   arena must be used first, a partial IOKit allocation must be given back,
+   and a later retry must succeed. */
+static void test_alloc(void)
+{
+    u32 src = 0, pa = 0, r;
+    cam_test_alloc_reset();
+    r = cam_test_alloc(1, 1, &src, &pa);
+    CHECK(r == 1 && src == 1 && pa != 0, "arena buffers: status %u, source %u, PA %08x", r, src, pa);
+    CHECK(cam_host_alloc_calls == 0, "arena path called IOMallocContiguous %u times", cam_host_alloc_calls);
+    cam_test_alloc_reset();
+    CHECK(cam_test_alloc(0, 1, &src, &pa) == 1 && src == 2 && pa != 0,
+          "IOKit buffers: source %u, PA %08x", src, pa);
+    CHECK(cam_host_alloc_calls == CAM_NBUF, "IOKit path made %u allocations (want %u)",
+          cam_host_alloc_calls, CAM_NBUF);
+    cam_test_alloc_reset();
+    cam_host_fail_at = 2;                       /* first frame allocated, second fails */
+    CHECK(cam_test_alloc(0, 1, &src, &pa) == 0 && src == 0,
+          "partial allocation must fail with no buffers (source %u)", src);
+    CHECK(cam_host_free_calls == 1, "partial allocation freed %u buffers (want 1)", cam_host_free_calls);
+    cam_host_fail_at = 0;
+    CHECK(cam_test_alloc(0, 1, &src, &pa) == 1 && src == 2,
+          "retry after a failed allocation: source %u", src);
+    printf("buffers: GPU arena first, IOKit fallback, partial failure freed and retried\n");
+}
+
 int main(void)
 {
     test_convert();
+    test_alloc();
     test_drain();
     if (fails) {
         printf("%d failures\n", fails);

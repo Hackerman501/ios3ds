@@ -55,6 +55,7 @@
 #include "pica_diag.h"
 #include "gpu_mirror.h"
 #include "stereo.h"
+#include "cam_proto.h"              /* frame-buffer reservation for the cameras */
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -107,7 +108,12 @@ struct sysctl_oid {
 __attribute__((section(".gpuhdr"), used))
 static const uint32_t gpu_part_hdr[4] = { GPU_PART_MAGIC, 1, GPU_PART_PA, GM_BLOB_PA };
 
-static pica_drv_t drv;
+pica_drv_t drv;                     /* shared with cam.c (arena VA/PA) */
+/* The camera's three frame buffers are reserved here, once, while the GPU
+   driver is being initialised (no concurrent GL requests yet). cam.c reads
+   the PA at START; if there is no arena it falls back to IOMallocContiguous. */
+uint32_t shim_cam_reserved_pa;
+#define PICA_CAM_OWNER  0xFFFFFFFEu /* never a pid: pica_drv_free_all(client) cannot free it */
 static uint32_t bringup_state;               /* 0 = not tried, 1 = done (drv.state says how it went) */
 static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror frame */
 /* A VBlank found the GPU busy with GL: the mirror goes next. New GL requests
@@ -126,7 +132,8 @@ static void dc_clean(volatile void *p, uint32_t len)
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
 void shim_l2_inv(uint32_t pa, uint32_t len);   /* entry.S: New 3DS L2, write-through (docs/n3ds.md) */
-static uint32_t arena_va, arena_pa, arena_size;
+uint32_t arena_va, arena_pa;       /* shared with cam.c; arena_size stays private */
+static uint32_t arena_size;
 /* drop stale L2 lines of a kernel buffer: the arena (IOMallocContiguous VA)
    or XNU's linear map. Invalidating clean lines never loses data (the L2
    runs write-through), so a wrong guess only costs time. */
@@ -285,6 +292,16 @@ static void bringup(void)
     gpu_diag_before((uint8_t *)va, pa, size);
     gpu_clock_fix();
     st = pica_drv_init(&drv, &plat, va, pa, size, cnt);
+    /* Leave the small (2/4 MiB fallback) arenas to the display mirror: the
+       camera then uses the old IOKit path. */
+    if (st == PICA_OK && size >= (6u << 20)) {
+        if (pica_drv_alloc(&drv, PICA_CAM_OWNER, CAM_NBUF * CAM_FRAME_BYTES, 32,
+                           &shim_cam_reserved_pa) != PICA_OK)
+            shim_cam_reserved_pa = 0;
+        if (shim_cam_reserved_pa)
+            k_printf("[cam] reserved %u x %u KiB in the GPU arena at PA 0x%08x\n",
+                     (unsigned)CAM_NBUF, CAM_FRAME_BYTES >> 10, (unsigned)shim_cam_reserved_pa);
+    }
     k_printf("[pica] arena %u KiB at VA %p = PA 0x%08x; driver %s (state %u)\n",
              size >> 10, va, pa, st == PICA_OK ? "ready" : "FAILED", st);
     if (st == PICA_OK)
@@ -453,7 +470,11 @@ static int take(void)
 
 void shim_gpu_thread_poll(void);
 
-static int pica_sysctl(struct sysctl_oid *oidp, void *arg1, int namelen, void *req)
+/* This file is built at -Os to leave room in gpu.bin for the camera frame
+   buffers' allocator (kernel/shim/cam.c). Keep the three hot paths at -O2;
+   the rest (bring-up, display-mirror setup) runs once. */
+#define PICA_HOT __attribute__((optimize("O2")))
+static PICA_HOT int pica_sysctl(struct sysctl_oid *oidp, void *arg1, int namelen, void *req)
 {
     int *name = (int *)arg1;
     pica_req_t r;
@@ -619,7 +640,7 @@ static int fb_ok(uint32_t pa, uint32_t len)
 }
 
 /* Thread context. Brings the mirror up once the ARM9 asks for it. */
-void shim_gpu_thread_poll(void)
+PICA_HOT void shim_gpu_thread_poll(void)
 {
     uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
     int v, keep_tex = 0;
@@ -774,7 +795,7 @@ static void m_after(int st)
 }
 
 /* IRQ mode, IRQs masked, private stack (entry.S). id = GIC interrupt ID. */
-void shim_gpu_irq(uint32_t id)
+PICA_HOT void shim_gpu_irq(uint32_t id)
 {
     uint32_t t0, spin;
     vu32 *clcd;

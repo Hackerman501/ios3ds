@@ -912,6 +912,33 @@ static void test_alloc(void)
     printf("alloc: 150 targets placed in a 3/4 full arena, %u KiB of textures evicted for them\n", kb);
 }
 
+/* The camera's frame buffers live in the arena under an owner that no client
+   pid can have (kernel/shim/pica.c shim_pica_cam_buffers). A GL client's
+   free_all must not hand that block back to the texture allocator. */
+static void test_cam_reserve(void)
+{
+    static pica_plat_t plat;
+    static pica_drv_t d;
+    const uint32_t frames = 3u * 320u * 240u * 2u, owner = 0xFFFFFFFEu;
+    uint32_t cam_pa, gl_pa, again_pa;
+    plat.alive = t_alive;
+    plat.log = t_log;
+    d.p = &plat;
+    d.pa = 0x24000000;
+    d.size = 12u << 20;
+    d.state = PICA_OK;
+    d.block[0].size = PICA_DRV_CMD_SIZE;        /* as pica_drv_init() leaves it */
+    d.nblocks = 1;
+    CHECK_EQ(pica_drv_alloc(&d, owner, frames, 32, &cam_pa), PICA_OK);
+    CHECK_EQ(cam_pa & 31u, 0u);                                 /* the CAM FIFO needs 32-byte alignment */
+    CHECK_EQ(pica_drv_alloc(&d, 42, 4096, 0, &gl_pa), PICA_OK);
+    CHECK(gl_pa + 4096 <= cam_pa || gl_pa >= cam_pa + frames);   /* no overlap with the camera frames */
+    CHECK_EQ(pica_drv_free_all(&d, 42), 1u);                     /* one GL block given back */
+    CHECK_EQ(pica_drv_alloc(&d, 43, frames, 32, &again_pa), PICA_OK);
+    CHECK(again_pa != cam_pa);                                  /* the camera block survived free_all */
+    printf("arena: camera reserves %u KiB under a private owner, GL churn leaves it alone\n", frames >> 10);
+}
+
 /* PICA_OP_SCATTER's page copy: an arena block into destination pages that
    are not physically contiguous (CA's second 320x480 surface after an app
    returns to the home screen), each through its own mapping, with the
@@ -988,6 +1015,7 @@ int main(int argc, char **argv)
     test_ff();
     test_sim();
     test_alloc();
+    test_cam_reserve();
     test_scatter();
     (void)argc; (void)argv;
     printf("%d checks, %d failures\n", checks, failures);

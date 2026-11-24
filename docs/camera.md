@@ -1,8 +1,10 @@
 # Camera: the 3DS cameras in iOS 4.2.1
 
-Status: **on the first console run the sensors answer but no picture data
-arrives (section 7); diagnostics and fallbacks are in for the next run.**
-In QEMU Camera.app shows a live preview and takes photos through the whole
+Status: **hardware run 2026-11-24 failed before any sensor work: CAM_OP_START
+returned status 3 (`CAM_ERR_NO_MEM`) and CAM_OP_FRAME status 6
+(`CAM_ERR_NOT_RUNNING`), so no camera request ever reached the ARM9 (section 7.1).
+Frame buffers now come from the already-wired GPU arena; the next card run must
+confirm it.** In QEMU Camera.app shows a live preview and takes photos through the whole
 path (QEMU camera model → ARM9 sensor set-up → ARM11 FIFO drain → mediaserverd
 plug-in → Celestial → Camera.app → Camera Roll). Video recording is not
 offered (section 8).
@@ -88,7 +90,7 @@ the frame size (section 6). The I2C buses and the camera clock are the ARM9's
 | `vcd = true` | `rootfs/files/camera/com.apple.coremedia.plist` → `/var/mobile/Library/Preferences/` |
 | Shared contracts: sysctl requests, mailbox, register map | `boot/common/cam_proto.h` |
 | Test pattern + YUV conversions (plug-in, QEMU model, host test) | `boot/common/cam_pattern.h` |
-| Shim: sysctl `ios3ds_cam`, FIFO drain, overrun recovery | `kernel/shim/cam.c` (GPU part, `link.ld` `*cam*.o`), hooks in `gpu_glue.c`, `audio.c` |
+| Shim: sysctl `ios3ds_cam`, frame buffers (GPU arena first, `IOMallocContiguous` fallback), FIFO drain, overrun recovery | `kernel/shim/cam.c` (GPU part, `link.ld` `*cam*.o`), hooks in `gpu_glue.c`, `audio.c`; arena block `kernel/shim/pica.c` |
 | ARM9: camera clock, I2C (16-bit register index added to `i2c.c`), Aptina set-up, standby | `boot/arm9/camera.c` |
 | boot.cfg `camera=1` (default) / `camera=0` | `scripts/mkboot.py`, `boot/arm9/main.c` |
 | QEMU model | `emu/qemu/hw/arm/ctr_cam.c` |
@@ -148,6 +150,20 @@ previous sensor into standby first.
   frames.
 - STOP cleans all three frame buffers; the ARM9 then copies the two newest
   complete frames out of them (section 4.1).
+
+### 3.3 Status numbers in `[cam] stream N: ... status X`
+These are the **sysctl request status** (`CAM_ERR_*` in `boot/common/cam_proto.h`),
+not the ARM9's mailbox `CAM_ST_*` state, even where the numbers coincide:
+
+| Line | Status | Meaning |
+|---|---|---|
+| `start camera ... -> status 3` | `CAM_ERR_NO_MEM` | the shim could not get the 3 x 150 KiB frame buffers; it returned before sending the mailbox request, so the ARM9 never logs a start and the camera clock/I2C/Aptina paths are untouched |
+| `frame request failed, status 6` | `CAM_ERR_NOT_RUNNING` | FRAME arrived with no successful START in this boot (`C.running == 0`): a consequence of the failed START, not a separate sensor fault |
+| `kernel state 3` in `[cam] device: ...` | `CAM_ST_FAILED` | different scale: the **ARM9** gave up on I2C/sensor init; it always logs `[cam] ... init failed (step N)` then. This did not happen in run 2026-11-24. |
+
+`CAM_ERR_AGAIN` (4) is normal while waiting for the first frame. A status 3 at
+START also explains `0 frames` and `monitor at stop: 0 CAM_STAT samples`: nothing
+was ever started.
 
 ## 4. Preview, photos, orientation
 - Preview: the plug-in delivers BGRA frames (YUYV converted in mediaserverd),
@@ -337,6 +353,85 @@ picture's orientation/mirroring (`SensorOrientation`, read mode 0x2717/0x272D
 bit 0 = x-flip), and whether a 1 ms CPU drain keeps up on the console (many
 overruns would mean CDMA is needed). `camera=0` in boot.cfg keeps the kernel
 away from the cameras (the plug-in then reports no device).
+
+### 7.1 Hardware run 2026-11-24 (Old 3DS): out of frame-buffer memory
+Evidence: `issue-reports/run-2026-11-24.txt` (git-excluded, quoted here only in
+short excerpts). The card identified itself as
+`m1-0.4.0-21-g5800f1e-dirty-20261122.1622`, i.e. build 21 after the 0.4.0 tag
+that was confirmed working on a New 2DS XL - **not** the `edf6444` sources in
+this worktree. That matters for the history bisect but not for the failure:
+the camera sources are byte-for-byte identical from 0.4.0 (`6d963b6`) through
+`5800f1e`; what changed between the last working Old-3DS run 29 (build 43) and
+this run was the surrounding memory footprint (TLSFix/Substrate, Music library,
+GPS daemon, larger rootfs and GPU arena churn), not the camera driver.
+
+- The boot `[cam-diag]` lines are identical to run 29's: `CFG11_CAMERA_CNT 00 ->
+  01`, CAM0 `cnt 00004610`, CAM1 `cnt 00004600`, and all three chips answer
+  `chip id 2280`. `cameras present 0x3` in the plug-in's INFO call confirms the
+  ARM9 probe. So the CAM clock, CAM0 bit-4 reset, I2C buses and Aptina IDs are
+  fine on this console; none of those paths was reached again at START.
+- The plug-in logs `start camera outer -> status 3` then
+  `frame request failed, status 6`, stop after `0 frames`, and
+  `[cam] monitor at stop: 0 CAM_STAT samples`. There is no `[cam] start outer
+  camera ...`, no `[cam] iOS wants ...` and no `[cam-diag]` start dump. Those
+  lines only exist after `op_start()` gets past allocation: status 3 is
+  `CAM_ERR_NO_MEM` from `IOMallocContiguous(CAM_FRAME_BYTES, 32, &pa)`, before
+  the mailbox request. Run 29's log has `[cam] start outer camera ...` followed
+  by `status 0`. This is the exact boundary of the regression.
+- On the Old 3DS XNU has 128 MiB; the GPU arena already wires 12 MiB and the
+  wired/contiguous heap is much tighter than on the New 2DS XL's 256 MiB. A new
+  3 x 150 KiB *physically contiguous, wired* allocation at Camera.app start can
+  fail there even though the boot-time arena allocation succeeded. QEMU's
+  `--icount 2` model did not reproduce the failure (IOMallocContiguous succeeds
+  there), so the fix had to be proven with host tests and diagnostics.
+
+**Fix** (`kernel/shim/cam.c`, `kernel/shim/pica.c`, `tools/ios3ds-camera/vcd/vcd.c`):
+at GPU bring-up (once, before GL requests can race the driver's block table)
+reserve one 450 KiB block for the three frames from a full-size arena
+(`pica_drv_alloc` under private owner `0xFFFFFFFE`, so a GL client's `free_all`
+cannot reclaim it; arenas under 6 MiB are left to the display mirror). The
+shim derives the frame VAs from the arena's VA/PA at START and falls back to
+`IOMallocContiguous` when no block was reserved (`gpu=0`, GPU bring-up failed,
+or a small arena). On failure, give back the frames already
+allocated (the old code leaked them, making every retry worse), log
+`[cam] NO_MEM ...`, and let the plug-in retry START four times at 200 ms. The
+arena block is kept across camera sessions, like the IOKit buffers before it.
+
+**Host proof:** `tools/ios3ds-camera/tests/test_cam.c` models both allocation
+sources: arena first (0 IOKit calls), IOKit fallback when the arena is off, a
+forced mid-sequence failure frees the first frame and a retry succeeds;
+`tools/ios3ds-pica/tests/test_pica.c` reserves 450 KiB under the private owner
+and checks that GL churn/free-all does not overlap it. Both run in `make test`.
+
+**QEMU proof** (`--icount 2`, Old model, fresh image): `[cam] reserved 3 x 150
+KiB in the GPU arena at PA <PA>`, `[cam] buffers: arena 3x150 KiB
+@<PA>`, `[cam] start outer (... src 1 ...)`,
+`stream 0: start camera outer -> status 0`, frames delivered and 0 overruns;
+`emu/stress.py --cycles 0 --camera-cycles 2 --icount 2` saw 2 starts/3 stops,
+and `emu/soak.py --cycles 5 --icount 2` PASS. The stress harness's camera tap
+coordinate was corrected from (123,314) to (123,360) for the current IconState;
+with earlier app cycles the first touch can still land in Spotlight under
+`--icount 2` (a QEMU input-timing flake, unrelated to the camera).
+
+**Next card run must show** (with `diag=1`):
+1. `[cam] buffers: arena 3x150 KiB @<PA>` soon after Camera.app opens, and
+   `[cam] start outer (... src 1 ...)` / `start camera outer -> status 0`.
+   If instead `src 2` appears, the GPU arena was unavailable - check the
+   `[pica] arena ...` line; if `[cam] NO_MEM ...` appears, both sources failed.
+2. `[cam] iOS wants the outer left camera`, the start `[cam-diag]` block dumps,
+   `outer left camera streaming ...`, and frames/overruns in the 10 s line.
+3. A live preview and a saved photo in Camera Roll. If statuses 3/6 still
+   appear, the new `NO_MEM` line names which allocator failed; do **not** read
+   it as a sensor/I2C fault. The boot probe alone cannot distinguish them.
+
+### 7.2 Old vs New: paths checked, and what is different
+| Path | Old 3DS (this report / run 29) | New 2DS XL (0.4.0) | Verdict |
+|---|---|---|---|
+| CAM clock | `CFG11_CAMERA_CNT` 00 -> 01 (bit 1 does not stick) | same register sequence | not the failure |
+| CAM block reset/init | CAM0 `4610`, CAM1 `4600` before the sensor set-up | same | not the failure |
+| I2C buses | outer left `0x10144000/0x78`, inner `0x10161000/0x7A`, outer right `0x10161000/0x78`; all answer `2280` | same | not the failure |
+| Aptina init | run 29 streamed 12 fps with the same code | confirmed working | unchanged since 0.4.0 |
+| Contiguous frame buffers | 128 MiB XNU, 12 MiB arena already wired; failed at START | 256 MiB (`n3ds_ram=1`), succeeded | **the difference**; now reserved from the arena on both |
 
 ## 8. Not done
 - **Video recording**: Camera.app's video switch needs `video-camera` and an

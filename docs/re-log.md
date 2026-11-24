@@ -2529,3 +2529,71 @@ md0 errors or crashes).
 A full Voice Memos tap sequence in `emu/tap.py` was timing-dependent under the
 shared host's load (the folder animation missed the scheduled tap), so the
 `[mic]` lines still need a real console run; host tests cover the shim side.
+## 108. Camera on the Old 3DS: START status 3 is out of frame-buffer memory, not a sensor fault (2026-11-24)
+
+- **Report** (`issue-reports/run-2026-11-24.txt`, git-excluded; only short
+  excerpts are quoted here): Old 3DS, `CFG11_SOCINFO 1`, `diag=1 powersave=0
+  hp_codec=1`. All three sensors answer `chip id 2280` at boot, `cameras
+  present 0x3`, then `stream 0: start camera outer -> status 3`,
+  `frame request failed, status 6`, `stopped after 0 frames`, `monitor at stop:
+  0 CAM_STAT samples`. Camera.app shows no camera and the shutter never opens.
+- **Decoding (docs/camera.md §3.3):** status 3 at START is
+  `CAM_ERR_NO_MEM` from `op_start()`'s `IOMallocContiguous()` loop; status 6 at
+  FRAME is `CAM_ERR_NOT_RUNNING` because `C.running` was never set. The ARM9's
+  `CAM_ST_FAILED` is *also* 3 but would come with `[cam] ... init failed
+  (step N)` and `kernel state 3`; this run has neither. The absence of
+  `[cam] start outer camera ...`, `[cam] iOS wants ...` and any `[cam-diag]`
+  start dump pins the failure to the first 150 KiB allocation, before the
+  mailbox request. `cameras present 0x3` is from the boot probe and does not
+  mean a start happened.
+- **History/old-vs-new bisect:** the card's own banner read
+  `m1-0.4.0-21-g5800f1e-dirty-20261122.1622` (21 commits after the camera-working
+  0.4.0 tag), not `edf6444` as reported. `git log`/`git diff` show **no changes
+  to cam.c/camera.c/cam_proto.h/vcd.c/docs/camera.md** from 0.4.0 (`6d963b6`)
+  to `5800f1e`; the last Old-3DS hardware run with pictures was run 29 (build
+  43, `53304df`) and the register sequence in this run matches it byte for
+  byte (`CFG11_CAMERA_CNT 00 -> 01`, CAM0 `4610`, CAM1 `4600`, the same I2C
+  buses and IDs). What changed between those builds is the rest of the image
+  (TLSFix/Substrate, Music library, GPS daemon, bigger rootfs, GPU arena
+  churn) - i.e. XNU's contiguous/wired heap at the moment Camera.app starts.
+  New 2DS XL has 256 MiB (`n3ds_ram=1`) and kept working; the 128 MiB Old 3DS
+  did not. A full boot bisect over ~100 commits is not possible here (one QEMU
+  boot is ~80 s and the failure needs hardware), so this is an evidence-based
+  narrowing, not a proven commit-level bisect. The two later camera-related
+  changes (`aab28fb`, `e7175ba`, ambient light) are not in the card's build.
+- **Fix:** `kernel/shim/pica.c` reserves one 450 KiB block for the three
+  150 KiB frames during GPU bring-up (single-threaded, private owner
+  `0xFFFFFFFE`, full-size arenas only), publishing its PA to
+  `kernel/shim/cam.c` with the arena VA/PA. cam.c uses those frames at START,
+  falls back to `IOMallocContiguous` when no block was reserved, gives back a
+  partial allocation on failure, and logs
+  `[cam] buffers: arena|IOKit ...`, `[cam] NO_MEM ...`, `[cam] FRAME status 6
+  ...` and the buffer source in `[cam] start ...`. `vcd.c` retries START four
+  times on `CAM_ERR_NO_MEM` instead of giving up after one. `pica.c` is now
+  built at `-Os` with `PICA_HOT` (-O2) on its three hot functions to keep
+  gpu.bin at 31776/32768 bytes (CI's larger codegen needs the room).
+  `docs/camera.md` §7.1/§7.2 record the diagnosis, the next-run checklist and
+  the Old/New comparison.
+- **Verified without the console:** `make test` green (host camera allocator:
+  arena used first with 0 IOKit calls; IOKit fallback; forced partial failure
+  freed and retried; pica: a private 450 KiB block survives GL free_all).
+  Shim/gpu.bin builds at 23756/24320 and 31776/32768 bytes. QEMU Old model,
+  `--icount 2`, fresh image: `[cam] reserved 3 x 150 KiB in the GPU arena at
+  PA <PA>`, `[cam] buffers: arena 3x150 KiB @<PA>`, `src 1`, START
+  status 0, frames delivered, 0 overruns, frame dump written;
+  `emu/stress.py --cycles 0 --camera-cycles 2 --icount 2`: 2 starts/3 stops,
+  0 camera start failures/OOM lines (the run's overall FAIL is the unrelated
+  unlock/home-screen flake).
+  Required fresh-image soak `rm -f build/sd.img && make sdimg && python3
+  emu/soak.py --cycles 5 --icount 2`: **Result: PASS**. `emu/stress.py`'s
+  camera icon coordinate was corrected to (123,360) for the current
+  IconState; with earlier app cycles the first QEMU touch still sometimes
+  lands in Spotlight (harness timing, unrelated to the camera), and that run's
+  unlock rounds also report the known home-screen diff flake.
+- **Still needs hardware:** reflash and open Camera.app on the same Old 3DS.
+  The log must show `[cam] buffers: arena ...`, `src 1`, START status 0, the
+  ARM9's start dump and frames, plus a live preview and a saved photo. If
+  `[cam] NO_MEM ...` or `src 2` appears instead, the next card run has to
+  include the `[pica] arena ...` line - that decides whether the arena was
+  absent/full or the fallback also failed. Video, 3D photos and New 3DS models
+  are not re-verified by this run (the change is common to both models).

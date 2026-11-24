@@ -38,7 +38,7 @@ APPS = {
     "photos": (199, 50),
     "notes": (47, 226),
     "settings": (47, 314),
-    "camera": (123, 314),
+    "camera": (123, 360),       # IconState row 4, column 2 (re-log 77); 314 opened Spotlight
     "safari": (199, 440),       # dock
     "music": (47, 440),         # dock
 }
@@ -57,6 +57,9 @@ CHECKS = [
     ("GPU present check failed", r"GPU present check FAILED", True),
     ("GPU mirror self-test failed", r"\[gpu\] display mirror( FAILED|: self-test (FAILED|aborted))", True),
     ("camera init failed", r"\[cam\].*init failed|\[cam\].*did not answer", False),
+    ("camera start failed", r"\[cam\] stream \d+: start camera .* -> status [1-9]", True),
+    ("camera frame-buffer OOM", r"\[cam\] NO_MEM|no frame buffers \(status 3\)", True),
+    ("camera frame request failed", r"\[cam\] stream \d+: frame request failed, status (?!4\b)\d+", True),
     ("camera FIFO overruns", r"\[cam\].*FIFO overruns [1-9]", False),
     ("audio device error", r"could not start DMA|no CODEC", False),
     ("input stale port", r"\[input\] stale touch port", False),
@@ -317,6 +320,9 @@ def main():
         if not a.no_camera:
             cam = {"started": 0, "stopped": 0, "lit": []}
             for i in range(a.camera_cycles):
+                # NOTE: after other app cycles the first touch can land in
+                # Spotlight under --icount 2 (SpringBoard timing, not a camera
+                # bug). Use --cycles 0 --camera-cycles N for a camera-only run.
                 tap(*APPS["camera"])
                 text = ""
                 for _ in range(18):             # up to 90 s of wall time

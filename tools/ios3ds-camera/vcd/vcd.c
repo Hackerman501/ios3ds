@@ -422,7 +422,14 @@ static void *frame_thread(void *arg)
         memset(&r, 0, sizeof r);
         r.op = CAM_OP_START;
         r.a[0] = s->cam;
-        cam_call(&r);
+        for (unsigned attempt = 0; ; attempt++) {
+            cam_call(&r);
+            if (r.status != CAM_ERR_NO_MEM || attempt >= 4 || !s->running) break;
+            /* XNU's contiguous heap can recover as another app frees pages;
+               the shim now normally avoids this by taking the GPU arena. */
+            if (!attempt) lg("stream %u: start: no frame buffers (status 3), retrying", s->cam);
+            usleep(200000);
+        }
         lg("stream %u: start camera %s -> status %u", s->cam, s->cam == CAM_OUTER ? "outer" : "inner", r.status);
     }
     while (s->running) {
