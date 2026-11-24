@@ -3261,3 +3261,44 @@ worktree's `build/` (no Apple files are committed).
   emu/soak.py --cycles 5 --icount 2`): **Result: PASS**, SpringBoard + input
   up after 60 s, five cycles, zero failures. The 4.2.1 exact-sequence PASS is
   recorded just above.
+
+## NEXT. Harness conflict after the perf2 rebase, and older-version bring-up (2026-11-24)
+
+### Harness: restore the warm-up gate beside the console-colour test
+
+- **[V]** The rebase of the six compat5 commits onto `f46d155` (perf2) had a
+  conflict in `emu/soak.py:is_bootlog()`. Keeping compat5's whole function also
+  dropped perf2's `[sbwarm]` gate (`0272d9d`): the home reference could be
+  taken before SpringBoard's icon warm-up finished, i.e. from a lit boot
+  console or a partially drawn first frame. That is the combined-harness
+  regression; neither side had it alone (perf2 gated on `[sbwarm]`, compat5
+  rejected console colours). A loaded host makes the window long enough to
+  matter, and a run that waits 300 s for a reference plus up to 180 s per tap
+  produces exactly the reported long, silent soak.
+- **[V]** Measured on the rebased 4.2.1 guest (unmodified harness, idle host):
+  the boot console is monochrome, the lit home screen has RGB means
+  44/44/44, greyscale stddev **53.6** and **3264** saturated samples in the
+  top-screen crop, against 194/3128 (console/home) recorded for 4.1 in §114.
+  The saturation test alone can also reject a *dim* home frame: it has no
+  idea whether the frame has console-like texture.
+- **[V]** `emu/soak.py` now waits for the `[sbwarm]` marker (300 s bound, logs
+  a fallback when a firmware does not emit it) *and* keeps the colour test,
+  but only applies the saturation part to frames whose greyscale stddev is
+  >= 70 (console text, measured ~92 in §113, vs 53.6 for the icons). The
+  reference-acquisition line now logs its brightness/stddev so a future
+  misclassification is visible in the run log instead of only in the report.
+- **[V]** Fresh-image exact sequence with the fixed harness printed
+  **Result: PASS** on 4.2.1: SpringBoard + input after 70 s, `[sbwarm]` after
+  135 s, home reference at 145 s (stddev 53.6), five app/home cycles with
+  `home diff 0.0`, no recoveries, zero failures. The 4.1 exact-sequence soak
+  is recorded in the next subsection.
+- **[V]** 4.2.1 boot files are unchanged: `git archive origin/main` and this
+  branch, built from the same staged firmware, produce identical SHA-256 for
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`, `fakeio.bin e5fecd66…`,
+  `shim.bin e0609de9…`, `gpu.bin 7e696f65…` and `boot.cfg 8d4079cf…`.
+- **[V]** The documented 4.1 sequence with the fixed harness
+  (`rm -f build/sd.img && make sdimg IOS=4.1 && IOS3DS_QEMU=… python3
+  emu/soak.py --cycles 5 --icount 2`) also printed **Result: PASS**: input up
+  after 60 s, `[sbwarm]` at 130 s, home reference at 140 s (stddev 53.3),
+  five cycles with `home diff 0.0`, no recoveries or failures. Both harnesses
+  now agree on what a home frame looks like; the guest payload is unchanged.

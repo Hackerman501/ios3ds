@@ -162,11 +162,21 @@ def main():
         input daemon connected, so the 'stable and bright' reference test can
         accept it and every later home screenshot fails with a ~70 diff.
         The console is monochrome: unlike the home screen's coloured icons it
-        has almost no saturated pixels. (re-log 111 and 114, 4.1 soak.)"""
+        has almost no saturated pixels. (re-log 111/114 and NEXT.)"""
         rgb = img.convert("RGB")
         rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in rgb.split())
         if gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90:
             return True
+        # Only ask the saturation question of console-*textured* frames. A
+        # lit home screen is dim on this host (RGB means ~44/44/44) but its
+        # greyscale stddev is ~54; text on black is ~92. Without this gate a
+        # dim, low-saturation home frame would be called a console, the
+        # reference would never be accepted and every cycle would time out
+        # waiting for an app (seen as a >15 min silent soak after re-log 113).
+        grey = img.convert("L")
+        stat = ImageStat.Stat(grey)
+        if stat.stddev[0] < 70:
+            return False
         # Sample the top screen: the home screen's icon grid has thousands of
         # saturated pixels, the console's text has a few (measured 1.7k vs
         # 17k over both screens on a 4.1 image). 1/4 sampling keeps this cheap
@@ -265,6 +275,21 @@ def main():
             key("ret")
             time.sleep(4)
             log("unlock-first: %d slide attempt(s)" % (attempt + 1))
+        # SpringBoard's icon warm-up marker is the earliest point at which the
+        # screen can be the home screen. Re-log 113: a slow host could leave
+        # the boot console lit and stable past the input daemon's connect, so
+        # an un-gated reference test took *that* as home and reported every
+        # later cycle as "stuck". Keep the console-colour test below as a
+        # second line of defence (re-log 114: white console text), but never
+        # skip the warm-up wait when applog is installed. A firmware without
+        # the marker falls through after the timeout instead of hanging.
+        warm_wait = time.time()
+        while time.time() - warm_wait < 300 and "sbwarm" not in read_log(a.sd):
+            time.sleep(5)
+        if "sbwarm" in read_log(a.sd):
+            log("SpringBoard icon warm-up ready after %.0f s" % (time.time() - t0))
+        else:
+            log("no [sbwarm] marker within 300 s; relying on the image tests")
         # reference: not black (the screen copy may be switching to the GPU,
         # soak 3) and unchanged across two shots 5 s apart.  On a loaded host
         # with --icount 2 SpringBoard's first lit frame came ~220 s after the
@@ -279,6 +304,8 @@ def main():
                     ImageStat.Stat(ImageChops.difference(
                         img.convert("L"), prev.convert("L"))).mean[0] < 1.0):
                 home_ref = img
+                log("home reference after %.0f s: mean %.1f, stddev %.1f" %
+                    (time.time() - t0, bright, ImageStat.Stat(img.convert("L")).stddev[0]))
                 break
             prev = img
         dark_ref = False
