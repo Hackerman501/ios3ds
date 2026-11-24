@@ -2762,7 +2762,7 @@ Design: docs/perf.md. Hardware input: `issue-reports/run2-perf.txt`
   figures. The dominant Old 3DS cost - the mirror's ~20 ms/frame and the GPU
   split with CoreAnimation - is GPU-side and not fixed here.
 
-## NEXT. iOS 3.1.3 root mount: the patch was on the wrong memdev helper (2026-11-24)
+## 111. iOS 3.1.3 root mount: the patch was on the wrong memdev helper (2026-11-24)
 
 The 7E18 bring-up stopped in `BSD root: md0` with **0** md0 requests served by
 the ARM9. The earlier guess was a Darwin 10.0 `buf_t` ABI change inside the
