@@ -162,7 +162,7 @@ def main():
         input daemon connected, so the 'stable and bright' reference test can
         accept it and every later home screenshot fails with a ~70 diff.
         The console is monochrome: unlike the home screen's coloured icons it
-        has almost no saturated pixels. (re-log 111 and NEXT, 4.1 soak.)"""
+        has almost no saturated pixels. (re-log 111 and 114, 4.1 soak.)"""
         rgb = img.convert("RGB")
         rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in rgb.split())
         if gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90:

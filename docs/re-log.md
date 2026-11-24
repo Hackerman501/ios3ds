@@ -2787,7 +2787,7 @@ shim. It was not: the kernel patch was on the wrong function.
   userland activation, as on 2.2.1. 4.2.1 files were not touched; only a
   3.1.3 patch recipe changed.
 
-### NEXT.md (same section, continued): 3.1.3 offline activation
+### 114 (same section, continued): 3.1.3 offline activation
 
 - **[V]** 7E18's dyld cache has no 8C148 offsets, but its liblockdown symbols
   do resolve. `rootfs/overlay-3.1.3.json` now carries five file patches:
@@ -2806,7 +2806,7 @@ shim. It was not: the kernel patch was on the wrong function.
   applog) rather than more liblockdown table work. 4.2.1/4.1 code paths are
   untouched; the 2.2.1 interposer is a separate version-only tool.
 
-### NEXT.md (same section, continued): 2.2.1 liblockdown, still no SpringBoard
+### 114 (same section, continued): 2.2.1 liblockdown, still no SpringBoard
 
 - **[V]** The 4.2.1 `DYLD_INSERT_LIBRARIES` approach does not transfer to 2.x:
   a dylib built with the 4.2.1 stub toolchain produced
@@ -2822,7 +2822,7 @@ shim. It was not: the kernel patch was on the wrong function.
   Boot now has no `CODESIGNING` faults, but still no SpringBoard output and a
   black screen: activation alone is not the 2.x blocker.
 
-### NEXT.md (same section, continued): default build stays byte-identical
+### 114 (same section, continued): default build stays byte-identical
 
 - **[V]** `make userland` + a fresh `make sdimg` produced the same six 4.2.1
   boot-file sha256 values as before any of this version work:
@@ -2836,7 +2836,7 @@ shim. It was not: the kernel patch was on the wrong function.
   md0/log/crash/watchdog/GPU failures). The 4.1 soak and the two older-version
   runs are recorded below as they finish.
 
-### NEXT.md (same section, continued): 4.1 soak PASS after a harness fix
+### 114 (same section, continued): 4.1 soak PASS after a harness fix
 
 - **[V]** The first two 4.1 fresh-image soaks printed `Result: FAIL` with
   `not home after Home: {'stuck': [0..4]}` and a ~70 home diff. The cycle
@@ -2850,7 +2850,7 @@ shim. It was not: the kernel patch was on the wrong function.
   stalls, md0/log/crash/watchdog/GPU failures. The change affects only the
   harness; no firmware or userland payload was altered.
 
-### NEXT.md (same section, final hash check after the rebase)
+### 114 (same section, final hash check after the rebase)
 
 - **[V]** Rebasing onto current `origin/main` brought in the stereo/GPU changes
   from `agent/stereogpu` (`dd54b1a`), which legitimately change `shim.bin`,
@@ -3141,7 +3141,7 @@ A card run with `diag=1` on the Old 3DS to confirm:
   textures are broken, run 13), and the read-out writes both framebuffer sets
   to avoid tearing. Cutting those needs a console decision (RGB565 texture =
   banding; one-set read-out = possible tearing), so they were left alone.
-## NEXT. iOS 3.1.3: SpringBoard starts, stops at the activation screen (2026-11-24)
+## 114. iOS 3.1.3: SpringBoard starts, stops at the activation screen (2026-11-24)
 
 Continues §111. The root mount has been solid since the previous round; this
 round traced the userland stop point with GDB and dyld logging, all in this
