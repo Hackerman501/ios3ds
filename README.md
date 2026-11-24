@@ -37,13 +37,13 @@ iOS boots to the home screen in about a minute. Apps open, Safari loads web page
 | ⚠️ | Headphone jack | iOS switches to headphones when plugged in, but 0.4.0 was silent in them; CODEC fix after 0.4.0 not yet confirmed, see [docs/audio.md](docs/audio.md) §4 |
 | 🧪 | Music app: a test song and your own songs | `install.py --music DIR` (or files in `SD/ios3ds/music/`): .mp3, .m4a (AAC/ALAC), .wav, .aif; [docs/audio.md](docs/audio.md) §10 |
 | 🧪 | Gyroscope (CoreMotion) | |
-| 🧪 | Stereoscopic 3D home screen (experimental, needs a console test) | `stereo3d=1` in `boot.cfg`; the ARM9 builds both eyes and enables the barrier with the slider up; see [docs/stereo3d.md](docs/stereo3d.md) |
+| 🧪 | Stereoscopic 3D home screen (experimental, needs a console test) | `stereo3d=1` in `boot.cfg`; the GPU mirror builds both eyes and enables the barrier with the slider up; flat frames cost nothing extra; see [docs/stereo3d.md](docs/stereo3d.md) |
 | 🧪 | Fake GPS location (CoreLocation) | set with `boot.cfg` `gps=` or `/usr/bin/ios3ds-gps` from a terminal; 1 Hz updates in apps, including Safari, see [docs/location.md](docs/location.md) |
 | 🧪 | Modern HTTPS: TLS 1.2/1.3 (TLSFix), current root certificates | Cydia, Safari and other apps; see [Limitations](#limitations) |
 | 🧪 | Cydia Substrate (tweaks) | pre-installed; installing tweaks no longer hangs the 3DS; tweaks load into SpringBoard and apps, see [docs/cydia.md](docs/cydia.md) |
 | 🧪 | New 3DS: 804 MHz CPU, C-stick, ZL/ZR | L2 cache optional, see [docs/n3ds.md](docs/n3ds.md) |
 | 🧪 | New 3DS: auto-brightness from the ambient light sensor | emulator only, off on Old models; `auto_brightness=0` to disable, see [docs/mcu.md](docs/mcu.md) §13 |
-| 🧪 | 3D screen (home screen only, experimental) | `stereo3d=1` + slider up; hardware path implemented, not yet confirmed on a console; see [docs/stereo3d.md](docs/stereo3d.md) |
+| 🧪 | 3D screen (home screen only, experimental) | `stereo3d=1` + slider up; PICA200 two-eye mirror implemented, not yet confirmed on a console; see [docs/stereo3d.md](docs/stereo3d.md) |
 | ❌ | IR, NFC, video recording | currently unplanned |
 
 ✅ works on a real 3DS · ⚠️ works on a real 3DS with known problems · 🧪 works in the emulator, not yet confirmed on a console · ❌ not working / not supported
@@ -184,7 +184,7 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
   | `wifi_led=0` | don't light the console's Wi-Fi LED while connected |
   | `boot_delay=0` | skip the 1 s wait before XNU (or press **A** during it); the old name `countdown_ms` still works |
   | `diag=1` | extra diagnostics in the log |
-  | `stereo3d=1` | experimental stereoscopic 3D home screen (ARM9 two-eye copy + barrier; needs a console test); turns `gpu_mirror` off automatically |
+  | `stereo3d=1` | experimental stereoscopic 3D home screen (PICA200 two-eye mirror + barrier; needs a console test); flat frames use the normal GPU mirror |
 
 ### FAQ
 
@@ -239,7 +239,7 @@ rebooting; details and limits: [docs/location.md](docs/location.md).
 - **Cameras:** 320×240 preview at about 12 fps (photos are scaled up from it); no video recording and no 3D photos.
 - **Home-screen wallpaper:** not present on the iPod touch 2G in stock iOS 4.2.1 (Apple enabled it on newer devices); the lock screen does show the wallpaper you pick in Settings. See the [FAQ](#faq).
 - **Updates rebuild the iOS disk:** user data (settings, saved Wi-Fi networks and passwords, photos, voice memos, preferences) is carried over automatically by the installer; installed Cydia packages and the Music library are not (reinstall packages after updating). Use `--fresh` (installer) to start with a clean disk.
-- **No hardware for:** Bluetooth (the 3DS has none), GPS, IR, NFC. The 3D screen path is implemented but not yet confirmed on a console ([docs/stereo3d.md](docs/stereo3d.md)). A user-set fake location works in CoreLocation apps ([docs/location.md](docs/location.md)).
+- **No hardware for:** Bluetooth (the 3DS has none), GPS, IR, NFC. The 3D screen path (PICA200 two-eye mirror) is implemented but not yet confirmed on a console ([docs/stereo3d.md](docs/stereo3d.md)). A user-set fake location works in CoreLocation apps ([docs/location.md](docs/location.md)).
 - **Leaving iOS:** a short POWER press locks/unlocks; holding it for about 3 s now starts iOS's own clean shutdown (the same path as "slide to power off") and switches the 3DS off through the MCU. Holding it for ~10 s still forces a hard power cut if iOS is stuck. Apple's boot-time `fsck` cannot check the root disk (`/dev/md0` is already mounted, `EBUSY`); the ARM9 instead logs at boot whether `rootfs.hfs` was cleanly unmounted and sets that flag after a clean shutdown ([docs/mcu.md](docs/mcu.md) §12). A hard cut can still damage files: back up your card.
 - **Not supported:** activation, iTunes sync and the data-protection keybag are stubbed out.
 

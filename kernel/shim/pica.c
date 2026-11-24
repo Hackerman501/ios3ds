@@ -151,10 +151,11 @@ static void dc_inval(volatile void *p, uint32_t len)
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
-/* lines 0-1 are the ARM9's (it writes FCRAM uncached): drop our copy first */
-static void gm_fetch(void) { dc_inval(GM, 64); }
-/* lines 2-4 are ours: write them back so the ARM9 sees them */
-static void gm_publish(void) { dc_clean(&GM->state, 96); }
+/* lines 0-1 and the ARM9's stereo request (line 5) are written uncached by
+   the monitor: drop our copies first (256 bytes = the whole mailbox) */
+static void gm_fetch(void) { dc_inval(GM, sizeof(gmbox_t)); }
+/* lines 2-5 are ours: write them back so the ARM9 sees the mode counters */
+static void gm_publish(void) { dc_clean(&GM->state, sizeof(gmbox_t) - 32); }
 static int gm_valid(void) { gm_fetch(); return GM->magic == GM_MAGIC; }
 
 static uint32_t p_rd(uint32_t off) { return *(vu32 *)(GX_VA + off); }
@@ -642,7 +643,8 @@ static int fb_ok(uint32_t pa, uint32_t len)
 /* Thread context. Brings the mirror up once the ARM9 asks for it. */
 PICA_HOT void shim_gpu_thread_poll(void)
 {
-    uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
+    uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4], t0, i;
+    fbad[0] = fbad[1] = fbad[2] = fbad[3] = 0;
     int v, keep_tex = 0;
 
     /* PDC0 3D mode is needed even when the display mirror is off (the stereo
@@ -730,9 +732,16 @@ PICA_HOT void shim_gpu_thread_poll(void)
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
         if (denv.vram) {
             /* the variants left their own last state: draw variant 0 once more and show it */
+            pm_frame_t f;
             mir.variant = 0;
-            pm_begin(&mir, &(pm_frame_t){ src_pa, 1, 1, { out_pa + GUARD, out_pa + GUARD },
-                                          { out_pa + GUARD + GM_TOP_FB_BYTES, out_pa + GUARD + GM_TOP_FB_BYTES } });
+            f.src_pa = src_pa;
+            f.mode = 1;
+            f.nsets = 1;
+            f.top[0] = f.top[1] = out_pa + GUARD;
+            f.bot[0] = f.bot[1] = out_pa + GUARD + GM_TOP_FB_BYTES;
+            f.stereo = f.k = 0;
+            f.tex_va = (void *)(drv.va + (tex_pa - drv.pa));
+            pm_begin(&mir, &f);
             while (pm_poll(&mir, mir.timeout_ticks) == PM_BUSY)
                 ;
             pd_dump_mirror(&denv, (const uint32_t *)(drv.va + (tex_pa - drv.pa)));
@@ -741,6 +750,8 @@ PICA_HOT void shim_gpu_thread_poll(void)
         goto out;
     }
     mir.variant = (uint32_t)v;
+    GM->stereo_ok = ((const gm_blob_t *)mir.blob)->st_list_bytes[0] != 0;
+    GM->st_frames = GM->flat_frames = GM->mirror_busy = 0;
     mir.frames = 0;
     mir.timeouts = 0;
     for (i = 0; i < 3; i++)
@@ -782,7 +793,16 @@ static void m_after(int st)
     if (st == PM_BUSY)
         return;
     busy = 0;
+    GM->mirror_busy = 0;
     m_stats();
+    if (st == PM_DONE) {
+        /* the ARM9 waits for a frame in the new mode before it moves the
+           barrier or gives the screen back to the CPU copy */
+        if (mir.stereo)
+            GM->st_frames++;
+        else
+            GM->flat_frames++;
+    }
     if (st == PM_TIMEOUT) {
         /* the GPU did not finish: stop mirroring for good; the ARM9 notices
            (frames stop) and copies with the CPU again */
@@ -853,12 +873,17 @@ PICA_HOT void shim_gpu_irq(uint32_t id)
     }
     f.mode = GM->mode;
     f.nsets = m_nsets;
+    f.stereo = GM->stereo_on && GM->stereo_ok;
+    f.k = GM->stereo_k;
+    f.tex_va = (void *)(drv.va + (mir.tex_pa - drv.pa));
     f.top[0] = m_fb[0];
     f.top[1] = m_fb[1];
     f.bot[0] = m_fb[2];
     f.bot[1] = m_fb[3];
     busy = 2;
     pm_begin(&mir, &f);
+    GM->mirror_busy = 1;
+    gm_publish();                       /* the ARM9 must see an in-flight frame */
     GM->steps++;
     m_after(pm_poll(&mir, spin));
 out:

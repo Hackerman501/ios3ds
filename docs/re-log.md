@@ -2597,3 +2597,104 @@ shared host's load (the folder animation missed the scheduled tap), so the
   include the `[pica] arena ...` line - that decides whether the arena was
   absent/full or the fallback also failed. Video, 3D photos and New 3DS models
   are not re-verified by this run (the change is common to both models).
+
+## NEXT. Stereo 3D on hardware: keep the GPU mirror on, build both eyes on the PICA200 (2026-11-24)
+
+Hardware run 3 (`issue-reports/run3-3d.txt`, git-excluded) answered the console
+question from section 90: with `stereo3d=1` the 3D slider did **nothing**.
+The log showed `[mcu] ... 3D slider 8` once at boot, then
+`[monitor] CPU screen copy: 43 copies in 30 s, 301.4 ms each (ARM9)` and
+`53 copies in 30 s, 229.1 ms each`. There were no `[stereo]` lines at all:
+at that revision none existed, so neither slider changes nor PDC/barrier
+transitions were observable.
+
+- **Why:** `a9_main()` forced `cfg.gpu_mirror = 0` whenever `stereo3d=1`, so
+  every frame was copied by the ARM9 (230-300 ms on an Old 3DS). The only
+  thing that could open the barrier was `display_blit()` finding a stamped
+  home frame, switching PDC0 through the mailbox, and getting an ack. That
+  gate never fired on the console. The MCU slider itself is read correctly
+  (reg 0x08 is "raw 3D slider position"; other logs show 0/8/9/10/14/253 at
+  boot, and threshold 16 rejects the resting 8/14), but no log line ever
+  proved whether the user's movement was published. The 3D LED is a separate
+  MCU register (0x2C) that the MCU firmware lights for Horizon's barrier;
+  writing the barrier register directly left it dark.
+- **Fix:** `stereo3d=1` no longer switches the mirror off. The GPU copies the
+  screen exactly as with the flag off while the slider is down or a frame is
+  flat, and the existing v4 `gpumirror.bin` two-eye lists do the eyes on the
+  PICA200 when a stamped home frame and a slider above 16 arrive. The ARM9
+  two-eye copy remains only as the fallback when the mirror stops.
+- **Diagnostics:** `[stereo] MCU 3D slider N -> M ...`, `[stereo] 3D LED ...`,
+  `[stereo] switch: PDC0 3D/2D, path, ack and mode-frame counts`, and
+  `[stereo] active path: ...` every 30 s. A hung mirror/PDC switch is logged
+  as a FAILED switch, never as a lock-up: every wait is bounded and serves
+  md0 with `blksrv_poll()`. The 3D LED (MCU reg 0x2C) follows the barrier.
+- **GPU lists (v4):** `tools/ios3ds-pica/mirror/genmirror.c` emits, per
+  sampling variant, a flat list and a two-eye list. Each eye draws a baseline
+  quad (unshifted, all pixels) plus three passes alpha-tested (`==` on the
+  stamp read through texture unit 1) for BG/FRONT/ALERT; unit 0's texture
+  matrix is patched per pass from a precomputed shift table for the slider's
+  k (1..4). The left eye renders into GM_RT_TOP_PA, the right eye into the
+  upload buffer (free after the texture copy); both are read out into the
+  two LCD framebuffer sets the PDC0 preset points at. The texture's unused
+  columns 320..327 are replicated from x=319 after every upload
+  (`pad_edge()`), so a shifted sample past the iOS edge clamps like the ARM9
+  copy instead of reading the padding. The bottom screen stays flat.
+- **Hand-over:** `gmbox_t` gained `stereo_k`, `st_frames`, `flat_frames`,
+  `mirror_busy`, `stereo_ok`. `gm_set_shift()` publishes k without a PDC
+  switch; `gm_set_stereo()` requests the 2D/3D preset and waits for both the
+  ack and one GPU frame in the new mode before the ARM9 opens the barrier.
+  Going back to 2D restores the preset before clearing the barrier. An old
+  blob without stereo lists pauses the mirror while the ARM9 builds the eyes.
+  All ARM11 cache ranges were widened to cover the whole mailbox (256 B):
+  line 5 is shared and the new counters live there.
+- **Sizes:** the stereo lists, shift patching and edge padding add about
+  1.6 KiB to the GPU part; the camera allocator from sections 107/108 already
+  took most of its remaining room. After rebasing on that work the final
+  build is main shim 24268/24320 and GPU part 32624/32768 (144 bytes below
+  the limit; compiling `pica_mirror.c` at -Os was rejected: at -Os the
+  constant divisions pull `__aeabi_idiv` into the *main* part and overflow
+  it, so mkboot keeps `pica_mirror.c` at -O2 and `pica.c` at -Os with
+  `PICA_HOT`). `gpumirror.bin` is 32336/32768 bytes (flat lists 2240 + 2240,
+  stereo lists 7360 + 7360, the rest vertex arrays, shift/pad tables and
+  diagnostics). The new version-stamp rule made `make -C boot` choose the
+  phony stamp as its default goal; `.DEFAULT_GOAL := all` restores the
+  firmware build.
+- **Version stamp:** `boot/Makefile` stamps the compiled `IOS3DS_VERSION`
+  into `build/boot/.version` and rebuilds both stubs' `main.c.o` when it
+  changes. Hardware run 3 showed a loader banner of `g64b0cd8` with an ARM11
+  stub still saying `g89178de`: incremental builds changed VERSION without
+  recompiling the untouched ARM11 object.
+- **Test:** `make test` passes; `test_mirror` now checks the GPU two-eye
+  output against the class/delta rule for all k=1..4 on a stamped picture
+  (9330 sampled eye pixels per k) and still checks the flat path byte for
+  byte against `boot/arm9/display.c`. `test_stereo_copy` runs the real ARM9
+  copy through `display_stereo_probe()` for flag off, slider up/down, apps
+  and a partial class-map update.
+- **Frame times (QEMU, `--icount 2`, fresh images, `[monitor] CPU screen copy`
+  averages; QEMU does not model ARM9 bus speed):**
+
+  | configuration | before (ARM9 copy) | after (GPU mirror, frame avg) |
+  |---|---|---|
+  | `stereo3d=0` | 13.6 ms (33 copies/30 s, before the mirror took over) | 306 frames/30 s, 13.2 ms |
+  | `stereo3d=1`, slider 0 | 8.7 ms then 7.3 ms (mirror forced off, ARM9 copied every frame) | 327 frames/30 s, 13.7 ms (flat list, k=0) |
+  | `stereo3d=1`, slider 255 | 9.4 ms then 8.2 ms with the cached ARM9 two-eye copy (§106); 120-186 ms before that cache (§90) | 312 frames/30 s, 14.3 ms (two-eye list, k=4) |
+
+  So the slider-down path is now the flag-off path (13.2 vs 13.7 ms in the
+  emulator, within run-to-run noise), and 3D adds about 1 ms per GPU frame,
+  against 120-186 ms for the original uncached ARM9 two-eye copy. The
+  `[stereo] active path` line in each run names the side that built the eyes.
+- **Soaks (fresh `build/sd.img` each, private QEMU, `--cycles 5 --icount 2`):**
+  `stereo3d=0`, `stereo3d=1` slider 0 and `stereo3d=1` slider 255 all ended
+  `Result: PASS`, with 0 panic/ARM11-stall/md0/crash/GPU-timeout findings.
+  The 3D run logged 30 PDC0/barrier on-off pairs as apps opened and the home
+  screen returned, and its spot check was skipped while the eyes were offset.
+  A separate 300 s toggle run set the QOM slider 0→255→0→255 at 180/225/255 s:
+  each move gave one `[stereo] switch`, one `[stereo] 3D LED` line and one
+  `[monitor] stereo 3D: ... barrier on/off` line, with flat screenshots after
+  the 2D switches and anaglyph screenshots after the 3D switches
+  (`build/emu/stereo-toggle/`). No tearing or stale eyes were visible.
+- **Host:** `make test` passes; `test_mirror` checks the two-eye GPU output
+  against the ARM9's class/delta rule for k=1..4 (9330 sampled eye pixels per
+  k, 0 differences) and keeps the byte-for-byte flat comparison; host blob
+  32336 bytes. Raw `picasim` alpha test and the second texture unit are used
+  by the same list in QEMU, so the model and the machine agree.

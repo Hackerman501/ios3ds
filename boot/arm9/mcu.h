@@ -20,6 +20,8 @@ void mcu_set_als(bool on);
 /* Wi-Fi link LED (MCU reg 0x2A); boot.cfg wifi_led=0 disables it */
 void mcu_config_wifi_led(bool on);
 void mcu_set_wifi_led(bool on);
+/* 3D indicator LED (MCU reg 0x2C), follows the parallax barrier in stereo mode */
+void mcu_set_3d_led(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */

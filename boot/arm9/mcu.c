@@ -29,6 +29,7 @@
 #include "mcu_proto.h"
 #include "input_proto.h"
 #include "camera.h"
+#include "stereo.h"
 
 #define MCU_BUS     1           /* I2C2, 0x10144000 */
 #define MCU_DEV     0x4A
@@ -41,6 +42,7 @@
 #define R_PWR       0x20        /* bit 0 power off, bit 2 reboot */
 #define R_LCD_PWR   0x22        /* bits 2/3 bottom backlight off/on, 4/5 top off/on (libn3ds MCU_LCD_PWR_*) */
 #define R_WIFI_LED  0x2A        /* Wi-Fi LED state, 4 bits: non-zero = on (3dbrew "I2C Registers") */
+#define R_3D_LED    0x2C        /* 3D LED state, 4 bits (libn3ds MCU_set3dLedState) */
 #define R_LED       0x2D        /* notification LED pattern, 100-byte stream */
 #define R_RTC       0x30        /* 7 bytes BCD */
 #define R_ACC_CFG   0x40        /* bit 0 accelerometer on */
@@ -123,10 +125,19 @@ static bool read_batt(void)
 static bool read_sliders(void)
 {
     u8 b[2];
+    u32 was = box ? box->slider3d : 0;
+    bool have = box && (box->valid & MCUV_SLIDERS);
     if (!rd(R_SLIDER3D, b, 2)) return false;
     box->slider3d = b[0];
     box->vol_raw = b[1] & 0x3F;
     box->valid |= MCUV_SLIDERS;
+    /* run3: the user moved the 3D slider but the log had no line for it.
+       Every change is now visible, with the raw MCU value and the threshold
+       the stereo path uses (boot/common/stereo.h). */
+    if (have && was != box->slider3d)
+        logp("[stereo] MCU 3D slider %u -> %u (raw reg 0x08, 3D %s at >= %u)\n",
+             was, box->slider3d, box->slider3d >= STEREO_MIN_SLIDER ? "ON" : "OFF",
+             (unsigned)STEREO_MIN_SLIDER);
     return true;
 }
 
@@ -207,6 +218,19 @@ void mcu_set_wifi_led(bool on)
     if (!wr(R_WIFI_LED, (u8)want)) return;
     wifi_led_shown = want;
     logp("[mcu] Wi-Fi LED %s (reg 0x2A = %u)\n", want ? "on" : "off", want);
+}
+
+/* The parallax barrier is a GPU/LCD register, so the MCU's own 3D LED stays
+   dark when we switch modes ourselves: drive it explicitly with the barrier.
+   3dbrew "I2C Registers" reg 0x2C, 1 = on (libn3ds MCU_set3dLedState). */
+static int stereo_led_shown = -1;
+
+void mcu_set_3d_led(bool on)
+{
+    if (!box || box->state != MCU_ST_OK || stereo_led_shown == (int)on) return;
+    if (!wr(R_3D_LED, (u8)(on ? 1 : 0))) return;
+    stereo_led_shown = (int)on;
+    logp("[stereo] 3D LED %s (MCU reg 0x2C = %u)\n", on ? "on" : "off", on ? 1u : 0u);
 }
 
 static void led_update(void)

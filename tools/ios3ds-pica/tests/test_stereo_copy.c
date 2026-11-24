@@ -29,6 +29,8 @@ static int fails, checks, stereo_reqs;
 
 bool blksrv_poll(void) { return false; }
 bool gm_set_stereo(bool on) { stereo_reqs++; return true; }
+void gm_set_shift(u32 k) { (void)k; }
+void mcu_set_3d_led(bool on) { (void)on; }
 void log_color(unsigned color, const char *fmt, ...) { (void)color; (void)fmt; }
 
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
@@ -63,6 +65,14 @@ static uint32_t pixel(uint32_t fb, uint32_t col, uint32_t row)
     return p[0] | p[1] << 8 | p[2] << 16;
 }
 
+/* the monitor loop samples the stamp before every copy (display.c no longer
+   decides inside display_blit) */
+static void blit(void)
+{
+    display_stereo_probe(CLCD_PA);
+    display_blit(CLCD_PA);
+}
+
 int main(void)
 {
     uint32_t fbs[4], before[240], i, diff;
@@ -87,7 +97,7 @@ int main(void)
     /* 1. flag off: the old byte-for-byte path, barrier untouched */
     picture(1);
     display_set_stereo(false, 255);
-    display_blit(CLCD_PA);
+    blit();
     for (i = 0; i < 240; i++) before[i] = pixel(TOP0, 100, i);
     CHECK(*(volatile uint32_t *)lcd == 0, "flag off: barrier off");
     CHECK(stereo_reqs == 0, "flag off: no PDC request");
@@ -95,7 +105,7 @@ int main(void)
     /* 2. slider up + class map: both eyes written, offset per class, opaque */
     picture(1);
     display_set_stereo(true, 255);
-    display_blit(CLCD_PA);
+    blit();
     CHECK(*(volatile uint32_t *)lcd == ST_BARRIER_ON, "home + slider: barrier on");
     CHECK(stereo_reqs == 1, "home + slider: PDC switched once");
     diff = 0;
@@ -123,7 +133,7 @@ int main(void)
     }
     /* 3. slider down: flat, barrier off, and the normal copy restored */
     display_set_stereo(true, 0);
-    display_blit(CLCD_PA);
+    blit();
     CHECK(*(volatile uint32_t *)lcd == 0, "slider down: barrier off");
     diff = 0;
     for (i = 0; i < 240; i++)
@@ -133,7 +143,7 @@ int main(void)
     /* 4. unstamped frame (apps): flat even with the slider up */
     picture(0);
     display_set_stereo(true, 255);
-    display_blit(CLCD_PA);
+    blit();
     CHECK(*(volatile uint32_t *)lcd == 0, "app frame: barrier off");
     diff = 0;
     for (i = 0; i < 240; i++)
@@ -146,20 +156,20 @@ int main(void)
        until their own row changes. */
     picture(1);
     display_set_stereo(false, 255);
-    display_blit(CLCD_PA);                  /* flat copy, cache invalidated */
+    blit();                  /* flat copy, cache invalidated */
     display_set_stereo(true, 255);
     for (i = 0; i < 4; i++)
-        display_blit(CLCD_PA);              /* 360 columns / 120 per blit */
+        blit();              /* 360 columns / 120 per blit */
     {
         uint32_t keep = pixel(TOP1, 250, 100);
         uint32_t was = pixel(TOP0, 170, 2);
         uint32_t *src = (uint32_t *)vram;
         src[200 * W + 2] ^= 0x123456u;      /* icon row 200 -> screen column 170, no eye shift */
-        display_blit(CLCD_PA);
+        blit();
         CHECK(pixel(TOP0, 170, 2) != was, "dirty row: its column was rebuilt");
         CHECK(pixel(TOP1, 250, 100) == keep, "clean row: other column untouched");
         for (i = 0; i < 4; i++)
-            display_blit(CLCD_PA);
+            blit();
         /* every column now matches a reference computed from the original
            class/delta rules, for both eyes (sampled grid, all depth bands) */
         for (uint32_t c = 0; c < 360; c += 7) {

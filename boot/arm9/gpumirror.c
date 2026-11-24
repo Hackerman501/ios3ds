@@ -212,19 +212,81 @@ u32 gm_shown(void)
 /* Stereo mode switch. The PDC registers are ARM11-only (3dbrew
    GPU/External Registers), so the GPU part of the shim writes them; the
    parallax barrier is ARM9-side and is enabled by display.c after this ack.
-   Only a transition writes the mailbox; a stalled shim must not hold the
-   monitor loop, so the wait is bounded. */
+   With the GPU mirror in use the shim also builds both eyes: wait for one
+   frame in the requested mode so the barrier never opens over a half-drawn
+   pair, and never lets the GPU overwrite the eyes while the ARM9 builds
+   them (an old blob, or a mirror that cannot do stereo, is paused here).
+   Every wait is bounded: a stalled shim must not hold the monitor loop. */
+static bool stereo_paused;
+
+static void gm_pause_mirror(bool pause)
+{
+    if (!gm || stereo_paused == pause)
+        return;
+    stereo_paused = pause;
+    gm->want = !pause;
+    u32 seq = ++gm->seq;
+    if (!pause)
+        return;
+    for (volatile u32 n = 0; n < 200000 && (gm->mirror_busy || gm->ack_seq != seq); n++)
+        blksrv_poll();
+}
+
 bool gm_set_stereo(bool on)
 {
     if (!gm || !gm->gpu_enable || gm->magic != GM_MAGIC)
         return false;
-    if (gm->stereo_on == (u32)on && gm->stereo_ack_seq == gm->stereo_seq)
-        return true;
-    gm->stereo_on = on;
-    u32 seq = ++gm->stereo_seq;
+    bool mirror = gm->state == GM_ST_ACTIVE && gm->frames && !stereo_paused;
+    bool change = gm->stereo_on != (u32)on || gm->stereo_ack_seq != gm->stereo_seq;
+    u32 seq = change ? ++gm->stereo_seq : gm->stereo_seq;
+    u32 st0 = gm->st_frames, fl0 = gm->flat_frames;
+    bool ok;
+    if (change)
+        gm->stereo_on = on;
+    if (mirror && on && !gm->stereo_ok)
+        gm_pause_mirror(true);              /* old blob: the ARM9 builds the eyes */
+    if (!on && stereo_paused) {
+        /* leave the CPU fallback: the 2D preset goes back first, then the
+           mirror resumes and paints both framebuffer sets over the eyes */
+        for (volatile u32 n = 0; n < 200000 && gm->stereo_ack_seq != seq; n++)
+            blksrv_poll();
+        gm_pause_mirror(false);
+    }
     for (volatile u32 n = 0; n < 200000 && gm->stereo_ack_seq != seq; n++)
         blksrv_poll();
-    return gm->stereo_ack_seq == seq;
+    ok = gm->stereo_ack_seq == seq;
+    if (ok && mirror && !stereo_paused) {
+        u32 target = on ? st0 : fl0, now = on ? gm->st_frames : gm->flat_frames;
+        for (volatile u32 n = 0; n < 2000000 && now == target; n++) {
+            blksrv_poll();
+            now = on ? gm->st_frames : gm->flat_frames;
+        }
+    }
+    if (change)
+        logp("[stereo] %s: PDC0 %s, %s (ack %u, %u/%u mode frames)\n", ok ? "switch" : "switch FAILED",
+             on ? "3D" : "2D", gm_stereo_path(), (unsigned)gm->stereo_ack_seq,
+             (unsigned)gm->st_frames, (unsigned)gm->flat_frames);
+    return ok;
+}
+
+/* The GL engine stamps the same classes whatever the slider says; only the
+   eye offset changes, so publish k without restarting the mirror. */
+void gm_set_shift(u32 k)
+{
+    if (gm && gm->stereo_k != k) {
+        gm->stereo_k = k;
+        gm->seq++;                  /* no frame built with the old k may land late */
+    }
+}
+
+/* Which side built the last top-screen pair (for the [stereo] log line). */
+const char *gm_stereo_path(void)   /* declared in gpumirror.h */
+{
+    if (!gm || !gm->stereo_on)
+        return "flat (GPU mirror)";
+    if (stereo_paused || gm->state != GM_ST_ACTIVE)
+        return "ARM9 two-eye copy";
+    return "PICA200 two-eye mirror";
 }
 
 /* every 30 s: what the copy costs, GPU and CPU side by side */
@@ -251,8 +313,10 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
              frames, secs, frames * 10 / secs / 10, frames * 10 / secs % 10,
              us(gm->t_in), us(gm->t_3d), us(gm->t_out), us(sum / frames), us(gm->m_frame), us(irq / frames), steps,
              (unsigned)gm->busy_skips, (unsigned)gm->timeouts);
-    if (shown)
+    if (shown && !gm->stereo_on)
         spot_check(regs_pa, mode, frames != 0);
+    else if (shown)
+        logp("[gpu] spot check skipped: the two eye images are offset from the source by design\n");
     if (nb) {                   /* ARM9 timer ticks (hz) */
         u32 t = cb / nb;
         logp("[monitor] CPU screen copy: %u copies in %u s, %u.%u ms each (ARM9)\n", nb, secs,
@@ -267,4 +331,6 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
         last_rb = rb;
         last_sk = sk;
     }
+    logp("[stereo] active path: %s (slider k=%u, %u 3D / %u 2D GPU frames, %u ARM9 eye cols reused)\n",
+         gm_stereo_path(), (unsigned)gm->stereo_k, (unsigned)gm->st_frames, (unsigned)gm->flat_frames, sk);
 }

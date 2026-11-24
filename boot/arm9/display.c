@@ -15,6 +15,7 @@
 #include "log.h"
 #include "blksrv.h"
 #include "gpumirror.h"
+#include "mcu.h"
 #include "stereo.h"
 
 #define SCR_W 400
@@ -29,6 +30,7 @@ static bool armed, touched;
    current 3D slider. With the flag off this code is dormant and the normal
    copy below runs exactly as before. */
 static bool stereo_cfg, stereo_hw, stereo_no_shim, stereo_warned;
+static bool stereo_want;                    /* a stamped home frame with the slider up */
 static u32 stereo_slider;
 
 /* Rebuilding both eyes is several times the cost of the normal copy: the
@@ -59,13 +61,18 @@ void display_set_stereo(bool on, u32 slider)
     if (was_cfg != stereo_cfg || stereo_slider != slider)
         stereo_cache_reset();               /* a different k shifts every column */
     stereo_slider = slider;
+    gm_set_shift(stereo_active(1, slider) ? (u32)stereo_shift_k(slider) : 0);
     if (!on || !stereo_cfg || slider < STEREO_MIN_SLIDER)
         stereo_no_shim = false;                 /* retry a failed switch next time */
-    if (stereo_hw && (!stereo_cfg || !stereo_active(1, slider))) {
-        stereo_barrier(false);
-        gm_set_stereo(false);
-        stereo_hw = false;
-        logp("[monitor] stereo 3D: back to 2D, parallax barrier off\n");
+    if (!stereo_cfg || !stereo_active(1, slider)) {
+        bool was_want = stereo_want;
+        stereo_want = false;
+        if (stereo_hw || was_want) {
+            gm_set_stereo(false);              /* 2D preset first, barrier second */
+            stereo_barrier(false);
+            stereo_hw = false;
+            logp("[monitor] stereo 3D: back to 2D, parallax barrier off\n");
+        }
     }
 }
 
@@ -81,6 +88,9 @@ static void stereo_barrier(bool on)
     } else {
         *cnt = 0;
     }
+    /* The MCU firmware normally lights this LED when Horizon enables the
+       barrier. We drive the registers directly, so do it here as well. */
+    mcu_set_3d_led(on);
 }
 
 /* The stamp is an alpha-only GL pass. The iOS surface is 32 bpp BGRA, but
@@ -132,6 +142,51 @@ static bool stereo_is_home(const u8 *src, u32 w, u32 h, u32 stride)
        Do not demand every sample be a class magic: untouched pixels keep
        whatever alpha the compositor produced. */
     return stamped >= 16 && (seen & (seen - 1)) != 0;
+}
+
+/* One decision per copy interval. The GL engine stamps classes into the
+   display surface's alpha byte whenever stereo3d=1; a stamped home frame
+   with the slider up selects the two-eye path. With the mirror running the
+   PICA200 builds both eyes (pica_mirror.c); without it the ARM9 copy does.
+   Everything else - an app's flat frame, slider down, flag off - leaves the
+   mirror drawing the ordinary one-eye picture and the barrier closed. */
+bool display_stereo_probe(u32 regs_pa)
+{
+    bool want = false;
+    if (stereo_cfg && stereo_active(1, stereo_slider) && !stereo_no_shim &&
+        mode != SCREEN_BOTTOM && top_fb[1] && top_fb[1] != top_fb[0] && regs_pa) {
+        vu32 *r = (vu32 *)regs_pa;
+        u32 w = r[0x30 / 4] >> 16 & 0x1FF, h = r[0x30 / 4] & 0x1FF;
+        u32 stride = r[0x28 / 4] * 4;
+        want = w && h && stride && stereo_is_home((const u8 *)(uintptr_t)r[0x24 / 4], w, h, stride);
+    }
+    if (want != stereo_want) {
+        if (want) {
+            if (!gm_set_stereo(true)) {
+                if (!stereo_warned) {
+                    log_warn("[monitor] stereo 3D: no shim to switch the top LCD into 3D mode; staying in 2D\n");
+                    stereo_warned = true;
+                }
+                stereo_no_shim = true;
+                stereo_cache_reset();       /* the flat copy replaced both eye images */
+                want = false;
+            }
+        } else {
+            gm_set_stereo(false);
+        }
+        stereo_want = want;
+    }
+    if (stereo_want && !stereo_hw) {
+        stereo_barrier(true);
+        stereo_hw = true;
+        log_ok("[monitor] stereo 3D: both eyes from the stamped home frame, parallax barrier on "
+               "(slider %u, shift %d px)\n", stereo_slider, stereo_shift_k(stereo_slider));
+    } else if (!stereo_want && stereo_hw) {
+        stereo_barrier(false);
+        stereo_hw = false;
+        logp("[monitor] stereo 3D: top screen back to 2D, parallax barrier off\n");
+    }
+    return stereo_want;
 }
 
 /* remember the register page as loaded; the mirror starts once the kernel
@@ -568,39 +623,16 @@ void display_blit(u32 regs_pa)
     if (w <= 320 && !(w & 3) && stride >= w * 4 && !(stride & 3) && !((u32)(uintptr_t)src & 3) &&
         top_fb[0] && !((u32)(uintptr_t)top_fb[0] & 3) && (!top_fb[1] || !((u32)(uintptr_t)top_fb[1] & 3)) &&
         (!bot_fb[0] || !((u32)(uintptr_t)bot_fb[0] & 3)) && (!bot_fb[1] || !((u32)(uintptr_t)bot_fb[1] & 3))) {
-        /* Experimental stereo path. With the flag off (or a slider down, or
-           an unstamped frame, or SCREEN_BOTTOM) `stereo` is false and the two
-           lines below are the original copy, unchanged. */
-        bool stereo = stereo_cfg && !stereo_no_shim && stereo_active(1, stereo_slider) &&
-                      mode != SCREEN_BOTTOM && top_fb[1] && top_fb[1] != top_fb[0] &&
-                      stereo_is_home(src, w, h, stride);
-        if (stereo && !stereo_hw && !gm_set_stereo(true)) {
-            if (!stereo_warned) {
-                log_warn("[monitor] stereo 3D: no shim to switch the top LCD into 3D mode; staying in 2D\n");
-                stereo_warned = true;
-            }
-            stereo_no_shim = true;
-            stereo_cache_reset();       /* the flat copy replaced both eye images */
-            stereo = false;
-        }
-        if (!stereo && stereo_hw) {
-            stereo_barrier(false);
-            gm_set_stereo(false);
-            stereo_hw = false;
-            logp("[monitor] stereo 3D: top screen back to 2D, parallax barrier off\n");
-        }
+        /* Only called when the GPU mirror is not feeding the LCDs. The mode
+           decision (stamp + slider) lives in display_stereo_probe(); here the
+           cached ARM9 two-eye copy is the fallback for a mirror that stopped
+           or cannot do stereo. With the flag off this is the original copy. */
         if (mode != SCREEN_TOP) blit_bottom(src, w, h, stride);
         if (mode != SCREEN_BOTTOM) {
-            if (stereo)
+            if (stereo_want)
                 blit_top_stereo(src, w, h, stride);
             else
                 blit_top(src, w, h, stride);
-        }
-        if (stereo && !stereo_hw) {
-            stereo_barrier(true);
-            stereo_hw = true;
-            logp("[monitor] stereo 3D: both eyes from the stamped home frame, parallax barrier on "
-                 "(slider %u, shift %d px)\n", stereo_slider, stereo_shift_k(stereo_slider));
         }
         return;
     }

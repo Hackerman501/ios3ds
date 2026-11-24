@@ -30,7 +30,23 @@ ARM11_OBJ := $(patsubst %,$(OUT)/arm11/%.o,$(ARM11_SRC))
 LIBGCC9   = $(shell $(CC) $(ARM9_FLAGS) -marm -print-libgcc-file-name)
 LIBGCC11  = $(shell $(CC) $(ARM11_FLAGS) -marm -print-libgcc-file-name)
 
+# VERSION is compiled into both stubs, but git describe/date change on every
+# make invocation: without this stamp an incremental build can leave one stub
+# showing the previous commit (hardware run3: loader g64b0cd8, ARM11 g89178de).
+# The stamp is only rewritten when the version actually changes, so it does
+# not force a full rebuild on every make.
+VERSION_STAMP := $(OUT)/.version
+.PHONY: FORCE_VERSION
+FORCE_VERSION:
+$(VERSION_STAMP): FORCE_VERSION
+	@mkdir -p $(dir $@)
+	@echo "$(VERSION)" | cmp -s - $@ 2>/dev/null || echo "$(VERSION)" > $@
+$(OUT)/arm9/arm9/main.c.o $(OUT)/arm11/arm11/main.c.o: $(VERSION_STAMP)
+
 .PHONY: all clean
+# the version-stamp rule below appears before this target; keep `make -C boot`
+# building the firmware, not just the phony stamp
+.DEFAULT_GOAL := all
 all: $(OUT)/ios3ds.firm
 
 $(OUT)/arm9/%.o: $(ROOT)/boot/%

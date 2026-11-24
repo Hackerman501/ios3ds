@@ -221,6 +221,12 @@ def main():
     if booted is None:
         log("boot did not reach SpringBoard in %.0f s" % a.boot_timeout)
     else:
+        if a.slider3d >= 0:
+            # QEMU resets the machine shortly after QMP connects, which can
+            # clear an early qom-set of mcu-3d-slider. Re-apply it now that the
+            # guest is up; the ARM9 polls MCU reg 0x08 every 100 ms.
+            q.cmd("qom-set", path="/machine", property="mcu-3d-slider", value=a.slider3d)
+            log("3D slider set to %d after boot" % a.slider3d)
         log("SpringBoard + input up after %.0f s; waiting for a stable home screen" % booted)
         if a.unlock_first:
             # Some images come up locked (or with Spotlight left open): wake,

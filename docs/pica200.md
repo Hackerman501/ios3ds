@@ -391,6 +391,15 @@ PPF  RT top + bottom (one transfer when Luma's bottom framebuffer follows the to
 ```
 
 Five GPU operations per frame in "both" mode (4 + 1 per set in the others).
+With `stereo3d=1` and the 3D slider up on a stamped home frame the P3D list is
+the v4 two-eye one instead: one baseline quad plus three alpha-tested passes
+per eye, with the class stamp read through texture unit 1 and the colour
+sample through unit 0 at that class's eye offset (docs/stereo3d.md §5). The
+left eye goes into the usual top render target, the right eye into the upload
+buffer (free after the texture copy); two extra PPF read-outs write the two
+LCD framebuffer sets the PDC0 stereo preset points at. Flat frames use the
+original list, so slider-down is the ordinary path. Seven operations per
+frame in "both" mode while in 3D.
 
 **Why this is a plain scaling.** The 3DS framebuffers are column-major:
 framebuffer row j is screen column j, and its 240 pixels run from the bottom
@@ -479,7 +488,7 @@ Fallbacks to the ARM9 CPU copy, each logged:
 |---|---|
 | shim+0x7F00 (PA 0x20847F00), 256 B | `gmbox_t` mailbox: lines 0-1 ARM9, lines 2-4 ARM11 |
 | PA 0x208B0000, 32 KiB | the shim's GPU part (pica.c, pica_drv.c, pica_mirror.c), from gpu.bin |
-| PA 0x208B8000, ≤ 32 KiB | gpumirror blob: command lists and vertex arrays, from gpu.bin |
+| PA 0x208B8000, ≤ 32 KiB | gpumirror blob: v4 command lists (flat + two-eye), vertex arrays, slider shift table, texture edge-padding table and diagnostics, from gpu.bin (32336 bytes) |
 | VRAM 0x18480000-0x185BEC00 | upload buffer and the two render targets |
 | FCRAM arena, 1 MiB | the 512x512 texture (allocated at mirror start-up; its address is patched into both lists) |
 
@@ -565,6 +574,13 @@ GL test runs on its own context, and every failure falls back to the CPU.
    `gltest: PICA200 offscreen frame took N ms` next to the software one.
 9. X still cycles the screen modes; the console must come back cleanly on the
    screen given back (the shim acknowledges each mode change first).
+10. With `stereo3d=1`: slider down must give the same `[stereo] active path:
+    flat (GPU mirror)` and frame times as the flag-off run. Slider up on the
+    home screen gives `[stereo] switch: PDC0 3D, PICA200 two-eye mirror`,
+    `[stereo] 3D LED on` and `[monitor] stereo 3D: both eyes ... barrier on`;
+    app frames and slider-down give the matching 2D/barrier-off lines. A
+    `[stereo] switch FAILED` means the shim never acked: the mirror stays flat
+    rather than showing a broken pair. See docs/stereo3d.md §8.
 
 If anything goes wrong: `gpu_mirror=0` in `sd:/ios3ds/boot.cfg` brings back
 the ARM9 copy exactly as on main; `gpu=0` keeps the kernel away from the GPU

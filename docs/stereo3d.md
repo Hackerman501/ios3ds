@@ -1,10 +1,13 @@
 # Experimental stereoscopic 3D home screen
 
-Status: **hardware path implemented, not yet tested on a console**. Off by
+Status: **hardware path implemented, not yet confirmed on a console**. Off by
 default (`stereo3d=0`). Enabled with `stereo3d=1` in `sd:/ios3ds/boot.cfg`;
 the 3D slider must be above the bottom notch (MCU register 0x08 >= 16).
-The bottom screen, the touch map and the GPU display mirror are unaffected
-(the mirror is switched off by this flag: the ARM9 builds the eyes).
+The bottom screen and the touch map are unaffected. The GPU display mirror
+stays on: with the slider down (or a flat frame) the PICA200 copies the same
+one-eye picture as with the flag off, and with the slider up its two-eye
+command lists build the eyes. The ARM9 two-eye copy is only the fallback if
+the mirror stops (docs/re-log.md `NEXT`).
 
 ## 1. Idea
 
@@ -19,12 +22,13 @@ of the topmost layer into the frame's alpha byte while it composites:
 - dock and status bar in front of it,
 - folders and alerts in front of those.
 
-The ARM9 screen copy reads that class map and builds the left and right eye
-images in the two LCD framebuffer sets, shifting each class by its eye offset.
-The 3D slider scales the shift (0..4 pixels); slider down or a frame that is
-not the home screen gives both eyes the same image and the barrier is off.
-The alpha byte is masked away before the pixels reach the LCD: the screen
-always gets opaque BGR8.
+The GPU mirror's two-eye command list reads that class map when it samples
+the frame: one baseline pass and three alpha-tested class passes per eye
+shift the colour sample by its class offset. The 3D slider scales the shift
+(1..4 pixels); slider down or a frame that is not the home screen gives both
+eyes the same image and the barrier is off. The alpha byte is masked away
+before the pixels reach the LCD: the screen always gets opaque BGR8. An ARM9
+copy with the same class/delta rules takes over when the mirror cannot run.
 
 ## 2. Why the alpha channel
 
@@ -90,18 +94,35 @@ display IOSurface through the GPU (`PICA_OP_PRESENT`, docs/gpu.md §7). That
 swizzle uses the render target's alpha byte for the surface's blue channel,
 so it would throw the class map away. With `stereo3d=1` the display target
 therefore uses the CPU read-back instead: it writes BGRA with the stamped
-alpha intact, which is what the ARM9 copy reads. Only that target takes the
-detour; with the flag off the direct GPU present is unchanged.
+alpha intact, which is what the GPU mirror's two-eye list (and the ARM9
+fallback copy) reads. Only that target takes the detour; with the flag off
+the direct GPU present is unchanged.
 
-## 5. Real hardware: the two-eye copy and the display registers
+## 5. Real hardware: the two-eye mirror and the display registers
 
-**ARM9 copy** (`boot/arm9/display.c`, `blit_top_stereo()`): one source row is
-read per screen column as in the normal fast copy. For each output pixel the
-alpha byte at that source position picks the depth class; the left eye
-samples `x - delta(cls,k,left)`, the right eye `x + delta(cls,k,right)`,
-clamped to the source width. Both samples are packed as BGR8 (low 24 bits
-only) into `top_fb[0]` (left eye) and `top_fb[1]` (right eye). The bottom
-copy and the touch map are the ordinary `blit_bottom()`, unchanged.
+**GPU mirror** (`tools/ios3ds-pica/mirror/genmirror.c`,
+`tools/ios3ds-pica/src/pica_mirror.c`): `gpumirror.bin` v4 carries two extra
+command lists (one per sampling variant). Each eye draws a baseline quad
+(all pixels, no shift) and three more quads alpha-tested against the stamp
+read through texture unit 1: BG (0x33), FRONT (0x99) and ALERT (0xCC).
+Texture unit 0 carries the colour sample at the eye offset from §3; the
+shim patches its texture matrix per pass from a precomputed table for the
+slider's k, so no floating point runs in the kernel. The left eye renders
+into `GM_RT_TOP_PA`, the right eye into the upload buffer (free after the
+texture copy); both are transferred to the two LCD framebuffer sets. The
+bottom screen keeps the ordinary flat quad. The unused texture columns
+320..327 are filled from x=319 after every upload (`pad_edge()`), so a
+shifted sample at the iOS edge clamps exactly like the ARM9 copy. The
+alpha stamp is sampled but never written to the LCD.
+
+**ARM9 fallback** (`boot/arm9/display.c`, `blit_top_stereo()`): when the GPU
+mirror stops, one source row is read per screen column as in the normal fast
+copy. For each output pixel the alpha byte at that source position picks the
+depth class; the left eye samples `x - delta(cls,k,left)`, the right eye
+`x + delta(cls,k,right)`, clamped to the source width. Both samples are
+packed as BGR8 (low 24 bits only) into `top_fb[0]` (left eye) and `top_fb[1]`
+(right eye). The bottom copy and the touch map are the ordinary
+`blit_bottom()`, unchanged.
 
 The two-eye copy caches one signature per screen column, taken from the
 source row that feeds it (all 320 pixels, alpha stamp included). A column
@@ -135,15 +156,18 @@ and the shim applies the preset on the next VBlank. Per 3dbrew
 
 - parallax barrier enable at PA `0x10202000`: `0x00010001` on, `0` off;
 - parallax barrier PWM at PA `0x10202004`: `0x0A390A39` before enabling
-  (the value libn3ds' `LCD_setParallaxBarrier` writes).
+  (the value libn3ds' `LCD_setParallaxBarrier` writes);
+- the 3D LED is MCU register `0x2C`: the ARM9 writes 1/0 with the barrier,
+  because the MCU firmware only lights it when Horizon enables the barrier
+  through GSP (we write the registers directly).
 
 The ARM9 enables the barrier only **after** the shim acknowledged the PDC
-switch, and only when a stamped home frame was actually copied. Any later
-flat frame (app, slider down, boot flag off) switches PDC0 back to 2D and
-clears the barrier register again. No CONFIG11/SPI write is needed: the
-barrier itself is the register above (3dbrew also notes that Horizon's GSP
-turns it on when it programs AB interlace; we are baremetal, so we write it
-directly).
+switch and one GPU frame was built in 3D mode (`gmbox_t.st_frames`); on the
+CPU fallback it waits for the two-eye copy instead. Any later flat frame
+(app, slider down, boot flag off) switches PDC0 back to 2D and clears the
+barrier register again. No CONFIG11/SPI write is needed: the barrier itself
+is the register above (3dbrew also notes that Horizon's GSP turns it on when
+it programs AB interlace; we are baremetal, so we write it directly).
 
 **`stereo3d=0`** never calls any of this code: `display_blit()` executes the
 same two copy calls as before, writing the same bytes to the same
@@ -157,15 +181,16 @@ With the flag off the normal path is unchanged: `stereo_prepare()` returns -1
 immediately and no stamp pass runs. With the flag on the CA render server
 logs `CA stereo3D: N frames, N home (stamped), ...` and the usual
 `CA: ... per frame ...` line in `sd:/ios3ds/log.txt` (enable `diag=1` for the
-per-draw classifier log). The ARM9 logs each stereo transition and its
-30-second `[monitor] CPU screen copy: ... ms each (ARM9)` average. The extra
-cost is the alpha-only stamp pass on home frames, one wipe quad on other
-frames, and writing both eye framebuffers instead of one; the GPU mirror is
-off in this mode, so this replaces the GPU copy rather than adding to it.
-The two-eye ARM9 work is now cached per screen column (§5): only rows that
-changed are rebuilt, at most 120 columns per copy, and every 30 s the log adds
-`[monitor] stereo eye columns: N rebuilt, N reused` next to the CPU-copy
-average. Measured numbers are in docs/re-log.md, sections 90 and NEXT.
+per-draw classifier log). Flat frames still use the ordinary one-eye GPU
+mirror, so slider-down frame times are those of `stereo3d=0`. Home frames
+with the slider up add the alpha-only stamp pass on the ARM11 and the GPU
+two-eye list (one baseline plus three alpha-tested quads per eye) instead of
+the flat list; no ARM9 copy runs. If the mirror falls back, the ARM9 two-eye
+copy is cached per screen column (§5): only rows that changed are rebuilt,
+at most 120 columns per copy, and every 30 s the log adds
+`[monitor] stereo eye columns: N rebuilt, N reused`. Every 30 s
+`[stereo] active path: ...` reports which side built the eyes. Measured
+numbers are in docs/re-log.md, sections 90 and NEXT.
 
 ## 7. QEMU
 
@@ -176,25 +201,24 @@ and `lcd-3d-barrier`, readable with `qom-get /machine ...`). The arm9 gets an
 alias of the LCD register page so its barrier writes reach the model. With
 the barrier off or PDC0 in 2D mode the ordinary top-screen copy is shown.
 
-The QEMU binary in `build/qemu` is shared between worktrees; this branch uses
-its own private build (`QEMU_DIR=$PWD/build/qemu-hy4 emu/build-qemu.sh`, the
-binary copied to `build/qemu-local/b/`), selected with
-`IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm` and
-`LD_LIBRARY_PATH=$PWD/build/qemu-local/b` (libslirp is bundled there)
-(or `--qemu PATH` with either script; both pick up the bundled libslirp):
+The QEMU binary in `build/qemu` is shared between worktrees and predates the
+`mcu-3d-slider` QOM property; this branch built a private one under `build/`
+(`QEMU_DIR=$PWD/build/qemu-hy4 emu/build-qemu.sh`; the configure script needs
+a one-line quoting fix for the HDD path with spaces) and selects it with
+`IOS3DS_QEMU=$PWD/build/qemu-hy4/b/qemu-system-arm`:
 
 ```
 # flag on + slider up: anaglyph home screen; tap an app: no offset
-LD_LIBRARY_PATH=$PWD/build/qemu-local/b \
-IOS3DS_QEMU=$PWD/build/qemu-local/b/qemu-system-arm \
-  python3 emu/run.py --time 90 --shots 70,80 --slider3d 255
-# slider down: flat
-... --hmp '5=qom-set /machine mcu-3d-slider 0'
+IOS3DS_QEMU=$PWD/build/qemu-hy4/b/qemu-system-arm \
+  python3 emu/run.py --time 240 --shots 239 --slider3d 255
+# slider down / up again at runtime: clean hand-over both ways
+... --hmp '180=qom-set /machine mcu-3d-slider 255;225=qom-set /machine mcu-3d-slider 0;255=qom-set /machine mcu-3d-slider 255'
 # flag off: ordinary screen
 ```
 
-`emu/soak.py --slider3d 255` sets the slider before boot for flag-on soaks.
-The bottom screen and the touch mapping are unchanged.
+`emu/soak.py --slider3d 255` sets the slider for flag-on soaks (it re-applies
+the QOM property after boot, because QEMU's machine reset can clear an early
+write). The bottom screen and the touch mapping are unchanged.
 
 ## 8. What still needs a console
 
@@ -210,13 +234,18 @@ has not been seen on a real 3DS**. To test:
    slider still up and take a third photo: it must look flat.
 3. Capture `sd:/ios3ds/log.txt` (and `log_prev.txt` if a previous run is
    relevant). The lines to look for are
-   `[monitor] stereo3d=1: GPU display mirror off, ARM9 CPU copy builds the eyes`,
-   `[gpu] PDC0 stereo preset applied: left fb ..., right fb ... (3D=1)`,
+   `[stereo] stereo3d=1: GPU display mirror stays on ...`,
+   `[stereo] MCU 3D slider 8 -> N (raw reg 0x08, 3D ON at >= 16)` for every
+   slider movement, `[stereo] switch: ... PICA200 two-eye mirror ...` on each
+   mode change, `[stereo] 3D LED on/off`,
    `[monitor] stereo 3D: both eyes ... parallax barrier on (slider ..., shift ... px)`
    and, after leaving the home screen or sliding down,
    `[monitor] stereo 3D: top screen back to 2D, parallax barrier off`.
-   Any `[monitor] stereo 3D: no shim ...` means the GPU part was not loaded
-   (check `gpu=1`): the copy stays in 2D rather than showing a broken image.
+   Every 30 s `[stereo] active path: ...` reports the current path and how
+   many 3D/2D GPU frames were built. An ARM9 fallback says `ARM9 two-eye
+   copy`; any `[monitor] stereo 3D: no shim ...` means the GPU part was not
+   loaded (check `gpu=1`): the copy stays in 2D rather than showing a broken
+   image.
 4. Report the console model (Old/New, 2DS?) and whether the top LCD really
    shows depth. A 2DS has no barrier, so a flat picture there is expected.
 
@@ -239,3 +268,27 @@ stays 🧪.
   console the ARM9 runs in parallel with iOS, so QEMU is not a hardware
   prediction. Keep the flag experimental until a console test (section 8) says
   how it feels.
+
+### GPU-built eyes, fresh soaks (2026-11-24)
+
+The rework above moves the two-eye work into the mirror lists. All three
+configurations then got a **fresh** `build/sd.img`, a private-QEMU
+`emu/soak.py --cycles 5 --icount 2` run and `Result: PASS`, with 0
+panic/stall/md0/crash/GPU-timeout findings; flag-on images had `stereo3d=1`
+in `boot.cfg`, slider 255 was set with `--slider3d 255`:
+
+| boot.cfg / slider | active path | GPU frame avg (30 s line) | CPU copy before mirror |
+|---|---|---|---|
+| `stereo3d=0` | flat mirror | 306 frames/30 s, 13.2 ms | 47 copies, 14.3 ms each |
+| `stereo3d=1`, 0 | flat mirror (`k=0`) | 327 frames/30 s, 13.7 ms | 43 copies, 14.3 ms each |
+| `stereo3d=1`, 255 | PICA200 two-eye mirror (`k=4`) | 312 frames/30 s, 14.3 ms | 48 copies, 14.8 ms each |
+
+Slider-down cost is now the same as flag-off (both use the same flat list),
+and slider-up costs about 1 ms per frame more in the instruction-clocked
+emulator, instead of the old 120-186 ms ARM9 two-eye copy (§106). A runtime
+toggle run (`--hmp` slider 0→255→0→255) logged a PDC0 3D switch, barrier on,
+then PDC0 2D and barrier off, then 3D again; flat screenshots had single
+icons and 3D ones the two shifted eye images. A flat app frame with the
+slider up leaves the barrier off and the flat GPU mirror running; the
+soak's 3D run logged 30 such on/off pairs across app launches. These are
+emulator timings, not hardware predictions; section 8 still applies.

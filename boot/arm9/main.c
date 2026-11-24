@@ -470,6 +470,10 @@ static void __attribute__((noreturn)) monitor(const char *phase)
                 gm_set_mode(screen_mode, clk_ticks);
                 gm_want(true);
             }
+            /* sample the class map at copy rate (not every monitor loop) and
+               let the mirror / barrier follow the slider and the frame */
+            display_stereo_probe(cfg.display_regs);
+            gpu_copy = gm_live(tnow, disp_on);
             if (!gpu_copy) {
                 u32 t0 = clk_ticks();
                 display_set_shown(gm_shown());
@@ -945,8 +949,11 @@ void a9_main(int argc, char **argv)
     audio_set_hp_route(cfg.hp_route != 0);
     camera_init(cfg.shim_pa, cfg.camera != 0, cfg.cam_test != 0);   /* docs/camera.md */
     if (cfg.stereo3d) {
-        cfg.gpu_mirror = 0;
-        log_color(CON_YELLOW, "[monitor] stereo3d=1: GPU display mirror off, ARM9 CPU copy builds the eyes\n");
+        /* The GPU mirror stays on: with the slider down it copies the screen
+           exactly as with stereo3d=0, and with the slider up its two-eye lists
+           build both eyes on the PICA200 (docs/stereo3d.md). The ARM9 two-eye
+           copy is only a fallback when the mirror stops. */
+        log_color(CON_YELLOW, "[stereo] stereo3d=1: GPU display mirror stays on; the PICA200 builds both eyes with the slider up\n");
     }
     if (cfg.shim_pa) {              /* GPU display mirror mailbox (gpu_mirror.h), before XNU */
         u32 g[7] = { cfg.gpu, cfg.gpu_mirror, cfg.gpu_vbl_div, cfg.gpu_spin_us, cfg.gpu_clk, cfg.gpu_diag, cfg.ca_gpu };

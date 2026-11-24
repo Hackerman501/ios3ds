@@ -31,6 +31,9 @@ typedef struct {
     uint32_t mode;              /* 0 top, 1 both, 2 bottom (display.h SCREEN_*) */
     uint32_t nsets;             /* 1 or 2 framebuffer sets */
     uint32_t top[2], bot[2];    /* BGR8 LCD framebuffers (PA) */
+    uint32_t stereo;            /* 1: draw both eyes with the stereo list */
+    uint32_t k;                 /* 1..4: slider shift in iOS pixels */
+    void *tex_va;               /* CPU view of the texture, for stereo edge padding (may be NULL) */
 } pm_frame_t;
 
 enum { PM_IDLE = 0, PM_BUSY = 1, PM_DONE = 2, PM_TIMEOUT = 3 };
@@ -39,10 +42,13 @@ enum { PM_OP_PPF = 0, PM_OP_P3D = 1, PM_OP_TEXCOPY = 2 };
 
 typedef struct pica_mirror {
     const pm_plat_t *p;
+    uint8_t *blob;                          /* CPU view of gpumirror.bin (shift patching) */
     uint32_t list_pa[2], list_bytes[2];     /* from gpumirror.bin */
     uint32_t tex_pa;                        /* the 512x512 texture (FCRAM) */
     uint32_t variant;                       /* GM_VAR_* */
     uint32_t timeout_ticks;
+    uint32_t stereo;                        /* the frame in flight used the two-eye list */
+    uint8_t *tex_va;                        /* CPU view of the texture (stereo edge padding) */
     /* the frame in flight */
     struct { uint8_t kind, stage; uint32_t a, b, c, d, e; } op[PM_MAX_OPS];
     uint32_t nops, cur, state;
