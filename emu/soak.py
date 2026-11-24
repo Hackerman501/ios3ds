@@ -157,13 +157,25 @@ def main():
         return prev, time.time() - t_start
 
     def is_bootlog(img):
-        """The M1 boot console is green text on black; on a loaded host it can
-        stay lit long after SpringBoard's input daemon connected, so the old
-        'stable and bright' reference test accepted it and every later home
-        screenshot failed with a ~70 diff. Home/wallpaper colours are not
-        green-dominant. (re-log 113, 4.1 soak.)"""
-        rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in img.convert("RGB").split())
-        return gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90
+        """The M1 boot console is text on black (green or white, depending on
+        the log line); on a loaded host it can stay lit long after SpringBoard's
+        input daemon connected, so the 'stable and bright' reference test can
+        accept it and every later home screenshot fails with a ~70 diff.
+        The console is monochrome: unlike the home screen's coloured icons it
+        has almost no saturated pixels. (re-log 111 and NEXT, 4.1 soak.)"""
+        rgb = img.convert("RGB")
+        rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in rgb.split())
+        if gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90:
+            return True
+        # Sample the top screen: the home screen's icon grid has thousands of
+        # saturated pixels, the console's text has a few (measured 1.7k vs
+        # 17k over both screens on a 4.1 image). 1/4 sampling keeps this cheap
+        # even when it is called on every reference attempt.
+        top = rgb.crop((0, 0, min(320, rgb.width), min(240, rgb.height)))
+        px = list(top.getdata())[::4]
+        saturated = sum(1 for r, g, b in px
+                        if max(r, g, b) - min(r, g, b) > 25 and r + g + b > 120)
+        return saturated < 1200
 
     def is_spotlight(img):
         """Spotlight's light search field fills the top 40 points; the home
@@ -253,14 +265,6 @@ def main():
             key("ret")
             time.sleep(4)
             log("unlock-first: %d slide attempt(s)" % (attempt + 1))
-        # SpringBoard's icon warm-up marker is the earliest point at which the
-        # screen can be the home screen. Without it a slow host can leave the
-        # boot console showing, still lit and stable: the harness then took
-        # *that* as home_ref and reported every cycle as "stuck" while the
-        # screenshots clearly showed the home screen (2026-11-24).
-        warm_wait = time.time()
-        while time.time() - warm_wait < 300 and "sbwarm" not in read_log(a.sd):
-            time.sleep(5)
         # reference: not black (the screen copy may be switching to the GPU,
         # soak 3) and unchanged across two shots 5 s apart.  On a loaded host
         # with --icount 2 SpringBoard's first lit frame came ~220 s after the

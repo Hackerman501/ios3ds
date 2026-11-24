@@ -3225,3 +3225,34 @@ worktree's `build/` (no Apple files are committed).
 - **[V]** Disabling the 18 4.2.1-style daemons that also exist on 7E18 made
   the boot worse (console full of dyld lines, no UI), so that experiment was
   reverted too.
+
+### NEXT. Final byte-identical check and 4.x soaks after the rebase (2026-11-24)
+
+- **[V]** Rebased `agent/compat5` onto current `origin/main` (conflict in this
+  log resolved by keeping both sections). `make test` passes (94 offline tests
+  plus host harnesses/stub-symbol check) after updating
+  `tests/test_versions.py` for the three extra liblockdown stubs in each old
+  overlay. Those overlays and the optional `mkdirs` recipe key are the only
+  code changes on this branch; 4.x boot paths are untouched.
+- **[V]** A clean `git archive origin/main` tree in a space-free `/tmp/opencode`
+  path and this worktree generated the same six 4.2.1 boot files from the same
+  staged firmware (SHA-256, origin/main = branch):
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`,
+  `fakeio.bin e5fecd66…`, `shim.bin 5e522c4e…`,
+  `gpu.bin 439cae2d…`, `boot.cfg 8d4079cf…`. The shim/GPU/boot.cfg values
+  reflect the other workers' current main; our branch does not shift them.
+- **[V]** The exact fresh-image sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** on
+  4.2.1: SpringBoard + input up after 70 s, five app/home cycles, no failures.
+
+- **[V]** 4.1 needed one more harness fix: the first fresh-image soak picked
+  the **white-on-black M1 boot console** as its home reference (`home_ref.png`
+  was frozen console text with RGB means 48/52/48), so every cycle reported
+  `home diff 73.1` and **Result: FAIL**, even though the screenshot after each
+  Home was a normal 4.1 home screen. The existing green-dominance test missed
+  this white console. `emu/soak.py:is_bootlog()` now also rejects frames with
+  almost no saturated pixels in the top screen (measured: 194 sampled
+  saturated pixels on the console vs 3128 on the home screen and 13082 in an
+  app). A fresh 4.1 image then printed **Result: PASS**: SpringBoard + input
+  up after 60 s, five cycles with `home diff 0.0`, no failures. The harness
+  change affects no boot files.
