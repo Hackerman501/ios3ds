@@ -207,8 +207,8 @@ address): without the copies Safari shows "Safari cannot open the page because i
 could not establish a secure connection" and the host sees no TLS request; with
 them the host logs `TLSv1.2` and Safari shows the page with the lock icon, for an
 RSA certificate and for a P-256 ECDSA one (the latter goes through TLSFix's
-OpenSSL check and the profile copy). MobileSafari reaches 11.0 MiB resident with
-TLSFix after the first page (8.4 MiB without); the system still has 41.4 MiB free
+OpenSSL check and the profile copy). MobileSafari reaches 11.7 MiB resident with
+TLSFix after the first page (8.2 MiB without); the system still has 40.5 MiB free
 of 128 MiB, so the old `SANDBOX=1` out-of-memory failure does not occur. Numbers
 and screenshots: re-log `NEXT`.
 

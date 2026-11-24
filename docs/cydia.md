@@ -114,9 +114,9 @@ before (SpringBoard and unsandboxed apps are unchanged). If that `dlopen` fails
 — a sandboxed app — it loads the `/usr/lib` TLSFix copy from a run-loop timer
 once CFNetwork is up (an app's constructors run before its frameworks), so
 TLSFix's hooks are installed before the first connection. This needs no kernel
-patch and no wider sandbox; it costs about 2.6 MiB of resident memory in
-MobileSafari (`--icount 2`: 8.4 MiB after a plain page, 11.0 MiB with TLSFix
-after an HTTPS page, 39-41 MiB still free of 128 MiB) and the old out-of-memory
+patch and no wider sandbox; it costs about 2.5-3 MiB of resident memory in
+MobileSafari (`--icount 2`: 8.2 MiB after a plain page, 10.7-11.7 MiB with TLSFix
+after an HTTPS page, 38-41 MiB still free of 128 MiB) and the old out-of-memory
 failure did not reappear (re-log `NEXT`).
 
 **The old sb_evaluate patch remains an opt-in** (`kernel/patches-sandbox.json`,

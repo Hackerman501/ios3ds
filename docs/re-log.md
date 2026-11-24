@@ -2147,12 +2147,14 @@ new `ios3ds_urlport=<port>` override (the host's 8080 is often busy) and
 memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
 - **Page A:** a 4,013,130-byte HTML (2,200 paragraphs) with 24 generated JPEG
   images (320x240, 24-58 KB each). Safari fetched the HTML and all 24 images;
-  `MobileSafari` 7.9-12.9 MiB resident, free 43-46 MiB, `memorystatus_level` 59,
-  no alert. Screenshot `build/tlstest/shots/tls-big-final-page.png`.
+  `MobileSafari` 7.7-12.6 MiB resident (7,900-12,932 KiB), free 42.4-45.3 MiB
+  (43,416-46,380 KiB), `memorystatus_level` 59, no alert. Screenshot
+  `build/tlstest/shots/tls-big-final-page.png`.
 - **Page B:** a 3,648,172-byte HTML with 20 1024x1024 JPEGs (~480 KB each, ~3 MiB
   decoded each), opened 5 s after the home screen to catch the boot-time
-  daemons. Safari fetched all 20 images; peak `MobileSafari` 27.7 MiB, free
-  **20.6 MiB**, level 49, 114/114 mbuf clusters, no jetsam, page loaded.
+  daemons. Safari fetched all 20 images; peak `MobileSafari` 27.0 MiB
+  (27,664 KiB), free **20.1 MiB** (20,588 KiB), level 49, mbuf 136 and
+  114/3806 clusters, no jetsam, page loaded.
 - **What fails:** no allocation fails in QEMU. `vm_stat` and
   `kern.memorystatus_level` are the only figures available: `host_get_host_priv_port`
   and the `host_priv_self()` Mach trap are both refused to the root `[mem]` job,
@@ -2172,14 +2174,14 @@ memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
   The rest of the list is Apple's (mediaserverd 4.0, configd 2.8, lsd 1.9,
   installd 1.3, mDNSResponder 1.3) or ours and small (ios3ds-mcud 1.16,
   ios3ds-diag 0.65, ios3ds-wifid/input ~0.5); no further safe cut.
-- **Conclusion:** QEMU cannot reproduce the hardware alert even with 20.6 MiB
-  free and 28 MiB Safari. The 2.4 MiB from `profiled` and accurate accounting are
+- **Conclusion:** QEMU cannot reproduce the hardware alert even with 20.1 MiB
+  free and 27 MiB Safari. The 2.4 MiB from `profiled` and accurate accounting are
   all that is ours to fix here; the `[applog] MobileSafari load error` line
   (now also appended to `/private/var/tmp/ios3ds-applog.txt` when the sandbox
   denies `/dev/console`) is what a hardware log needs to name the layer.
-- **New 3DS:** `--new3ds` (n3ds_ram=1) after boot: **172.6 MiB free**, level 79
-  (Old: 49.2 MiB, 65); the same TLS 1.2 page loads in Safari
-  (`build/tlstest/shots/tls-n3ds-final-page.png`).
+- **New 3DS:** `--new3ds` (n3ds_ram=1) after boot: **168.5 MiB free**
+  (172,576 KiB), level 79 (Old: 48.1 MiB / 49,212 KiB, 65); the same TLS 1.2
+  page loads in Safari (`build/tlstest/shots/tls-n3ds-final-page.png`).
 
 **2. TLS 1.2 in Safari.** The sandbox denies `/Library` and
 `/var/mobile/Library/ConfigurationProfiles` but allows `/usr/lib` (re-log 71/72).
@@ -2212,10 +2214,10 @@ memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
   |---|---|---|
   | local TLS 1.2-only, RSA (Safari) | no connection, "could not establish a secure connection" (`tls-sandbox1-page.png`) | **loads**, host logs `TLSv1.2` (`tls-copy4-page.png`) |
   | local TLS 1.2-only, P-256 ECDSA (Safari) | -9836 | **loads**, host logs `TLSv1.2`; TLSFix's OpenSSL check read `/usr/lib/ConfigurationProfiles` (`tls-ec1-page.png`) |
-  | MobileSafari resident, first page | 8.4 MiB (HTTP) | 11.0 MiB with TLSFix (EC), 12.9 MiB (big page) |
-  | free / level after the page | 49.2 MiB / 65 at boot | 41.4 MiB / 59, no OOM |
-  The old OOM did not reappear; TLSFix costs ~2.6 MiB resident, its text is
-  file-backed. Screenshots: `build/tlstest/shots/`.
+  | MobileSafari resident, first page | 8.2 MiB (HTTP, 8,432 KiB) | 11.7 MiB with TLSFix (EC, 11,948 KiB), 12.6 MiB (big page, 12,932 KiB) |
+  | free / level after the page | 48.1 MiB / 65 at boot | 40.5 MiB / 59, no OOM |
+  The old OOM did not reappear; TLSFix costs about 2.5-3 MiB resident, its text
+  is file-backed. Screenshots: `build/tlstest/shots/`.
 - **Tools left in the tree:** `ios3ds-diag` honours `ios3ds_urlport=PORT` for
   `-urlpoll` (host 8080 conflicts); `ios3ds-applog` gained
   `ios3ds_probe=1` (writes executable path, `DYLD_INSERT_LIBRARIES`, `open()`
@@ -2235,3 +2237,23 @@ memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
   0 ARM11 stalls, 0 md0 I/O errors, 0 process crashes, 0 jetsam; the one
   "SpringBoard restart" is the boot-time connection), and again after rebasing
   onto main's 4.1 work (fresh image, boot 81 s, same checks).
+
+**Continuation (2026-11-24):** re-verified on the rebased tree. A fresh
+`make userland` + `rm -f build/sd.img && make sdimg` printed the four
+`sandbox_copies` lines (81 trust-store roots, 121 profile roots; the test CA is
+not in the tree), `make test` was green, and `emu/soak.py --cycles 5 --icount 2`
+on that image printed **Result: PASS** (boot 120 s, 5 cycles, 0 panics, 0 ARM11
+stalls, 0 md0 errors, 0 crashes, 0 jetsam; the one "SpringBoard restart" is the
+boot-time connection). The memory figures above were rechecked against the
+sampler, which prints **KiB**: an earlier draft divided those values by 1000 and
+labelled them MiB, so the numbers here are corrected (20,588 KiB = 20.1 MiB, not
+20.6; 172,576 KiB = 168.5 MiB, not 172.6). Re-ran the pages: `huge.html` reached
+26,384 KiB Safari and 22,348 KiB (21.8 MiB) free with no alert (a loaded host
+meant the 240 s timeout caught 8 of 20 images; the full-load 20,588 KiB figure
+stands). With `build/tlstest/ca.pem` appended to `rootfs/certs/roots.pem` for the
+run and then reverted, Safari loaded the local TLS 1.2-only page over both the
+RSA (`:18443`) and P-256 ECDSA (`:18444`) certificates; the host logged
+`TLSv1.2` and Safari showed the lock icon
+(`build/tlstest/shots/tls-tls-verify2-page.png`, `tls-ec-verify-page.png`).
+New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
+64. No code changed in the continuation.
