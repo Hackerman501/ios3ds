@@ -92,14 +92,18 @@ class TestVersions(unittest.TestCase):
             for v in ("3.1.3", "2.2.1"):
                 recipe = json.load(open(versions.recipe_path(v, td)))
                 if v == "3.1.3":
-                    # Symbol-relocated 7E18 liblockdown activation patches.
+                    # Symbol-relocated 7E18 liblockdown activation patches,
+                    # plus the three extra lockdown functions SpringBoard
+                    # calls with the fake handle (remove/set/disconnect).
                     self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
                                      ["0x176a008", "0x1767600", "0x176a358",
-                                      "0x176a3dc", "0x1769eb0"])
+                                      "0x176a3dc", "0x1769eb0", "0x176a1c4",
+                                      "0x176a210", "0x176a260"])
                 elif v == "2.2.1":
                     # 2.x has no dyld cache: liblockdown is patched in place.
                     self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
-                                     ["0x2ea8", "0x2c20", "0x544"])
+                                     ["0x2ea8", "0x2c20", "0x544", "0x2be4",
+                                      "0x30a8", "0x30f4"])
                 else:
                     self.assertEqual(recipe["file_patches"], [])
                 if v == "2.2.1":
