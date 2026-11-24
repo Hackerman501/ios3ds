@@ -2761,3 +2761,28 @@ Design: docs/perf.md. Hardware input: `issue-reports/run2-perf.txt`
   re-log 78's 13.5-16 ms (GPU present) / 31-37 ms (read-back) hardware
   figures. The dominant Old 3DS cost - the mirror's ~20 ms/frame and the GPU
   split with CoreAnimation - is GPU-side and not fixed here.
+
+## NEXT. iOS 3.1.3 root mount: the patch was on the wrong memdev helper (2026-11-24)
+
+The 7E18 bring-up stopped in `BSD root: md0` with **0** md0 requests served by
+the ARM9. The earlier guess was a Darwin 10.0 `buf_t` ABI change inside the
+shim. It was not: the kernel patch was on the wrong function.
+
+- **Trace.** A GDB remote-protocol client (`emu/gdb/rsp.py`, from `build/`,
+  not committed) set a hardware breakpoint at the old 7E18 patch site
+  `0xc0073f94` and never hit it. A breakpoint at `0xc0073b64` hit once per root
+  mount retry (`mdevopen`), and a runtime dump of `bdevsw[2]` showed
+  `0xc0074021` as its strategy entry. The symtab had no name for either
+  function; the `bdevsw` pointer identified the real one.
+- **The real strategy.** `0xc0074020` calls `_buf_count` (`0xc007950c`) and
+  `_buf_biodone` (`0xc007ac6c`) just like 8C148's `0x80072bf8`, and it takes
+  `buf_t` in r0 (no Darwin 10 argument shuffle). The function at
+  `0xc0073f94` is a different `(dev,bp)` memdev helper that `bdevsw` never
+  calls. `kernel/patchsets/3.1.3.json` now patches `0xc0074020` with the
+  original Thumb `ldr r3,[pc]; bx r3; .word shim+0x20` stub.
+- **Result.** `make sdimg IOS=3.1.3` + `emu/run.py --icount 2`:
+  `/dev/md0 on / (hfs, local, noatime)`, launchd, fsck, mDNSResponder and the
+  display come up; 2,251 md0 requests / 49 MiB / 0 errors by t=70 s, no panic
+  or stall. Screenshots are still black (no SpringBoard): the next blocker is
+  userland activation, as on 2.2.1. 4.2.1 files were not touched; only a
+  3.1.3 patch recipe changed.

@@ -161,10 +161,10 @@
  },
  {
   "name": "mdevstrategy",
-  "orig": "f0b5464640b404af",
+  "orig": "f0b55e4655464446",
   "new": "004b1847@shim+0x20@",
-  "why": "7E18 memdev strategy -> ARM9 block server (Thumb ldr r3,[pc]; bx r3)",
-  "va": "0xc0073f94"
+  "why": "7E18 memdev strategy -> ARM9 block server. The bdevsw[2] strategy pointer installed at runtime is 0xc0074021, i.e. the function at 0xc0074020 (it calls buf_count 0xc007950c and buf_biodone 0xc007ac6c, like 8C148's 0x80072bf8). The earlier patch hit 0xc0073f94, a different memdev helper with (dev,bp) arguments that bdevsw never calls, so the root mount looped with 0 md0 requests. The real strategy takes buf_t in r0, so the original Thumb ldr r3,[pc]; bx r3 stub works here.",
+  "va": "0xc0074020"
  },
  {
   "name": "commpage-gtod-off",

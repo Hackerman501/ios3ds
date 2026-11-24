@@ -664,6 +664,13 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   original bytes rather than the 8C148 pattern. The IRQ handler's second
   instruction is `mrs sp,spsr` instead of `mrs sp,apsr`; the shim's
   `KERNEL_IRQ_CONT` is set to the instruction after both patched ones.
+- **[V]** The 7E18 `mdevstrategy` patch targets `0xc0074020`, not the similar
+  `(dev,bp)` helper at `0xc0073f94`: a GDB trace of the root-mount loop showed
+  `bdevsw[2]` installed with `0xc0074021` as its strategy entry, while the old
+  patch site was never called. `0xc0074020` calls `buf_count`/`buf_biodone`
+  exactly like 8C148's `0x80072bf8` and takes `buf_t` in r0. With the patch at
+  the real function, 7E18 mounts `/dev/md0 on / (hfs, local, noatime)`, starts
+  launchd and mDNSResponder and serves 2,251 md0 requests with 0 errors.
 - **[V]** Skipped on 7E18: `uart-baud` (the init stub returns first),
   `clcd-sync-swap`, the three CLCD backlight log/retry patches, the I2S LRCK
   sync patch, the clock-controller voltage and performance-state waits, the
@@ -718,15 +725,17 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   AppleFSCompression and AMFI start, then the root mount retries forever
   ("BSD root: md0" every ~1 s) with **0** md0 requests served by the ARM9 and
   no launchd/SpringBoard. Heartbeats, timers and the screen copy stay alive;
-  there is no panic, stall or watchdog. This is the exact stop point: the
-  memdev block path is patched but no buffer ever reaches the ARM9's md0
-  server. An HMP dump of the block mailbox at PA `0x20846000` showed
-  `magic=BLKM`, `dev_sectors=0x200000`, but `seq/nreq/nerr = 0`, so the shim
-  strategy is not issuing a transfer (the patched mdevsw slot still points at
-  the patched function). **[G]** Likely a Darwin 10.0 `buf_t`/`mdevstrategy` ABI difference
-  inside `shim_mdevstrategy` (the first KPI call that returns an unusable
-  value, or a sysctl registration that fails before `xfer()`); needs an
-  instrumented shim run or a 7E15-era xnu source comparison.
+  there is no panic, stall or watchdog. The block mailbox at PA `0x20846000`
+  showed `magic=BLKM`, `dev_sectors=0x200000`, but `seq/nreq/nerr = 0`.
+- **[V]** The cause was **the wrong patch target, not a `buf_t` ABI change**.
+  A GDB trace (`emu/gdb/rsp.py`) with a breakpoint at the old patch site never
+  hit it, while `mdevopen` was called on every retry; `bdevsw[2]` held
+  `0xc0074021`, the real 7E18 strategy at `0xc0074020`. Relocating the patch
+  there (same `buf_t`-in-r0 contract as 8C148) mounts the root filesystem:
+  `/dev/md0 on / (hfs, local, noatime)`, launchd, fsck, mDNSResponder and the
+  display come up; 2,251 md0 requests with 0 errors in the first 100 s. The
+  remaining 3.1.3 stop point is userland/activation, not the block server:
+  no SpringBoard yet and black screenshots (§6.5).
 - **[V]** 2.2.1, first QEMU run used a stale `sd.img` built before the shim's
   `VIRT_BASE` fix and panicked at shim+0x310c with `far=0x808c8020`, the same
   audio/cam PA->VA bug as 3.1.3's first run.
