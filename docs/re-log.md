@@ -3302,3 +3302,56 @@ worktree's `build/` (no Apple files are committed).
   after 60 s, `[sbwarm]` at 130 s, home reference at 140 s (stddev 53.3),
   five cycles with `home diff 0.0`, no recoveries or failures. Both harnesses
   now agree on what a home frame looks like; the guest payload is unchanged.
+
+### 3.1.3: SpringBoard is alive but never enters the lockdown path
+
+- **[V]** Rebuilt the archived 7E18 firmware in this worktree (sha1
+  `5f4f5c01…` verified) and extracted SpringBoard from the staged HFSX image.
+  Its ObjC method list puts `-[SBLockdownManager _setupActivationState]` at
+  Thumb VA `0x6ec30` (file `0x6dc30`), `lockdownState` at `0x6e450`,
+  `_lockdownChanged` at `0x6ebdc` and `init` at `0x6e964`. The CFString
+  literals in `_setupActivationState` are `Unactivated`, `Expired`,
+  `Activated`, `WildcardActivated`, `Unlocked`, …; the value returned by
+  `lockdown_copy_value` selects state 1–7 from those comparisons.
+- **[V]** A GDB trace (QEMU `-gdb`, hardware breakpoints, no periodic
+  interrupts) on the unmodified 7E18 image: kernel `_execve` fires at t=13 s,
+  SpringBoard's Mach-O entry `0x34e8` at t=38 s, and
+  `-[SpringBoard applicationDidFinishLaunching:]` (`0xa6f4`) at t=33–38 s
+  and **returns** at `0xad30` by t=32 s. Neither `-[SBLockdownManager init]`,
+  `_setupActivationState`, `lockdownState` nor our relocated
+  `lockdown_copy_value` breakpoint is hit during that time. The surviving
+  SpringBoard therefore stops *after* its app delegate returns but *before*
+  any lockdown/activation state is computed; the "Connect to iTunes" screen
+  is a default view, not the result of a live activation query.
+- **[V]** Diagnostic-only patch, reverted: force `-[SBLockdownManager
+  lockdownState]` to return 3 (`Activated`) by replacing its first two
+  Thumb words at SpringBoard file offset `0x6d450` (`b0b502af` → `03207047`)
+  and re-signing the executable with `ldid -Hsha1 -S` as on 2.2.1. A fresh
+  240 s QEMU run stays on the Apple logo/spinner at t=120/180/230 s, with the
+  same heartbeat and zero md0 errors. Forcing one getter is not sufficient;
+  the state is either not consulted on this path or another default view is
+  already up. No 4.x code was changed by the experiment.
+
+### 2.2.1: the liblockdown re-sign, not its byte patches, stops dyld early
+
+- **[V]** Control experiment with the archived 5H11a IPSW (sha1
+  `9af5625e…` verified) extracted in this worktree. Three fresh images were
+  built from the same kernel/devtree and booted with `--icount 2`:
+  1. the shipped overlay (six liblockdown byte patches + `ldid -Hsha1 -S`):
+     dyld stops after `CoreSurface.framework` (re-log 114);
+  2. no file patches but the **same re-sign step**: dyld also stops after
+     `CoreSurface.framework`;
+  3. no file patches and **no re-sign**: dyld continues through WebCore,
+     WebKit, OpenGLES, MBX2D, MBXConnect, MobileSync, Message and
+     `libCGFreetype.A.dylib`, with 1,498 md0 requests / 0 errors by t=187 s.
+  So it is the pseudo-signature written by `ldid -Hsha1` on the 2.x dylib
+  that prevents dyld from loading the rest of SpringBoard's framework set,
+  not the activation bytes. (SpringBoard still draws no UI in the control:
+  the CLCD never sees a first iOS frame, and the top screen stays on the M1
+  console through t=280 s.)
+- **[V]** `rootfs/overlay-2.2.1.json` now keeps the stock, signed
+  `/usr/lib/liblockdown.dylib`: its six `extra_file_patches` and the `resign`
+  step were removed, and `tests/test_versions.py` expects an empty 2.2.1
+  patch list. 4.x recipes and boot files are untouched; no Apple file is
+  committed. Activation on 2.x remains an open item, but the boot now gets
+  substantially further than before.

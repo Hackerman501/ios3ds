@@ -87,7 +87,7 @@ class TestVersions(unittest.TestCase):
             self.assertIn("0xa899a4", offsets)   # QuartzCore MBX2D init string
 
     def test_old_recipe_overlays(self):
-        """No 4.2.1 cache patches; only the 2.2.1 activation interposer is added."""
+        """No 4.2.1 cache patches; old versions add only their own verified patches."""
         with tempfile.TemporaryDirectory() as td:
             for v in ("3.1.3", "2.2.1"):
                 recipe = json.load(open(versions.recipe_path(v, td)))
@@ -100,10 +100,11 @@ class TestVersions(unittest.TestCase):
                                       "0x176a3dc", "0x1769eb0", "0x176a1c4",
                                       "0x176a210", "0x176a260"])
                 elif v == "2.2.1":
-                    # 2.x has no dyld cache: liblockdown is patched in place.
-                    self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
-                                     ["0x2ea8", "0x2c20", "0x544", "0x2be4",
-                                      "0x30a8", "0x30f4"])
+                    # 2.x has no dyld cache. Patching + re-signing liblockdown
+                    # made dyld stop after CoreSurface (re-log NEXT), so the
+                    # stock signed dylib is kept and no file patches apply.
+                    self.assertEqual(recipe["file_patches"], [])
+                    self.assertNotIn("resign", recipe)
                 else:
                     self.assertEqual(recipe["file_patches"], [])
                 if v == "2.2.1":

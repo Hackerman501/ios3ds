@@ -1,5 +1,5 @@
 {
- "_comment": "iOS 2.2.1 (5H11a) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-2.2.1/recipe.json; the 4.2.1 recipe is never changed. 2.x has no dyld shared cache (frameworks are individual dylibs) and no MBXGLEngine/Substrate, so all cache patches, interposers, Cydia and TLSFix are left out. /System/Library/Caches/com.apple.dyld does not exist on this rootfs, so the 4.2.1 'enable-dylibs-to-override-cache' marker is not written either. Activation is patched directly in /usr/lib/liblockdown.dylib: an inserted 4.x-linked dylib could not be loaded by iOS 2.x dyld. The temporary DYLD_INSERT_LIBRARIES interposer is no longer installed.",
+ "_comment": "iOS 2.2.1 (5H11a) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-2.2.1/recipe.json; the 4.2.1 recipe is never changed. 2.x has no dyld shared cache (frameworks are individual dylibs) and no MBXGLEngine/Substrate, so all cache patches, interposers, Cydia and TLSFix are left out. The liblockdown patches + ldid re-sign were removed after a control run showed the re-sign alone stops dyld after CoreSurface; the stock signed dylib lets it load the full framework set (re-log NEXT). Activation remains an open item.",
  "cydia": false,
  "tlsfix": false,
  "trust_store": null,
@@ -16,7 +16,7 @@
   "/private/var/mobile/Library/Logs",
   "/private/var/mobile/Library/Logs/CrashReporter"
  ],
- "_activation": "SpringBoard's liblockdown calls lockdown_connect()/lockdown_copy_value() through /var/run/lockdown/localcomm. With no lockdownd there is no ActivationState and no UI. Since 2.x has no dyld cache, rootfs/recipe.json's liblockdown patches cannot be used: tools/ios3ds-lockdown221/lockdown221.c is inserted into SpringBoard instead and answers those calls locally.",
+ "_activation": "SpringBoard's liblockdown calls lockdown_connect()/lockdown_copy_value() through /var/run/lockdown/localcomm, which does not exist without lockdownd. Patching and re-signing /usr/lib/liblockdown.dylib is not viable on 2.x: even a re-sign with no byte changes makes dyld stop after CoreSurface. The stock dylib is kept; activation/UI is still not reached.",
  "symlink": {
   "_replace": true
  },
@@ -44,58 +44,6 @@
  },
  "file_patches": [],
  "disable_daemons": [],
- "_todo": "Darwin 9 lacks IOSurface, CoreMotion and Celestial's 4.x API: our 4.2.1 GPU/gyro/camera userland binaries cannot simply be copied here. The activation interposer above is the only 4.2.1-derived tool installed on 2.2.1; input/MCU/Wi-Fi tools are still not installed (docs/multi-version.md §6.5).",
- "extra_file_patches": [
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x2ea8",
-   "orig": "70009fe5f0402de9",
-   "new": "0100a0e31eff2fe1",
-   "why": "5H11a liblockdown: lockdown_connect -> 1 (fake handle) because __local_connect() to /var/run/lockdown/localcomm fails without lockdownd.",
-   "mode": "0755"
-  },
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x2c20",
-   "orig": "90402de904708de204d04de204308de200c0a0e304c023e5000090e56afcffeb0040a0e100009de5000050e3",
-   "new": "14c09fe508309ce4000053e30300000a020053e1faffff1a04001ce51eff2fe10000a0e31eff2fe144158930",
-   "why": "5H11a liblockdown: ARM stub for lockdown_copy_value; compares the requested CFStringRef (r2) with a local key/value table and returns the value, else NULL. Verified 44-byte original body replaced.",
-   "mode": "0755"
-  },
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x544",
-   "orig": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-   "new": "481e893858158930481c8938481c243800000000a07d2338c80700006815893009000000416374697661746564000000",
-   "why": "Offline activation table in a verified zero gap of liblockdown __TEXT: ActivationState = inline CFString 'Activated' (isa 0x38237da0 from this dylib), BrickState = CFBooleanFalse 0x38241c48. Other keys return NULL as on 4.x.",
-   "mode": "0755"
-  },
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x2be4",
-   "orig": "90402de904708de2",
-   "new": "0000a0e31eff2fe1",
-   "why": "5H11a lockdown_disconnect -> 0. SpringBoard imports it and passes the fake handle from lockdown_connect (symbol VA 0x30893be4 from liblockdown's own symtab); without this stub it faults on a fake handle.",
-   "mode": "0755"
-  },
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x30a8",
-   "orig": "90402de904708de2",
-   "new": "0000a0e31eff2fe1",
-   "why": "5H11a lockdown_remove_value -> 0 (symbol VA 0x308940a8; same reason as disconnect).",
-   "mode": "0755"
-  },
-  {
-   "path": "/usr/lib/liblockdown.dylib",
-   "offset": "0x30f4",
-   "orig": "90402de904708de2",
-   "new": "0000a0e31eff2fe1",
-   "why": "5H11a lockdown_set_value -> 0 (symbol VA 0x308940f4; same reason as disconnect). All three original byte sequences were verified in this dylib; the resign step re-signs the patched file for 2.x page signatures.",
-   "mode": "0755"
-  }
- ],
- "resign": {
-  "/usr/lib/liblockdown.dylib": "0755"
- }
+ "_todo": "Darwin 9 lacks IOSurface, CoreMotion and Celestial's 4.x API: our 4.2.1 GPU/gyro/camera userland binaries cannot simply be copied here. The activation interposer above is the only 4.2.1-derived tool installed on 2.2.1; input/MCU/Wi-Fi tools are still not installed (docs/multi-version.md \u00a76.5).",
+ "extra_file_patches": []
 }
