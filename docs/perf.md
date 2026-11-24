@@ -6,7 +6,7 @@ and how to measure it again. Hardware numbers come from the two perf logs
 (`issue-reports/run2-perf.txt`: `stereo3d=0`, GPU mirror on; `run3-perf.txt`:
 `stereo3d=1`). QEMU numbers are `--icount 2` (instruction-clocked guest time,
 Old 3DS model) from `emu/perf.py` (this branch). Reverse-engineering steps
-are in [re-log.md](re-log.md) `NEXT`.
+are in [re-log.md](re-log.md) 113.
 
 ## 1. What the hardware logs say
 
@@ -113,7 +113,7 @@ These are CPU-side trims; the dominant Old 3DS costs in §1 (the mirror's
 ~20 ms/frame and the GPU split with CoreAnimation) are GPU-side and need the
 hardware `[perf]`/`[gpu]` lines to confirm, which is why §5 lists them.
 
-Round 2 ([re-log.md](re-log.md) `NEXT`) attacks those GPU-side costs: the
+Round 2 ([re-log.md](re-log.md) 113) attacks those GPU-side costs: the
 mirror only runs after a present or a display-config change (damage tracking),
 starts in the free slot right after a CoreAnimation present, and is told about
 CPU-written surface frames through `PICA_OP_DIRTY`. The self-test and CA's

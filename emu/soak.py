@@ -161,7 +161,7 @@ def main():
         stay lit long after SpringBoard's input daemon connected, so the old
         'stable and bright' reference test accepted it and every later home
         screenshot failed with a ~70 diff. Home/wallpaper colours are not
-        green-dominant. (re-log NEXT, 4.1 soak.)"""
+        green-dominant. (re-log 113, 4.1 soak.)"""
         rm, gm, bm = (ImageStat.Stat(ch).mean[0] for ch in img.convert("RGB").split())
         return gm > 2.0 * max(rm, bm) + 2 and (rm + gm + bm) / 3.0 < 90
 

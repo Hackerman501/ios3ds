@@ -3001,7 +3001,7 @@ the WebPreferences plist here is deliberately limited to cache/back-forward
 memory, not animation or rendering settings. The arena size is a GPU-side
 memory change; no display or stereo files were touched.
 
-## NEXT. Old 3DS frame drops round 2: damage-tracked mirror, present-driven scheduling, faster uploads
+## 113. Old 3DS frame drops round 2: damage-tracked mirror, present-driven scheduling, faster uploads
 
 Design: docs/perf.md. Hardware: `issue-reports/run2-perf.txt` (stereo3d=0):
 `[gpu] PICA200: … every 2. VBlank`, `25 copies in 30 s, 347.2 ms each` before
