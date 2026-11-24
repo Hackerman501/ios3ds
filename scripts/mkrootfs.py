@@ -249,6 +249,23 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             hfs(out, "add", tmp, path)
             # re-added files lose their mode; executables set "mode" on a patch
             hfs(out, "chmod", next((fp["mode"] for fp in fps if "mode" in fp), "0644"), path)
+        # 2.x has no dyld shared cache: its dylibs are signed individually, so
+        # patching one invalidates its code directory. Only recipes that set
+        # "resign" (rootfs/overlay-2.2.1.json) re-sign after file_patches; the
+        # default 4.2.1 recipe never enters this loop.
+        for path, mode in recipe.get("resign", {}).items():
+            ldid = os.path.join(ROOT, "build", "toolchain", "bin", "ldid")
+            if not os.path.exists(ldid):
+                raise SystemExit("resign %s: %s missing (build the iOS toolchain)" % (path, ldid))
+            tmp = os.path.join(td, "resign")
+            with open(tmp, "wb") as f:
+                f.write(hfs_cat(out, path))
+            subprocess.run([ldid, "-Hsha1", "-S", tmp], check=True)
+            hfs(out, "rm", path)
+            hfs(out, "add", tmp, path)
+            hfs(out, "chmod", mode, path)
+            if verbose:
+                print("[mkrootfs] re-signed %s (mode %s)" % (path, mode))
         for path, mode in recipe.get("chmod", {}).items():
             hfs(out, "chmod", mode, path)
     if music or test_song:

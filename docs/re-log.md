@@ -2805,3 +2805,19 @@ shim. It was not: the kernel patch was on the wrong function.
   step is a SpringBoard-side trace (its `main`/activation path, or a 3.x
   applog) rather than more liblockdown table work. 4.2.1/4.1 code paths are
   untouched; the 2.2.1 interposer is a separate version-only tool.
+
+### NEXT.md (same section, continued): 2.2.1 liblockdown, still no SpringBoard
+
+- **[V]** The 4.2.1 `DYLD_INSERT_LIBRARIES` approach does not transfer to 2.x:
+  a dylib built with the 4.2.1 stub toolchain produced
+  `dyld: could not load inserted library` on every SpringBoard restart. An
+  unsigned copy instead produced `CODESIGNING: vm_fault_enter ... INVALID PAGE`.
+  The inserted-library source was therefore removed, not shipped.
+- **[V]** The working path is to patch `/usr/lib/liblockdown.dylib` itself:
+  `lockdown_connect` → 1, `lockdown_copy_value` → an ARM table lookup over two
+  entries (ActivationState = an inline `Activated` CFString, BrickState =
+  CFBooleanFalse), with the table in a verified zero gap of `__TEXT`. Because
+  2.x checks each dylib page, `mkrootfs.py` re-signs patched files listed in
+  the recipe's `resign` map (`ldid -Hsha1 -S`); only the 2.2.1 overlay sets it.
+  Boot now has no `CODESIGNING` faults, but still no SpringBoard output and a
+  black screen: activation alone is not the 2.x blocker.

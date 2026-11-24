@@ -96,17 +96,16 @@ class TestVersions(unittest.TestCase):
                     self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
                                      ["0x176a008", "0x1767600", "0x176a358",
                                       "0x176a3dc", "0x1769eb0"])
+                elif v == "2.2.1":
+                    # 2.x has no dyld cache: liblockdown is patched in place.
+                    self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
+                                     ["0x2ea8", "0x2c20", "0x544"])
                 else:
                     self.assertEqual(recipe["file_patches"], [])
                 if v == "2.2.1":
-                    # 2.x has no dyld cache: SpringBoard gets liblockdown answers
-                    # from our own dylib instead of the 4.x cache patches.
-                    self.assertEqual(recipe["add"], {
-                        "build/rootfs-add/usr/lib/ios3ds-lockdown221.dylib":
-                            "/usr/lib/ios3ds-lockdown221.dylib"})
-                    self.assertEqual(recipe["plist_set"], {
-                        "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist":
-                            recipe["plist_set"]["/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"]})
+                    self.assertEqual(recipe["add"], {})
+                    self.assertEqual(list(recipe["plist_set"]),
+                                     ["/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"])
                 else:
                     self.assertEqual(recipe["add"], {})
                     self.assertEqual(list(recipe["plist_set"]),

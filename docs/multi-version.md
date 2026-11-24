@@ -698,14 +698,14 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   separate dylibs, so the 4.x cache patches and the
   `enable-dylibs-to-override-cache` marker are meaningless there. SpringBoard's
   liblockdown calls end in `/var/run/lockdown/localcomm`, which does not exist
-  on the 3DS. `rootfs/overlay-2.2.1.json` therefore installs
-  `tools/ios3ds-lockdown221/lockdown221.c` (a 2.x-only dylib inserted through
-  SpringBoard's launchd plist) which interposes `lockdown_connect`,
-  `lockdown_copy_value`, `lockdown_disconnect`, `lockdown_copy_identity`,
-  `lockdown_set_value`, `lockdown_remove_value` and `lockdown_checkin` with
-  local answers: ActivationState = `Activated`, BrickState = false and the
-  iPod identity strings. It uses only CoreFoundation API present in 2.x and
-  is not installed on 4.x.
+  on the 3DS. `rootfs/overlay-2.2.1.json` therefore patches the standalone
+  `/usr/lib/liblockdown.dylib` in place: `lockdown_connect` returns a fake
+  handle, `lockdown_copy_value` is replaced by an ARM table lookup (file
+  offsets `0x2ea8`, `0x2c20`, `0x544`) and the result is re-signed with
+  `ldid -Hsha1` because 2.x verifies dylib signatures per page. A 4.2.1-linked
+  `DYLD_INSERT_LIBRARIES` interposer was tried first and abandoned: 2.x dyld
+  reported `could not load inserted library` (an unsigned variant produced
+  `CODESIGNING ... INVALID PAGE` instead). None of this is installed on 4.x.
 - **[V]** 7E18 does have a dyld cache (96,117,081 bytes). The 8C148
   `lockdown_copy_value` stub and its key/value table were relocated by symbol
   into 7E18's liblockdown (cache offsets `0x176a008` / `0x1767600`), with all
@@ -762,10 +762,10 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   (`mDNSResponder[11]` seatbelt profiles). The ARM9 serves 1,630 md0 requests
   (32 MiB, **0** errors) and heartbeats/VBlank/screen copy run for the whole
   run, with no panic or stall. It stops there: **no SpringBoard and no UI**
-  (screenshots are black; no crash report was written). The rootfs overlay
-  deliberately omits the 4.2.1 liblockdown activation patches and interposers,
-  and 2.x needs its own dylib-level activation fix **[G]**; that is the exact
-  blocker at which this task stops.
+  (screenshots are black; no crash report was written). A 2.x-specific
+  liblockdown patch + re-sign (§6.5) was added later: it removes the codesign
+  page faults, but SpringBoard still does not start. The remaining blocker is
+  elsewhere in 2.x userland, not activation state alone **[G]**.
 
 ### 6.7 4.2.1 and 4.1 stay byte-identical
 
