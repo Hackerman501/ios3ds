@@ -21,6 +21,11 @@
 #define ST_GX_VA      0xBFE00000u              /* entry.S: PA 0x10400000 */
 #define ST_REG(off)   (*(volatile uint32_t *)(ST_GX_VA + (off)))
 
+/* the mirror only runs on a GL present or a config change; a PDC 2D/3D
+   switch is one such config change (the eyes must be rebuilt even when the
+   CA frame did not move, e.g. the slider on an idle home screen) */
+extern volatile uint32_t m_dirty;
+
 /* 3D values from libn3ds's top-screen stereo preset. The 2D values are
    whatever Luma left there and are saved on the first switch. */
 static const uint8_t st_off[] = { 0x24, 0x2C, 0x30, 0x34, 0x40, 0x5C, 0x64 };
@@ -92,6 +97,7 @@ void shim_stereo_poll(void)
     }
     st_ack = seq;
     gm->stereo_ack_seq = seq;
+    m_dirty = 1;                        /* rebuild the eyes with the new mode */
     st_cache(&gm->stereo_on, 1);
 
 }

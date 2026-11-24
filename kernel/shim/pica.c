@@ -120,10 +120,11 @@ static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror fr
    a GL client drawing back to back cannot starve the screen copy (QEMU
    lockburst: the ARM9 saw no GPU frames for 1 s and copied with the CPU). */
 static volatile uint32_t m_pending;
-/* 1 = a GL present (or scatter) wrote a fresh frame into the iOS framebuffer
-   since the last mirror frame: the mirror only does GPU work when there is
-   new content (docs/perf.md). Cleared when a frame is started. */
-static volatile uint32_t m_dirty;
+/* 1 = a GL present (or scatter) wrote a fresh frame into the iOS framebuffer,
+   or the display config changed (mode / stereo k / want), since the last
+   mirror frame: the mirror only does GPU work when there is new content or a
+   rebuild is required (docs/perf.md). Cleared when a frame is started. */
+volatile uint32_t m_dirty;              /* also set by pica_stereo.c's PDC switch */
 
 /* ---- the ARM9 <-> ARM11 display mailbox (gmbox_t at shim+0x7F00) ---- */
 extern uint32_t cfg_clcd_pa;                /* entry.S: fake CLCD page (PA), patched in by mkboot */
@@ -869,6 +870,7 @@ PICA_HOT void shim_gpu_irq(uint32_t id)
     gm_fetch();
     if (GM->ack_seq != GM->seq) {
         GM->ack_seq = GM->seq;          /* nothing built from an older line 0 is in flight */
+        m_dirty = 1;                    /* a mode / stereo-k / want change needs a rebuild */
         gm_publish();
     }
     if (!GM->want)
