@@ -447,6 +447,46 @@ void display_stereo_stats(u32 *rebuilt, u32 *skipped)
     *skipped = st_skipped;
 }
 
+/* The CLCD scan-out buffer is ordinary /vram. Until iOS draws its first
+   frame it still holds whatever the loader or the GPU left there. Mirroring
+   it as soon as AppleM2CLCD programs the register page showed a barcode of
+   stale VRAM for the first one to two minutes of a hardware boot (issue #10:
+   the log has no present yet, and the copy's spot check reports 0/512 wrong:
+   the buffer itself is the stale picture). Keep the boot log on screen until
+   the buffer changes after the CLCD is on. */
+#define FB_PROBE_WORDS 64
+static u32 fb_probe[FB_PROBE_WORDS];
+static u32 fb_probe_pa, fb_probe_stride, fb_probe_h;
+static bool fb_probe_waiting, fb_ready;
+
+/* one word every 1/8 of the width and 1/8 of the height: the first frame
+   (or the driver clearing the buffer) changes at least one of them for any
+   real picture, while a static stale pattern does not. */
+static u32 fb_probe_word(u32 base, u32 stride, u32 h, u32 w, int i)
+{
+    u32 y = (2 * (i >> 3) + 1) * h / 16u, x = (2 * (i & 7) + 1) * w / 16u;
+    if (y >= h) y = h - 1;
+    if (x >= w) x = w - 1;
+    return *(vu32 *)(base + y * stride + x * 4);
+}
+
+static void fb_probe_take(u32 base, u32 stride, u32 h, u32 w)
+{
+    for (int i = 0; i < FB_PROBE_WORDS; i++)
+        fb_probe[i] = fb_probe_word(base, stride, h, w, i);
+    fb_probe_pa = base;
+    fb_probe_stride = stride;
+    fb_probe_h = h;
+}
+
+static bool fb_probe_changed(u32 base, u32 stride, u32 h, u32 w)
+{
+    for (int i = 0; i < FB_PROBE_WORDS; i++)
+        if (fb_probe[i] != fb_probe_word(base, stride, h, w, i))
+            return true;
+    return false;
+}
+
 bool display_active(u32 regs_pa)
 {
     vu32 *r = (vu32 *)regs_pa;
@@ -456,7 +496,26 @@ bool display_active(u32 regs_pa)
         for (u32 i = 0; i < 0x100 && !touched; i++) touched = r[i] != snapshot[i];
         if (!touched) return false;
     }
-    return regs_pa && (r[0] & 1) && base >= VRAM_BASE && base < VRAM_BASE + 0x600000 && top_fb[0];
+    if (!regs_pa || !(r[0] & 1) || base < VRAM_BASE || base >= VRAM_BASE + 0x600000 || !top_fb[0])
+        return false;
+    u32 w = r[0x30 / 4] >> 16 & 0x1FF, h = r[0x30 / 4] & 0x1FF, stride = r[0x28 / 4] * 4;
+    if (!w || !h || !stride || stride < w * 4 ||
+        (u64)base + (u64)h * stride > (u64)VRAM_BASE + 0x600000)
+        return false;
+    if (!fb_ready) {
+        if (!fb_probe_waiting) {
+            fb_probe_take(base, stride, h, w);
+            fb_probe_waiting = true;
+            logp("[monitor] CLCD is on; waiting for the first iOS frame before mirroring its buffer\n");
+            return false;
+        }
+        if (base == fb_probe_pa && stride == fb_probe_stride && h == fb_probe_h &&
+            !fb_probe_changed(base, stride, h, w))
+            return false;               /* still the loader's stale picture: keep the console */
+        fb_ready = true;
+        logp("[monitor] first iOS frame in the CLCD buffer: mirroring it now\n");
+    }
+    return true;
 }
 
 static void display_blit_slow(u32 regs_pa)

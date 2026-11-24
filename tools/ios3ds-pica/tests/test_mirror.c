@@ -144,6 +144,16 @@ static int compare_with_cpu(pica_mirror_t *m, int mode, const char *name)
 
     memset(vram + (FB_LO - VRAM_PA), 0, FB_HI - FB_LO);
     display_set_mode(mode);
+    /* The monitor keeps the boot console until the CLCD buffer changes after
+       AppleM2CLCD programmed the page (issue #10: the stale loader picture
+       was mirrored for the first one to two minutes). The first call takes
+       the probe, a changed buffer is the first iOS frame. */
+    static bool first_frame;
+    if (!first_frame) {
+        CHECK(!display_active(CLCD_PA), "display_active waits for the first frame");
+        ((uint32_t *)vram)[30 * GM_SRC_W + 20] ^= 0x01010101u;   /* a probed word (i = 0) */
+        first_frame = true;
+    }
     CHECK(display_active(CLCD_PA), "display_active");
     display_blit(CLCD_PA);
     memcpy(cpu, vram + (FB_LO - VRAM_PA), sizeof cpu);
