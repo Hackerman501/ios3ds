@@ -3183,7 +3183,7 @@ worktree's `build/` (no Apple files are committed).
   edit is in `rootfs/overlay-3.1.3.json` (plus crash dirs in the 2.2.1
   overlay). No 4.2.1 boot-file or shim code changed.
 
-### NEXT. 2.2.1: the same lockdown stubs, dyld stops after CoreSurface (2026-11-24)
+### 114. 2.2.1: the same lockdown stubs, dyld stops after CoreSurface (2026-11-24)
 
 - **[V]** 2.2.1's SpringBoard imports `lockdown_disconnect`,
   `lockdown_remove_value` and `lockdown_set_value` just like 7E18's. Their
@@ -3206,7 +3206,7 @@ worktree's `build/` (no Apple files are committed).
   CoreSurface blocks; 2.x has no shared cache, so every dylib is a separate
   page-signed file. No 4.x code is involved in this overlay.
 
-### NEXT. 3.1.3: activation-state experiments (2026-11-24, diagnostic only)
+### 114. 3.1.3: activation-state experiments (2026-11-24, diagnostic only)
 
 - **[V]** SpringBoard 3.1.3 contains `-[SBLockdownManager _setupActivationState]`
   at Thumb VA `0x6ec30` (IMP from the `__objc` method list in the executable,
@@ -3226,7 +3226,7 @@ worktree's `build/` (no Apple files are committed).
   the boot worse (console full of dyld lines, no UI), so that experiment was
   reverted too.
 
-### NEXT. Final byte-identical check and 4.x soaks after the rebase (2026-11-24)
+### 114. Final byte-identical check and 4.x soaks after the rebase (2026-11-24)
 
 - **[V]** Rebased `agent/compat5` onto current `origin/main` (conflict in this
   log resolved by keeping both sections). `make test` passes (94 offline tests

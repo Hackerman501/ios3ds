@@ -7,7 +7,7 @@ The bottom screen and the touch map are unaffected. The GPU display mirror
 stays on: with the slider down (or a flat frame) the PICA200 copies the same
 one-eye picture as with the flag off, and with the slider up its two-eye
 command lists build the eyes. The ARM9 two-eye copy is only the fallback if
-the mirror stops (docs/re-log.md `NEXT`).
+the mirror stops (docs/re-log.md 109).
 
 ## 1. Idea
 
@@ -190,7 +190,7 @@ copy is cached per screen column (§5): only rows that changed are rebuilt,
 at most 120 columns per copy, and every 30 s the log adds
 `[monitor] stereo eye columns: N rebuilt, N reused`. Every 30 s
 `[stereo] active path: ...` reports which side built the eyes. Measured
-numbers are in docs/re-log.md, sections 90 and NEXT.
+numbers are in docs/re-log.md, sections 90 and 109.
 
 ## 7. QEMU
 
