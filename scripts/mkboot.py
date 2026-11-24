@@ -114,8 +114,14 @@ def build_shim(outdir, staging=None, version=versions.DEFAULT, virt_base=None):
              os.path.join(sd, "pica_stereo.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c"),
-             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c"),
              os.path.join(sd, "cam.c")]                     # camera data side (docs/camera.md)
+    # pica_diag.c (the staged [gpu-diag] bring-up diagnostics, docs/pica200.md
+    # section 12) is NOT linked into the shim any more: the GPU part was at
+    # 32624/32768 bytes and the mirror/perf work needs room. The diagnostics
+    # already served their purpose (runs 12/13 pinned the NPOT-texture and
+    # GX-clock facts); the source and the host tests against picasim stay, so
+    # the staged tests remain runnable on the build host. gpu_diag=1 in
+    # boot.cfg is now a no-op (no [gpu-diag] lines).
     with tempfile.TemporaryDirectory() as td:
         # KPI call addresses are version-specific; generate them from the
         # staged kernelcache. For 4.2.1 the values equal kpi.h's defaults.

@@ -105,7 +105,10 @@ typedef struct {
     /* lines 6-7: ARM11 mirror state for the ARM9 */
     uint32_t mirror_busy;   /* 1 while a mirror frame is in flight */
     uint32_t stereo_ok;     /* 1: gpumirror.bin has the stereo lists (v4) */
-    uint32_t _r6[13];
+    uint32_t idle_frames;   /* VBlanks skipped because nothing changed: the ARM9
+                               counts these as liveness too (the LCDs already
+                               hold the current picture) */
+    uint32_t _r6[12];
 } gmbox_t;
 _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 

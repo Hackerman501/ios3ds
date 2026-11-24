@@ -52,7 +52,6 @@
 #include "pica_drv.h"
 #include "pica_regs.h"
 #include "pica_mirror.h"
-#include "pica_diag.h"
 #include "gpu_mirror.h"
 #include "stereo.h"
 #include "cam_proto.h"              /* frame-buffer reservation for the cameras */
@@ -121,6 +120,10 @@ static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror fr
    a GL client drawing back to back cannot starve the screen copy (QEMU
    lockburst: the ARM9 saw no GPU frames for 1 s and copied with the CPU). */
 static volatile uint32_t m_pending;
+/* 1 = a GL present (or scatter) wrote a fresh frame into the iOS framebuffer
+   since the last mirror frame: the mirror only does GPU work when there is
+   new content (docs/perf.md). Cleared when a frame is started. */
+static volatile uint32_t m_dirty;
 
 /* ---- the ARM9 <-> ARM11 display mailbox (gmbox_t at shim+0x7F00) ---- */
 extern uint32_t cfg_clcd_pa;                /* entry.S: fake CLCD page (PA), patched in by mkboot */
@@ -210,9 +213,7 @@ static int p_alive(uint32_t pid)
 
 static pica_plat_t plat;                /* filled at bring-up (k_printf is not a constant expression) */
 
-static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size);
 static void gpu_clock_fix(void);
-static void gpu_diag_after(void);
 
 static void bringup(void)
 {
@@ -293,10 +294,10 @@ static void bringup(void)
     arena_pa = pa;
     arena_size = size;
     shim_l2_inv(pa, size);              /* New 3DS L2: no stale copies either */
-    /* staged diagnostics on the GPU as Luma left it, then the part of
-       libn3ds' hardwareReset() Luma never does (GX clock, VRAM banks, DMA
-       priorities), then the same tests again (docs/pica200.md section 12) */
-    gpu_diag_before((uint8_t *)va, pa, size);
+    /* the part of libn3ds' hardwareReset() Luma never does (GX clock, VRAM
+       banks, DMA priorities; docs/pica200.md section 12). The staged
+       [gpu-diag] diagnostics were moved out of the shim to make room
+       (scripts/mkboot.py). */
     gpu_clock_fix();
     st = pica_drv_init(&drv, &plat, va, pa, size, cnt);
     /* Leave the small (2/4 MiB fallback) arenas to the display mirror: the
@@ -311,8 +312,6 @@ static void bringup(void)
     }
     k_printf("[pica] arena %u KiB at VA %p = PA 0x%08x; driver %s (state %u)\n",
              size >> 10, va, pa, st == PICA_OK ? "ready" : "FAILED", st);
-    if (st == PICA_OK)
-        gpu_diag_after();
 }
 
 /* ---- PICA_OP_PRESENT: the caller's memory as a GPU destination ----------
@@ -405,7 +404,12 @@ static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t byt
     if (!said_ok++)
         k_printf("[pica] present: GPU writes the caller's surface directly: user VA 0x%08x = PA 0x%08x (%s, %u KiB)\n",
                  va, pa0, pa0 >= 0x20000000u ? "FCRAM" : "VRAM", bytes >> 10);
-    return pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+    {
+        uint32_t st = pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+        if (st == PICA_OK)
+            m_dirty = 1;                /* a fresh frame is waiting to be mirrored */
+        return st;
+    }
 }
 
 /* PICA_OP_SCATTER: the destination PRESENT refused as not one contiguous run
@@ -432,6 +436,7 @@ static uint32_t scatter(uint32_t src_pa, uint32_t va, uint32_t bytes)
             return st;
         shim_l2_inv(pa, len);               /* New 3DS L2: write-through, safe to drop */
     }
+    m_dirty = 1;                            /* a fresh frame is waiting to be mirrored */
     return PICA_OK;
 }
 
@@ -546,8 +551,6 @@ static void m_from_gpu(void *p, uint32_t len) { dc_inval(p, len); }
 
 static pm_plat_t mplat;
 static pica_mirror_t mir;
-static pd_env_t denv;                       /* diagnostics; denv.vram = 0 when not mapped */
-static uint32_t d_before, d_on;
 
 static void m_relax(void) { IODelay(10); }
 
@@ -561,30 +564,6 @@ static void mplat_init(void)
     mplat.from_gpu = m_from_gpu;
     mplat.log = k_printf;
     mplat.relax = m_relax;
-}
-
-/* bring-up, before pica_drv_init: diagnostics as Luma left the GPU. The
-   FCRAM scratch is the arena's last 64 KiB, unused until the driver runs. */
-static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size)
-{
-    mplat_init();
-    d_on = !gm_valid() || GM->gpu_diag;
-    if (!denv.vram)
-        denv.vram = (volatile uint8_t *)ml_io_map(PD_VRAM_PA, PD_VRAM_SIZE);
-    denv.p = &mplat;
-    denv.fc_va = va + size - PD_FC_SIZE;
-    denv.fc_pa = pa + size - PD_FC_SIZE;
-    denv.blob_va = (uint8_t *)GM_BLOB_VA;
-    denv.blob_pa = GM_BLOB_PA;
-    if (!d_on)
-        return;
-    if (!denv.vram) {
-        k_printf("[gpu-diag] cannot map VRAM 0x%08x: no diagnostics\n", PD_VRAM_PA);
-        d_on = 0;
-        return;
-    }
-    pd_dump_regs(&denv, "as found");
-    d_before = pd_fill_tests(&denv, "as found");
 }
 
 /* libn3ds hardwareReset() minus the reset: Luma's screen init never sets the
@@ -606,22 +585,6 @@ static void gpu_clock_fix(void)
     k_printf("[pica] GX setup as libn3ds hardwareReset: clock 0x%08x -> 0x%08x, psc_vram 0x%08x -> 0x%08x, "
              "dma prio 0x%08x/0x%08x -> 0x%08x/0x%08x\n", clk, p_rd(0x004), vram, p_rd(0x030), pr0, pr1,
              p_rd(0x050), p_rd(0x054));
-}
-
-static void gpu_diag_after(void)
-{
-    uint32_t after, gpu;
-    if (!d_on)
-        return;
-    pd_dump_regs(&denv, "after setup");
-    after = pd_fill_tests(&denv, "after setup");
-    gpu = pd_gpu_tests(&denv);
-    k_printf("[gpu-diag] summary: fill VRAM %s->%s, fill FCRAM %s->%s (as found -> after setup); PPF %s; "
-             "P3D solid VRAM %s, FCRAM %s; texture POT %s, NPOT %s\n",
-             d_before & PD_FILL_VRAM ? "ok" : "FAIL", after & PD_FILL_VRAM ? "ok" : "FAIL",
-             d_before & PD_FILL_FCRAM ? "ok" : "FAIL", after & PD_FILL_FCRAM ? "ok" : "FAIL",
-             gpu & PD_PPF ? "ok" : "FAIL", gpu & PD_SOLID_VRAM ? "ok" : "FAIL", gpu & PD_SOLID_FCRAM ? "ok" : "FAIL",
-             gpu & PD_TEX_POT ? "ok" : "FAIL", gpu & PD_TEX_NPOT ? "ok" : "FAIL");
 }
 static volatile uint32_t m_state;           /* GM_ST_* (the IRQ side only acts on ACTIVE) */
 static uint32_t m_tried, m_vbl, m_fb[4], m_nsets;
@@ -646,6 +609,66 @@ static int fb_ok(uint32_t pa, uint32_t len)
     return pa + len <= GM_VRAM_LO || pa >= GM_VRAM_HI;
 }
 
+/* Start a mirror frame now: read the CLCD geometry and begin the GPU ops.
+   The caller owns the GPU (busy == 2). Returns 1 if a frame started, 0 if it
+   was skipped (display off or a bad framebuffer); on 0 the caller clears
+   busy = 2 again. */
+static int m_begin_frame(void)
+{
+    vu32 *clcd;
+    pm_frame_t f;
+    gm_fetch();
+    if (GM->ack_seq != GM->seq) {
+        GM->ack_seq = GM->seq;          /* nothing built from an older line 0 is in flight */
+        gm_publish();
+    }
+    if (!GM->want)
+        return 0;
+    /* the iOS framebuffer as AppleM2CLCD scans it out (fake CLCD page) */
+    clcd = (vu32 *)(cfg_clcd_pa - AXI_PA + AXI_VA);
+    f.src_pa = clcd[0x24 / 4];
+    if (!(clcd[0] & 1) || clcd[0x28 / 4] != GM_SRC_W || clcd[0x30 / 4] != (GM_SRC_W << 16 | GM_SRC_H) ||
+        f.src_pa < PICA_VRAM_PA || f.src_pa + GM_SRC_W * GM_SRC_H * 4 > GM_IOS_VRAM_HI || (f.src_pa & 7)) {
+        GM->reason = GM_WHY_GEOMETRY;   /* skipped; the ARM9 copies while frames stand still */
+        return 0;
+    }
+    f.mode = GM->mode;
+    f.nsets = m_nsets;
+    f.stereo = GM->stereo_on && GM->stereo_ok;
+    f.k = GM->stereo_k;
+    f.tex_va = (void *)(drv.va + (mir.tex_pa - drv.pa));
+    f.top[0] = m_fb[0];
+    f.top[1] = m_fb[1];
+    f.bot[0] = m_fb[2];
+    f.bot[1] = m_fb[3];
+    m_dirty = 0;
+    pm_begin(&mir, &f);
+    GM->mirror_busy = 1;
+    gm_publish();                       /* the ARM9 must see an in-flight frame */
+    return 1;
+}
+
+/* Thread context (after a GL request, or the input daemon's poll): a mirror
+   frame was skipped because GL held the GPU (m_pending, set only on a due
+   VBlank); start it now instead of waiting for the next interrupt. The frame
+   stays VBlank-cadenced: m_pending is what the VBlank left behind. */
+static void m_maybe_start(void)
+{
+    uint32_t cpsr, start = 0;
+    if (m_state != GM_ST_ACTIVE || !m_dirty || !m_pending)
+        return;
+    __asm__ volatile("mrs %0, cpsr" : "=r"(cpsr));
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr | 0x80) : "memory");
+    if (!busy) {
+        busy = 2;
+        m_pending = 0;
+        start = 1;
+    }
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory");
+    if (start && !m_begin_frame())
+        busy = 0;
+}
+
 /* Thread context. Brings the mirror up once the ARM9 asks for it. */
 PICA_HOT void shim_gpu_thread_poll(void)
 {
@@ -657,6 +680,10 @@ PICA_HOT void shim_gpu_thread_poll(void)
        path uses the ARM9 CPU copy), so this runs before the mirror gates. */
     extern void shim_stereo_poll(void);
     shim_stereo_poll();
+    /* a present left a fresh frame and a VBlank had skipped the mirror while
+       GL held the GPU: start it right away (the frame after a present is the
+       mirror's natural slot). */
+    m_maybe_start();
     if (m_tried || !gm_valid())
         return;
     if (!GM->gpu_enable || !GM->mirror_enable) {
@@ -736,22 +763,6 @@ PICA_HOT void shim_gpu_thread_poll(void)
     }
     if (v < 0) {
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
-        if (denv.vram) {
-            /* the variants left their own last state: draw variant 0 once more and show it */
-            pm_frame_t f;
-            mir.variant = 0;
-            f.src_pa = src_pa;
-            f.mode = 1;
-            f.nsets = 1;
-            f.top[0] = f.top[1] = out_pa + GUARD;
-            f.bot[0] = f.bot[1] = out_pa + GUARD + GM_TOP_FB_BYTES;
-            f.stereo = f.k = 0;
-            f.tex_va = (void *)(drv.va + (tex_pa - drv.pa));
-            pm_begin(&mir, &f);
-            while (pm_poll(&mir, mir.timeout_ticks) == PM_BUSY)
-                ;
-            pd_dump_mirror(&denv, (const uint32_t *)(drv.va + (tex_pa - drv.pa)));
-        }
         m_set(GM_ST_FAILED, GM_WHY_SELFTEST);
         goto out;
     }
@@ -824,8 +835,6 @@ static void m_after(int st)
 PICA_HOT void shim_gpu_irq(uint32_t id)
 {
     uint32_t t0, spin;
-    vu32 *clcd;
-    pm_frame_t f;
 
     if (id == PICA_IRQ_PDC0) {
         /* which framebuffer set each LCD shows: for the ARM9's CPU copy */
@@ -869,27 +878,17 @@ PICA_HOT void shim_gpu_irq(uint32_t id)
         m_pending = 1;
         return;
     }
-    /* the iOS framebuffer as AppleM2CLCD scans it out (fake CLCD page) */
-    clcd = (vu32 *)(cfg_clcd_pa - AXI_PA + AXI_VA);
-    f.src_pa = clcd[0x24 / 4];
-    if (!(clcd[0] & 1) || clcd[0x28 / 4] != GM_SRC_W || clcd[0x30 / 4] != (GM_SRC_W << 16 | GM_SRC_H) ||
-        f.src_pa < PICA_VRAM_PA || f.src_pa + GM_SRC_W * GM_SRC_H * 4 > GM_IOS_VRAM_HI || (f.src_pa & 7)) {
-        GM->reason = GM_WHY_GEOMETRY;   /* skipped; the ARM9 copies while frames stand still */
+    if (!m_dirty) {
+        /* nothing new since the last frame: the LCDs already hold the current
+           picture. Skip the GPU work but keep the liveness counter moving so
+           the ARM9 does not fall back to the CPU copy (docs/perf.md). */
+        GM->idle_frames++;
+        gm_publish();
         return;
     }
-    f.mode = GM->mode;
-    f.nsets = m_nsets;
-    f.stereo = GM->stereo_on && GM->stereo_ok;
-    f.k = GM->stereo_k;
-    f.tex_va = (void *)(drv.va + (mir.tex_pa - drv.pa));
-    f.top[0] = m_fb[0];
-    f.top[1] = m_fb[1];
-    f.bot[0] = m_fb[2];
-    f.bot[1] = m_fb[3];
     busy = 2;
-    pm_begin(&mir, &f);
-    GM->mirror_busy = 1;
-    gm_publish();                       /* the ARM9 must see an in-flight frame */
+    if (!m_begin_frame())
+        busy = 0;                       /* display off or a bad framebuffer */
     GM->steps++;
     m_after(pm_poll(&mir, spin));
 out:

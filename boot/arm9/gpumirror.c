@@ -80,12 +80,12 @@ void gm_set_mode(int mode, u32 (*now)(void))
 /* Is the GPU copying the screen right now? Logs every change. */
 bool gm_live(u32 now, bool display_on)
 {
-    static u32 last_state = 0xFFFFFFFFu, last_frames, last_change, last_busy, busy_since;
+    static u32 last_state = 0xFFFFFFFFu, last_frames, last_idle, last_change, last_busy, busy_since;
     static int was_live = -1;
     static bool was_off;
     if (!gm)
         return false;
-    u32 st = gm->state, frames = gm->frames;
+    u32 st = gm->state, frames = gm->frames, idle = gm->idle_frames;
     if (!display_on) {
         was_off = true;                 /* the shim skips frames while the CLCD is off */
         return false;
@@ -93,6 +93,7 @@ bool gm_live(u32 now, bool display_on)
     if (was_off) {
         was_off = false;
         last_frames = frames;           /* grace: frames resume within a few VBlanks */
+        last_idle = idle;
         last_change = now;
         last_busy = gm->busy_skips;
         busy_since = 0;
@@ -118,8 +119,11 @@ bool gm_live(u32 now, bool display_on)
         else
             logp("[gpu] display mirror: %s\n", s);
     }
-    if (frames != last_frames) {
+    if (frames != last_frames || idle != last_idle) {
+        /* a real frame, or the shim skipping an unchanged frame (idle_frames):
+           both mean the LCDs hold the current picture and the mirror is alive */
         last_frames = frames;
+        last_idle = idle;
         last_change = now;
         busy_since = 0;
     } else if (gm->busy_skips != last_busy) {
@@ -132,7 +136,7 @@ bool gm_live(u32 now, bool display_on)
         if (now - busy_since < 3 * hz) last_change = now;
     }
     last_busy = gm->busy_skips;
-    bool live = st == GM_ST_ACTIVE && frames && now - last_change < hz && gm->ack_seq == gm->seq;
+    bool live = st == GM_ST_ACTIVE && (frames || idle) && now - last_change < hz && gm->ack_seq == gm->seq;
     if ((int)live != was_live) {
         if (live)
             log_ok("[gpu] screen copy: PICA200 (ARM9 CPU copy paused)\n");
