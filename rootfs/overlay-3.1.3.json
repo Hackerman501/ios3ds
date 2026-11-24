@@ -1,5 +1,5 @@
 {
- "_comment": "iOS 3.1.3 (7E18) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-3.1.3/recipe.json; the 4.2.1 recipe is never changed. The 3.1 dyld shared cache exists but every 8C148 file patch points at code that moved, so none is applied until it is relocated by symbol (docs/multi-version.md). Our userland binaries are built against 4.2.1's exported symbols and are not installed yet; Cydia/TLSFix packages are 4.2.1-only.",
+ "_comment": "iOS 3.1.3 (7E18) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-3.1.3/recipe.json; the 4.2.1 recipe is never changed. The 3.1 dyld shared cache exists but every 8C148 file patch points at code that moved, so none is applied until it is relocated by symbol (docs/multi-version.md). Our userland binaries are built against 4.2.1's exported symbols and are not installed yet; Cydia/TLSFix packages are 4.2.1-only. The liblockdown body/table below are the 7E18 equivalents of the 8C148 activation patches (symbol-relocated from 4.2.1), so 3.1.3 has offline activation answers without a dyld-cache override. SpringBoard stdout/stderr go to the console for bring-up diagnostics (no 3.x applog tool is installed).",
  "cydia": false,
  "tlsfix": false,
  "trust_store": null,
@@ -9,14 +9,74 @@
   "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
   "/var/log/syslog": ""
  },
- "remove": ["/System/Library/Caches/com.apple.datadetectorscore.cache.full.system"],
- "symlink": {"_replace": true},
- "plist_set": {"_replace": true},
- "plist_merge": {"_replace": true},
- "add": {"_replace": true},
- "chmod": {"_replace": true},
- "cydia_plist_write": {"_replace": true},
+ "remove": [
+  "/System/Library/Caches/com.apple.datadetectorscore.cache.full.system"
+ ],
+ "symlink": {
+  "_replace": true
+ },
+ "plist_set": {
+  "_replace": true,
+  "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
+   "StandardErrorPath": "/dev/console",
+   "StandardOutPath": "/dev/console"
+  }
+ },
+ "plist_merge": {
+  "_replace": true
+ },
+ "add": {
+  "_replace": true
+ },
+ "chmod": {
+  "_replace": true
+ },
+ "cydia_plist_write": {
+  "_replace": true
+ },
  "file_patches": [],
  "disable_daemons": [],
- "_todo": "Relocate 8C148 dyld-cache patches by image symbol for 7E18 (liblockdown activation, MBX2D strings), then build a version-tagged userland subset: 3.x has IOSurface/CoreMotion selectors that moved, but it does have a dyld cache and enable-dylibs-to-override-cache."
+ "_todo": "Relocate 8C148 dyld-cache patches by image symbol for 7E18 (liblockdown activation, MBX2D strings), then build a version-tagged userland subset: 3.x has IOSurface/CoreMotion selectors that moved, but it does have a dyld cache and enable-dylibs-to-override-cache.",
+ "extra_file_patches": [
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a008",
+   "orig": "90402de904708de204d04de204308de200c0a0e304c023e5000090e5dffbffeb0040a0e100009de5000050e3",
+   "new": "20c09fe508309ce4000053e30000a0031eff2f01003093e5020053e1f8ffff1a04001ce51eff2fe100767631",
+   "why": "7E18 liblockdown: relocate 8C148's lockdown_copy_value stub to VA 0x3176a008 (cache offset 0x176a008). Its body is the same except one branch displacement; the verified original bytes are from this cache. The stub looks up the activation key in the table at 0x31767600 and returns the constant value, so SpringBoard can see ActivationState without lockdownd.",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x1767600",
+   "orig": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "new": "48d2233844767631e4d22338f895c86938d223385476763144d22338547676315cd223386476763154d223387476763150d223388476763130d22338947676310000000008aa5238c8070000c47676310900000008aa5238c8070000ce7676310400000008aa5238c8070000d37676310700000008aa5238c8070000db7676310500000008aa5238c8070000e17676310400000008aa5238c8070000e67676310500000000000000000000000000000000000000000000000000000000000000000000004163746976617465640069506f640069506f64322c3100332e312e330037453138004e373241500000000000",
+   "why": "7E18 lockdown_copy_value key/value table in a verified zero gap of liblockdown's __TEXT (VA 0x31767600). Eight 7E18 kLockdown*Key variables map to inline __CFString objects (isa ___CFStringClass 0x3852aa08, flags 0x7c8) for Activated/iPod/iPod2,1/3.1.3/7E18/N72AP and kCFBooleanFalse 0x38521ff8. Same layout as the 8C148/8B117 tables.",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a358",
+   "orig": "f0402de9",
+   "new": "20014770",
+   "why": "7E18 liblockdown: lockdown_connect -> nonzero fake handle. With no lockdownd on the 3DS, __local_connect() returns -1 and this function returned NULL, so SpringBoard stopped before calling lockdown_copy_value (GDB breakpoint at the relocated stub never hit). The copy_value table answers all calls through this handle locally.",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a3dc",
+   "orig": "f0402de9",
+   "new": "20004770",
+   "why": "7E18 lockdown_checkin -> 0 (no lockdownd session to check in with; 8C148 stubs lockdown_activate the same way).",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x1769eb0",
+   "orig": "f0402de9",
+   "new": "20004770",
+   "why": "7E18 lockdown_copy_identity -> NULL (iTunes pairing cert/device key: not available offline; 8C148 stubs lockdown_copy_buid_identity the same way).",
+   "mode": "0644"
+  }
+ ]
 }

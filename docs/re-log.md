@@ -2786,3 +2786,22 @@ shim. It was not: the kernel patch was on the wrong function.
   or stall. Screenshots are still black (no SpringBoard): the next blocker is
   userland activation, as on 2.2.1. 4.2.1 files were not touched; only a
   3.1.3 patch recipe changed.
+
+### NEXT.md (same section, continued): 3.1.3 offline activation
+
+- **[V]** 7E18's dyld cache has no 8C148 offsets, but its liblockdown symbols
+  do resolve. `rootfs/overlay-3.1.3.json` now carries five file patches:
+  the 8C148 `lockdown_copy_value` stub relocated to `0x3176a008`, a
+  240-byte key/value table in a verified zero gap of liblockdown's `__TEXT`
+  (`0x31767600`), and stubs for `lockdown_connect`, `lockdown_checkin` and
+  `lockdown_copy_identity` (no lockdownd on the 3DS). The table's eight
+  `__CFString` objects use 7E18's `___CFStringClass` isa `0x3852aa08`,
+  confirmed by reading an existing CFString in the cache.
+- **[V]** With these patches 3.1.3 still stops on the boot spinner;
+  SpringBoard writes nothing to the console even with its plist's stdout and
+  stderr redirected. A GDB breakpoint at the relocated `lockdown_copy_value`
+  hit only three unrelated keys (TrustedHostAttached, VolumeLimit,
+  ShutterClick), so activation state is not the observed blocker. The next
+  step is a SpringBoard-side trace (its `main`/activation path, or a 3.x
+  applog) rather than more liblockdown table work. 4.2.1/4.1 code paths are
+  untouched; the 2.2.1 interposer is a separate version-only tool.

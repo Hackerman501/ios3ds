@@ -694,13 +694,23 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   the grow step. One large cache file is removed first (7E18's
   DataDetectors cache, 5H11a's stale kernelcache copy): xpwn's `grow` needs
   free allocation-map blocks and both stock images are 100 % full.
-- **[V]** 7E18 has `/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6`
-  (96,117,081 bytes), so a later port *can* use the 4.1 symbol-relocation
-  technique for its liblockdown/MBX patches. None of the 8C148 offsets apply
-  unchanged, so this build applies none. 5H11a has no `com.apple.dyld`
-  directory at all: its frameworks are separate dylibs, so cache patches and
-  the `enable-dylibs-to-override-cache` marker are meaningless there; pin the
-  replacement `liblockdownd.dylib` / `OpenGLES.framework` files instead **[G]**.
+- **[V]** 5H11a has no `com.apple.dyld` directory at all: its frameworks are
+  separate dylibs, so the 4.x cache patches and the
+  `enable-dylibs-to-override-cache` marker are meaningless there. SpringBoard's
+  liblockdown calls end in `/var/run/lockdown/localcomm`, which does not exist
+  on the 3DS. `rootfs/overlay-2.2.1.json` therefore installs
+  `tools/ios3ds-lockdown221/lockdown221.c` (a 2.x-only dylib inserted through
+  SpringBoard's launchd plist) which interposes `lockdown_connect`,
+  `lockdown_copy_value`, `lockdown_disconnect`, `lockdown_copy_identity`,
+  `lockdown_set_value`, `lockdown_remove_value` and `lockdown_checkin` with
+  local answers: ActivationState = `Activated`, BrickState = false and the
+  iPod identity strings. It uses only CoreFoundation API present in 2.x and
+  is not installed on 4.x.
+- **[V]** 7E18 does have a dyld cache (96,117,081 bytes). The 8C148
+  `lockdown_copy_value` stub and its key/value table were relocated by symbol
+  into 7E18's liblockdown (cache offsets `0x176a008` / `0x1767600`), with all
+  original bytes verified at build time; this gives 3.1.3 offline activation
+  without a lockdownd.
 - **[V]** Our userland binaries are ARMv6 Mach-O linked against 4.2.1's
   exported symbol list (`scripts/ios-sdk-symbols.json`) and use private APIs
   (IOSurface, IOKit, Celestial, CoreMotion, Substrate). They are **not**
@@ -734,8 +744,9 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   there (same `buf_t`-in-r0 contract as 8C148) mounts the root filesystem:
   `/dev/md0 on / (hfs, local, noatime)`, launchd, fsck, mDNSResponder and the
   display come up; 2,251 md0 requests with 0 errors in the first 100 s. The
-  remaining 3.1.3 stop point is userland/activation, not the block server:
-  no SpringBoard yet and black screenshots (§6.5).
+  remaining 3.1.3 stop point is userland, not the block server: even with
+  offline liblockdown answers (below), the screen stays on the boot spinner
+  and SpringBoard writes nothing to the console (§6.5).
 - **[V]** 2.2.1, first QEMU run used a stale `sd.img` built before the shim's
   `VIRT_BASE` fix and panicked at shim+0x310c with `far=0x808c8020`, the same
   audio/cam PA->VA bug as 3.1.3's first run.

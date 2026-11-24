@@ -87,13 +87,33 @@ class TestVersions(unittest.TestCase):
             self.assertIn("0xa899a4", offsets)   # QuartzCore MBX2D init string
 
     def test_old_recipe_overlays(self):
-        """No 4.2.1 cache patches / userland binaries on 3.x and 2.x."""
+        """No 4.2.1 cache patches; only the 2.2.1 activation interposer is added."""
         with tempfile.TemporaryDirectory() as td:
             for v in ("3.1.3", "2.2.1"):
                 recipe = json.load(open(versions.recipe_path(v, td)))
-                self.assertEqual(recipe["file_patches"], [])
-                self.assertEqual(recipe["add"], {})
-                self.assertEqual(recipe["plist_set"], {})
+                if v == "3.1.3":
+                    # Symbol-relocated 7E18 liblockdown activation patches.
+                    self.assertEqual([fp["offset"] for fp in recipe["file_patches"]],
+                                     ["0x176a008", "0x1767600", "0x176a358",
+                                      "0x176a3dc", "0x1769eb0"])
+                else:
+                    self.assertEqual(recipe["file_patches"], [])
+                if v == "2.2.1":
+                    # 2.x has no dyld cache: SpringBoard gets liblockdown answers
+                    # from our own dylib instead of the 4.x cache patches.
+                    self.assertEqual(recipe["add"], {
+                        "build/rootfs-add/usr/lib/ios3ds-lockdown221.dylib":
+                            "/usr/lib/ios3ds-lockdown221.dylib"})
+                    self.assertEqual(recipe["plist_set"], {
+                        "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist":
+                            recipe["plist_set"]["/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"]})
+                else:
+                    self.assertEqual(recipe["add"], {})
+                    self.assertEqual(list(recipe["plist_set"]),
+                                     ["/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"])
+                    self.assertEqual(recipe["plist_set"][
+                        "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"][
+                            "StandardOutPath"], "/dev/console")
                 self.assertEqual(recipe["disable_daemons"], [])
                 self.assertFalse(recipe["cydia"])
                 self.assertFalse(recipe["tlsfix"])
