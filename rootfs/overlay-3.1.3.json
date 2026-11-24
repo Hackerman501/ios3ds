@@ -12,6 +12,10 @@
  "remove": [
   "/System/Library/Caches/com.apple.datadetectorscore.cache.full.system"
  ],
+ "mkdirs": [
+  "/private/var/mobile/Library/Logs",
+  "/private/var/mobile/Library/Logs/CrashReporter"
+ ],
  "symlink": {
   "_replace": true
  },
@@ -19,7 +23,10 @@
   "_replace": true,
   "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
    "StandardErrorPath": "/dev/console",
-   "StandardOutPath": "/dev/console"
+   "StandardOutPath": "/dev/console",
+   "EnvironmentVariables": {
+    "DYLD_PRINT_LIBRARIES": "1"
+   }
   }
  },
  "plist_merge": {
@@ -50,7 +57,7 @@
    "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
    "offset": "0x1767600",
    "orig": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-   "new": "48d2233844767631e4d22338f895c86938d223385476763144d22338547676315cd223386476763154d223387476763150d223388476763130d22338947676310000000008aa5238c8070000c47676310900000008aa5238c8070000ce7676310400000008aa5238c8070000d37676310700000008aa5238c8070000db7676310500000008aa5238c8070000e17676310400000008aa5238c8070000e67676310500000000000000000000000000000000000000000000000000000000000000000000004163746976617465640069506f640069506f64322c3100332e312e330037453138004e373241500000000000",
+   "new": "48d2233844767631e4d2233880a9523838d223385476763144d22338547676315cd223386476763154d223387476763150d223388476763130d22338947676310000000008aa5238c8070000c47676310900000008aa5238c8070000ce7676310400000008aa5238c8070000d37676310700000008aa5238c8070000db7676310500000008aa5238c8070000e17676310400000008aa5238c8070000e67676310500000000000000000000000000000000000000000000000000000000000000000000004163746976617465640069506f640069506f64322c3100332e312e330037453138004e373241500000000000",
    "why": "7E18 lockdown_copy_value key/value table in a verified zero gap of liblockdown's __TEXT (VA 0x31767600). Eight 7E18 kLockdown*Key variables map to inline __CFString objects (isa ___CFStringClass 0x3852aa08, flags 0x7c8) for Activated/iPod/iPod2,1/3.1.3/7E18/N72AP and kCFBooleanFalse 0x38521ff8. Same layout as the 8C148/8B117 tables.",
    "mode": "0644"
   },
@@ -76,6 +83,30 @@
    "orig": "f0402de9",
    "new": "20004770",
    "why": "7E18 lockdown_copy_identity -> NULL (iTunes pairing cert/device key: not available offline; 8C148 stubs lockdown_copy_buid_identity the same way).",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a1c4",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "7E18 lockdown_remove_value -> 0 (no lockdownd). SpringBoard imports it and passes the fake handle from lockdown_connect; without this stub it dereferences an invalid handle and exits during activation. Located by the 8-byte context around 8C148's 0x684bb48 function and verified against this cache.",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a210",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "7E18 lockdown_set_value -> 0 (same reason/location method as lockdown_remove_value; 8C148 0x684bb94).",
+   "mode": "0644"
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x176a260",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "7E18 lockdown_disconnect -> 0 (SpringBoard calls it on the fake handle; without the stub it faults. 8C148 0x684bbe4, same 8-byte context and original bytes verified).",
    "mode": "0644"
   }
  ]

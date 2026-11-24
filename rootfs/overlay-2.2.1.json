@@ -12,6 +12,10 @@
  "remove": [
   "/System/Library/Caches/com.apple.kernelcaches/kernelcache.s5l8720x"
  ],
+ "mkdirs": [
+  "/private/var/mobile/Library/Logs",
+  "/private/var/mobile/Library/Logs/CrashReporter"
+ ],
  "_activation": "SpringBoard's liblockdown calls lockdown_connect()/lockdown_copy_value() through /var/run/lockdown/localcomm. With no lockdownd there is no ActivationState and no UI. Since 2.x has no dyld cache, rootfs/recipe.json's liblockdown patches cannot be used: tools/ios3ds-lockdown221/lockdown221.c is inserted into SpringBoard instead and answers those calls locally.",
  "symlink": {
   "_replace": true

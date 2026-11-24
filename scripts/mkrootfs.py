@@ -118,6 +118,13 @@ def build(staging, out, recipe_path=None, verbose=True, hfsplus=None, rootfs_add
             raise SystemExit("hfsplus grow failed: " + res.strip())
         if verbose:
             print("[mkrootfs] grew volume to %d MiB" % (os.path.getsize(out) >> 20))
+    # Older stock rootfs images have no Logs/CrashReporter directory. Without
+    # it ReportCrash silently drops the reports we need for older-iOS bring-up.
+    # No 4.2.1 recipe sets this key, so its rootfs is unchanged.
+    for path in recipe.get("mkdirs", []):
+        hfs(out, "mkdir", path, check=False)
+        if verbose:
+            print("[mkrootfs] ensured directory %s" % path)
     cydia_mod = cydia_set = None
     if recipe.get("cydia") and cydia:
         # before our own files: whatever the recipe writes below wins over a deb

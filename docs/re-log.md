@@ -3141,3 +3141,44 @@ A card run with `diag=1` on the Old 3DS to confirm:
   textures are broken, run 13), and the read-out writes both framebuffer sets
   to avoid tearing. Cutting those needs a console decision (RGB565 texture =
   banding; one-set read-out = possible tearing), so they were left alone.
+## NEXT. iOS 3.1.3: SpringBoard starts, stops at the activation screen (2026-11-24)
+
+Continues §111. The root mount has been solid since the previous round; this
+round traced the userland stop point with GDB and dyld logging, all in this
+worktree's `build/` (no Apple files are committed).
+
+- **SpringBoard really was launching.** A GDB remote-protocol trace of
+  `_execve`/`_proc_exit` (kernel symbols from 7E18's `LC_SYMTAB`) showed
+  launchd at t≈9 s, fsck/mount/mount_hfs helpers exiting at t≈22–25 s, and
+  processes named `SpringBoard` exiting with status 1 at t≈64 s and t≈72 s;
+  launchd then stopped retrying. Before that the boot spinner was the only
+  screen, which is why earlier rounds concluded "no SpringBoard".
+- **Crash reports:** `rootfs/overlay-3.1.3.json` now asks `mkrootfs.py` for the
+  optional `mkdirs` step (new key, ignored by 4.2.1) to create
+  `/private/var/mobile/Library/Logs/CrashReporter`. No reports appeared: the
+  exits are normal `exit(1)` paths, not crashes. `DYLD_PRINT_LIBRARIES=1` in
+  SpringBoard's launchd plist (3.1.3 overlay only) showed dyld loading the
+  complete framework set through `ArtworkCache.framework` and then stopping,
+  with no dyld error.
+- **Missing lockdown stubs were the reason SpringBoard survived.** SpringBoard
+  imports `lockdown_disconnect`, `lockdown_remove_value` and
+  `lockdown_set_value` in addition to the four functions the previous round
+  had stubbed; the fake handle from `lockdown_connect` was passed to them.
+  Their 7E18 offsets (`0x176a260`, `0x176a1c4`, `0x176a210`) were located from
+  the 8C148 context and verified byte-for-byte against the cache, then stubbed
+  to return 0. With those three extra patches SpringBoard no longer exits: it
+  stays up, the heartbeat shows no kernel idle stall, and the screen changes
+  from the spinner to the **"Connect to iTunes" activation screen**. The
+  table's `BrickState` value was also corrected to 7E18's real
+  `kCFBooleanFalse` (`0x38521ff8`, verified via the CFBoolean array at that
+  address) from an out-of-cache pointer; this alone did not change the screen.
+  Writing stock-style activation record/plist files was tried and reverted:
+  it did not change the screen either.
+- **Remaining blocker:** activation. A GDB breakpoint at the relocated
+  `lockdown_copy_value` stub (`0x3176a008`) is not hit in this build, so the
+  offline activation table is not the code path that decides the screen; the
+  decision is inside SpringBoard's `SBLockdownManager`. The next step is
+  its Objective-C method implementation, not more liblockdown table work.
+- **4.x is unchanged:** `mkdirs` is a new optional recipe key and every other
+  edit is in `rootfs/overlay-3.1.3.json` (plus crash dirs in the 2.2.1
+  overlay). No 4.2.1 boot-file or shim code changed.
