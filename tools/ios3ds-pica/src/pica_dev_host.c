@@ -123,10 +123,14 @@ static uint32_t d_scatter(uint32_t src_pa, void *dst, uint32_t bytes)
     return PICA_OK;
 }
 
+/* the host has no display mirror; the request still exists so the engine's
+   surface-write path is exercised by gltest's host build */
+static uint32_t d_dirty(void) { return PICA_OK; }
+
 const pica_dev_t *pica_dev_host(void)
 {
     static const pica_dev_t dev = { "PICA200 software model (host)", d_info, d_alloc, d_free, d_write, d_read,
-                                    d_submit, d_fill, d_transfer, d_config, d_present, d_scatter };
+                                    d_submit, d_fill, d_transfer, d_config, d_present, d_scatter, d_dirty };
     return &dev;
 }
 

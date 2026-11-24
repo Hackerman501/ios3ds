@@ -461,6 +461,10 @@ static void run(pica_req_t *r, uint32_t pid)
     case PICA_OP_TRANSFER: r->status = pica_drv_transfer(&drv, a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_PRESENT:  r->status = present(a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_SCATTER:  r->status = scatter(a[0], a[1], a[2]); break;
+    case PICA_OP_DIRTY:    /* a CPU read-back wrote a surface: the mirror must copy it */
+        m_dirty = 1;
+        r->status = PICA_OK;
+        break;
     case PICA_OP_CONFIG:
         a[0] = gm_valid() && GM->gpu_enable && GM->ca_gpu ? PICA_CFG_CA_GPU : 0;
         r->status = PICA_OK;

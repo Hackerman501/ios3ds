@@ -34,7 +34,7 @@
 
 #define PICA_SYSCTL_NAME   "ios3ds_gpu"
 #define PICA_SYSCTL_LEAF   "ios3ds_gpu"
-#define PICA_PROTO_VERSION 4
+#define PICA_PROTO_VERSION 5
 
 /* PRESENT flags bit 31: test hook (IOS3DS_GL_SCATTER=1 in the GL engine).
    The shim refuses FCRAM destinations with PICA_ERR_NOT_CONTIG so the
@@ -67,6 +67,11 @@ enum {
                            walks the caller's page tables and copies each page through the kernel's
                            linear map with the caller's cache lines maintained. Every page must be
                            user-writable and in FCRAM or VRAM; else PICA_ERR_FAULT / PICA_ERR_NOT_CONTIG */
+    PICA_OP_DIRTY,      /* a surface target was written back by the CPU after a PICA_OP_READ.
+                           The display mirror's damage tracking needs to know: PRESENT and
+                           SCATTER already mark the frame dirty, but a CPU read-back (the
+                           stereo stamp path, or the fallback after a refused present) writes
+                           straight into the IOSurface from userland. No arguments. */
 };
 
 #define PICA_CFG_CA_GPU 1u      /* boot.cfg gpu=1 and ca_gpu=1: CoreAnimation may composite on the GPU */

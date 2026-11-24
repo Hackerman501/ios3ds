@@ -3000,3 +3000,108 @@ saved photo after the arena shrink; if textures fall back to the CPU
 the WebPreferences plist here is deliberately limited to cache/back-forward
 memory, not animation or rendering settings. The arena size is a GPU-side
 memory change; no display or stereo files were touched.
+
+## NEXT. Old 3DS frame drops round 2: damage-tracked mirror, present-driven scheduling, faster uploads
+
+Design: docs/perf.md. Hardware: `issue-reports/run2-perf.txt` (stereo3d=0):
+`[gpu] PICA200: … every 2. VBlank`, `25 copies in 30 s, 347.2 ms each` before
+the self-test passed, then `600 frames in 33 s (18.1 fps); upload 9388 us,
+draw 3086 us, read-out 6475 us; frame avg 20661 us … 764 busy skips, 0
+timeouts`, and `11 copies in 33 s, 75.6 ms each` when GL held the GPU.
+QEMU: `emu/perf.py --runs 3/8 --icount 2` on a fresh `build/sd.img`.
+
+### Space first
+The shim GPU part was **32624/32768** bytes (re-log 109). The staged
+`[gpu-diag]` bring-up diagnostics (`tools/ios3ds-pica/src/pica_diag.c`) are
+no longer linked into the shim (`scripts/mkboot.py`): they already served
+their purpose (runs 12/13 pinned the NPOT-texture and GX-clock facts), and
+the source + the picasim host tests stay, so `gpu_diag=1` in boot.cfg is now
+a no-op. That freed 6.7 KiB.
+
+`make shim`: main **24268/24320**, GPU part **26256/32768** bytes (after all
+four commits below).
+
+### Mirror: skip unchanged frames (damage tracking)
+A GL present/scatter now sets `m_dirty` (`kernel/shim/pica.c`); the
+VBlank-driven mirror only does GPU work when `m_dirty` is set and skips
+unchanged frames by incrementing a new `gmbox_t.idle_frames` counter (line 6,
+reusing a reserved word). The ARM9's `gm_live()` counts `idle_frames` as
+liveness too, so an idle screen no longer falls back to the 75 ms ARM9 CPU
+copy. On an idle home screen the mirror's ~19 ms/frame GPU cost drops to 0,
+and the LCDs simply keep the last picture. A line-0 `seq` change (screen
+mode, `stereo_k`, `want`) or a PDC 2D/3D switch (`pica_stereo.c`) also sets
+`m_dirty`, so the eyes are rebuilt even when the CA frame did not move (the
+3D slider on an idle home screen).
+
+### Mirror: CPU-written surfaces also mark the frame dirty
+`m_dirty` was only set by `PICA_OP_PRESENT`/`PICA_OP_SCATTER`. A display
+target that takes the CPU read-back path (every frame with `stereo3d=1`, so
+the alpha stamp reaches `/vram`, and any surface after a refused present
+switched the process to read-backs) writes straight into the IOSurface from
+userland: the mirror would have kept showing an older frame. Protocol 5 adds
+`PICA_OP_DIRTY` (`pica_dev_t.dirty()`); `sync_target()` calls it after a
+successful `read_back()` into a surface target, and the shim just sets
+`m_dirty`. Host test: `test_pica` calls the new op; `make test` green.
+GPU part +16 bytes.
+
+### Mirror: schedule right after a CA present
+A frame the VBlank skipped because GL held the GPU (`m_pending`) now starts
+in thread context right after that GL request finishes (`m_maybe_start` in
+`shim_gpu_thread_poll`), instead of waiting for the next interrupt. The
+frame stays VBlank-cadenced (`m_pending` is only set on a due VBlank), so
+the mirror cannot oversubscribe the GPU. The busy-skips now only count a
+present that collided, not a lost display refresh.
+
+### Mirror self-test: pixel-wise compare (shorter 347 ms boot phase)
+`pm_selftest` compared 518400 output bytes one at a time, re-deriving the
+source pixel through `gm_map()` (two integer divisions) three times per
+byte. It now compares one 24-bit BGR8 pixel at a time (one `gm_map` per
+pixel). The self-test runs once at boot while the ARM9 still copies at
+~347 ms/frame, so this shortens that phase. The host test still reports the
+exact same `0 of 518400 bytes differ` and per-variant byte counts.
+
+### CA render thread: faster texture tiling
+`pica_tex_upload`'s common case (every CA texture: BGRA8888 into an RGBA8
+texel) did four byte loads/stores per texel; it now does one 32-bit load, a
+rotate-left-by-8 and one 32-bit store, falling back to the byte path when
+either buffer is not 32-bit aligned. Host test: byte-identical.
+
+### Before / after (`emu/perf.py`, fresh image each)
+
+| metric | before | after |
+|---|---|---|
+| boot to SpringBoard + input | 70 s | 70 s |
+| folder open (wall s, 3 runs) | 12.2 / 14.2 / 12.2 | 12.2 / 6.2 / 14.2 (host-load noisy) |
+| `[perf] CA:` frame ms (avg) | 23 / 24 | 22–24 |
+| `[gl] CA:` render thread CPU | 14–24 ms/frame (re-log 110, range) | **16066 us**, 3.0 lists, 1.1 presents, 0.1 read-backs, 1.9 uploads (112 KiB) |
+
+The `[perf]` folder-open histogram is unchanged because QEMU's folder open is
+vsync/CA-paced at ~22–24 ms (~45 fps), and the render thread (16.1 ms) is
+already under that budget; the tiling win shows as fewer guest instructions
+per upload, not as a faster histogram. On the Old 3DS the render thread and
+the 19 ms mirror are serialised on the GPU, which is why the hardware
+`[perf] CA:` average (54 ms in run2) tracks the mirror's 18 fps: the fixes
+that matter there are the damage tracking and the scheduling above, and they
+are GPU-side, so QEMU cannot show them (QEMU's GPU model finishes every
+operation instantly).
+
+### Validation
+`make test` green (6698 + 59 + 2469 pica checks, gl host-test, wifi, gps,
+input, blkcache); `make shim` and `make userland` clean. Fresh-image
+`emu/soak.py --cycles 5 --icount 2` soaks: TODO.
+
+### Needs hardware
+A card run with `diag=1` on the Old 3DS to confirm:
+- `[gpu] mirror: … fps` should now show **0 frames / 0 busy skips** on an
+  idle home screen (damage tracking) and fewer busy skips during a folder
+  open/scroll, with the `[perf] CA:` histogram avg dropping from 54 ms toward
+  30 ms;
+- `[gpu] display mirror ACTIVE` and the spot check still pass; the stereo
+  path (re-log 109) still opens the barrier when the slider moves on an idle
+  home screen (`[stereo] switch: PDC0 3D`, one stereo frame before the
+  barrier);
+- the remaining mirror per-frame cost (upload 9388 + read-out 6475 us) is
+  still there: the upload is linear→tiled + a texture re-stride (NPOT
+  textures are broken, run 13), and the read-out writes both framebuffer sets
+  to avoid tearing. Cutting those needs a console decision (RGB565 texture =
+  banding; one-set read-out = possible tearing), so they were left alone.

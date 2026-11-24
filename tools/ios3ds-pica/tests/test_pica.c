@@ -715,6 +715,7 @@ static void test_sim(void)
     CHECK_EQ(dev->info(&info), PICA_OK);
     CHECK_EQ(info.state, PICA_OK);
     CHECK_EQ(info.version, PICA_PROTO_VERSION);
+    CHECK_EQ(dev->dirty(), PICA_OK);        /* surface read-back -> mirror damage flag */
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &color), PICA_OK);
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &depth), PICA_OK);
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &lin), PICA_OK);

@@ -750,6 +750,13 @@ static void sync_target(PTarget *t)
         gpu_fail("reading a frame back", st);
     else if (st == (uint32_t)-1)
         gl_log("pica: no memory to read a %dx%d target back: its last GPU frame is lost", t->w, t->h);
+    else if (t->rt.surface)
+        /* The read-back wrote the final frame straight into the IOSurface
+           from userland. PRESENT/SCATTER tell the mirror about their frames
+           themselves, but this path needs an explicit announcement too:
+           stereo3d=1 keeps the stamp by reading the display target back,
+           and a refused present switches every surface to this path. */
+        P.dev->dirty();
 }
 
 /* bring rt->color into the GPU buffer */
