@@ -53,6 +53,10 @@ typedef struct PTarget {
     uint32_t swz_pa;                    /* != 0: written back by the GPU itself (present_target) */
     uint32_t bnc_pa;                    /* scattered surface: linear arena copy the shim copies out */
     int bounce;                         /* the shim refused PRESENT: not one contiguous range */
+    uint32_t *swz_list;                 /* cached swizzle command list + its vertices */
+    uint32_t swz_words;                 /* (built once per target: the swizzle pass is identical) */
+    int swz_opaque;                     /* the rt.opaque the list was built for */
+    Vtx swz_v[6];
 } PTarget;
 
 typedef struct PDepth {
@@ -490,84 +494,94 @@ static int present_target(PTarget *t)
     pica_raster_t rs;
     pica_vtx_layout_t l;
     float clip[16];
-    Vtx q[6];
-    uint32_t bytes, dim = (uint32_t)t->h << 16 | (uint32_t)t->w, st, *list = scratch(2048), flags;
+    uint32_t bytes, dim = (uint32_t)t->h << 16 | (uint32_t)t->w, st, flags;
     uint32_t sbytes = (uint32_t)t->w * t->h * 4;
     int i;
-    if (!list)
-        return -1;
-    pica_cmd_init(&c, list, 2048);
-    pica_emit_base_state(&c);
-    pica_ff_emit_program(&c);
-    memset(&fb, 0, sizeof fb);
-    fb.color_pa = t->swz_pa;
-    fb.width = (uint16_t)t->w;
-    fb.height = (uint16_t)t->h;
-    fb.color_fmt = PICA_CB_RGBA8;
-    pica_emit_framebuffer(&c, &fb);
-    pica_emit_viewport(&c, 0, 0, (uint32_t)t->w, (uint32_t)t->h);
-    pica_emit_scissor(&c, 0, 0, 0, 0, 0);
-    pica_raster_defaults(&rs);
-    rs.write_mask = PICA_WRITE_COLOR;
-    pica_emit_raster(&c, &rs);
-    memset(&tx, 0, sizeof tx);
-    tx.pa = t->color_pa;
-    tx.width = (uint16_t)t->pw;
-    tx.height = (uint16_t)t->ph;
-    tx.fmt = PICA_TEX_RGBA8;
-    tx.mag = tx.min = PICA_NEAREST;
-    tx.wrap_s = tx.wrap_t = PICA_CLAMP_TO_EDGE;
-    pica_emit_texture(&c, 0, &tx);
-    pica_emit_texunits(&c, 1);
-    for (i = 0; i < PICA_TEV_STAGES; i++)
-        pica_tev_passthrough(&tev[i]);
-    for (i = 0; i < 3; i++) {
-        static const uint8_t op[3] = { PICA_TEVOP_RGB_ALPHA, PICA_TEVOP_RGB_R, PICA_TEVOP_RGB_G };
-        static const uint32_t k[3] = { 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u };     /* R | G<<8 | B<<16 | A<<24 */
-        tev[i].src_rgb[0] = PICA_TEVSRC_TEXTURE0;
-        tev[i].src_rgb[1] = PICA_TEVSRC_CONSTANT;
-        tev[i].src_rgb[2] = i ? PICA_TEVSRC_PREVIOUS : PICA_TEVSRC_CONSTANT;
-        tev[i].op_rgb[0] = op[i];
-        tev[i].op_rgb[1] = PICA_TEVOP_RGB_COLOR;
-        tev[i].op_rgb[2] = PICA_TEVOP_RGB_COLOR;
-        tev[i].func_rgb = i ? PICA_TEV_MULT_ADD : PICA_TEV_MODULATE;
-        tev[i].color = k[i];
-        /* alpha = the sample's blue (the surface's B byte), or opaque */
-        tev[i].src_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVSRC_TEXTURE0 : i == 2 ? PICA_TEVSRC_CONSTANT : PICA_TEVSRC_PREVIOUS;
-        tev[i].op_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVOP_A_B : PICA_TEVOP_A_ALPHA;
-        tev[i].func_a = PICA_TEV_REPLACE;
+    /* The swizzle pass is identical every frame for a given target (same
+       colour buffer, swizzle buffer, dimensions and opacity), so build the
+       command list and its six vertices once and resubmit them.  Building it
+       on every frame cost the render thread a few hundred instructions per
+       present; a frame's present is the hot path. */
+    if (!t->swz_list || t->swz_opaque != (t->rt.opaque != 0)) {
+        free(t->swz_list);
+        t->swz_list = malloc(2048 * 4);
+        if (!t->swz_list)
+            return -1;
+        t->swz_opaque = t->rt.opaque != 0;
+        pica_cmd_init(&c, t->swz_list, 2048);
+        pica_emit_base_state(&c);
+        pica_ff_emit_program(&c);
+        memset(&fb, 0, sizeof fb);
+        fb.color_pa = t->swz_pa;
+        fb.width = (uint16_t)t->w;
+        fb.height = (uint16_t)t->h;
+        fb.color_fmt = PICA_CB_RGBA8;
+        pica_emit_framebuffer(&c, &fb);
+        pica_emit_viewport(&c, 0, 0, (uint32_t)t->w, (uint32_t)t->h);
+        pica_emit_scissor(&c, 0, 0, 0, 0, 0);
+        pica_raster_defaults(&rs);
+        rs.write_mask = PICA_WRITE_COLOR;
+        pica_emit_raster(&c, &rs);
+        memset(&tx, 0, sizeof tx);
+        tx.pa = t->color_pa;
+        tx.width = (uint16_t)t->pw;
+        tx.height = (uint16_t)t->ph;
+        tx.fmt = PICA_TEX_RGBA8;
+        tx.mag = tx.min = PICA_NEAREST;
+        tx.wrap_s = tx.wrap_t = PICA_CLAMP_TO_EDGE;
+        pica_emit_texture(&c, 0, &tx);
+        pica_emit_texunits(&c, 1);
+        for (i = 0; i < PICA_TEV_STAGES; i++)
+            pica_tev_passthrough(&tev[i]);
+        for (i = 0; i < 3; i++) {
+            static const uint8_t op[3] = { PICA_TEVOP_RGB_ALPHA, PICA_TEVOP_RGB_R, PICA_TEVOP_RGB_G };
+            static const uint32_t k[3] = { 0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u };     /* R | G<<8 | B<<16 | A<<24 */
+            tev[i].src_rgb[0] = PICA_TEVSRC_TEXTURE0;
+            tev[i].src_rgb[1] = PICA_TEVSRC_CONSTANT;
+            tev[i].src_rgb[2] = i ? PICA_TEVSRC_PREVIOUS : PICA_TEVSRC_CONSTANT;
+            tev[i].op_rgb[0] = op[i];
+            tev[i].op_rgb[1] = PICA_TEVOP_RGB_COLOR;
+            tev[i].op_rgb[2] = PICA_TEVOP_RGB_COLOR;
+            tev[i].func_rgb = i ? PICA_TEV_MULT_ADD : PICA_TEV_MODULATE;
+            tev[i].color = k[i];
+            /* alpha = the sample's blue (the surface's B byte), or opaque */
+            tev[i].src_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVSRC_TEXTURE0 : i == 2 ? PICA_TEVSRC_CONSTANT : PICA_TEVSRC_PREVIOUS;
+            tev[i].op_a[0] = i == 2 && !t->rt.opaque ? PICA_TEVOP_A_B : PICA_TEVOP_A_ALPHA;
+            tev[i].func_a = PICA_TEV_REPLACE;
+        }
+        tev[0].src_a[0] = PICA_TEVSRC_CONSTANT;    /* stage 0 has no "previous" */
+        for (i = 0; i < PICA_TEV_STAGES; i++)
+            pica_emit_tev(&c, (unsigned)i, &tev[i]);
+        pica_ff_clip_matrix(clip, ident, ident);
+        pica_ff_emit_matrices(&c, clip, NULL, NULL, 1.0f);
+        memset(&l, 0, sizeof l);
+        l.count = PICA_FF_ATTRS;
+        l.attr[PICA_FF_POSITION].type = PICA_FLOAT;  l.attr[PICA_FF_POSITION].size = 4;
+        l.attr[PICA_FF_COLOR].type = PICA_FLOAT;     l.attr[PICA_FF_COLOR].size = 4;
+        l.attr[PICA_FF_TEXCOORD0].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD0].size = 2;
+        l.attr[PICA_FF_TEXCOORD1].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD1].size = 2;
+        l.nbuffers = 1;
+        l.buffer[0].stride = sizeof(Vtx);
+        l.base_pa = P.vbuf_pa;
+        pica_emit_vtx_layout(&c, &l);
+        pica_emit_draw_arrays(&c, PICA_TRIANGLES, 0, 6);
+        pica_emit_fb_flush(&c);
+        t->swz_words = pica_cmd_finish(&c);
+        /* GL row y of the target is GL row y of the texture (both stored top
+           first), so pixel (x, y) samples texel (x, y): s = x / pw, t = y / ph */
+        memset(t->swz_v, 0, sizeof t->swz_v);
+        for (i = 0; i < 6; i++) {
+            t->swz_v[i].x = corner[i][0] * 2 - 1;
+            t->swz_v[i].y = corner[i][1] * 2 - 1;
+            t->swz_v[i].w = 1;
+            t->swz_v[i].c[0] = t->swz_v[i].c[1] = t->swz_v[i].c[2] = t->swz_v[i].c[3] = 1;
+            t->swz_v[i].t[0][0] = corner[i][0] * (float)t->w / (float)t->pw;
+            t->swz_v[i].t[0][1] = corner[i][1] * (float)t->h / (float)t->ph;
+            t->swz_v[i].fog = 1;
+        }
     }
-    tev[0].src_a[0] = PICA_TEVSRC_CONSTANT;    /* stage 0 has no "previous" */
-    for (i = 0; i < PICA_TEV_STAGES; i++)
-        pica_emit_tev(&c, (unsigned)i, &tev[i]);
-    pica_ff_clip_matrix(clip, ident, ident);
-    pica_ff_emit_matrices(&c, clip, NULL, NULL, 1.0f);
-    memset(&l, 0, sizeof l);
-    l.count = PICA_FF_ATTRS;
-    l.attr[PICA_FF_POSITION].type = PICA_FLOAT;  l.attr[PICA_FF_POSITION].size = 4;
-    l.attr[PICA_FF_COLOR].type = PICA_FLOAT;     l.attr[PICA_FF_COLOR].size = 4;
-    l.attr[PICA_FF_TEXCOORD0].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD0].size = 2;
-    l.attr[PICA_FF_TEXCOORD1].type = PICA_FLOAT; l.attr[PICA_FF_TEXCOORD1].size = 2;
-    l.nbuffers = 1;
-    l.buffer[0].stride = sizeof(Vtx);
-    l.base_pa = P.vbuf_pa;
-    pica_emit_vtx_layout(&c, &l);
-    pica_emit_draw_arrays(&c, PICA_TRIANGLES, 0, 6);
-    pica_emit_fb_flush(&c);
-    bytes = pica_cmd_finish(&c);
-    /* GL row y of the target is GL row y of the texture (both stored top
-       first), so pixel (x, y) samples texel (x, y): s = x / pw, t = y / ph */
-    memset(q, 0, sizeof q);
-    for (i = 0; i < 6; i++) {
-        q[i].x = corner[i][0] * 2 - 1;
-        q[i].y = corner[i][1] * 2 - 1;
-        q[i].w = 1;
-        q[i].c[0] = q[i].c[1] = q[i].c[2] = q[i].c[3] = 1;
-        q[i].t[0][0] = corner[i][0] * (float)t->w / (float)t->pw;
-        q[i].t[0][1] = corner[i][1] * (float)t->h / (float)t->ph;
-        q[i].fog = 1;
-    }
-    if (!bytes || P.dev->submit(list, bytes, P.vbuf_pa, q, sizeof q) != PICA_OK)
+    bytes = t->swz_words;
+    if (!bytes || P.dev->submit(t->swz_list, bytes, P.vbuf_pa, t->swz_v, sizeof t->swz_v) != PICA_OK)
         return -1;
     /* XNU maps a user page that has not been written since its modified bit
        was cleared read-only and makes it writable on the first write fault
@@ -780,6 +794,7 @@ static void drop_target(PTarget *t)
     arena_release(t->color_pa, (uint32_t)t->pw * t->ph * 4);
     arena_release(t->swz_pa, (uint32_t)t->w * t->h * 4);
     arena_release(t->bnc_pa, (uint32_t)t->w * t->h * 4);
+    free(t->swz_list);
     memset(t, 0, sizeof *t);
 }
 

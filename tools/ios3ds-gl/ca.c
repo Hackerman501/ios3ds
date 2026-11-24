@@ -16,10 +16,17 @@
  * ca_frame() is called on every CA swap and logs, every 30 s, what a frame
  * costs the render thread.
  * SPDX-License-Identifier: GPL-3.0-or-later */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "engine.h"
 #include "gl_slots.h"
+#ifndef GL_HOST
+#include <mach/mach_time.h>
+#endif
 
 typedef void (*F_u)(GC *, GLenum);
 typedef void (*F_uu)(GC *, GLenum, GLenum);
@@ -282,6 +289,117 @@ static unsigned ca_period(void)
     return (unsigned)period;
 }
 
+/* ------------------------------------------------------------------ */
+/* [perf] frame-time histogram (the hardware side of emu/perf.py).     */
+/*                                                                     */
+/* Every CA swap is one frame. ca_frame() runs on the render thread    */
+/* right after the swap's GPU work (flush_all -> present) finished, so */
+/* the interval between two calls is the wall time of one frame:       */
+/* vsync pacing when the compositor keeps up, longer when the CPU or   */
+/* the GPU (its own work or the display mirror's, which the shim        */
+/* arbitrates) made it miss a refresh. Once per second while frames    */
+/* flow - i.e. during a folder open/close, a scroll or a page load,    */
+/* and not at all on an idle home screen - one [perf] line prints the  */
+/* frame-time histogram, so a hardware log shows exactly where a given */
+/* animation drops frames.                                             */
+/* ------------------------------------------------------------------ */
+static uint64_t perf_now_us(void)
+{
+#ifndef GL_HOST
+    static mach_timebase_info_data_t tb;
+    static int have_tb;
+    if (!have_tb) {
+        mach_timebase_info(&tb);
+        have_tb = 1;
+    }
+    return mach_absolute_time() / 1000u * tb.numer / tb.denom;
+#else
+    return 0;
+#endif
+}
+
+/* log a "[perf] ..." line straight to /dev/console (not "[gl] ...") */
+static void perf_log(const char *fmt, ...)
+{
+    static int fd = -2;
+    char buf[256];
+    va_list ap;
+    int n = snprintf(buf, sizeof buf, "[perf] ");
+    va_start(ap, fmt);
+    n += vsnprintf(buf + n, sizeof buf - n - 1, fmt, ap);
+    va_end(ap);
+    if (n > (int)sizeof buf - 2)
+        n = sizeof buf - 2;
+    buf[n++] = '\n';
+#ifndef GL_HOST
+    if (fd == -2)
+        fd = open("/dev/console", 0x20001 /* O_WRONLY | O_NOCTTY */);
+    if (fd < 0)
+        fd = 2;
+#else
+    if (fd == -2)
+        fd = 2;
+#endif
+    write(fd, buf, n);
+}
+
+static void perf_frame_tick(void)
+{
+    static uint64_t last_us, sec_us;
+    static unsigned n, hist[5], sum_ms, min_ms, max_ms;
+    uint64_t now = perf_now_us(), dt;
+    if (!last_us) {
+        last_us = sec_us = now;
+        return;
+    }
+    dt = now - last_us;
+    last_us = now;
+    /* a gap longer than a second: the app was idle. This frame is the first
+       of a new animation; its "interval" is the idle gap, not a frame time,
+       so start a fresh window and do not record it. */
+    if (dt > 1000000u) {
+        sec_us = now;
+        n = 0;
+        memset(hist, 0, sizeof hist);
+        sum_ms = min_ms = max_ms = 0;
+        return;
+    }
+    if (!n) {
+        min_ms = max_ms = (unsigned)(dt / 1000u);
+    } else {
+        if (dt / 1000u < min_ms)
+            min_ms = (unsigned)(dt / 1000u);
+        if (dt / 1000u > max_ms)
+            max_ms = (unsigned)(dt / 1000u);
+    }
+    sum_ms += (unsigned)(dt / 1000u);
+    n++;
+    {
+        unsigned ms = (unsigned)(dt / 1000u);
+        if (ms < 17)
+            hist[0]++;
+        else if (ms < 33)
+            hist[1]++;
+        else if (ms < 66)
+            hist[2]++;
+        else if (ms < 100)
+            hist[3]++;
+        else
+            hist[4]++;
+    }
+    if (now - sec_us >= 1000000u) {
+        if (n >= 2)
+            perf_log("CA: %u frames in %u ms; frame ms min/avg/max %u/%u/%u; "
+                     "<17:%u 17-33:%u 33-66:%u 66-100:%u >=100:%u",
+                     n, (unsigned)((now - sec_us) / 1000u), min_ms, n ? sum_ms / n : 0, max_ms,
+                     hist[0], hist[1], hist[2], hist[3], hist[4]);
+        sec_us = now;
+        n = 0;
+        memset(hist, 0, sizeof hist);
+        sum_ms = 0;
+    }
+}
+
 void ca_frame(void)
 {
     static uint64_t cpu0, frames;
@@ -291,15 +409,19 @@ void ca_frame(void)
     unsigned period;
     if (!getenv("IOS3DS_CA"))
         return;
+    perf_frame_tick();
     period = ca_period();
-    cpu = thread_cpu_us();
     if (!frames++) {
-        cpu0 = cpu;
+        cpu0 = thread_cpu_us();
         pica_backend_stats2(&s0);
         return;
     }
     if (frames % (period + 1) != 1)
         return;
+    /* measure the CPU time only at the reporting frames: the thread_info
+       Mach call costs a few syscalls per swap and its result is used once
+       per `period` frames (the render thread is the hot path). */
+    cpu = thread_cpu_us();
     pica_backend_stats2(&s);
     /* a new render thread starts its CPU clock at 0: never subtract backwards */
     dcpu = cpu >= cpu0 ? cpu - cpu0 : 0;

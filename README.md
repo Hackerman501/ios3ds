@@ -302,6 +302,7 @@ Optional:
 | [real-hardware.md](docs/real-hardware.md) | testing safely on a console |
 | [emulator.md](docs/emulator.md) | the QEMU `nintendo3ds` machine, Azahar |
 | [gpu.md](docs/gpu.md) · [pica200.md](docs/pica200.md) | OpenGL ES engine, CoreAnimation and the screen copy on the PICA200 |
+| [perf.md](docs/perf.md) | Old 3DS frame drops: folder open / Safari profiling, the `[perf]` frame histogram, `emu/perf.py` |
 | [audio.md](docs/audio.md) | speaker, headphones, microphone |
 | [mcu.md](docs/mcu.md) | battery, clock, buttons, sliders, accelerometer, gyroscope |
 | [wifi.md](docs/wifi.md) · [certificates.md](docs/certificates.md) | Wi-Fi driver, WPA2, iOS integration; HTTPS roots |

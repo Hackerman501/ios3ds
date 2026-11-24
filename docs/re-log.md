@@ -2702,3 +2702,62 @@ transitions were observable.
   k, 0 differences) and keeps the byte-for-byte flat comparison; host blob
   32336 bytes. Raw `picasim` alpha test and the second texture unit are used
   by the same list in QEMU, so the model and the machine agree.
+
+## 110. Old 3DS frame drops: [perf] frame histogram, emu/perf.py, and the CA render-thread trim
+
+Design: docs/perf.md. Hardware input: `issue-reports/run2-perf.txt`
+(stereo3d=0, GPU mirror on) and `run3-perf.txt` (stereo3d=1, CPU copy; the
+229-301 ms/frame there is agent/stereogpu's area). QEMU: `emu/perf.py --runs
+3 --safari --icount 2` on a fresh `build/sd.img`.
+
+- **Report:** an Old 3DS (128 MiB) still drops frames; the home screen is
+  fine but opening a folder and opening a page in Safari are slow.
+- **Hardware numbers (run2).** The ARM9 CPU copy of the framebuffer took
+  **347.2 ms/frame** (25 copies in 30 s) until the GPU mirror's self-test
+  passed, then the mirror runs **18.1 fps** (600 frames in 33 s) at
+  `upload 9388 us + draw 3086 us + read-out 6475 us` ≈ 19 ms GPU/frame, with
+  **764 busy skips** in 33 s (CoreAnimation holding the GPU). Free memory
+  falls 99.3 → 26 MiB over the run (wired 17.9 → 33.3 MiB, the 12 MiB arena
+  plus the kernel); one `[pica] present: … not physically contiguous` →
+  the arena copy (re-log 78/79), no process-wide read-back.
+- **QEMU, where a folder open goes** (`diag=1 ioprof=1 log_ts=1`, folder
+  opened at ~guest 30 s): md0 is quiet by then (`[io] t=26.8 … rd 96 KiB …
+  arm9 3 ms`) and `[mem 3]` shows 53 MiB free / 0 pageouts - so the folder
+  open is **CPU** (SpringBoard's animation + the CA render thread), not I/O
+  or memory. The `[smp]` sampler cannot dump SpringBoard's threads (its task
+  port is unreachable), so the per-frame cost is the new histogram.
+- **`[perf]` frame histogram (`tools/ios3ds-gl/ca.c`):** `ca_frame()` now
+  measures the wall interval between CA swaps on the render thread (mach
+  time) and, once per second while frames flow, prints one line -
+  `[perf] CA: 42 frames in 1037 ms; frame ms min/avg/max 4/24/281;
+  <17:21 17-33:18 33-66:1 66-100:1 >=100:1`. It prints only during an
+  animation, never on an idle screen, so a hardware log shows second by
+  second where a folder open or a scroll drops frames (next to the existing
+  `[gpu] mirror: … fps` display line). A folder open in QEMU is ~40 frames
+  in ~1 s at 24-26 ms/frame with a couple of drops; the `[gl] CA:` line puts
+  the render thread at 14-24 ms/frame (2-3 texture uploads/frame on the
+  first frames, ~1.2 after, presents 1.2-1.3/frame, ~0.2 read-backs/frame).
+- **Benchmark (`emu/perf.py`):** boots, waits for a stable home screen and
+  the `[sbwarm]` warm-up, taps the Utilities folder (120,237) and Home
+  `--runs` times, then optionally a Safari cold launch (dock 199,440);
+  writes `build/emu/perf/report.md`+`report.json` with the wall times and
+  the `[perf]`/`[gl] CA:` lines. Full page loads over the Wi-Fi model stay in
+  `emu/safari_test.py` (page-load time + memory).
+- **CA render-thread trim (`tools/ios3ds-gl/pica_be.c`, `ca.c`):** the
+  swizzle pass's command list and its six vertices are built once per render
+  target (they are identical every frame; keyed on the target's buffers,
+  dimensions and opacity) and resubmitted each frame instead of re-encoded
+  on every present; `ca_frame()` no longer calls `thread_info` (three Mach
+  syscalls) on every swap - the render-thread CPU is sampled only on the
+  reporting frames. Host test (`make -C tools/ios3ds-gl host-test`) still
+  passes, including the CA compositor gate's present check.
+- **Validation:** `make test` green; `make userland` + fresh `make sdimg`
+  clean; the required fresh-image soak `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**.
+- **Still needs hardware:** a card run with `diag=1` to see the `[perf] CA:`
+  histogram during a real folder open/close and a Safari scroll on the Old
+  3DS, next to `[gpu] mirror: … fps`, to decide whether a dropped frame is
+  the compositor or the mirror; and `[gl] CA: … render thread CPU …` against
+  re-log 78's 13.5-16 ms (GPU present) / 31-37 ms (read-back) hardware
+  figures. The dominant Old 3DS cost - the mirror's ~20 ms/frame and the GPU
+  split with CoreAnimation - is GPU-side and not fixed here.
