@@ -2437,3 +2437,26 @@ rebuilding all 360 screen columns on every blit.
   path already used; the final flag-on run passed with no lock-round failures.
   Both runs had 0 panic/stall/md0/crash/GPU failures, and no "not home after
   Home" failures.
+- **Continuation on 2026-11-24 (after the previous worker was OOM-stopped):**
+  reviewed the committed branch, rebuilt the shim (GPU part 31680/32768 bytes,
+  1088 bytes headroom), rebuilt the private QEMU from
+  `/tmp/opencode/qemu-stereoperf` (binary and bundled libslirp copied to
+  `build/qemu-local/b/`), and repeated `make test`, `make userland` and fresh
+  `--icount 2` soaks with that one binary. The flag-off run (boot 161 s) and
+  the flag-on run (`--slider3d 255`, boot 90 s) both end in `Result: PASS`,
+  with 0 panic/stall/md0/crash/GPU failures; each needed one "second Home"
+  recovery, but no lock-round failure and no "stuck" cycle. Frame times from
+  their logs: flag off `33 copies in 30 s, 14.7 ms each (ARM9)`; flag on
+  `85 copies, 13.0 ms each` before the stamped frame, then `292 copies,
+  9.4 ms each` (3826 eye columns rebuilt, 83129 reused) and `344 copies,
+  8.2 ms each` (3806 rebuilt, 111167 reused). So the final two-eye path is
+  at or below the ordinary copy's time in QEMU, down from 120-186 ms in
+  section 90. Two earlier flag-on retries failed only the harness's
+  screenshot checks: one unlock ended with the Spotlight keyboard up, one
+  cycle left a typed Spotlight query and keyboard ("Game Center"). No guest
+  failure was logged in either. `emu/soak.py` now shares one
+  `dismiss_spotlight()` helper between the normal and unlock paths: up to
+  three page-swipe + Home attempts, tapping the search field's X before the
+  later attempts, plus a "clear query + Home" step in the "not home"
+  recovery list. The passing runs above use that harness; screenshots and
+  reports are in `build/emu/soak-on3/` and `build/emu/soak-off2/`.

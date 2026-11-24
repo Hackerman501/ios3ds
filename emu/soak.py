@@ -161,6 +161,27 @@ def main():
         screen's status bar is dark (measured on both GPU and CPU copies)."""
         return ImageStat.Stat(img.convert("L").crop((0, 0, 320, 40))).mean[0] > 35
 
+    def dismiss_spotlight(name):
+        """Leave Spotlight, including the keyboard and a typed query. Home on
+        page 1 opens Spotlight, and a tap landing during a transition can type
+        an app name into it (re-log 100): a page swipe + Home is the usual way
+        out, but a query needs its X (top right) tapped first, and on a loaded
+        --icount 2 guest one Home can be swallowed. Return the settled image
+        and the number of attempts."""
+        img = None
+        for attempt in range(3):
+            if attempt:
+                tap(301, 30)                # clear a query that keeps the keyboard up
+                time.sleep(2)
+            drag(280, 240, 40, 240)
+            time.sleep(3)
+            key("ret")
+            time.sleep(4)
+            img, _ = settled(name)
+            if not is_spotlight(img):
+                break
+        return img, attempt + 1
+
     def tap(x, y, hold=0.15):
         dx, dy = viewer.ios_to_display(x / 320.0, y / 480.0)
         q.pointer(dx, dy, True)
@@ -291,14 +312,9 @@ def main():
             # Home on the first page opens Spotlight on iOS 4; it is not a
             # stuck app. Dismiss it before measuring (re-log 63/86).
             if is_spotlight(home):
-                # A second Home can leave Spotlight up on a loaded guest;
-                # a page swipe then Home is what dismisses it (re-log 100).
-                drag(280, 240, 40, 240)
-                time.sleep(3)
-                key("ret")
-                time.sleep(4)
-                home, _ = settled("c%03d_unspotlight" % i)
+                home, n = dismiss_spotlight("c%03d_unspotlight" % i)
                 c["spotlight_dismissed"] = True
+                c["spotlight_attempts"] = n
             diff = ImageStat.Stat(ImageChops.difference(home.convert("L"), home_ref.convert("L"))).mean[0]
             c["home_diff"] = round(diff, 2)
             c["app_diff"] = round(app_diff, 2)
@@ -315,6 +331,9 @@ def main():
                 c["recovered_with"] = "stuck"
                 for step, act in (("page swipe + Home", lambda: (drag(280, 240, 40, 240),
                                                                  time.sleep(3), key("ret"))),
+                                  ("clear query + Home", lambda: (tap(301, 30), time.sleep(2),
+                                                                  drag(280, 240, 40, 240),
+                                                                  time.sleep(3), key("ret"))),
                                   ("second Home", lambda: key("ret")),
                                   ("Dismiss", lambda: tap(160, 333)),
                                   # On a slow --icount 2 host a cycle can take
@@ -381,11 +400,8 @@ def main():
                     # comparison below. Dismiss it the same way as in the
                     # normal cycle path.
                     if is_spotlight(u0):
-                        drag(280, 240, 40, 240)
-                        time.sleep(3)
-                        key("ret")
-                        time.sleep(4)
-                        u0, _ = settled("c%03d_unspotlight_unlock" % i)
+                        u0, n = dismiss_spotlight("c%03d_unspotlight_unlock" % i)
+                        c["unlock_spotlight_attempts"] = n
                         c["unlock_spotlight_dismissed"] = True
                     u0 = u0.convert("L")
                 # iOS fades the screen in after an unlock (and the emulated

@@ -223,17 +223,19 @@ has not been seen on a real 3DS**. To test:
 Until that photo and log arrive, treat this as experimental; the README row
 stays 🧪.
 
-## Soak status at merge (2026-11-23)
+## Soak status at merge (2026-11-24)
 
-- `stereo3d=0` (default): fresh-image 5-cycle `--icount 2` soak PASS (boot 90 s).
+- `stereo3d=0` (default): fresh-image 5-cycle `--icount 2` soak PASS (boot
+  161 s), `14.7 ms` per ARM9 copy in the 30-second monitor line.
 - `stereo3d=1`, slider 255, private QEMU build: fresh-image 5-cycle
-  `--icount 2` soak PASS (boot 80 s). Both eyes and the barrier come up
+  `--icount 2` soak PASS (boot 90 s). Both eyes and the barrier come up
   (`[monitor] stereo 3D: both eyes ..., parallax barrier on`), the flag-off
   copy stays byte-for-byte the same, and there are no panic/stall/md0/crash
-  failures. The two-eye ARM9 copy now takes about 6-10 ms per blit in QEMU
-  (before: 120-186 ms), because only changed source rows are rebuilt. Some
-  cycles still need a repeated Home or a Spotlight dismissal; that is the
-  known iOS 4 home/Spotlight race in the harness, not a display stall. On a
+  failures. The two-eye ARM9 copy takes 8.2-13.0 ms per blit in QEMU (before:
+  120-186 ms), because only changed source rows are rebuilt. Some cycles
+  still need a repeated Home or a Spotlight dismissal; that is the known iOS 4
+  home/Spotlight race in the harness, not a display stall (the harness now
+  retries the dismissal and clears a typed query before giving up). On a
   console the ARM9 runs in parallel with iOS, so QEMU is not a hardware
   prediction. Keep the flag experimental until a console test (section 8) says
   how it feels.
