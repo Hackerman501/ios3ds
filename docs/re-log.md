@@ -2007,7 +2007,7 @@ nothing Apple-derived was committed.
   no "not home after Home", no failed lock rounds. Default 4.2.1 kernel and
   shim hashes are unchanged (`505f451a…`, `7906b596…`).
 
-## NEXT. Older iPod2,1 firmwares: 3.1.3 and 2.2.1 in QEMU (2026-11-23)
+## 102. Older iPod2,1 firmwares: 3.1.3 and 2.2.1 in QEMU (2026-11-23)
 
 See docs/multi-version.md §6 for the full tables and hashes. All Apple files
 were downloaded into `build/fw-3.1.3/` and `build/fw-2.2.1/` and are never
