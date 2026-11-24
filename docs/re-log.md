@@ -2686,6 +2686,10 @@ transitions were observable.
 - **Soaks (fresh `build/sd.img` each, private QEMU, `--cycles 5 --icount 2`):**
   `stereo3d=0`, `stereo3d=1` slider 0 and `stereo3d=1` slider 255 all ended
   `Result: PASS`, with 0 panic/ARM11-stall/md0/crash/GPU-timeout findings.
+  After rebasing onto sections 107/108 the same three fresh-image soaks were
+  repeated on the final tree (`build/emu/soak-final-*`) and all three printed
+  `Result: PASS` again; the table above uses the earlier, longer steady-state
+  windows (the final runs were shorter under shared host load).
   The 3D run logged 30 PDC0/barrier on-off pairs as apps opened and the home
   screen returned, and its spot check was skipped while the eyes were offset.
   A separate 300 s toggle run set the QOM slider 0→255→0→255 at 180/225/255 s:
