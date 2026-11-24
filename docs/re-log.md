@@ -3205,3 +3205,23 @@ worktree's `build/` (no Apple files are committed).
   the signature on the re-signed liblockdown is accepted and where
   CoreSurface blocks; 2.x has no shared cache, so every dylib is a separate
   page-signed file. No 4.x code is involved in this overlay.
+
+### NEXT. 3.1.3: activation-state experiments (2026-11-24, diagnostic only)
+
+- **[V]** SpringBoard 3.1.3 contains `-[SBLockdownManager _setupActivationState]`
+  at Thumb VA `0x6ec30` (IMP from the `__objc` method list in the executable,
+  file offset `0x6dc30`). Its disassembly calls `lockdown_connect` then
+  `lockdown_copy_value`, checks `CFGetTypeID == CFStringGetTypeID`, and uses
+  several `CFEqual` comparisons to choose an activation state 0–7; state 0
+  takes the branch that sets the "Connect to iTunes" screen.
+- **[V]** Forcing the first `CFEqual` branch (`beq` → `b`, file offset
+  `0x6dc8e`, original `0ad0` verified) removes the activation screen and
+  leaves SpringBoard alive on the boot spinner. Forcing the state value
+  (`mov r2,sl` → `movs r2,#N`, file offset `0x6dc94`) to 1, 2, 4, 5, 6 or 7
+  also gives the spinner; 3 gives the activation screen again. A HOME key
+  press does not unlock the spinner. These are diagnostic patches, **not**
+  shipped in `rootfs/overlay-3.1.3.json`: the spinner is a different stop
+  point and the correct activation semantics still need to be established.
+- **[V]** Disabling the 18 4.2.1-style daemons that also exist on 7E18 made
+  the boot worse (console full of dyld lines, no UI), so that experiment was
+  reverted too.
