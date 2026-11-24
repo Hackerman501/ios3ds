@@ -812,7 +812,22 @@ void a9_main(int argc, char **argv)
             log_err("shim load failed (%d)\n", r);
             monitor("shim load failed");
         }
-        log_ok("shim: %u bytes at %08x (magic %08x)\n", ssize, cfg.shim_pa, *(vu32 *)(cfg.shim_pa + 4));
+        u32 magic = *(vu32 *)(cfg.shim_pa + 4);
+        log_ok("shim: %u bytes at %08x (magic %08x)\n", ssize, cfg.shim_pa, magic);
+        /* The kernel's patches branch into these fixed addresses. A shim.bin
+           that is not ours (corrupt first cluster, a foreign file, or a
+           different program) used to be accepted silently: the ARM11 then
+           jumped into whatever is at 0x80840000 on its first console write
+           and stalled with no output at all (issue #9: magic e7bfe619). Catch
+           it here, before the jump, and leave the reason on the screen and in
+           log.txt. */
+        if (ssize < 0x10 || magic != SHIM_MAGIC) {
+            log_err("shim: bad header (magic %08x, want %08x 'SHIM'): sd:/ios3ds/shim.bin is corrupt or "
+                    "from another build\n", magic, SHIM_MAGIC);
+            log_err("shim: re-run install.py from the same zip as ios3ds.firm (or delete the card's "
+                    "ios3ds/shim.bin and reinstall)\n");
+            monitor("shim header invalid");
+        }
     }
 
     if (cfg.rootfs[0]) {

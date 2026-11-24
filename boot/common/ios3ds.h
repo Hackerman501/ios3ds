@@ -174,6 +174,7 @@ _Static_assert(offsetof(boot_args_t, deviceTreeP) == 0x30, "boot_args layout");
 #endif
 #define SHIM_VA          IOS3DS_SHIM_VA
 #define SHIM_SIZE        0x10000u
+#define SHIM_MAGIC       0x4D494853u    /* 'SHIM' at shim+4 (kernel/shim/entry.S _shim_base) */
 #define SHIM_PANIC_REQ   0x6500u        /* offset: ARM9 writes 1 -> XNU panics with a thread dump; a
                                             cache line only the ARM9 writes (kernel/shim/entry.S) */
 #define SHIM_BLK_OFF     0x6000u        /* blkmbox_t */
