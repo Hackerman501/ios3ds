@@ -385,6 +385,7 @@ static void __attribute__((noreturn)) monitor(const char *phase)
     u32 *l1 = cfg.top_pa ? (u32 *)cfg.top_pa : NULL;
 
     log_color(CON_GREY, "[monitor] %s - ARM9 stays here forwarding logs.\n", phase);
+    if (!cfg.panic_combo) logp("[monitor] SELECT+START debug panic disabled (set panic_combo=1 to enable a 1 s hold)\n");
     clk_start();
     /* from here on the consoles are painted a few rows per loop pass, never
        inside a log call (run 17: a visible log console starved the loop) */
@@ -495,13 +496,32 @@ static void __attribute__((noreturn)) monitor(const char *phase)
             apply_screen_mode(screen_mode);
         }
         x_latched = xdown;
-        static bool combo_latched;
-        bool combo = !(HID_PAD & HID_SELECT) && !(HID_PAD & HID_START);
-        if (cfg.shim_pa && combo && !combo_latched) {
-            log_warn("[monitor] SELECT+START: asking XNU to panic (thread dump)\n");
-            *(vu32 *)(cfg.shim_pa + SHIM_PANIC_REQ) = 1;
+        /* The HID register is active-low and can transiently report both
+           bits low during real-hardware bring-up. Keep the debug panic opt-in
+           and require a continuous one-second hold before touching XNU. */
+        static bool combo_latched, combo_candidate_logged;
+        static u32 combo_since;
+        u16 pad = HID_PAD;
+        bool combo = (pad & (HID_SELECT | HID_START)) == 0;
+        if (!combo) {
+            if (cfg.panic_combo && combo_since && !combo_latched)
+                log_warn("[monitor] SELECT+START candidate canceled before 1000 ms (HID_PAD=%04x)\n", pad);
+            combo_since = 0;
+            combo_latched = false;
+            combo_candidate_logged = false;
+        } else if (cfg.panic_combo && cfg.shim_pa) {
+            u32 now = clk_ticks();
+            if (!combo_since) combo_since = now;
+            if (!combo_candidate_logged) {
+                log_warn("[monitor] SELECT+START candidate raw HID_PAD=%04x; debug panic requires a 1000 ms continuous hold\n", pad);
+                combo_candidate_logged = true;
+            }
+            if (!combo_latched && now - combo_since >= T9_HZ) {
+                log_warn("[monitor] SELECT+START held for 1000 ms: asking XNU to panic (thread dump)\n");
+                *(vu32 *)(cfg.shim_pa + SHIM_PANIC_REQ) = 1;
+                combo_latched = true;
+            }
         }
-        combo_latched = combo;
         if ((tick & 63) == 0) {
             u32 bs, be;
             gm_report(clk_ticks(), cpu_blits, cpu_ticks, cfg.display_regs, screen_mode, ios_display);

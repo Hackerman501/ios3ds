@@ -70,6 +70,7 @@ int main(void)
     parse("");
     CHECK(cfg.countdown_ms == 3000);            /* no boot.cfg: safe bring-up default */
     CHECK(cfg.jump == 1);
+    CHECK(cfg.panic_combo == 0);                 /* debug panic must be explicitly enabled */
 
     parse("boot_delay=0\n");
     CHECK(cfg.countdown_ms == 0);               /* issue #1: skip by default */
@@ -90,6 +91,11 @@ int main(void)
     parse("boot_delay=0\nno_such_key=1\n");
     CHECK(cfg.countdown_ms == 0);
     CHECK(warnings >= 1);                       /* unknown keys are still reported */
+
+    parse("panic_combo=1\n");
+    CHECK(cfg.panic_combo == 1);
+    parse("panic_combo=0\n");
+    CHECK(cfg.panic_combo == 0);
 
     parse("boot_delay=0\ngps=52.5200,13.4050\ncmdline=debug=0x8\n");
     CHECK(cfg.countdown_ms == 0);

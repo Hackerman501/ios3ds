@@ -23,11 +23,12 @@ void parse_bootcfg(char *txt)
     cfg.ba_version = 5;
     cfg.screen = SCREEN_BOTH;   /* pe_identify_machine panics 'Epoch Mismatch' unless == 5 */
     cfg.gpu = 1;
-    cfg.gpu_mirror = 1;
+    cfg.gpu_mirror = 0;   /* Old 3DS XL compatibility: ARM9 copies the display */
     cfg.gpu_vbl_div = 2;
     cfg.gpu_clk = 1;
     cfg.gpu_diag = 1;
-    cfg.ca_gpu = 1;
+    cfg.ca_gpu = 0;      /* avoid the PICA200 CoreAnimation compositor on this test profile */
+    cfg.panic_combo = 0;  /* debug panic chord is opt-in */
     cfg.mcu = 1;
     cfg.mcu_acc = 1;
     cfg.gyro = 1;
@@ -54,6 +55,7 @@ void parse_bootcfg(char *txt)
         /* boot_delay is the user-facing name (issue #1); countdown_ms stays for
            old cards. If both are present, the last line wins. */
         { "countdown_ms", &cfg.countdown_ms }, { "boot_delay", &cfg.countdown_ms },
+        { "panic_combo", &cfg.panic_combo },
         { "probes", &cfg.probes }, { "display_regs", &cfg.display_regs }, { "ba_revision", &cfg.ba_revision }, { "ba_version", &cfg.ba_version },
         { "screen", &cfg.screen },
         { "gpu", &cfg.gpu }, { "gpu_mirror", &cfg.gpu_mirror }, { "gpu_vbl_div", &cfg.gpu_vbl_div },

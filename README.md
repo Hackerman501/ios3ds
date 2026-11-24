@@ -145,7 +145,7 @@ Alternatively, hold **START** while powering on and pick `ios3ds` in Luma's chai
 | **ZL / ZR** (New 3DS) | scroll to the top / screenshot |
 | **POWER** (hold ~3 s) | clean shutdown: iOS unmounts its disk and the 3DS powers off (same path as "slide to power off") |
 | **POWER** (hold ~10 s) | hardware power cut if iOS is stuck; the next power-on is your normal Luma + HOME Menu |
-| SELECT + START (hold) | debugging only: crash iOS on purpose and write a report to the log |
+| SELECT + START | debug panic only when `panic_combo=1`; both must be held continuously for 1 s (disabled by default) |
 
 ---
 
@@ -176,8 +176,10 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 
   | Switch | Effect |
   |---|---|
-  | `gpu=0` | don't use the 3DS GPU at all: try this first if the screen stays black or garbled |
-  | `ca_gpu=0` | draw the iOS interface in software (slower) |
+  | `gpu=0` | don't use the 3DS GPU at all: GL and CoreAnimation use software; ARM9 copies the screen |
+  | `gpu_mirror=0` | keep PICA200 available for GL, but let the ARM9 copy the iOS framebuffer to the LCDs |
+  | `ca_gpu=0` | use the software CoreAnimation compositor instead of the PICA200 compositor |
+  | `panic_combo=1` | opt in to SELECT+START debug panic; requires a continuous 1 s hold (default: 0) |
   | `screen=0/1/2` | start in screen layout top / both / bottom |
   | `camera=0`, `gyro=0`, `hp_route=0` | turn off the cameras, the gyroscope, or headphone switching |
   | `gps=52.5200,13.4050` | report a fake location to apps (latitude,longitude[,accuracy in metres]); empty = off |

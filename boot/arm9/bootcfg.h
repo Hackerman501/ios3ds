@@ -14,6 +14,7 @@ typedef struct {
     u32 phys_base, virt_base, mem_size;
     u32 video_pa, video_display, video_rowbytes, video_width, video_height, video_depth;
     u32 jump, countdown_ms;
+    u32 panic_combo;     /* 1: enable the SELECT+START debug panic after a 1 s hold */
     u32 ba_revision, ba_version;
     u32 probes;
     u32 display_regs;

@@ -37,7 +37,7 @@
 #define NWMTMP  "sdmc:/ios3ds/nwm.code.tmp"
 #define FWSTATUS "sdmc:/ios3ds/wififw-status.txt"  /* last attempt, read into log.txt by the ARM9 */
 #define WIFIFW  "sdmc:/ios3ds/wifi-fw.bin"
-#define VERSION "ios3ds launcher 2"
+#define VERSION "ios3ds launcher 3"
 
 #define NWM_TID     0x0004013000002D02ULL   /* NWM, same on Old and New 3DS */
 #define NWM_MIN     (64u << 10)             /* NWM .code holds 3 firmware images */
@@ -349,6 +349,12 @@ int main(void)
         printf("Missing %s\n\nCopy build/sd/ from the ios3ds build\n"
                "to the SD card first.\n\nSTART: exit\n", !have_self ? SELF : BOOT);
     } else {
+        /* Clear stale status first: the ARM9 log can then prove that this exact
+           Homebrew Launcher binary ran before the reboot, even if the copy is
+           skipped because the file is already present. */
+        remove(FWSTATUS);
+        fw_status("launcher entered from Homebrew Launcher; NWM .code %s, wifi-fw.bin %s",
+                  exists(NWMCODE) ? "present" : "missing", exists(WIFIFW) ? "present" : "missing");
         fetch_code(&job_nwm);
         bool n3ds = false;
         APT_CheckNew3DS(&n3ds);
