@@ -378,8 +378,10 @@ GPS daemon, larger rootfs and GPU arena churn), not the camera driver.
   `CAM_ERR_NO_MEM` from `IOMallocContiguous(CAM_FRAME_BYTES, 32, &pa)`, before
   the mailbox request. Run 29's log has `[cam] start outer camera ...` followed
   by `status 0`. This is the exact boundary of the regression.
-- On the Old 3DS XNU has 128 MiB; the GPU arena already wires 12 MiB and the
-  wired/contiguous heap is much tighter than on the New 2DS XL's 256 MiB. A new
+- On the Old 3DS XNU has 128 MiB; the GPU arena already wires 10 MiB now (12 MiB
+  before the memory pass, re-log `NEXT`; the camera's 450 KiB block is still
+  reserved inside it) and the wired/contiguous heap is much tighter than on the
+  New 2DS XL's 256 MiB. A new
   3 x 150 KiB *physically contiguous, wired* allocation at Camera.app start can
   fail there even though the boot-time arena allocation succeeded. QEMU's
   `--icount 2` model did not reproduce the failure (IOMallocContiguous succeeds
@@ -431,7 +433,7 @@ with earlier app cycles the first touch can still land in Spotlight under
 | CAM block reset/init | CAM0 `4610`, CAM1 `4600` before the sensor set-up | same | not the failure |
 | I2C buses | outer left `0x10144000/0x78`, inner `0x10161000/0x7A`, outer right `0x10161000/0x78`; all answer `2280` | same | not the failure |
 | Aptina init | run 29 streamed 12 fps with the same code | confirmed working | unchanged since 0.4.0 |
-| Contiguous frame buffers | 128 MiB XNU, 12 MiB arena already wired; failed at START | 256 MiB (`n3ds_ram=1`), succeeded | **the difference**; now reserved from the arena on both |
+| Contiguous frame buffers | 128 MiB XNU, arena already wired (12 MiB then, 10 MiB now); failed at START | 256 MiB (`n3ds_ram=1`), succeeded | **the difference**; now reserved from the arena on both |
 
 ## 8. Not done
 - **Video recording**: Camera.app's video switch needs `video-camera` and an

@@ -103,9 +103,12 @@ address registers) before anything untrusted may use GL.
 - VRAM (0x18000000, 6 MiB) is taken: `/vram` gives iOS the first 3 MiB for the
   CLCD framebuffer, Luma's LCD framebuffers (which the ARM9 draws) start at
   0x18300000.
-- So the arena is FCRAM: `IOMallocContiguous(12 MiB, page aligned, &pa)` at the
-  first request (falling back to 8, 4 and 2 MiB; on a New 3DS with 256 MiB it
-  must lie below 0x28000000, docs/n3ds.md section 6). It is ordinary wired, cached
+- So the arena is FCRAM: `IOMallocContiguous(10 MiB on an Old 3DS, 12 MiB on a
+  New model, page aligned, &pa)` at the first request (falling back to 8, 4 and
+  2 MiB; on a New 3DS with 256 MiB it must lie below 0x28000000, docs/n3ds.md
+  section 6). The Old model's 10 MiB still holds the camera's 450 KiB frame
+  reservation (re-log 108) and gives apps 2 MiB more than the old default;
+  hardware verification of that size is still outstanding. It is ordinary wired, cached
   kernel memory; the GPU sees it by physical address. `CFG11_GPUPROT`
   (0x10140140) is written 0 so GPU DMA may reach all of FCRAM.
 - Right after allocating, the shim cleans and invalidates the whole D-cache

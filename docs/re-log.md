@@ -2866,3 +2866,132 @@ shim. It was not: the kernel patch was on the wrong function.
   five cycles, 70 s to SpringBoard + input, no failures. Final 4.1 soak:
   **Result: PASS**, five cycles, 60 s to SpringBoard + input, no failures.
   `make test` passes after the final rebase.
+## NEXT. Safari's "Cannot allocate memory": free pages, not jetsam; lean caches and a smaller Old-3DS arena (2026-11-24)
+
+**Reports.** Old 3DS (128 MiB), `diag=1`: Safari shows "Cannot allocate memory"
+(NSPOSIXErrorDomain 12) on bigger pages; a retry works. No zone/jetsam cause
+was found in re-log 104. The git-excluded `issue-reports/mem-lines.txt` has
+`[mem]` lines every few seconds from two console runs (run2: 61 samples, run3:
+6; no per-process lines in that file).
+
+**What those console numbers actually say.** `vm_stat`'s `free` *includes*
+speculative file pages (`spec`): run2 boots at 101,704 KiB free / 42,304 KiB
+speculative / 17,928 KiB wired / level 85, then settles at 25,276-40,820 KiB
+free with 23,328-54,020 KiB of it speculative. Subtracting speculative -
+now printed as `free_nospec` - leaves **1,948-3,856 KiB** of immediately
+usable free memory while the browser is warm, with wired 31,420-33,672 KiB
+(12 MiB of it the GPU arena) and `memorystatus_level` 60. That is why the
+process can get ENOMEM from a large allocation while no jetsam kill happens
+and the headline "free" figure still looks like 25 MiB. iOS 4.2.1 has no VM
+compressor, so there are no compressed pages to count; the new `[mem] VM`
+line says so explicitly.
+
+**QEMU reproduction attempts (`--icount 2`, Old model).** The harness
+`emu/safari_test.py` can now set `--settle` and `--port`. Tried: 65 MB HTML
+with six 65 KB JPEGs, 8 × 1024² JPEGs, a 2-million-element JS array, 26
+generated pages in one Safari (JS + 6 images each), and `mem_size` lowered to
+96 MiB (2 MiB free, level 16). No "Cannot allocate memory" alert appeared;
+one run with a 69 MB Safari process was killed with signal 9 instead (a
+jetsam kill, a different failure). Baseline for this pass: four heavy pages
+(`js.html`, `manyhuge.html`, `manybig.html`, `hugeimg.html`) loaded 4/4 in
+618 s, boot `[mem 1]` 102,832 KiB free / level 85, after settle 52,620 KiB
+free (`free_nospec` 1,188 KiB) / level 64, Safari peak 19,488 KiB, end
+47,428 KiB free / level 55, wired 33,800 KiB. This is still not a hardware
+reproduction of the alert; the console numbers above are the evidence that
+physical free pages, not jetsam or a named zone, run out first.
+
+**Fix (memory only).**
+1. `rootfs/files/memory/com.apple.mobilesafari.plist` (installed via
+   `rootfs/recipe.json`): WebPreferences is read from the app's standard
+   defaults (WebKit's `WebPreferences.mm` calls
+   `NSUserDefaults standardUserDefaults`). Set
+   `WebKitCacheModelPreferenceKey=1` (`WebCacheModelDocumentViewer`, the
+   smallest WebCore cache footprint), `WebKitUsesPageCachePreferenceKey=0`,
+   `WebKitApplicationCacheTotalQuota=0` and a 60 s back-forward cache
+   expiry. This keeps Safari's decoded images, page cache and app cache from
+   accumulating across pages. Trade-off: going Back may re-load a page; the
+   performance worker's Safari changes are separate (see overlap below).
+2. `kernel/shim/pica.c`: the wired GPU arena is now **10 MiB on Old models**
+   (skip the 12 MiB first size when `cfg_n3ds` lacks `N3RES_NEW`), 12 MiB on
+   New models, with the same 8/4/2 MiB fallbacks. The camera's 450 KiB frame
+   block is still reserved inside the arena (re-log 108) and the `>= 6 MiB`
+   gate still applies. This gives every app 2 MiB more wired-free RAM, not
+   just Safari. 10 MiB is above the 8 MiB size that fragmented in run16
+   (704 KiB texture found 290 KiB free in 90 blocks), but it is **not yet
+   confirmed on a console**; the `[pica] arena N KiB` log line must be
+   checked, as must a live camera preview and a non-black home screen.
+3. Diagnostics: `ios3ds-sample -mem` prints `free_nospec`, a
+   `[mem N] VM: compressed n/a ...` note on the first report, and a
+   `[mem N] VA MiB:` top-process list next to the resident list.
+   `ios3ds-applog.dylib` interposes `mmap`, `vm_allocate` and
+   `mach_vm_allocate`; failures >= 64 KiB are logged as
+   `[applog] <proc> ENOMEM <call> size N arg K caller 0xPC` (max 16 per
+   process; sandboxed Safari writes them to
+   `/private/var/tmp/ios3ds-applog.txt`). These lines name the failing call
+   and request size on the next hardware run; the kernel hook itself is not
+   feasible: the main shim has ~50 bytes and the GPU part ~100 bytes free,
+   and the 4.2.1 kernelcache has no exported allocation symbols in our stub.
+   Three new symbols were added to `scripts/ios-sdk-symbols.json` so CI's
+   stub SDK links the interposer.
+
+**Before/after (QEMU, Old, `--icount 2`, four heavy pages, same images and
+timing; each run a fresh image).** All memory figures are KiB (÷1024 = MiB):
+
+| | before (12 MiB arena, stock WebKit defaults) | after (10 MiB arena, lean WebKit defaults) |
+|---|---|---|
+| `[pica] arena` | 12,288 | **10,240** (-2,048) |
+| free after boot (`[mem 1]`) | 102,832 / level 85 | 103,104 / level 85 |
+| wired after boot | 17,756 | 17,720 |
+| free after 45 s settle (`[mem 2]`) | 52,620 / level 64 | **53,224 / level 66** |
+| wired after settle | 33,408 | **31,336** (-2,072) |
+| `free_nospec` after settle | 1,188 | 1,748 |
+| MobileSafari resident, end of run | 19,488 | 18,976 (peak sample before its jetsam kill: 72,940, see below) |
+| free at end | 47,428 / level 55 | **47,776 / level 55** |
+| wired at end | 33,800 | **31,656** (-2,144) |
+| pages loaded | 4/4, one jetsam kill + restart on page 1 | 4/4, one jetsam kill + restart on page 1 |
+
+The two MiB saved are physical wired pages, visible in every `[mem]` sample;
+the Safari footprint in this short run is unchanged within noise. Both runs
+killed the 2-million-string JS page with signal 9 (jetsam), then restarted
+Safari and loaded all four pages: QEMU still does not produce the hardware
+alert. The new ENOMEM interposer logged nothing in these runs - no
+`mmap`/`vm_allocate` call failed; the kill is a different path.
+
+A 26-page stress run (the same generated pages as re-log 75's six-page run)
+compares the longer session against the previous 26-page QEMU run
+(`build/emu-mem6`, before this pass):
+
+| | before (26 pages) | after (26 pages) |
+|---|---|---|
+| pages loaded | 26/26 | 26/26 |
+| MobileSafari peak resident | 43,788 KiB | 44,912 KiB (no measured reduction) |
+| minimum free during the run | 2,608 KiB / level 39 | **11,564 KiB / level 40** |
+| free at end | 6,488 KiB / level 39 | **12,600 KiB / level 40** |
+| wired at end | 31,352 KiB | **29,316 KiB** (-2,036) |
+
+So the prefs did **not** measurably shrink Safari's heap in QEMU; the useful
+gain is the 2 MiB of wired arena per app (and the additional slack in the
+file-cache / speculative balance). The plist stays as a low-risk guard for
+long sessions, but it is not claimed as a fix for the alert.
+
+**Validation:** `make test` green (after adding the three imported symbols to
+`scripts/ios-sdk-symbols.json`); `make userland` + fresh `make sdimg` shows
+`[pica] arena 10240 KiB`, `[cam] reserved 3 x 150 KiB in the GPU arena`,
+`[mkrootfs] added ... com.apple.mobilesafari.plist`, GPU shim 32,656/32,768
+bytes; the required fresh-image soak is reported below.
+
+**Still needs hardware:** reflash the Old 3DS, open Safari with `diag=1` and
+repeat the big page that shows the alert. The log must contain `[pica] arena
+10240 KiB`, `[cam] reserved 3 x 150 KiB in the GPU arena`, the new
+`[mem] free_nospec / VA` lines and, if the alert returns, the
+`[applog] MobileSafari ENOMEM ...` line and the existing load-error domain /
+code. That line will finally say whether JSC's heap reservation, an image
+decode mapping, or another call is failing. Check the camera preview and a
+saved photo after the arena shrink; if textures fall back to the CPU
+(`[gl] CA: ... CPU from now on`), restore 12 MiB on Old models in
+`kernel/shim/pica.c`.
+
+**Overlap:** agent/perf owns Safari page speed and the CA render-thread trim;
+the WebPreferences plist here is deliberately limited to cache/back-forward
+memory, not animation or rendering settings. The arena size is a GPU-side
+memory change; no display or stereo files were touched.

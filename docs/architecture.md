@@ -27,7 +27,7 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 | 0x208A0000 | network mailbox (docs/wifi.md) |
 | 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
 | 0x208C0000 | audio PCM ring (docs/audio.md) |
-| 0x20900000 | topOfKernelData (kernel page tables); XNU owns everything up to 0x28000000 (119 MiB; New 3DS with `n3ds_ram=1`: up to 0x30000000, 247 MiB, [n3ds.md](n3ds.md) §6). The GPU arena (12 MiB, [pica200.md](pica200.md)) is wired XNU memory taken at GPU bring-up |
+| 0x20900000 | topOfKernelData (kernel page tables); XNU owns everything up to 0x28000000 (119 MiB; New 3DS with `n3ds_ram=1`: up to 0x30000000, 247 MiB, [n3ds.md](n3ds.md) §6). The GPU arena (10 MiB on Old models, 12 MiB on New, [pica200.md](pica200.md)) is wired XNU memory taken at GPU bring-up |
 | 0x1FF90000 | ARM11 stub (AXI WRAM) |
 | 0x1FFA0000 | `/pram` (panic log area) |
 | 0x1FFB0000 | **fake S5L8720 register pages** (32 × 4 KB, `fakeio.bin`) |
