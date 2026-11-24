@@ -78,7 +78,7 @@ the boot. Not debugged further (Substrate is closed source).
 | every app | SpringBoard inserts `/usr/lib/libgmalloc.dylib` (= ios3ds-applog, `SBGuardMallocAlways`) into each app, replacing anything else; ios3ds-applog's constructor `dlopen`s MobileSubstrate.dylib in executables inside a `.app` (after adding it to `DYLD_INSERT_LIBRARIES`, where Substrate's loader looks for and removes itself) | ios3ds-applog |
 | ios3ds-nettest | `dlopen` after it loads CFNetwork (TLSFix filters on CFNetwork) | |
 | configd, securityd, other daemons | none (nothing targets them; it would only cost memory) | configd: Wi-Fi bridge interposer; securityd: AES interposer (unchanged) |
-| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **the `/usr/lib` copies**: the sandbox refuses every file under `/Library`, so applog's `dlopen` of `MobileSubstrate.dylib` fails and it falls back to `/usr/lib/ios3ds-CydiaSubstrate.dylib` + `/usr/lib/ios3ds-tlsfix.dylib` (TLSFix only, loaded by a timer once CFNetwork is up; re-log `NEXT`) | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
+| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **the `/usr/lib` copies**: the sandbox refuses every file under `/Library`, so applog's `dlopen` of `MobileSubstrate.dylib` fails and it falls back to `/usr/lib/ios3ds-CydiaSubstrate.dylib` + `/usr/lib/ios3ds-tlsfix.dylib` (TLSFix only, loaded by a timer once CFNetwork is up; re-log 104) | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
 
 No launchd plist names `MobileSubstrate.dylib` (`substrate.daemons` is empty;
 `cydia.substrate_setup` can still append it to listed recipe jobs): a
@@ -95,7 +95,7 @@ extensions: `MobileSafety` (safe mode, SpringBoard) and `tlsfix` (any process wi
 `com.apple.CFNetwork`; TLSFix itself skips SpringBoard, launchd, lockdownd and
 securityd).
 
-## Reaching sandboxed apps (Safari): /usr/lib copies (re-log `NEXT`)
+## Reaching sandboxed apps (Safari): /usr/lib copies (re-log 104)
 
 A sandboxed process (MobileSafari, App Store apps, Mail's helpers) runs under a
 Seatbelt profile that denies `open()` of everything under `/Library` and
@@ -117,7 +117,7 @@ TLSFix's hooks are installed before the first connection. This needs no kernel
 patch and no wider sandbox; it costs about 2.5-3 MiB of resident memory in
 MobileSafari (`--icount 2`: 8.2 MiB after a plain page, 10.7-11.7 MiB with TLSFix
 after an HTTPS page, 38-41 MiB still free of 128 MiB) and the old out-of-memory
-failure did not reappear (re-log `NEXT`).
+failure did not reappear (re-log 104).
 
 **The old sb_evaluate patch remains an opt-in** (`kernel/patches-sandbox.json`,
 `SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`; re-log 72): it replaces

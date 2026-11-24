@@ -210,7 +210,7 @@ RSA certificate and for a P-256 ECDSA one (the latter goes through TLSFix's
 OpenSSL check and the profile copy). MobileSafari reaches 11.7 MiB resident with
 TLSFix after the first page (8.2 MiB without); the system still has 40.5 MiB free
 of 128 MiB, so the old `SANDBOX=1` out-of-memory failure does not occur. Numbers
-and screenshots: re-log `NEXT`.
+and screenshots: re-log 104.
 
 Turn it off: `make sd TLSFIX=0`, `install.py --no-tlsfix`, `IOS3DS_TLSFIX=0`, or
 `"tlsfix": false` in `rootfs/recipe.json`.
