@@ -2067,3 +2067,11 @@ committed.
   **Result: PASS**: SpringBoard/input up after 80 s, 5 app/home cycles, zero
   panics, stalls, md0/log/crash/hang/GPU failures; `make test` passed (94
   offline tests plus all host harnesses and the stub-symbol check).
+- **Continuation (2026-11-24).** `make test` was rerun (all offline tests, host
+  harnesses, stub-symbol and conflict-marker checks pass), and a fresh default
+  build (`make userland`, `rm -f build/sd.img && make sdimg`) reproduced all six
+  4.2.1 boot-file sha256 values in §6.7. The 4.1 patch set, overlay and registry
+  entry are unchanged relative to `origin/main`. A second fresh image with
+  `IOS3DS_QEMU=... python3 emu/soak.py --cycles 5 --icount 2` again printed
+  **Result: PASS**: 5 cycles, SpringBoard/input up after 241 s (host loaded),
+  zero panic, stall, md0, log, crash, watchdog or GPU failures.

@@ -747,8 +747,6 @@ time by `kernel/patcher.py`. Examples where offsets moved:
   and 2.x needs its own dylib-level activation fix **[G]**; that is the exact
   blocker at which this task stops.
 
-*(boot results updated below when the final runs finish)*
-
 ### 6.7 4.2.1 and 4.1 stay byte-identical
 
 **[V]** Six boot files were generated twice from the same staged firmware:
