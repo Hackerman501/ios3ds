@@ -132,6 +132,7 @@ static void dc_clean(volatile void *p, uint32_t len)
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
 void shim_l2_inv(uint32_t pa, uint32_t len);   /* entry.S: New 3DS L2, write-through (docs/n3ds.md) */
+extern u32 cfg_n3ds;                       /* entry.S: ARM9 N3RES_* word (boot/common/ios3ds.h) */
 uint32_t arena_va, arena_pa;       /* shared with cam.c; arena_size stays private */
 static uint32_t arena_size;
 /* drop stale L2 lines of a kernel buffer: the arena (IOMallocContiguous VA)
@@ -215,9 +216,14 @@ static void gpu_diag_after(void);
 
 static void bringup(void)
 {
-    /* 12 MiB first: run16 (CA on the GPU) fragmented 8 MiB (a 704 KiB texture
-       found 290 KiB free in 90 blocks) and fell back to CPU read-backs */
-    static const uint32_t sizes[] = { 0xC00000, 0x800000, 0x400000, 0x200000 };
+    /* Old 3DS has only 128 MiB for XNU: 10 MiB first here gives every app 2 MiB
+       more wired-free memory than the old 12 MiB default. run16 (CA on the GPU)
+       fragmented 8 MiB (a 704 KiB texture found 290 KiB free in 90 blocks), so
+       10 - not 8 - is the floor; the camera's 450 KiB block still fits. New
+       models keep 12 MiB (re-log 75): they have the extra 128 MiB of FCRAM.
+       Fallbacks stay 8/4/2 MiB if even 10 MiB is too fragmented to allocate. */
+    static const uint32_t sizes[] = { 0xC00000, 0xA00000, 0x800000, 0x400000, 0x200000 };
+    unsigned first = (cfg_n3ds & N3RES_NEW) ? 0 : 1;   /* skip 12 MiB on Old models */
     vu32 *pdn, *cfg11;
     uint32_t cnt = 0, prot = 0, pa = 0, size = 0, i, st;
     void *va = 0;
@@ -263,7 +269,7 @@ static void bringup(void)
     cfg11[GPUPROT_OFF / 4] = 0;         /* GPU DMA may reach all of FCRAM (the arena lives there) */
 
     drv.state = PICA_ERR_NO_ARENA;
-    for (i = 0; i < sizeof sizes / sizeof sizes[0] && !va; i++) {
+    for (i = first; i < sizeof sizes / sizeof sizes[0] && !va; i++) {
         size = sizes[i];
         va = IOMallocContiguous(size, 0x1000, &pa);
         if (va && pa + size > 0x20000000u + FCRAM_SIZE) {
