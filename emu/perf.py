@@ -140,7 +140,13 @@ def main():
         for _ in range(60):
             time.sleep(5)
             im = shot("home_ref")
-            if prev is not None and mean(im) > 20 and diff(im, prev) < 1.0:
+            # The boot console is also lit and stable for a while after
+            # [sbwarm]; its greyscale stddev is ~92 against ~54 for the home
+            # screen. Taking it as the reference made every folder close look
+            # like a timeout (2026-11-24).
+            stable_home = (prev is not None and mean(im) > 20 and
+                           ImageStat.Stat(grey(im)).stddev[0] < 70 and diff(im, prev) < 1.0)
+            if stable_home:
                 home_ref = im
                 break
             prev = im
