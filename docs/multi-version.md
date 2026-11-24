@@ -804,3 +804,29 @@ here produce the same bytes.)
   open), VirtualAudio routing, CoreMotion capability mask, MusicLibrary
   signing check. Needed for activation, audio routing, gyro and Music
   respectively; not for the home screen.
+
+### 6.9 Current status and userland/driver matrix (2026-11-24)
+
+| Version | QEMU state | Fresh-image 5-cycle soak |
+|---|---|---|
+| 4.2.1 (8C148) | home screen, apps, input, Cydia/TLSFix | **PASS** (70 s to SpringBoard + input, 0 failures) |
+| 4.1 (8B117) | home screen with stock icons; Cydia/TLSFix disabled | first run **FAIL** only on "not home after Home" while two other worktrees' QEMU/ninja jobs loaded the host; retry in progress |
+| 3.1.3 (7E18) | `/dev/md0` mounts, launchd + mDNSResponder, display; boot spinner, no SpringBoard | not meaningful until the home screen appears |
+| 2.2.1 (5H11a) | `/dev/md0` mounts, launchd + mDNSResponder, display; no SpringBoard | not meaningful until the home screen appears |
+
+**What works on the older versions.** The kernel-side shim is shared by all
+four firmwares: timers/IRQ, the ARM9 block server, the MCU/RTC hooks, audio
+I2C bridging and the CLCD framebuffer copy are active on 3.1.3 and 2.2.1. The
+bottom-screen touch copy and iOS display come up; on these two versions the
+PICA200 GPU mirror stays off and the ARM9 CPU copy drives the LCD.
+
+**What is deliberately not installed on 3.1.3/2.2.1.** All 4.2.1 userland
+binaries (input daemon, `ios3ds-wifid`/a80211, mcud/gyrotest, camera `vcd`,
+GPS, GL/MBXGLEngine, applog, keychain, Cydia/TLSFix) use 4.2.1 private APIs or
+4.x-only frameworks. Their overlays keep `add` empty, so they are cleanly
+absent rather than crashing at launch. Activation is handled at the liblockdown
+level instead: dyld-cache patches on 7E18, direct dylib patches + re-sign on
+5H11a. Consequently Wi-Fi scanning/joining, Cydia Substrate, CoreMotion and
+Camera.app are not available on the older builds even though the hardware
+bridges exist in the shim. There is no separate 1.x backend: see §4 for the
+S5L8900 plan.
