@@ -295,14 +295,38 @@ int pm_clear_targets(pica_mirror_t *m)
     return ok ? 0 : -1;
 }
 
-/* expected framebuffer byte k of out (top image, then bottom) */
-static uint32_t expect(uint32_t off)
+/* Compare one screen's BGR8 pixels against gm_map()/pm_pattern(), one
+   24-bit pixel at a time. The old per-byte loop re-derived the source pixel
+   (two integer divisions) three times per pixel; the self-test compares
+   518400 bytes at boot and this cut it from ~3 divisions to 1 per pixel.
+   Adds the number of differing bytes to *bad and records the first one. */
+static void cmp_screen(const uint8_t *o, int bottom, uint32_t rows, uint32_t *bad, uint32_t *fb)
 {
-    uint32_t bottom = off >= GM_TOP_FB_BYTES, px = bottom ? (off - GM_TOP_FB_BYTES) / 3 : off / 3;
-    uint32_t x, y, c = bottom ? (off - GM_TOP_FB_BYTES) % 3 : off % 3;
-    if (!gm_map((int)bottom, px % GM_RT_W, px / GM_RT_W, &x, &y))
-        return 0;
-    return pm_pattern(x, y) >> (8 * c) & 0xFF;
+    uint32_t i, j;
+    for (j = 0; j < rows; j++) {
+        for (i = 0; i < GM_RT_W; i++) {
+            const uint8_t *q = o + (j * GM_RT_W + i) * 3;
+            uint32_t x, y, e, g = (uint32_t)q[0] | (uint32_t)q[1] << 8 | (uint32_t)q[2] << 16;
+            if (!gm_map(bottom, i, j, &x, &y))
+                e = 0;
+            else
+                e = pm_pattern(x, y) & 0xFFFFFFu;
+            if (e != g) {
+                uint32_t off = (uint32_t)(q - o) + (bottom ? GM_TOP_FB_BYTES : 0), k;
+                for (k = 0; k < 3; k++) {
+                    uint32_t eb = e >> (8 * k) & 0xFF, gb = g >> (8 * k) & 0xFF;
+                    if (eb != gb) {
+                        if (!*bad) {
+                            fb[0] = off + k;
+                            fb[1] = eb;
+                            fb[2] = gb;
+                        }
+                        (*bad)++;
+                    }
+                }
+            }
+        }
+    }
 }
 
 static const char *const var_name[GM_VARIANTS] = {
@@ -358,18 +382,10 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
         p->from_gpu(out_va, total);
         for (i = 0; i < guard; i++)
             guard_bad += (out_va[i] != 0xA5) + (out_va[guard + body + i] != 0xA5);
-        for (i = 0; i < body; i++) {
-            uint32_t e = expect(i), g = out_va[guard + i];
-            if (e != g) {
-                if (!bad) {
-                    fb[0] = i;
-                    fb[1] = e;
-                    fb[2] = g;
-                    fb[3] = m->nops;
-                }
-                bad++;
-            }
-        }
+        cmp_screen(out_va + guard, 0, GM_RT_TOP_H, &bad, fb);
+        cmp_screen(out_va + guard + GM_TOP_FB_BYTES, 1, GM_RT_BOT_H, &bad, fb);
+        if (bad)
+            fb[3] = m->nops;
         if (v == 0) {
             *bad0 = bad;
             for (i = 0; i < 4; i++)
