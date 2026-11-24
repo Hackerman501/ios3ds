@@ -546,8 +546,9 @@ static void mem_report(struct pent *procs, int n, int top)
     memset(vm, 0, sizeof vm);
     if (hs && hs(mach_host_self(), 2 /* HOST_VM_INFO */, vm, &cnt) == 0)
         lput(" KiB free %u active %u inactive %u spec %u wired %u purgeable %u | faults %u cow %u pageins %u"
-             " pageouts %u purges %u", kib(vm[0]), kib(vm[1]), kib(vm[2]), kib(vm[14]), kib(vm[3]), kib(vm[12]),
-             vm[8], vm[9], vm[6], vm[7], vm[13]);
+             " pageouts %u purges %u | free_nospec %u", kib(vm[0]), kib(vm[1]), kib(vm[2]), kib(vm[14]), kib(vm[3]),
+             kib(vm[12]), vm[8], vm[9], vm[6], vm[7], vm[13],
+             vm[0] > vm[14] ? kib(vm[0] - vm[14]) : 0);
     {
         int lvl = -1;
         size_t l = sizeof lvl;
@@ -569,6 +570,16 @@ static void mem_report(struct pent *procs, int n, int top)
         }
     }
     lflush();
+
+    /* iOS 4.2.1 has no VM compressor (that arrived in iOS 7): there are no
+       compressed pages to count. Say so explicitly, so a hardware log reader
+       does not mistake the absent field for an unmeasured one. */
+    if (seq == 1) {
+        lreset();
+        lput("[mem %u] VM: compressed n/a (no compressor in iOS 4.2.1);"
+             " free_nospec = free - speculative file pages", seq);
+        lflush();
+    }
 
     /* VM limits at the first report: the values that decide whether a large
        Safari allocation can be satisfied (docs/re-log: memory) */
@@ -660,6 +671,22 @@ static void mem_report(struct pent *procs, int n, int top)
     lput("[mem %u] %d procs, resident %u KiB:", seq, nr, tot >> 10);
     for (i = 0; i < nr && i < top; i++)
         lput(" %s(%d) %u/%u", r[i].name, r[i].pid, r[i].res >> 10, r[i].virt >> 20);
+    lflush();
+
+    /* Virtual size per process (same data, sorted the other way). A large
+       resident total with plenty of free pages but a stopped WebKit load
+       points at per-process address-space fragmentation; the caller's VA is
+       the only figure a root launchd job can get without the host-priv port. */
+    for (i = 1; i < nr; i++)
+        for (j = i; j > 0 && r[j].virt > r[j - 1].virt; j--) {
+            struct rss x = r[j];
+            r[j] = r[j - 1];
+            r[j - 1] = x;
+        }
+    lreset();
+    lput("[mem %u] VA MiB:", seq);
+    for (i = 0; i < nr && i < 8; i++)
+        lput(" %s(%d) %u", r[i].name, r[i].pid, r[i].virt >> 20);
     lflush();
 }
 

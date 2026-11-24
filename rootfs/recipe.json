@@ -151,7 +151,8 @@
   "tools/ios3ds-gps/com.ios3ds.gpstest.plist": "/System/Library/LaunchDaemons/com.ios3ds.gpstest.plist",
   "build/rootfs-add/System/Library/MediaCapture/vcd.mediacapture": "/System/Library/MediaCapture/vcd.mediacapture",
   "rootfs/files/camera/AVCapture.plist": "/System/Library/PrivateFrameworks/Celestial.framework/N72/AVCapture.plist",
-  "rootfs/files/camera/com.apple.coremedia.plist": "/private/var/mobile/Library/Preferences/com.apple.coremedia.plist"
+  "rootfs/files/camera/com.apple.coremedia.plist": "/private/var/mobile/Library/Preferences/com.apple.coremedia.plist",
+  "rootfs/files/memory/com.apple.mobilesafari.plist": "/private/var/mobile/Library/Preferences/com.apple.mobilesafari.plist"
  },
  "chmod": {
   "/usr/libexec/ios3ds-diag": "0755",
@@ -179,6 +180,7 @@
   "/usr/bin/ios3ds-gps": "0755",
   "/usr/libexec/ios3ds-gpstest": "0755",
   "/System/Library/LaunchDaemons/com.ios3ds.gpstest.plist": "0644",
+  "/private/var/mobile/Library/Preferences/com.apple.mobilesafari.plist": "0644",
   "/System/Library/MediaCapture/vcd.mediacapture": "0755"
  },
  "file_patches": [

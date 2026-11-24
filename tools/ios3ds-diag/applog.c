@@ -12,8 +12,11 @@
  * points stdout and stderr at /dev/console, and logs every alert's title and
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
  * popup), and MobileSafari's page-load errors with domain, code and userInfo.
- * Otherwise only the load errors (MobileSafari, re-log 75), SpringBoard's
- * modal state and SpringBoard's cache warm-up (below) are on.
+ * It also interposes mmap/vm_allocate/mach_vm_allocate and logs failed calls
+ * >= 64 KiB as "[applog] <program> ENOMEM ..." (up to 16 per process).
+ * Otherwise only the load errors (MobileSafari, re-log 75), failed big
+ * allocations, SpringBoard's modal state and SpringBoard's cache warm-up
+ * (below) are on.
  *
  * Cydia Substrate (docs/cydia.md): every executable inside a .app bundle
  * (SpringBoard, which inserts us through its launchd plist, and every app, which
@@ -63,6 +66,62 @@ static void applog_write(int fd, const char *line, int l)
     write(f, line, (size_t)l);
     close(f);
 }
+
+/* ENOMEM from the three allocation entry points WebKit/JSC can use. The
+   hardware "Cannot allocate memory" alert only gives NSPOSIXErrorDomain 12;
+   these lines name the call, the requested size and the caller's PC, which is
+   enough to tell a JSC heap reservation from a file/image mapping. No output
+   on success; at most 16 lines per process, so a failing loop cannot flood
+   the console. Only active when this dylib is inserted (diag/applog). */
+static int nomem_lines;
+static void log_nomem(const char *what, unsigned long long size, unsigned arg, unsigned pc)
+{
+    if (nomem_lines++ >= 16)
+        return;
+    char line[256];
+    int l = snprintf(line, sizeof(line),
+                     "[applog] %s ENOMEM %s size %llu arg %u caller 0x%08x\n",
+                     getprogname(), what, size, arg, pc);
+    if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;
+    if (l > 0) applog_write(2, line, l);
+}
+
+/* Declared here, not in a SDK header: the stub SDK has no sys/mman.h or Mach
+   VM declarations and these symbols live in libsystem. */
+extern void *mmap(void *addr, size_t len, int prot, int flags, int fd, long long off);
+extern int vm_allocate(unsigned task, unsigned *addr, unsigned size, int anywhere);
+extern int mach_vm_allocate(unsigned task, unsigned long long *addr, unsigned long long size, int anywhere);
+
+static void *my_mmap(void *addr, size_t len, int prot, int flags, int fd, long long off)
+{
+    void *r = mmap(addr, len, prot, flags, fd, off);
+    if (r == (void *)-1 && errno == ENOMEM && len >= 65536)
+        log_nomem("mmap", len, (unsigned)flags, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+static int my_vm_allocate(unsigned task, unsigned *addr, unsigned size, int anywhere)
+{
+    int r = vm_allocate(task, addr, size, anywhere);
+    if (r && size >= 65536)
+        log_nomem("vm_allocate", size, (unsigned)r, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+static int my_mach_vm_allocate(unsigned task, unsigned long long *addr, unsigned long long size, int anywhere)
+{
+    int r = mach_vm_allocate(task, addr, size, anywhere);
+    if (r && size >= 65536)
+        log_nomem("mach_vm_allocate", size, (unsigned)r, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+__attribute__((used, section("__DATA,__interpose")))
+static const struct { const void *rep, *orig; } nomem_interpose[] = {
+    { (const void *)my_mmap, (const void *)mmap },
+    { (const void *)my_vm_allocate, (const void *)vm_allocate },
+    { (const void *)my_mach_vm_allocate, (const void *)mach_vm_allocate },
+};
 
 static void say(const char *what, id str)
 {
