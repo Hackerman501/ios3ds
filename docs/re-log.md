@@ -2075,3 +2075,57 @@ committed.
   `IOS3DS_QEMU=... python3 emu/soak.py --cycles 5 --icount 2` again printed
   **Result: PASS**: 5 cycles, SpringBoard/input up after 241 s (host loaded),
   zero panic, stall, md0, log, crash, watchdog or GPU failures.
+
+## 103. Public issue #11 (New 3DS): "No way to enable WiFi" (2026-11-24)
+
+The reporter's `log.txt` (not committed) answers the two questions from the
+report directly. The firmware and chip **did** come up: `nwm.code` was read
+(348160 bytes, main type4), SDIO enumerated the AR6014 (chip id `0d000001`),
+BMI uploaded all four parts and ran the stub, `hi_board_data_initialized = 1`,
+and HTC answered: `HTC ready: 10 credits of 1544 bytes` followed by
+`htc: service 0100 -> status 0, endpoint 1, max message 1538 (1 polls)`.
+Then:
+
+```
+[wifi-diag]   5659 ms htc: tx waits for credits on endpoint 0 (0 < 1)
+[wifi] HTC services connected: -5 (WMI endpoint 1, ...)
+[wifi-diag]   5659 ms FAILED in stage htc: HTC service setup, error -5, sdio status 04212080
+[wifi] HTC service setup failed: -5 ...
+[wifid] waiting for the ARM9 network backend (state 10)
+```
+
+`-5` is `SDIO_ERR_BUSY` (`boot/arm9/wifi/sdio.h:17`): **our own** credit
+wait, not a rejected service or an SDIO error (STAT1 is 0). The credit model
+from §91 gives endpoint 0 one credit, and
+`mbox_send()`/`credit_wait()` (`boot/arm9/wifi/ar6k.c:513-536`, `485-511`)
+refuses the next CONNECT_SERVICE when the response does not return it. The
+QEMU model returns credits in the CONNECT_SERVICE response trailer
+(`emu/qemu/hw/arm/ctr_wifi.c:425-466`, `1690-1719`), but this firmware did
+not within the ~17 ms wait. dsiwifi's `htc_handle_pkt`
+(`arm_iop/source/ath/htc.twl.c:28-45`) sends all five CONNECT_SERVICE
+messages and SETUP_COMPLETE back-to-back, with no credit wait, on this chip.
+
+So "no way to enable WiFi" is downstream: the driver parked the chip in reset
+in state `failed`, the mailbox never got a backend/MAC, `ios3ds-wifid` kept
+waiting and configd had no interface to drive. No preset network is needed
+for scanning (docs/wifi.md §6 and §10); `wifi.cfg` was absent by design and
+is not the fix. `origin/main` is still at the reported commit `edf6444`, so
+nothing landed there after 0.4.0-126.
+
+**Change:** `mbox_send()` funds endpoint 0 locally for its fixed handful of
+control messages when a credit is not returned (at most 6 per bring-up:
+5 CONNECT_SERVICE + SETUP_COMPLETE), logs each refill and counts them in the
+`credits so far` diag line. Credits that *are* returned still top EP0 up;
+the credit accounting for WMI/data endpoints is unchanged. QEMU needed no
+model change: its model returns the credits, so the new branch is not taken
+there. Hardware still has to confirm that Type4 accepts the back-to-back
+handshake, as dsiwifi does.
+
+**Verification:** `make -C boot` and `make sdimg` clean; `make test` green;
+`emu/wifi_test.py --case ok` (18/18 checks), `--case settings` (no wifi.cfg:
+chip idle, a80211 loaded) and `--case nwm` (firmware from a synthetic
+BLZ-compressed `nwm.code`, full bring-up to HTTP fetch) all PASS. The UI test
+`emu/wifi_ui_test.py --nwm` also passed 8/8 in 535 s: with no `wifi.cfg`,
+Settings > Wi-Fi scanned, listed three networks, joined the WPA2 AP by
+touchscreen and got a DHCP lease — i.e. the control the reporter missed is
+there once bring-up succeeds. No new EP0 refill lines in QEMU, as expected.

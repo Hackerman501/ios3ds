@@ -202,6 +202,14 @@ As with any homebrew, **back up your SD card** first. More: [docs/real-hardware.
 - **Why is there a pause before XNU starts?** A 1 s grace period leaves time to
   hold **B** and stay in the monitor; press **A** to skip it once, or set
   `boot_delay=0` in `boot.cfg` to skip it every boot.
+- **Settings shows no Wi-Fi switch ("no way to enable WiFi")?** Wi-Fi needs
+  your console's `nwm.code` (the launcher copies it on the first start, see
+  [Start it](#3-start-it)), but **no `wifi.cfg`**: Settings scans and joins
+  without one. If `log.txt` shows `HTC service setup failed: -5` right after
+  `service 0100 -> status 0`, the 0.4.0 driver ran out of its own HTC control
+  credits before the chip was ready; fixed after 0.4.0 (issue #11). Any other
+  `FAILED in stage ...` line, or a red `Wi-Fi fw:` line from the launcher, is
+  a different problem — attach the whole log.
 - **Why is the wallpaper only on the lock screen?** Apple did not enable
   home-screen wallpaper on the iPod touch 2G (`iPod2,1`): SpringBoard's
   `homescreen-wallpaper` capability is absent from that device's capabilities

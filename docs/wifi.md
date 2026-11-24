@@ -358,7 +358,8 @@ every new maximum of 20 ms or more, i.e. how long block I/O waited on Wi-Fi.
 | `fw: part 1/2/3/4 ... in <ms>`, `fw: BMI_EXECUTE 00927000 ... returned <x>` | BMI write/LZ stream; the stub runs and returns | which part fails; the stub's return value |
 | `boot: hi_board_data_initialized = 1 after <ms>` | the stub/firmware set the flag (model assumption; the model needs 50 ms) | `FAILED in stage boot` + host interest dump: re-send stub data after main (dsiwifi order), section 3 |
 | `htc: HTC_READY ..., <n> bytes: <hex>` | Type4 firmware boots and speaks HTC (model: 8 credits of 1664 bytes) | `FAILED in stage htc`: try `fwmain=1` |
-| `htc: service 0100 -> status 0, endpoint 1, max message ...` (0100..0104) | service connect layout and endpoints (model: 1..5 in order) | a non-zero status: the service is not offered by this firmware |
+| `htc: service 0100 -> status 0, endpoint 1, max message ...` (0100..0104) | service connect layout and endpoints (model: 1..5 in order) | a non-zero status: the service is not offered by this firmware. `tx waits for credits on endpoint 0 (0 < 1)` followed by `HTC service setup failed: -5` instead means the *driver* ran out of HTC control credits (issue #11); -5 is `SDIO_ERR_BUSY`, not a firmware error |
+| `htc: endpoint 0 credit not returned: funding 1 for this control message` (at most 6 times: 5 CONNECT_SERVICE + SETUP_COMPLETE) | the firmware does not credit EP0 back between control messages, so the driver funds them locally as dsiwifi does | absent when the firmware/QEMU returns credits; harmless either way |
 | `wmi: WMI_READY ..., <n> bytes: <hex> (MAC, phy capability)` | WMI_READY layout (model: 7 bytes) | longer event: more fields (sw/abi version) we ignore, harmless |
 | `wmi: REG_DOMAIN <hex>` | regulatory domain reported after READY (model: 0) | absent: harmless |
 | `wmi: channel list: N channels, 2.4 GHz mask ....` | the channels the firmware will scan (model: 1-11, mask 0ffe; JPN/EUR consoles should show 1-13 = 3ffe) | `WMI command 000e rejected`: this firmware has no GET_CHANNEL_LIST; harmless |
@@ -573,7 +574,10 @@ optional.
   waiting for iOS (Settings > Wi-Fi)`). **Neither file:** one line, the chip is
   never powered (`[wifi] 0:/ios3ds/wifi-fw.bin: not found ... Wi-Fi off`), iOS
   sees no Wi-Fi hardware. A `wifi.cfg` with `ssid=` works as before (joins at
-  boot); iOS can still scan and switch networks.
+  boot); iOS can still scan and switch networks. A bring-up that reaches
+  `failed` instead (`HTC service setup failed`, ...) leaves the backend with
+  no MAC, so `ios3ds-wifid` waits and Settings has no Wi-Fi control to turn
+  on: that is a driver bring-up failure, not a missing `wifi.cfg` (issue #11).
 - `wlanmbox_t` (`boot/common/wifi_proto.h`) at `NET_PA + 0xC200`, inside the
   network mailbox's section: a status block (state off/starting/idle/joining/up,
   SSID, BSSID, channel, RSSI/noise, security, last disconnect reason, scan and
