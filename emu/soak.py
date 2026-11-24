@@ -253,6 +253,14 @@ def main():
             key("ret")
             time.sleep(4)
             log("unlock-first: %d slide attempt(s)" % (attempt + 1))
+        # SpringBoard's icon warm-up marker is the earliest point at which the
+        # screen can be the home screen. Without it a slow host can leave the
+        # boot console showing, still lit and stable: the harness then took
+        # *that* as home_ref and reported every cycle as "stuck" while the
+        # screenshots clearly showed the home screen (2026-11-24).
+        warm_wait = time.time()
+        while time.time() - warm_wait < 300 and "sbwarm" not in read_log(a.sd):
+            time.sleep(5)
         # reference: not black (the screen copy may be switching to the GPU,
         # soak 3) and unchanged across two shots 5 s apart.  On a loaded host
         # with --icount 2 SpringBoard's first lit frame came ~220 s after the
