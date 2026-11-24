@@ -379,7 +379,7 @@ GPS daemon, larger rootfs and GPU arena churn), not the camera driver.
   the mailbox request. Run 29's log has `[cam] start outer camera ...` followed
   by `status 0`. This is the exact boundary of the regression.
 - On the Old 3DS XNU has 128 MiB; the GPU arena already wires 10 MiB now (12 MiB
-  before the memory pass, re-log `NEXT`; the camera's 450 KiB block is still
+  before the memory pass, re-log 112; the camera's 450 KiB block is still
   reserved inside it) and the wired/contiguous heap is much tighter than on the
   New 2DS XL's 256 MiB. A new
   3 x 150 KiB *physically contiguous, wired* allocation at Camera.app start can

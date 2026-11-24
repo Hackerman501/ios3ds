@@ -2866,7 +2866,7 @@ shim. It was not: the kernel patch was on the wrong function.
   five cycles, 70 s to SpringBoard + input, no failures. Final 4.1 soak:
   **Result: PASS**, five cycles, 60 s to SpringBoard + input, no failures.
   `make test` passes after the final rebase.
-## NEXT. Safari's "Cannot allocate memory": free pages, not jetsam; lean caches and a smaller Old-3DS arena (2026-11-24)
+## 112. Safari's "Cannot allocate memory": free pages, not jetsam; lean caches and a smaller Old-3DS arena (2026-11-24)
 
 **Reports.** Old 3DS (128 MiB), `diag=1`: Safari shows "Cannot allocate memory"
 (NSPOSIXErrorDomain 12) on bigger pages; a retry works. No zone/jetsam cause
