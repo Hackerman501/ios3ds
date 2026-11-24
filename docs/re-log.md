@@ -3028,7 +3028,10 @@ unchanged frames by incrementing a new `gmbox_t.idle_frames` counter (line 6,
 reusing a reserved word). The ARM9's `gm_live()` counts `idle_frames` as
 liveness too, so an idle screen no longer falls back to the 75 ms ARM9 CPU
 copy. On an idle home screen the mirror's ~19 ms/frame GPU cost drops to 0,
-and the LCDs simply keep the last picture. A line-0 `seq` change (screen
+and the LCDs simply keep the last picture. `gm_report()` now prints
+`[gpu] mirror: N idle VBlanks in 30 s (no new CA frame, no GPU work)` for such
+a window, instead of no mirror line at all; the spot check labels the last
+picture as the GPU copy while idle frames keep it alive. A line-0 `seq` change (screen
 mode, `stereo_k`, `want`) or a PDC 2D/3D switch (`pica_stereo.c`) also sets
 `m_dirty`, so the eyes are rebuilt even when the CA frame did not move (the
 3D slider on an idle home screen).

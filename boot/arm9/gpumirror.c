@@ -296,10 +296,11 @@ const char *gm_stereo_path(void)   /* declared in gpumirror.h */
 /* every 30 s: what the copy costs, GPU and CPU side by side */
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown)
 {
-    static u32 last_t, last_frames, last_sum, last_irq, last_steps, last_blits, last_cpu;
+    static u32 last_t, last_frames, last_sum, last_irq, last_steps, last_blits, last_cpu, last_idle;
     if (!gm || now - last_t < 30 * hz)
         return;
     u32 dt = now - last_t, frames = gm->frames - last_frames, sum = gm->sum_frame - last_sum;
+    u32 idle = gm->idle_frames - last_idle;
     u32 irq = gm->sum_irq - last_irq, steps = gm->steps - last_steps;
     u32 nb = cpu_blits - last_blits, cb = cpu_ticks - last_cpu;
     last_t = now;
@@ -309,6 +310,7 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
     last_steps = gm->steps;
     last_blits = cpu_blits;
     last_cpu = cpu_ticks;
+    last_idle = gm->idle_frames;
     u32 secs = dt / hz ? dt / hz : 1;
     if (frames)
         logp("[gpu] mirror: %u frames in %u s (%u.%u fps); GPU per frame: upload %u us, draw %u us, read-out %u us; "
@@ -317,8 +319,14 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
              frames, secs, frames * 10 / secs / 10, frames * 10 / secs % 10,
              us(gm->t_in), us(gm->t_3d), us(gm->t_out), us(sum / frames), us(gm->m_frame), us(irq / frames), steps,
              (unsigned)gm->busy_skips, (unsigned)gm->timeouts);
+    else
+        /* No CA present for the whole window: damage tracking avoided every
+           GPU operation. Say so explicitly, otherwise a hardware log has no
+           mirror line at all and looks like a stalled mirror. */
+        logp("[gpu] mirror: %u idle VBlanks in %u s (no new CA frame, no GPU work); %u busy skips, %u timeouts\n",
+             idle, secs, (unsigned)gm->busy_skips, (unsigned)gm->timeouts);
     if (shown && !gm->stereo_on)
-        spot_check(regs_pa, mode, frames != 0);
+        spot_check(regs_pa, mode, frames != 0 || idle != 0);   /* idle VBlanks keep the last GPU picture */
     else if (shown)
         logp("[gpu] spot check skipped: the two eye images are offset from the source by design\n");
     if (nb) {                   /* ARM9 timer ticks (hz) */
