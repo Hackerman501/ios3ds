@@ -319,7 +319,7 @@ void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, boo
              frames, secs, frames * 10 / secs / 10, frames * 10 / secs % 10,
              us(gm->t_in), us(gm->t_3d), us(gm->t_out), us(sum / frames), us(gm->m_frame), us(irq / frames), steps,
              (unsigned)gm->busy_skips, (unsigned)gm->timeouts);
-    else
+    else if (gm->state == GM_ST_ACTIVE)
         /* No CA present for the whole window: damage tracking avoided every
            GPU operation. Say so explicitly, otherwise a hardware log has no
            mirror line at all and looks like a stalled mirror. */
