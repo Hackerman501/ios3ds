@@ -24,7 +24,10 @@
   "_replace": true,
   "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
    "StandardErrorPath": "/dev/console",
-   "StandardOutPath": "/dev/console"
+   "StandardOutPath": "/dev/console",
+   "EnvironmentVariables": {
+    "DYLD_PRINT_LIBRARIES": "1"
+   }
   }
  },
  "plist_merge": {
@@ -65,6 +68,30 @@
    "orig": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
    "new": "481e893858158930481c8938481c243800000000a07d2338c80700006815893009000000416374697661746564000000",
    "why": "Offline activation table in a verified zero gap of liblockdown __TEXT: ActivationState = inline CFString 'Activated' (isa 0x38237da0 from this dylib), BrickState = CFBooleanFalse 0x38241c48. Other keys return NULL as on 4.x.",
+   "mode": "0755"
+  },
+  {
+   "path": "/usr/lib/liblockdown.dylib",
+   "offset": "0x2be4",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "5H11a lockdown_disconnect -> 0. SpringBoard imports it and passes the fake handle from lockdown_connect (symbol VA 0x30893be4 from liblockdown's own symtab); without this stub it faults on a fake handle.",
+   "mode": "0755"
+  },
+  {
+   "path": "/usr/lib/liblockdown.dylib",
+   "offset": "0x30a8",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "5H11a lockdown_remove_value -> 0 (symbol VA 0x308940a8; same reason as disconnect).",
+   "mode": "0755"
+  },
+  {
+   "path": "/usr/lib/liblockdown.dylib",
+   "offset": "0x30f4",
+   "orig": "90402de904708de2",
+   "new": "0000a0e31eff2fe1",
+   "why": "5H11a lockdown_set_value -> 0 (symbol VA 0x308940f4; same reason as disconnect). All three original byte sequences were verified in this dylib; the resign step re-signs the patched file for 2.x page signatures.",
    "mode": "0755"
   }
  ],

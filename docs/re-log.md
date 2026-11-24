@@ -3182,3 +3182,26 @@ worktree's `build/` (no Apple files are committed).
 - **4.x is unchanged:** `mkdirs` is a new optional recipe key and every other
   edit is in `rootfs/overlay-3.1.3.json` (plus crash dirs in the 2.2.1
   overlay). No 4.2.1 boot-file or shim code changed.
+
+### NEXT. 2.2.1: the same lockdown stubs, dyld stops after CoreSurface (2026-11-24)
+
+- **[V]** 2.2.1's SpringBoard imports `lockdown_disconnect`,
+  `lockdown_remove_value` and `lockdown_set_value` just like 7E18's. Their
+  file offsets in `/usr/lib/liblockdown.dylib` (`0x2be4`, `0x30a8`, `0x30f4`)
+  came from that dylib's own `LC_SYMTAB` (VA `0x30893be4` / `0x308940a8` /
+  `0x308940f4`, `__TEXT` base `0x30891000`); all three original byte
+  sequences were verified before stubbing them to return 0. The existing
+  `resign` step re-signs the file as before.
+- **[V]** With `DYLD_PRINT_LIBRARIES=1` the 2.2.1 SpringBoard loads
+  MultitouchSupport, IOKit, Apple80211, libIOAccessoryManager,
+  IOMobileFramebuffer and CoreSurface, then prints nothing further for a
+  600 s run (`--icount 2`, screenshots at 180/360/540/590 s are still the M1
+  monitor console). The stop point is the dyld load/initialisation of
+  `/usr/lib/liblockdown.dylib` (the next `LC_LOAD_DYLIB`) or CoreSurface's
+  initialiser; extra `DYLD_PRINT_WARNINGS/INITIALIZERS/BINDINGS` variables
+  produced no extra output. A control build without the three new stubs
+  stops at exactly the same place, so they neither caused nor fixed this.
+- **[G]** Next: a userland GDB trace at 2.x dyld/CoreSurface to see whether
+  the signature on the re-signed liblockdown is accepted and where
+  CoreSurface blocks; 2.x has no shared cache, so every dylib is a separate
+  page-signed file. No 4.x code is involved in this overlay.
