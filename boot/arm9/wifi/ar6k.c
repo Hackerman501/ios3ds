@@ -129,6 +129,7 @@ static struct {
     u32 cred_sz, cred_pool;
     u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
     u32 credit_refund;              /* credits returned after a failed mailbox write */
+    u32 ep0_refill;                 /* HTC control credits funded locally (issue #11) */
     u32 defer_drop;                 /* packets that could not be queued at all */
     u32 defer_full;                 /* waits stopped with the deferred ring full */
     u32 wmi_busy;                   /* WMI control sends queued for lack of credits */
@@ -422,7 +423,7 @@ static void credit_init(u32 n, u32 sz)
     A.cred_sz = sz ? sz : 1664;
     A.cred_pool = n;
     A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
-    A.credit_refund = A.defer_drop = A.defer_full = A.wmi_busy = A.eapol_busy = 0;
+    A.credit_refund = A.ep0_refill = A.defer_drop = A.defer_full = A.wmi_busy = A.eapol_busy = 0;
     A.credit_log = 0;
     wmi_queue_clear();
     credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
@@ -517,6 +518,20 @@ static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wa
     int r = 0, asked = 0;
     if (type < 8) {
         need = credit_need(total);
+        if (type == PKT_HTC && A.ep_credits[type] < need) {
+            /* The Type4 firmware on a real New 3DS answers CONNECT_SERVICE
+               (status 0, endpoint 1) but does not credit EP0 back: the next
+               control message waited ~17 ms, failed with SDIO_ERR_BUSY (-5)
+               and left iOS with no Wi-Fi interface or Settings toggle
+               (issue #11). dsiwifi sends all five CONNECT_SERVICE messages
+               plus SETUP_COMPLETE back-to-back, with no credit wait, on the
+               same chip. They are a fixed handful of short control messages,
+               so fund EP0 locally. A firmware/model that does return the
+               credit simply tops EP0 up again. */
+            A.ep_credits[type] = (u8)need;
+            A.ep0_refill++;
+            DIAG("htc: endpoint 0 credit not returned: funding %u for this control message", need);
+        }
         if (A.ep_credits[type] < need) {
             if (!wait) {
                 A.credit_busy++;
@@ -752,8 +767,8 @@ static void link_up(void)
     A.state = NET_ST_UP;
     A.auth_fails = 0;
     A.nonet = 0;
-    DIAG("htc: credits so far: used %u, returned %u, reports %u, low-credit flags %u, waits %u",
-         A.credit_used, A.credit_ret, A.credit_rpt, A.credit_low, A.credit_busy);
+    DIAG("htc: credits so far: used %u, returned %u, reports %u, low-credit flags %u, waits %u, EP0 refills %u",
+         A.credit_used, A.credit_ret, A.credit_rpt, A.credit_low, A.credit_busy, A.ep0_refill);
     log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", T.ssid,
            A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3], A.bssid[4], A.bssid[5]);
 }
