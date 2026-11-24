@@ -340,7 +340,14 @@ single wall-clock run.
 **Verification:** `make test` passes (including the cache test, the CI stub
 symbol check and the conflict-marker check) and a fresh-image
 `python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** after the
-rebase onto `origin/main`.
+rebase onto `origin/main`. Re-checked on a freshly rebuilt image from the
+final tree (`make userland`, `rm -f build/sd.img && make sdimg`): the local
+repo harness gave 1.645 s for refresh, 0.385 s for the download and 2.618 s
+for `dpkg -i` (4.648 s total, rc=0, no md0 or blk errors; guest CPU
+0.23/0.05/0.19 s user + 0.44/0.04/0.40 s sys), and another fresh-image
+5-cycle soak printed **Result: PASS**. These wall times are between the two
+A/B runs above on the same loaded host; the comparison columns remain the
+stable result.
 
 ## Known issues
 

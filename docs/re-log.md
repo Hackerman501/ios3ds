@@ -2357,4 +2357,9 @@ New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
   `python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**
   (5 cycles, 0 panics/restarts after boot, 0 md0 errors). The rebase conflict
   in this file was section 101 arriving at the same tail; the 4.1 section is
-  kept before this one.
+  kept before this one. On the continuation run the final tree was rebuilt
+  (`make userland`, fresh `make sdimg`) and re-measured: refresh 1.645 s,
+  download 0.385 s, `dpkg -i` 2.618 s, all rc=0 with no `[blk] ... failed`;
+  a second fresh-image 5-cycle soak again printed **Result: PASS**. The
+  `[io]` counters over the install still show the cache absorbing the small
+  dpkg writes (0 direct-write sectors, 0 sync errors).
