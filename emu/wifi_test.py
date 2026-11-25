@@ -15,13 +15,15 @@ keys -> iOS interface -> DHCP lease -> DNS -> HTTP fetch.
 The files are removed from the image afterwards (so the image keeps the
 "no wifi.cfg" state), unless --keep.
 
-Cases: ok (WPA2, everything must pass), open (open network), nocfg (no
-wifi.cfg: Wi-Fi must stay off and nothing may touch the card), nofw (no
-firmware file: one log line, Wi-Fi off), wrongpsk (the 4-way handshake must
-fail at message 2, no link), nwm (no wifi-fw.bin: the ARM9 cuts the
-firmware out of a synthetic, BLZ-compressed sd:/ios3ds/nwm.code itself, as
-after the GodMode9 script; plus the [wifi-diag] lines), badnwm (an nwm.code
-that is not NWM: one error line, Wi-Fi off, card untouched).
+Cases: ok (WPA2, everything must pass), credit (4 MiB bulk fetch through the
+HTC credit path), open (open network), nocfg (no wifi.cfg: Wi-Fi must stay
+off and nothing may touch the card), nofw (no firmware file: one log line,
+Wi-Fi off), wrongpsk (the 4-way handshake must fail at message 2, no link),
+tkip (WPA2 with a TKIP group key), wpa1 (WPA v1 vendor IE, TKIP pairwise),
+nwm (no wifi-fw.bin: the ARM9 cuts the firmware out of a synthetic,
+BLZ-compressed sd:/ios3ds/nwm.code itself, as after the GodMode9 script;
+plus the [wifi-diag] lines), badnwm (an nwm.code that is not NWM: one error
+line, Wi-Fi off, card untouched).
 """
 import argparse
 import http.server
@@ -73,9 +75,24 @@ def dummy_nwm(path):
         f.write(test_nwmfw.blz_compress(code, 0x200))
 
 
+BULK_SIZE = 4 * 1024 * 1024         # several MB through the HTC credit path
+BULK_BLOCK = bytes(i % 251 for i in range(251 * 256))  # exact multiple of the pattern
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         hits.append(self.path)
+        if self.path == "/bulk":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(BULK_SIZE))
+            self.end_headers()
+            left = BULK_SIZE
+            while left > 0:
+                n = min(left, len(BULK_BLOCK))
+                self.wfile.write(BULK_BLOCK[:n])
+                left -= n
+            return
         body = ("%s path=%s\n" % (TOKEN, self.path) + "".join(u + "\n" for u in HTTPS)).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -91,19 +108,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="ok",
                     choices=("ok", "open", "nocfg", "nofw", "wrongpsk", "nofifo", "hidden", "tkip", "mixed", "wpa3", "rekey",
-                             "settings", "nwm", "badnwm"))
+                             "credit", "wpa1", "settings", "nwm", "badnwm"))
     ap.add_argument("--time", type=float, default=450)
     ap.add_argument("--icount", default="")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "emu-wifi"))
     ap.add_argument("--shots", default="")
+    ap.add_argument("--hmp", default="", help="HMP commands at guest seconds, passed to emu/run.py")
     ap.add_argument("--dns", default="example.com", help="name iOS resolves in the self-test")
     ap.add_argument("--debug", default="1", help="ctr-wifi model log level (0-3)")
     ap.add_argument("--keep", action="store_true", help="leave wifi.cfg / wifi-fw.bin on the image")
     ap.add_argument("--https", action="append", default=[], help="https:// URL iOS fetches via CFNetwork")
     ap.add_argument("--expect-https", choices=("ok", "any"), default="any")
     a = ap.parse_args()
+    if a.case == "credit" and a.time == 450:
+        a.time = 900                # a 4 MiB transfer takes a while under TCG
     HTTPS.extend(a.https)
     os.makedirs(a.out, exist_ok=True)
 
@@ -117,7 +137,8 @@ def main():
         mtools(["mcopy", "-o", fw, "::/ios3ds/wifi-fw.bin"], a.sd)
     elif a.case != "nocfg":
         lines = ["ssid=" + SSID, "verbose=1",
-                 "nettest=http://10.0.2.2:%d/ios3ds-nettest %s" % (a.port, a.dns)]
+                 "nettest=http://10.0.2.2:%d/ios3ds-nettest %s%s" %
+                 (a.port, a.dns, " bulk" if a.case == "credit" else "")]
         if a.case == "open":
             lines.append("security=open")
         else:
@@ -153,6 +174,8 @@ def main():
         extra += ["-global", "ctr-wifi.hidden=on"]
     if a.case == "tkip":
         extra += ["-global", "ctr-wifi.group=tkip"]
+    if a.case == "wpa1":
+        extra += ["-global", "ctr-wifi.security=wpa1"]
     if a.case == "mixed":                   # FRITZ!Box "WPA2 + WPA3" (hardware run 22)
         extra += ["-global", "ctr-wifi.security=wpa2-wpa3"]
     if a.case == "wpa3":
@@ -165,6 +188,8 @@ def main():
         cmd += ["--icount", a.icount]
     if a.shots:
         cmd += ["--shots", a.shots]
+    if a.hmp:
+        cmd += ["--hmp", a.hmp]
     r = subprocess.run(cmd, capture_output=True, text=True)
     out = r.stdout + r.stderr
     with open(os.path.join(a.out, "run.txt"), "w") as f:
@@ -218,6 +243,23 @@ def main():
             ("mixed network detected", r"\[wifi\] .* is a WPA2 \+ WPA3 network: joining with WPA2-PSK"),
             ("4-way: message 4 OK", r"4-way: message 4 OK"),
             ("ARM9 link up", r"\[wifi\] link up"),
+        ],
+        "credit": [
+            ("HTC credits used", r"\[wifi-diag\] .*htc: credits so far: used [1-9][0-9]*"),
+            ("credit reports applied", r"\[wifi-diag\] .*htc: credit report: \+[1-9]"),
+            ("model returned credits", r"ctr-wifi: .*HTC credits: consumed [1-9][0-9]*, returned [1-9]"),
+            ("4 MiB bulk transfer", r"\[nettest\] bulk \d+ bytes \(%d body, 0 bad\).*PASS" % BULK_SIZE),
+            ("HTTP fetch", r"\[nettest\] http .*" + TOKEN),
+            ("self-test passed", r"\[nettest\] all steps passed"),
+        ],
+        "wpa1": [
+            ("WPA v1 selected", r"\[wifi\] connect .*WPA-PSK/TKIP"),
+            ("WPA vendor IE used", r"WPA v1 vendor IE"),
+            ("pairwise TKIP key", r"pairwise.*equals the AP's TK"),
+            ("group TKIP key", r"group.*equals the AP's GTK"),
+            ("4-way: message 4 OK", r"4-way: message 4 OK"),
+            ("ARM9 link up", r"\[wifi\] link up"),
+            ("self-test passed", r"\[nettest\] all steps passed"),
         ],
         "rekey": [
             ("ARM9 link up", r"\[wifi\] link up"),
@@ -279,6 +321,8 @@ def main():
         "badnwm": [("card untouched", r"ctr-wifi: .*card powered")],
         "wrongpsk": [("no link", r"\[wifi\] link up")],
         "rekey": [("no group key timeout", r"reason 16")],
+        "credit": [("no mailbox overflow", r"ctr-wifi: .*(Mbox Full|TX overflow)"),
+                   ("no lost bulk bytes", r"\[nettest\] bulk .*bad [1-9]")],
     }.get(a.case, [])
     forbidden += [("no kernel panic", r"panic\(cpu"), ("no ARM9 crash", r"ARM9 (data abort|exception)")]
     ok = True

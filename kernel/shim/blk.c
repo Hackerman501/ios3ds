@@ -7,27 +7,29 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 
 typedef void *buf_t;
-/* xnu-1504 KPI (Thumb functions in the 4.2.1 kernel; |1 for interworking) */
+/* xnu-1504 KPI: addresses from the staged kernelcache's symbol table, with
+   4.2.1 defaults in kpi.h (docs/multi-version.md). Thumb |1 for interworking. */
 #define KPI(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
-#define buf_count     KPI(0x800781c0, u32, buf_t)
-#define buf_setresid  KPI(0x800781d4, void, buf_t, u32)
-#define buf_blkno     KPI(0x800782a4, long long, buf_t)
-#define buf_seterror  KPI(0x80078158, void, buf_t, int)
-#define buf_biodone   KPI(0x800793f4, void, buf_t)
-#define buf_map       KPI(0x800789a0, int, buf_t, void **)
-#define buf_unmap     KPI(0x800789f2, int, buf_t)
-#define buf_flags     KPI(0x80078198, int, buf_t)
+#define buf_count     KPI(IOS3DS_KPI_BUF_COUNT, u32, buf_t)
+#define buf_setresid  KPI(IOS3DS_KPI_BUF_SETRESID, void, buf_t, u32)
+#define buf_blkno     KPI(IOS3DS_KPI_BUF_BLKNO, long long, buf_t)
+#define buf_seterror  KPI(IOS3DS_KPI_BUF_SETERROR, void, buf_t, int)
+#define buf_biodone   KPI(IOS3DS_KPI_BUF_BIODONE, void, buf_t)
+#define buf_map       KPI(IOS3DS_KPI_BUF_MAP, int, buf_t, void **)
+#define buf_unmap     KPI(IOS3DS_KPI_BUF_UNMAP, int, buf_t)
+#define buf_flags     KPI(IOS3DS_KPI_BUF_FLAGS, int, buf_t)
 /* locking + sleeping (kernelcache symbol table; Thumb unless noted) */
-#define lck_grp_attr_alloc_init KPI(0x8001ae22, void *, void)
-#define lck_grp_alloc_init      KPI(0x8001ae00, void *, const char *, void *)
-#define lck_attr_alloc_init     KPI(0x8001ade8, void *, void)
-#define lck_mtx_alloc_init      KPI(0x80062008, void *, void *, void *)
-#define lck_mtx_lock   ((void (*)(void *))0x80063000)     /* ARM */
-#define lck_mtx_unlock ((void (*)(void *))0x800631a0)     /* ARM */
-#define assert_wait_timeout     KPI(0x8001f02a, int, void *, int, u32, u32)
-#define thread_block            KPI(0x8001edcc, int, void *)
+#define lck_grp_attr_alloc_init KPI(IOS3DS_KPI_LCK_GRP_ATTR_ALLOC_INIT, void *, void)
+#define lck_grp_alloc_init      KPI(IOS3DS_KPI_LCK_GRP_ALLOC_INIT, void *, const char *, void *)
+#define lck_attr_alloc_init     KPI(IOS3DS_KPI_LCK_ATTR_ALLOC_INIT, void *, void)
+#define lck_mtx_alloc_init      KPI(IOS3DS_KPI_LCK_MTX_ALLOC_INIT, void *, void *, void *)
+#define lck_mtx_lock   ((void (*)(void *))IOS3DS_KPI_LCK_MTX_LOCK)     /* ARM */
+#define lck_mtx_unlock ((void (*)(void *))IOS3DS_KPI_LCK_MTX_UNLOCK)   /* ARM */
+#define assert_wait_timeout     KPI(IOS3DS_KPI_ASSERT_WAIT_TIMEOUT, int, void *, int, u32, u32)
+#define thread_block            KPI(IOS3DS_KPI_THREAD_BLOCK, int, void *)
 #define THREAD_UNINT   0
 #define NSEC_PER_USEC  1000u
 #define B_READ 0x00000001
@@ -163,7 +165,12 @@ void shim_mdevstrategy(buf_t bp)
         while (done < total) {
             u32 n = total - done;
             if (n > SHIM_BOUNCE_SIZE) n = SHIM_BOUNCE_SIZE;
-            u32 secs = (n + 511) / 512;
+            /* The bounce area is 32-byte aligned but ends 16 bytes before the
+               Wi-Fi mailbox (SHIM_BOUNCE_SIZE = 0xFFE0): rounding *up* here
+               would send 128 sectors = 64 KiB and the ARM9 would reject the
+               request. Always transfer whole sectors that fit. */
+            n &= ~511u;
+            u32 secs = n / 512;
             int sleeping = blk_lock != 0;
             u32 xflags = bflags | (done ? 0 : 0x80000000u);
             u32 flags = sleeping ? 0 : irq_save();

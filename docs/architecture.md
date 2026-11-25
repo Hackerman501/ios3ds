@@ -21,12 +21,13 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 |---|---|
 | 0x20001000 | kernelcache, flat image with patches applied (8.1 MB) |
 | after the kernel | device tree, then boot_args |
-| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x6500 SELECT+START request (one line, written by the ARM9 only), +0x7E00 camera mailbox ([camera.md](camera.md)), +0x7F00 GPU mirror mailbox, +0x8000 32 KB bounce buffer |
+| 0x20840000 | **kernel shim** (`kernel/shim`, linked at virtual 0x80840000): code below +0x5F00, +0x5F00 probe snapshot, +0x5F80 IRQ PC samples, +0x6000 block mailbox, +0x6200 input mailbox, +0x6400 MCU mailbox ([mcu.md](mcu.md)), +0x6500 SELECT+START request (one line, written by the ARM9 only), +0x7E00 camera mailbox ([camera.md](camera.md)), +0x7F00 GPU mirror mailbox |
 | 0x20850000 | XNU log ring (256 KB) |
+| 0x20890020 | md0 bounce buffer (0xFFE0 bytes / 127 sectors, up to the network mailbox). It is the unused FCRAM after the log ring, inside the same 1 MiB kernel section XNU maps and never hands to the VM; the old 32 KB buffer was the upper half of the 64 KiB shim region ([boot-perf.md](boot-perf.md) §8) |
 | 0x208A0000 | network mailbox (docs/wifi.md) |
 | 0x208B0000 | `gpu.bin`: the shim's GPU part (32 KB, linked at 0x808B0000) + the display mirror's PICA200 command lists at 0x208B8000 ([pica200.md](pica200.md) §9) |
 | 0x208C0000 | audio PCM ring (docs/audio.md) |
-| 0x20900000 | topOfKernelData (kernel page tables); XNU owns everything up to 0x28000000 (119 MiB; New 3DS with `n3ds_ram=1`: up to 0x30000000, 247 MiB, [n3ds.md](n3ds.md) §6). The GPU arena (12 MiB, [pica200.md](pica200.md)) is wired XNU memory taken at GPU bring-up |
+| 0x20900000 | topOfKernelData (kernel page tables); XNU owns everything up to 0x28000000 (119 MiB; New 3DS with `n3ds_ram=1`: up to 0x30000000, 247 MiB, [n3ds.md](n3ds.md) §6). The GPU arena (10 MiB on Old models, 12 MiB on New, [pica200.md](pica200.md)) is wired XNU memory taken at GPU bring-up |
 | 0x1FF90000 | ARM11 stub (AXI WRAM) |
 | 0x1FFA0000 | `/pram` (panic log area) |
 | 0x1FFB0000 | **fake S5L8720 register pages** (32 × 4 KB, `fakeio.bin`) |
@@ -73,8 +74,8 @@ How stock iOS 4.2.1 (iPod2,1, 8C148) reaches the SpringBoard home screen on an O
 **Root disk:**
 - The device tree's memory-map gets a `RAMDisk` entry the size of the root filesystem, and the boot-args include `rd=md0`.
 - `mdevstrategy` (bsd/dev/memdev.c) jumps into `shim/blk.c`.
-- Each transfer goes through the block mailbox and bounce buffer, with interrupts masked and the buffer pages pre-faulted.
-- The ARM9 serves it from `sd:/ios3ds/rootfs.hfs` with FatFs fast seek.
+- Each transfer goes through the block mailbox and a 127-sector bounce buffer, with interrupts masked and the buffer pages pre-faulted.
+- The ARM9 serves it from `sd:/ios3ds/rootfs.hfs` with FatFs fast seek. Small writes go into a 256 KiB write-back cache; `f_sync` runs when md0 has been idle for 500 ms (2 s cap) and before the HFS+ clean-unmount flag is set ([boot-perf.md](boot-perf.md) §8, [cydia.md](cydia.md)).
 
 **Display:**
 - Apple's AppleM2CLCD driver runs against a fake register page that starts with iBoot's state (window 1 at 0x18000000).
@@ -91,7 +92,7 @@ These are applied to a copy of your root filesystem by `scripts/mkrootfs.py` fro
   - `AppleKeyStoreGetDeviceLockState` returns "no passcode" (without a system keybag the kernel call blocks forever).
 - The cameras: `vcd.mediacapture` in `/System/Library/MediaCapture` (Celestial's virtual-camera slot, enabled by the `vcd` preference of com.apple.coremedia), `still-camera`/`front-facing-camera` in N72AP.plist and our own `Celestial.framework/N72/AVCapture.plist`; see [camera.md](camera.md).
 - Two libraries are inserted with `DYLD_INSERT_LIBRARIES`: `ios3ds-a80211.dylib` into configd (WiFiManager sees en0 as Apple 802.11 hardware) and `ios3ds-hwaes.dylib` into securityd (software AppleKeyStore key wrap, so the keychain can store items). See [wifi.md](wifi.md) §10.
-- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash`, `SBDisableAutoDim` and `SBNoWatchdogs` (no launch watchdog, [wifi.md](wifi.md) §10.4; `SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
+- SpringBoard's stdout and stderr go to `/dev/console`. Its environment has `MBX2D_PAGE_FLIP=0`, `CA_ENABLE_MBX2D=0`, `LK_ENABLE_MBX2D=0`, `CA_ENABLE_OGL=1` and `IOS3DS_CA=1` (MBX2D is off: its 2D driver is missing on the 3DS, [gpu.md](gpu.md) §8) (CoreAnimation composites with OpenGL ES on the PICA200 when the GPU passes its checks, else in software: [gpu.md](gpu.md) §7), and `com.apple.springboard.plist` sets `SBDontLockAfterCrash`, `SBDisableAutoDim` and `SBNoWatchdogs` (no launch watchdog, [wifi.md](wifi.md) §10.4; `SBDontLockEver` was removed: lock now turns the screen off, see [mcu.md](mcu.md) §6.3).
 - OpenGL ES 1.1 comes from our engine `tools/ios3ds-gl`, installed as `OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine`:
   - dyld's `enable-dylibs-to-override-cache` lets it replace the cached copy;
   - OpenGLES's `"AppleMBXDevice"` lookup is patched to `"IOResources"`;

@@ -15,12 +15,118 @@
 #include "wifi.h"
 #include "wpa2.h"
 
+/* Compile the AR6K driver into the test with its hardware boundary mocked
+   below, so the HTC credit path can be exercised without a 3DS. */
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define waitcycles host_waitcycles
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"   /* wifi_scratch_pa is an ARM9 address */
+#include "../../../boot/arm9/wifi/ar6k.c"
+#pragma GCC diagnostic pop
+#undef waitcycles
+#undef ARRAY_SIZE
+
 #define NET_DINVAL(p, len) ((void)(p), (void)(len))
 #define NET_DCLEAN(p, len) ((void)(p), (void)(len))
 #include "net_core.h"
 
 static int fails, checks;
 #define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
+
+/* ---- AR6K hardware boundary mocks ---------------------------------------
+   Only the mailbox and the SDIO writes are real enough for the credit path;
+   nothing here runs firmware or touches hardware. */
+static u32 host_wait_cycles;
+void host_waitcycles(u32 n) { host_wait_cycles += n; }
+
+static u8 mock_rx[0x680];
+static u32 mock_rx_frames, mock_rx_len;
+static int mock_write_err, mock_write_calls;
+static int mock_w8_err, mock_w8_calls;
+static u8 mock_tx[0x680];
+static u32 mock_tx_len;
+
+static void mock_reset(void)
+{
+    memset(mock_rx, 0, sizeof(mock_rx));
+    memset(mock_tx, 0, sizeof(mock_tx));
+    mock_rx_frames = mock_rx_len = mock_tx_len = 0;
+    mock_write_err = mock_write_calls = mock_w8_err = mock_w8_calls = 0;
+}
+
+static void mock_mailbox_frame(u32 ep, const u8 *body, u32 n, const u8 *trailer, u32 tn)
+{
+    u32 len = n + tn;
+    memset(mock_rx, 0, sizeof(mock_rx));
+    mock_rx_len = len;
+    mock_rx[0] = (u8)ep;
+    mock_rx[1] = tn ? HTC_FLG_RX_TRAILER : 0;
+    mock_rx[2] = (u8)len;
+    mock_rx[3] = (u8)(len >> 8);
+    mock_rx[4] = (u8)tn;
+    if (n) memcpy(mock_rx + 6, body, n);
+    if (tn) memcpy(mock_rx + 6 + n, trailer, tn);
+    mock_rx_frames++;
+}
+
+int sdio_init(void) { return 0; }
+int sdio_r8(u32 func, u32 addr)
+{
+    (void)func;
+    if (addr == F1_HOST_INT_STATUS) return mock_rx_frames ? 1 : 0;
+    if (addr >= F1_RX_LOOKAHEAD0 && addr < F1_RX_LOOKAHEAD0 + 4) {
+        u32 la = mock_rx_len << 16;
+        return (u8)(la >> (8 * (addr - F1_RX_LOOKAHEAD0)));
+    }
+    return 0;
+}
+int sdio_w8(u32 func, u32 addr, u8 val)
+{
+    (void)func; (void)addr; (void)val;
+    mock_w8_calls++;
+    return mock_w8_err;
+}
+int sdio_read_blocks(u32 func, u32 addr, u8 *buf, u32 len)
+{
+    (void)func; (void)addr;
+    if (!mock_rx_frames || len > sizeof(mock_rx)) return SDIO_ERR_CARD;
+    memset(buf, 0, len);
+    memcpy(buf, mock_rx, len);
+    mock_rx_frames--;
+    return 0;
+}
+int sdio_write_blocks(u32 func, u32 addr, const u8 *buf, u32 len)
+{
+    (void)func; (void)addr;
+    mock_write_calls++;
+    mock_tx_len = len;
+    memcpy(mock_tx, buf, len);
+    return mock_write_err;
+}
+int sdio_read_bytes(u32 func, u32 addr, u8 *buf, u32 len)
+{
+    (void)func; (void)addr; (void)buf; (void)len;
+    return 0;
+}
+u32 sdio_last_status(void) { return 0; }
+const sdio_diag_t *sdio_diag(void) { static sdio_diag_t d; return &d; }
+int sdio_manfid(u16 *manf, u16 *card) { (void)manf; (void)card; return 0; }
+int sd_load(const char *path, void *dst, u32 maxsize, u32 *outsize)
+{
+    (void)path; (void)dst; (void)maxsize; (void)outsize;
+    return -4;
+}
+int nwm_extract(u8 *code, u32 len, u32 cap, u32 main_type, u8 *out, u32 outcap,
+                u32 *outlen, nwm_info_t *info)
+{
+    (void)code; (void)len; (void)cap; (void)main_type;
+    (void)out; (void)outcap; (void)outlen; (void)info;
+    return 0;
+}
+const char *nwm_strerror(int e) { (void)e; return ""; }
+u32 nwm_crc32(const u8 *p, u32 n) { (void)p; (void)n; return 0; }
+void log_color(u32 color, const char *fmt, ...) { (void)color; (void)fmt; }
+u32 wifi_scratch_pa, wifi_scratch_len;
 
 static void unhex(const char *h, u8 *out)
 {
@@ -171,6 +277,31 @@ static void test_frames(void)
     CHECK(wifi_frame_from_wmi(rx, 10, back, sizeof(back), &et) == 0);
 }
 
+/* HTC credit reports from the RX trailer (ath6kl htc.h record 1) */
+static void test_htc_credits(void)
+{
+    u8 c[8] = { 1, 0, 2, 0, 0, 0, 0, 0 };
+    const u8 rep[] = { WMI_HTC_REC_CREDITS, 4, 1, 2, 2, 3 };
+    CHECK(wifi_htc_credits(rep, sizeof(rep), c) == 5);
+    CHECK(c[1] == 2 && c[2] == 5 && c[3] == 0);
+    /* unknown records are skipped; a second credit record is cumulative */
+    const u8 two[] = { 7, 2, 0xAA, 0xBB, WMI_HTC_REC_CREDITS, 2, 3, 1, 0, 0 };
+    CHECK(wifi_htc_credits(two, sizeof(two), c) == 1);
+    CHECK(c[3] == 1 && c[1] == 2);
+    /* a torn record credits nothing, including records before the tear */
+    u8 before[8];
+    memcpy(before, c, sizeof(c));
+    const u8 torn[] = { WMI_HTC_REC_CREDITS, 4, 1, 1, 2 };
+    CHECK(wifi_htc_credits(torn, sizeof(torn), c) == 0);
+    CHECK(memcmp(before, c, sizeof(c)) == 0);
+    /* saturation and out-of-range endpoints */
+    c[0] = 254;
+    const u8 sat[] = { WMI_HTC_REC_CREDITS, 4, 0, 3, 9, 2 };
+    CHECK(wifi_htc_credits(sat, sizeof(sat), c) == 3);   /* ep 9 is ignored */
+    CHECK(c[0] == 255 && c[1] == 2);                    /* ep 0 saturates */
+    CHECK(wifi_htc_credits(rep, 1, c) == 0);                    /* truncated header */
+}
+
 /* ---------------------------------------------------------------- wlan */
 static void test_wlan(void)
 {
@@ -318,9 +449,12 @@ static void test_crypto(void)
 }
 
 /* ------------------------------------------------- 4-way handshake (AP side) */
+#define EK_DESC 4
 #define EK_INFO 5
+#define EK_KEYLEN 7
 #define EK_REPLAY 9
 #define EK_NONCE 17
+#define EK_IV 49
 #define EK_RSC 65
 #define EK_MIC 81
 #define EK_DATALEN 97
@@ -504,14 +638,347 @@ static void test_rsn_view(void)
     CHECK(!memcmp(b, mixed, 10));
 }
 
+/* ------------------------------------------------------------- WPA v1 / TKIP */
+static void test_wpa1_crypto(void)
+{
+    u8 d[64];
+    md5_hash((const u8 *)"", 0, d);             /* RFC 1321 test suite */
+    CHECK(eqhex(d, "d41d8cd98f00b204e9800998ecf8427e"));
+    md5_hash((const u8 *)"abc", 3, d);
+    CHECK(eqhex(d, "900150983cd24fb0d6963f7d28e17f72"));
+    md5_hash((const u8 *)"abcdefghijklmnopqrstuvwxyz", 26, d);
+    CHECK(eqhex(d, "c3fcd3d76192e4007dfb496cca67e13b"));
+    static u8 nulkey[16];
+    memset(nulkey, 0x0B, sizeof(nulkey));        /* RFC 2202 cases 1, 2 and 4 */
+    hmac_md5(nulkey, (const u8 *)"Hi There", 8, NULL, 0, d);
+    CHECK(eqhex(d, "9294727a3638bb1c13f48ef8158bfc9d"));
+    u8 jefe[16] = { 0 };
+    memcpy(jefe, "Jefe", 4);
+    hmac_md5(jefe, (const u8 *)"what do ya want for nothing?", 28, NULL, 0, d);
+    CHECK(eqhex(d, "750c783e6ab0b503eaa86e310a5db738"));
+    /* RC4 (key "Key", "Wiki": well-known reference vectors) */
+    u8 buf[32], k32[32];
+    memset(k32, 0, sizeof(k32));
+    memcpy(k32, "Key", 3);
+    memcpy(buf, "Plaintext", 9);
+    wpa_rc4_skip(k32, 3, 0, buf, 9);
+    CHECK(eqhex(buf, "bbf316e8d940af0ad3"));
+    memset(k32, 0, sizeof(k32));
+    memcpy(k32, "Wiki", 4);
+    memcpy(buf, "pedia", 5);
+    wpa_rc4_skip(k32, 4, 0, buf, 5);
+    CHECK(eqhex(buf, "1021bf0420"));
+    /* WPA RC4-drop-256: key and plaintext 00..1f, independently computed */
+    for (u32 i = 0; i < 32; i++) { k32[i] = (u8)i; buf[i] = (u8)i; }
+    wpa_rc4_skip(k32, 32, 256, buf, 32);
+    CHECK(eqhex(buf, "9f8b7fdda9150abbd319a32da0d9117d04c2809b6067c9e254a4681f9dab200a"));
+
+    u8 pmk[32], sn[32], an[32], sta[6] = { 2, 1, 2, 3, 4, 5 }, ap[6] = { 0x10, 9, 8, 7, 6, 5 };
+    u8 p48[48], p64[64];
+    wpa2_pmk("password", (const u8 *)"IEEE", 4, pmk);
+    for (u32 i = 0; i < 32; i++) { sn[i] = (u8)i; an[i] = (u8)(0x80 + i); }
+    wpa2_ptk(pmk, sta, ap, sn, an, p48);
+    wpa1_ptk(pmk, sta, ap, sn, an, p64);
+    CHECK(!memcmp(p48, p64, 48));                /* same PRF, TKIP asks for 64 */
+    CHECK(!eqhex(p64 + 48, "00000000000000000000000000000000"));
+}
+
+static void test_wpa1_parse(void)
+{
+    u8 ie[32], bad[32];
+    rsn_info_t r;
+    wpa2_t w;
+    memset(&w, 0, sizeof(w));
+    u32 n = wpa1_ie(&w, ie);
+    CHECK(n == 26 && ie[1] == 24 && ie[6] == 1);
+    CHECK(wpa1_ie_parse(ie, n, &r) == RSN_MODE_WPA1);
+    CHECK(r.ok && r.wpa1 && r.group == 2 && r.tkip && r.psk && !r.ccmp);
+    memcpy(bad, ie, n);
+    bad[5] = 0xF2;                                /* OUI type must be 01 */
+    CHECK(wpa1_ie_parse(bad, n, &r) == RSN_MODE_OTHER);
+    memcpy(bad, ie, n);
+    bad[23] = 3;                                  /* AKM 00:50:F2:03, not PSK */
+    CHECK(wpa1_ie_parse(bad, n, &r) == RSN_MODE_OTHER);
+    CHECK(wpa1_ie_parse(ie, 10, &r) == RSN_MODE_OTHER);
+}
+
+static void wpa1_mic(const u8 kck[16], u8 *f, u32 len)
+{
+    u8 m[16];
+    u8 c[512];
+    if (len > sizeof(c)) return;
+    memcpy(c, f, len);
+    memset(c + EK_MIC, 0, 16);
+    hmac_md5(kck, c, len, NULL, 0, m);
+    memcpy(f + EK_MIC, m, 16);
+}
+
+static int wpa1_mic_ok(const u8 kck[16], const u8 *f, u32 len)
+{
+    u8 c[512], m[16];
+    if (len > sizeof(c)) return 0;
+    memcpy(c, f, len);
+    memcpy(m, c + EK_MIC, 16);
+    wpa1_mic(kck, c, len);
+    return !memcmp(m, c + EK_MIC, 16);
+}
+
+static u32 wpa1_frame(u8 *f, u32 info, u64 replay, const u8 *nonce, const u8 *iv,
+                      const u8 *kd, u32 dlen, u32 keylen)
+{
+    u32 total = EK_DATA + dlen;
+    memset(f, 0, total);
+    f[0] = 1; f[1] = 3; f[2] = (u8)((total - 4) >> 8); f[3] = (u8)(total - 4);
+    f[4] = 0xFE; f[EK_INFO] = (u8)(info >> 8); f[EK_INFO + 1] = (u8)info;
+    f[EK_KEYLEN] = (u8)(keylen >> 8); f[EK_KEYLEN + 1] = (u8)keylen;
+    for (int i = 0; i < 8; i++) f[EK_REPLAY + i] = (u8)(replay >> (56 - 8 * i));
+    if (nonce) memcpy(f + EK_NONCE, nonce, 32);
+    if (iv) memcpy(f + EK_IV, iv, 16);
+    f[EK_DATALEN] = (u8)(dlen >> 8); f[EK_DATALEN + 1] = (u8)dlen;
+    if (dlen) memcpy(f + EK_DATA, kd, dlen);
+    return total;
+}
+
+static void test_wpa1_handshake(void)
+{
+    wpa2_t w;
+    u8 pmk[32], sn[32], an[32], iv[32], ptk[64], sta[6] = { 2, 1, 2, 3, 4, 5 };
+    u8 ap[6] = { 0x10, 9, 8, 7, 6, 5 }, gtk[32], kd[128], crypt[128], out[256], f[256];
+    u8 wpaie[26];
+    u32 olen = 0;
+    wpa2_pmk("mixed-mode-pass", (const u8 *)"wpa1-net", 8, pmk);
+    for (u32 i = 0; i < 32; i++) { sn[i] = (u8)(i * 3); an[i] = (u8)(i + 1); iv[i] = (u8)(0xA0 + i); }
+    for (u32 i = 0; i < 32; i++) gtk[i] = (u8)(0x40 + i);
+    memset(&w, 0, sizeof(w));
+    wpa1_start(&w, pmk, sta, ap, sn);
+    wpa1_ptk(pmk, sta, ap, sn, an, ptk);
+    {
+        wpa2_t tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        wpa1_ie(&tmp, wpaie);
+        memcpy(w.own_ie, wpaie, sizeof(wpaie));
+        w.own_ie_len = sizeof(wpaie);
+    }
+
+    /* M1: no MIC; WPA v1 is descriptor FE, version 0, Key Length 32 */
+    u32 n = wpa1_frame(f, 0x0088, 1, an, NULL, NULL, 0, 32);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_M2_SENT);
+    CHECK(olen == EK_DATA + sizeof(wpaie) && out[EK_DESC] == 0xFE && out[EK_KEYLEN + 1] == 32);
+    CHECK(out[EK_INFO] == 0x01 && out[EK_INFO + 1] == 0x08);
+    CHECK(!memcmp(out + EK_DATA, wpaie, sizeof(wpaie)));
+    CHECK(wpa1_mic_ok(ptk, out, olen));
+
+    /* M3: WPA IE + TKIP GTK KDE, RC4(key_iv||KEK) with 256-byte drop */
+    u32 k = 0;
+    memcpy(kd, wpaie, sizeof(wpaie)); k = sizeof(wpaie);
+    const u8 kde[8] = { 0xDD, 38, 0, 0x0F, 0xAC, 0x01, 0x01, 0 };
+    memcpy(kd + k, kde, 8); k += 8;
+    memcpy(kd + k, gtk, 32); k += 32;
+    u8 ek[32];
+    memcpy(ek, iv, 16);
+    memcpy(ek + 16, ptk + 16, 16);
+    memcpy(crypt, kd, k);
+    wpa_rc4_skip(ek, 32, 256, crypt, k);
+    n = wpa1_frame(f, 0x13A8, 2, an, iv, crypt, k, 32);
+    f[EK_RSC] = 0x17;
+    wpa1_mic(ptk, f, n);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_KEYS);
+    CHECK(!memcmp(w.tk, ptk + 32, 32) && w.gtk_len == 32 && w.gtk_idx == 1);
+    CHECK(!memcmp(w.gtk, gtk, 32) && w.rsc[0] == 0x17);
+    CHECK(out[EK_DESC] == 0xFE && out[EK_KEYLEN + 1] == 0 && !memcmp(out + EK_KEYLEN, "\0\0", 2));
+    CHECK(out[EK_INFO] == 0x03 && out[EK_INFO + 1] == 0x08);   /* pairwise|MIC|secure */
+    CHECK(wpa1_mic_ok(ptk, out, olen));
+    /* a wrong MIC is rejected */
+    u8 bad[256];
+    memcpy(bad, f, n); bad[EK_MIC] ^= 1;
+    wpa2_t w2;
+    memcpy(&w2, &w, sizeof(w2));
+    w2.have_replay = 0;                           /* allow the same counter again */
+    CHECK(wpa2_rx_eapol(&w2, bad, n, out, sizeof(out), &olen) == WPA2_ERR_MIC);
+
+    /* group rekey with a new 32-byte TKIP GTK */
+    k = 0;
+    const u8 kde2[8] = { 0xDD, 38, 0, 0x0F, 0xAC, 0x01, 0x02, 0 };
+    memcpy(kd, kde2, 8); k += 8;
+    for (u32 i = 0; i < 32; i++) kd[k++] = (u8)(0x80 + i);
+    memcpy(crypt, kd, k);
+    wpa_rc4_skip(ek, 32, 256, crypt, k);
+    n = wpa1_frame(f, 0x1380, 3, an, iv, crypt, k, 0);
+    wpa1_mic(ptk, f, n);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_EV_GTK);
+    CHECK(w.gtk_idx == 2 && w.gtk[0] == 0x80);
+}
+
+/* ---- AR6K credit/defer path --------------------------------------------- */
+static void test_ar6k_credits(void)
+{
+    const u8 body[4] = { 1, 2, 3, 4 };
+    const u8 credit_rep[] = { 1, 4, 2, 1, 0, 0 };   /* trailer: ep2 +1 credit */
+    u8 eth[64], framed[64];
+    u32 waits;
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;
+    A.ep_data = 2;
+    d_head = d_count = 0;
+    eapol_pending_len = 0;
+    mock_reset();
+    host_wait_cycles = 0;
+
+    /* no report: one step's worth of waits, not the old ~4 s busy loop */
+    CHECK(credit_wait(2, 1) == SDIO_ERR_BUSY);
+    CHECK(host_wait_cycles == CREDIT_WAIT_POLLS * 3350);
+    CHECK(A.credit_busy == 1);
+
+    /* a trailer credit ends the wait at once; the packet is kept for pump() */
+    mock_mailbox_frame(2, body, sizeof(body), credit_rep, sizeof(credit_rep));
+    CHECK(credit_wait(2, 1) == 0);
+    CHECK(A.ep_credits[2] == 1 && d_count == 1);
+    CHECK(host_wait_cycles == CREDIT_WAIT_POLLS * 3350);
+    d_head = d_count = 0;
+
+    /* data frames report BUSY without waiting; EAPOL is retried, not lost */
+    A.state = NET_ST_UP;
+    A.ep_credits[2] = 0;
+    memset(eth, 0, sizeof(eth));
+    eth[12] = 0x08; eth[13] = 0x00;                 /* IPv4 Ethernet frame */
+    memset(framed, 0x5A, sizeof(framed));
+    waits = host_wait_cycles;
+    CHECK(ar6k_tx(eth, sizeof(eth)) == -1);
+    CHECK(host_wait_cycles == waits);
+    CHECK(eapol_send(framed, sizeof(framed)) == SDIO_ERR_BUSY);
+    CHECK(eapol_pending_len == sizeof(framed) && host_wait_cycles == waits);
+    A.ep_credits[2] = 2;
+    mock_reset();
+    eapol_pending_step();
+    CHECK(eapol_pending_len == 0 && mock_write_calls == 1);
+    CHECK(host_wait_cycles == waits);
+}
+
+static void test_ar6k_write_credits(void)
+{
+    const u8 body[8] = { 0 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_credits[2] = 1;
+    A.ep_cred_per_msg[2] = 2;           /* the send sets NEED_CREDIT_UPDATE */
+    A.credit_used = 10;
+    mock_reset();
+
+    /* SDIO write fails: the target never sees the message, credits come back */
+    mock_write_err = SDIO_ERR_CARD;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == SDIO_ERR_CARD);
+    CHECK(A.ep_credits[2] == 1 && A.credit_used == 10 && A.credit_refund == 1);
+    CHECK(A.credit_low == 0);
+    /* a successful send still consumes exactly one credit */
+    mock_write_err = 0;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == 0);
+    CHECK(A.ep_credits[2] == 0 && A.credit_used == 11);
+    /* same refund in the CMD52 byte-mode fallback */
+    A.ep_credits[2] = 1;
+    A.byte_mode = 1;
+    mock_w8_err = SDIO_ERR_CARD;
+    CHECK(mbox_send(2, 0, 0, body, sizeof(body), 0) == SDIO_ERR_CARD);
+    CHECK(A.ep_credits[2] == 1 && A.credit_used == 11 && A.credit_refund == 2);
+    CHECK(mock_w8_calls > 0);
+}
+
+static void test_ar6k_defer_ring(void)
+{
+    const u8 body[4] = { 9, 8, 7, 6 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;                       /* 0xFE below is an unknown packet type */
+    A.ep_data = 2;
+    d_head = d_count = 0;
+    mock_reset();
+    host_wait_cycles = 0;
+
+    for (u32 i = 0; i < DEFER_MAX; i++)
+        CHECK(defer_msg(0xFE, body, sizeof(body)) == 0);
+    CHECK(d_count == DEFER_MAX && A.defer_drop == 0);
+    CHECK(defer_msg(0xFE, body, sizeof(body)) == SDIO_ERR_BUSY);
+    CHECK(d_count == DEFER_MAX && A.defer_drop == 1);
+
+    /* credit_wait stops draining on overflow: the extra frames stay in the
+       hardware mailbox instead of being silently dropped */
+    d_head = d_count = 0;
+    A.defer_drop = 0;
+    for (u32 i = 0; i < DEFER_MAX + 5; i++)
+        mock_mailbox_frame(0xFE, body, sizeof(body), NULL, 0);
+    CHECK(credit_wait(2, 1) == SDIO_ERR_BUSY);
+    CHECK(d_count == DEFER_MAX && A.defer_full == 1 && A.defer_drop == 0);
+    CHECK(mock_rx_frames == 5 && host_wait_cycles == 0);
+
+    /* pump() runs every deferred packet once, including the last one */
+    u32 before = A.defer_drop;
+    pump();
+    CHECK(d_count == 0 && A.defer_drop == before);
+}
+
+static void test_wpa2_long_frame(void)
+{
+    wpa2_t w;
+    u8 f[1024], out[1024], keydata[512];
+    u32 olen = 123;
+    const u8 pmk[32] = { 1 };
+    memset(keydata, 0, sizeof(keydata));
+
+    /* WPA v1 MICs use a 512-byte copy; anything longer must be rejected
+       before the caller compares mic[] with the frame. */
+    memset(&w, 0, sizeof(w));
+    w.wpa1 = 1;
+    w.have_ptk = 1;
+    memcpy(w.kck, pmk, 16);
+    u32 n = wpa1_frame(f, 0x0188, 1, NULL, NULL, keydata, 450, 0);  /* pairwise|MIC|ACK */
+    CHECK(n == EK_DATA + 450);
+    CHECK(wpa2_rx_eapol(&w, f, n, out, sizeof(out), &olen) == WPA2_ERR_LONG);
+    CHECK(olen == 0 && !w.have_replay && !w.done);
+}
+
+static void test_ar6k_wmi_queue(void)
+{
+    const u8 p[4] = { 1, 2, 3, 4 };
+
+    memset(&A, 0, sizeof(A));
+    A.cred_sz = 1664;
+    A.ep_wmi = 1;
+    A.ep_credits[1] = 0;
+    wmi_queue_clear();
+    mock_reset();
+
+    /* without credits WMI control is queued, not dropped, and stays ordered */
+    CHECK(wmi_send(0x22, p, sizeof(p)) == 0);
+    CHECK(wmi_send(0x16, p, sizeof(p)) == 0);
+    CHECK(wq_count == 2 && A.wmi_busy == 2 && mock_write_calls == 0);
+    A.ep_credits[1] = 1;
+    CHECK(wmi_queue_flush() == SDIO_ERR_BUSY);
+    CHECK(wq_count == 1 && mock_write_calls == 1 && mock_tx[6] == 0x22);
+    A.ep_credits[1] = 1;
+    CHECK(wmi_queue_flush() == 0);
+    CHECK(wq_count == 0 && mock_write_calls == 2 && mock_tx[6] == 0x16);
+}
+
 int main(void)
 {
     test_ring();
     test_wlan();
     test_frames();
+    test_htc_credits();
+    test_ar6k_credits();
+    test_ar6k_write_credits();
+    test_ar6k_wmi_queue();
+    test_ar6k_defer_ring();
     test_cfg();
     test_crypto();
     test_handshake();
+    test_wpa1_crypto();
+    test_wpa1_parse();
+    test_wpa1_handshake();
+    test_wpa2_long_frame();
     test_rsn_parse();
     test_rsn_view();
     printf("%s: %d checks, %d failed\n", fails ? "FAIL" : "ok", checks, fails);

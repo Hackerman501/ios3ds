@@ -29,6 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "kernel"))
 from fwlib.macho import MachO  # noqa: E402
+import versions  # noqa: E402
 
 PHYS_BASE = 0x20000000
 VIRT_BASE = 0x80000000
@@ -45,7 +46,10 @@ def align(x, a):
 
 
 def flat_kernel(mo, blob):
-    segs = [s for s in mo.segments if s["vmsize"] > 0]
+    # __PAGEZERO (iOS 2.x caches) has a vmsize but no file contents: including
+    # it would allocate a 3 GiB flat image with a 0x0 base. 4.2.1 has no such
+    # segment, so its flat image and hashes stay exactly as before.
+    segs = [s for s in mo.segments if s["vmsize"] > 0 and s["filesize"] > 0]
     lo = min(s["vmaddr"] for s in segs)
     hi = max(s["vmaddr"] + s["vmsize"] for s in segs)
     img = bytearray(hi - lo)
@@ -56,8 +60,8 @@ def flat_kernel(mo, blob):
     return lo, img
 
 
-def layout(kernel_va, kernel_len, dt_len):
-    kernel_pa = kernel_va - VIRT_BASE + PHYS_BASE
+def layout(kernel_va, kernel_len, dt_len, virt_base=VIRT_BASE):
+    kernel_pa = kernel_va - virt_base + PHYS_BASE
     devtree_pa = align(kernel_pa + kernel_len, 0x1000)
     bootargs_pa = align(devtree_pa + dt_len, 0x1000)
     shim_pa = SHIM_PA
@@ -69,9 +73,16 @@ def layout(kernel_va, kernel_len, dt_len):
             "shim_pa": shim_pa, "ring_pa": ring_pa, "ring_size": RING_SIZE, "top_pa": top_pa}
 
 
-def build_shim(outdir):
-    """Build kernel/shim (entry.S, blk.c, the input and GPU services) linked at its fixed kernel VA."""
+def build_shim(outdir, staging=None, version=versions.DEFAULT, virt_base=None):
+    """Build kernel/shim (entry.S, blk.c, the input and GPU services) linked at its kernel VA.
+
+    Darwin 9/10 kernelcaches use virt_base 0xC0000000 instead of 0x80000000,
+    so the shim must be linked at the matching VA (same physical address).
+    """
+    if virt_base is None:
+        virt_base = versions.virt_base(version)
     import subprocess
+    import kpi
     import tempfile
     cross = subprocess.run([os.path.join(ROOT, "scripts", "setup-toolchain.sh")],
                            capture_output=True, text=True).stdout
@@ -85,7 +96,13 @@ def build_shim(outdir):
              # iOS' ABI lets callees clobber r9; keep our C code off it so calls into the kernel are safe
              "-ffixed-r9",
              "-I" + os.path.join(ROOT, "boot", "common"),
+             "-I" + sd,
              "-I" + os.path.join(ROOT, "tools", "ios3ds-pica", "include")]
+    if virt_base != VIRT_BASE:
+        shim_va = virt_base + (SHIM_PA - PHYS_BASE)
+        flags += ["-DIOS3DS_SHIM_VA=0x%08x" % shim_va,
+                  "-DIOS3DS_GPU_PART_VA=0x%08x" % (virt_base + (GPU_BIN_PA - PHYS_BASE)),
+                  "-DIOS3DS_GM_BLOB_VA=0x%08x" % (virt_base + (GPU_BIN_PA + GPU_PART_SIZE - PHYS_BASE))]
     srcs = [os.path.join(sd, "entry.S"), os.path.join(sd, "blk.c"), os.path.join(sd, "gpu_glue.c"),
             os.path.join(sd, "quiet.c"),        # IOKit quiet at boot (docs/boot-perf.md)
             os.path.join(ROOT, "tools", "ios3ds-input", "shim", "input.c"),
@@ -94,27 +111,54 @@ def build_shim(outdir):
     srcs += sorted(__import__("glob").glob(os.path.join(sd, "audio*.[cS]")))     # docs/audio.md
     # the GPU part: link.ld places every object named *pica*.o at GPU_PART_VA (gpu.bin)
     srcs += [os.path.join(sd, "pica.c"),
+             os.path.join(sd, "pica_stereo.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_drv.c"),
              os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_mirror.c"),
-             os.path.join(ROOT, "tools", "ios3ds-pica", "src", "pica_diag.c"),
              os.path.join(sd, "cam.c")]                     # camera data side (docs/camera.md)
+    # pica_diag.c (the staged [gpu-diag] bring-up diagnostics, docs/pica200.md
+    # section 12) is NOT linked into the shim any more: the GPU part was at
+    # 32624/32768 bytes and the mirror/perf work needs room. The diagnostics
+    # already served their purpose (runs 12/13 pinned the NPOT-texture and
+    # GX-clock facts); the source and the host tests against picasim stay, so
+    # the staged tests remain runnable on the build host. gpu_diag=1 in
+    # boot.cfg is now a no-op (no [gpu-diag] lines).
     with tempfile.TemporaryDirectory() as td:
+        # KPI call addresses are version-specific; generate them from the
+        # staged kernelcache. For 4.2.1 the values equal kpi.h's defaults.
+        kpi.write_header(staging or os.path.join(ROOT, "build", "staging"), td)
+        flags += ["-I" + td]
+        link = os.path.join(sd, "link.ld")
+        if virt_base != VIRT_BASE:
+            # The script's four absolute addresses (and its two size asserts)
+            # move with the kernel's virtual base; the gap from PHYS_BASE is
+            # the same, so the shim still lands at SHIM_PA / GPU_BIN_PA.
+            text = open(link).read()
+            for old, new in ((0x80840000, virt_base + SHIM_PA - PHYS_BASE),
+                             (0x80845F00, virt_base + SHIM_PA - PHYS_BASE + 0x5F00),
+                             (0x808B0000, virt_base + GPU_BIN_PA - PHYS_BASE),
+                             (0x808B8000, virt_base + GPU_BIN_PA - PHYS_BASE + GPU_PART_SIZE)):
+                text = text.replace("%08X" % old, "%08X" % new).replace("%08x" % old, "%08x" % new)
+            link = os.path.join(td, "link.ld")
+            with open(link, "w") as f:
+                f.write(text)
         elf = os.path.join(td, "shim.elf")
         objs = []
         for s in srcs:
             o = os.path.join(td, os.path.splitext(os.path.basename(s))[0] + ".o")
             # main shim part: -Os (it must end below +0x5F00; CI's newer gcc
             # overflowed it at -O2). GPU part: -O2 only for the hot paths
-            # (pica.c's request/page-table path and pica_mirror.c's IRQ frame);
-            # the driver core, camera data side and PICA diagnostics at -Os.
+            # (pica_mirror.c's IRQ frame and the three functions marked PICA_HOT
+            # in pica.c); the driver core, the camera data side and the PICA
+            # diagnostics at -Os. The camera's frame-buffer allocator shares
+            # this part, so keep ~1 KiB of room for CI's larger codegen.
             # The GPU part must end below 0x808B8000, and CI's devkitARM emits
             # ~600 bytes more than the Arm GNU toolchain here. -Os on the
             # cold-ish objects leaves ~1.6 KiB of headroom with this gcc.
             b = os.path.basename(s)
-            opt = ["-O2"] if b in ("pica.c", "pica_mirror.c") else []
+            opt = ["-O2"] if b == "pica_mirror.c" else []
             subprocess.run([gcc] + flags + opt + ["-c", s, "-o", o], check=True)
             objs.append(o)
-        subprocess.run([gcc] + flags + ["-T", os.path.join(sd, "link.ld")] + objs +
+        subprocess.run([gcc] + flags + ["-T", link] + objs +
                        ["-lgcc", "-o", elf, "-Wl,--no-warn-rwx-segments"], check=True)
         out = os.path.join(outdir, "shim.bin")
         subprocess.run([objcopy, "-O", "binary", "-R", ".gpu", elf, out], check=True)
@@ -175,13 +219,16 @@ def use_prebuilt_shim(outdir, prebuilt):
 
 def build(staging, outdir, cmdline=None, patches=True, verbose=True,
           prebuilt=None, hfsplus=None, rootfs_add=None, cydia=True, cydia_cache=None,
-          tlsfix=True, sandbox_open=False, music=None, test_song=True):
+          tlsfix=True, sandbox_open=False, music=None, test_song=True,
+          version=versions.DEFAULT):
     """prebuilt: directory with shim.bin + gpu.bin (no cross compiler needed);
     hfsplus / rootfs_add / cydia / cydia_cache / tlsfix / music / test_song: passed on to mkrootfs.build;
-    sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md)."""
+    sandbox_open: apply the Seatbelt sb_evaluate file-read relaxation (opt-in, docs/cydia.md);
+    version: iOS version from scripts/versions.py (default 4.2.1 = original behaviour)."""
     import dtgen
     import patcher
 
+    virt_base = versions.virt_base(version)
     blob = open(os.path.join(staging, "kernelcache.macho"), "rb").read()
     mo = MachO(blob)
     kva, kimg = flat_kernel(mo, blob)
@@ -193,33 +240,44 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         import mkrootfs
         mkrootfs.build(staging, os.path.join(outdir, "rootfs.hfs"), verbose=verbose,
                        hfsplus=hfsplus, rootfs_add=rootfs_add, cydia=cydia,
-                       cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song)
+                       cydia_cache=cydia_cache, tlsfix=tlsfix, music=music, test_song=test_song,
+                       recipe_path=versions.recipe_path(version, os.path.dirname(staging.rstrip("/"))))
         ramdisk_len = os.path.getsize(os.path.join(outdir, "rootfs.hfs")) & ~0xFFF
-    shim, shim_syms = use_prebuilt_shim(outdir, prebuilt) if prebuilt else build_shim(outdir)
+    shim, shim_syms = (use_prebuilt_shim(outdir, prebuilt) if prebuilt
+                       else build_shim(outdir, staging, version, virt_base))
     # the DT size doesn't depend on the layout values, so two passes converge
-    lay0 = layout(kva, len(kimg), len(template))
+    lenient_dt = version != versions.DEFAULT
+    dt_extra_delete = versions.get(version).get("dt_delete", ())
+    lay0 = layout(kva, len(kimg), len(template), virt_base)
     lay0["ramdisk_len"] = ramdisk_len
     dt = dtgen.generate(template, lay0,
-                        PHYS_BASE, VIRT_BASE, MEM_SIZE, len(kimg))
-    lay = layout(kva, len(kimg), len(dt))
+                        PHYS_BASE, virt_base, MEM_SIZE, len(kimg), lenient=lenient_dt, extra_delete=dt_extra_delete)
+    lay = layout(kva, len(kimg), len(dt), virt_base)
     lay["ramdisk_len"] = ramdisk_len
-    dt = dtgen.generate(template, lay, PHYS_BASE, VIRT_BASE, MEM_SIZE, len(kimg))
-    chk = layout(kva, len(kimg), len(dt))
+    dt = dtgen.generate(template, lay, PHYS_BASE, virt_base, MEM_SIZE, len(kimg),
+                        lenient=lenient_dt, extra_delete=dt_extra_delete)
+    chk = layout(kva, len(kimg), len(dt), virt_base)
     chk["ramdisk_len"] = ramdisk_len
     assert chk == lay
     applied = []
     if patches:
-        syms = {"shim": lay["shim_pa"] - PHYS_BASE + VIRT_BASE}
+        syms = {"shim": lay["shim_pa"] - PHYS_BASE + virt_base}
         syms.update(shim_syms)      # shim_sb_evaluate & co for branch-to-symbol patches
         if os.environ.get("IOS3DS_SANDBOX_OPEN", "").lower() in ("1", "yes", "on", "true"):
             sandbox_open = True
         disabled = () if sandbox_open else ("sandbox-sb-evaluate",)
-        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled)
+        disabled += tuple(x for x in os.environ.get("IOS3DS_DISABLE_PATCHES", "").split(",") if x)
+        patch_files = versions.patch_files(version)
+        if os.environ.get("IOS3DS_PATCH_FILES"):
+            # bring-up only: an alternative recipe (e.g. a subset under build/)
+            patch_files = os.environ["IOS3DS_PATCH_FILES"].split(",")
+        applied = patcher.apply_all(kimg, kva, os.path.join(ROOT, "kernel", "patches.json"), syms, disabled,
+                                    files=patch_files)
         if verbose and sandbox_open:
             print("[mkboot] sandbox-sb-evaluate applied (SANDBOX=1): TLSFix reaches sandboxed apps; "
                   "Safari OOMs on 128 MB (docs/cydia.md)")
 
-    entry_pa = mo.entry - VIRT_BASE + PHYS_BASE
+    entry_pa = mo.entry - virt_base + PHYS_BASE
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "kernel.bin"), "wb") as f:
         f.write(kimg)
@@ -252,11 +310,11 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "ring_size=0x%x" % lay["ring_size"],
         "top_pa=0x%08x" % lay["top_pa"],
         "phys_base=0x%08x" % PHYS_BASE,
-        "virt_base=0x%08x" % VIRT_BASE,
+        "virt_base=0x%08x" % virt_base,
         "mem_size=0x%08x" % MEM_SIZE,
         "# boot_args header: 4.2.1's pe_identify_machine panics 'Epoch Mismatch' unless version=5",
         "ba_revision=1",
-        "ba_version=5",
+        "ba_version=%d" % versions.ba_version(version),
         "# Video: framebuffer handed to XNU (0 = none)",
         "video_pa=0x0",
         "video_display=0",
@@ -267,18 +325,19 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "# ARM11 instruction probes: a bring-up check of the instructions XNU uses (0.25 s;",
         "# diag=1 runs them too)",
         "probes=0",
-        "# set jump=0 to stop before starting XNU; hold B during the countdown to stay in the monitor",
+        "# set jump=0 to stop before starting XNU; hold B during the countdown to stay in the monitor,",
+        "# or press A to skip the wait and start XNU at once. boot_delay=0 skips it by default",
+        "# (the 1 s grace period is only there to make B available; old cards may use countdown_ms)",
         "jump=1",
-        "countdown_ms=1000",
+        "boot_delay=1000",
         "# iOS screen mode, X cycles at run time: 0 = top (log on bottom), 1 = both (bottom = touch map), 2 = bottom only",
         "screen=1",
-        "# PICA200 GPU (docs/pica200.md): gpu=0 keeps the kernel away from the GPU entirely",
-        "# (GL falls back to the CPU rasterizer, the ARM9 copies the screen); gpu_mirror=0",
-        "# keeps only the screen copy on the ARM9. The mirror self-tests itself and falls back",
-        "# to the ARM9 copy on any mismatch or timeout. gpu_vbl_div: a GPU frame at most every",
-        "# Nth VBlank (2 = 30 fps). gpu_spin_us: IRQ-time wait for the GPU (0 = never wait)",
+        "# Old 3DS XL compatibility profile: keep PICA200 for GL, but copy the display on ARM9",
+        "# and use the software CoreAnimation compositor. This avoids the PICA display-mirror",
+        "# and CA fence paths implicated by the hardware logs. Re-enable with gpu_mirror=1/ca_gpu=1.",
+        "# gpu=0 is the stronger fallback: no kernel GPU use; GL also uses the CPU rasterizer.",
         "gpu=1",
-        "gpu_mirror=1",
+        "gpu_mirror=0",
         "gpu_vbl_div=2",
         "gpu_spin_us=0",
         "# gpu_clk=1: set the GX clock register to 0x70100 (GSP/libn3ds value) if Luma left it 0;",
@@ -287,7 +346,10 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "gpu_diag=1",
         "# ca_gpu=1: SpringBoard's CoreAnimation composites on the PICA200 when the GPU self-checks pass",
         "# (else its software compositor, as with ca_gpu=0; docs/gpu.md section 7)",
-        "ca_gpu=1",
+        "ca_gpu=0",
+        "# SELECT+START deliberately cannot panic the kernel in this profile; set to 1 for debugging,",
+        "# then hold both buttons continuously for one second. It is disabled by default.",
+        "panic_combo=0",
         "# system controller (docs/mcu.md): RTC, battery, HOME/POWER, sliders, accelerometer.",
         "# mcu=0 never touches it (clock at 1970, no battery). rtc_offset: seconds added to the",
         "# 3DS RTC to get UTC, e.g. -3600 if the RTC runs on CET (UTC+1). mcu_acc=0 hides the",
@@ -325,12 +387,21 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "n3ds_l2=0",
         "n3ds_hid=1",
         "n3ds_ram=1",
+        "# auto_brightness=0: never use the New model's ambient light measurement (the inner",
+        "# camera's AE luminance), so iOS keeps the brightness from its slider (docs/mcu.md section 12).",
+        "# On Old models this switch has no effect at all.",
+        "auto_brightness=1",
         "# diag=1: diagnostics for bring-up (docs/boot-perf.md): adds the boot-arg ios3ds_diag=1,",
         "# which starts the test launchd jobs (ios3ds-gltest, the [smp] sampler)",
         "diag=0",
         "# gps=LAT,LON[,ACC]: fake GPS location reported to apps (empty = off). Example:",
         "# gps=52.5200,13.4050",
         "gps=",
+        "# stereo3d=1: experimental stereoscopic 3D home screen (docs/stereo3d.md).",
+        "# The GPU display mirror stays on: flat frames (slider down, apps) cost the",
+        "# same as stereo3d=0, and with the slider up the PICA200 builds both eyes.",
+        "# The ARM9 two-eye copy is the fallback if the mirror stops. Needs a console test.",
+        "stereo3d=0",
         "# ioprof=1: an [io] md0 line per second (2: plus a [blk] line per request); log_ts=1:",
         "# [s.ms] timestamps on the forwarded console lines (docs/boot-perf.md)",
         "ioprof=0",
@@ -339,6 +410,8 @@ def build(staging, outdir, cmdline=None, patches=True, verbose=True,
         "cmdline=%s" % (cmdline if cmdline is not None else DEFAULT_CMDLINE),
         "",
     ]
+    if version != versions.DEFAULT:
+        cfg.insert(1, "# iOS %s (%s)" % (version, versions.get(version)["build"]))
     with open(os.path.join(outdir, "boot.cfg"), "w", newline="\r\n") as f:
         f.write("\n".join(cfg))
     if verbose:
@@ -357,15 +430,16 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "sd", "ios3ds"))
     ap.add_argument("--cmdline", default=None)
     ap.add_argument("--no-patches", action="store_true")
+    ap.add_argument("--ios", default=versions.DEFAULT, help="iOS version (default 4.2.1)")
     ap.add_argument("--shim-only", metavar="DIR",
                     help="only compile shim.bin + gpu.bin into DIR (unconfigured; for releases)")
     a = ap.parse_args()
     if a.shim_only:
         os.makedirs(a.shim_only, exist_ok=True)
-        build_shim(a.shim_only)
+        build_shim(a.shim_only, a.staging, a.ios)
         print("[mkboot] shim.bin + gpu.bin -> %s" % a.shim_only)
         return
-    build(a.staging, a.out, a.cmdline, patches=not a.no_patches)
+    build(a.staging, a.out, a.cmdline, patches=not a.no_patches, version=a.ios)
 
 
 if __name__ == "__main__":

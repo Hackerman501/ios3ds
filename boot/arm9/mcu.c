@@ -22,11 +22,14 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "mcu.h"
+#include "blksrv.h"
 #include "i2c.h"
 #include "log.h"
 #include "util.h"
 #include "mcu_proto.h"
 #include "input_proto.h"
+#include "camera.h"
+#include "stereo.h"
 
 #define MCU_BUS     1           /* I2C2, 0x10144000 */
 #define MCU_DEV     0x4A
@@ -38,6 +41,8 @@
 #define R_IRQ_MASK  0x18        /* 4 bytes, 1 = masked */
 #define R_PWR       0x20        /* bit 0 power off, bit 2 reboot */
 #define R_LCD_PWR   0x22        /* bits 2/3 bottom backlight off/on, 4/5 top off/on (libn3ds MCU_LCD_PWR_*) */
+#define R_WIFI_LED  0x2A        /* Wi-Fi LED state, 4 bits: non-zero = on (3dbrew "I2C Registers") */
+#define R_3D_LED    0x2C        /* 3D LED state, 4 bits (libn3ds MCU_set3dLedState) */
 #define R_LED       0x2D        /* notification LED pattern, 100-byte stream */
 #define R_RTC       0x30        /* 7 bytes BCD */
 #define R_ACC_CFG   0x40        /* bit 0 accelerometer on */
@@ -57,7 +62,10 @@ static u32 hz;                  /* ARM9 timer ticks per second */
 static u32 fails_in_row;
 
 /* timers (ARM9 ticks) */
-static u32 t_irq, t_slider, t_batt, t_rtc, t_acc;
+static u32 t_irq, t_slider, t_batt, t_rtc, t_acc, t_als;
+static bool als_want;                 /* New models, boot.cfg auto_brightness */
+static bool als_paused;               /* a camera client has the cameras: hold the last luma */
+static uint8_t als_last;              /* last luminance published to the mailbox */
 
 /* button state presented to the input mailbox */
 static bool home_down, home_tap;
@@ -117,10 +125,19 @@ static bool read_batt(void)
 static bool read_sliders(void)
 {
     u8 b[2];
+    u32 was = box ? box->slider3d : 0;
+    bool have = box && (box->valid & MCUV_SLIDERS);
     if (!rd(R_SLIDER3D, b, 2)) return false;
     box->slider3d = b[0];
     box->vol_raw = b[1] & 0x3F;
     box->valid |= MCUV_SLIDERS;
+    /* run3: the user moved the 3D slider but the log had no line for it.
+       Every change is now visible, with the raw MCU value and the threshold
+       the stereo path uses (boot/common/stereo.h). */
+    if (have && was != box->slider3d)
+        logp("[stereo] MCU 3D slider %u -> %u (raw reg 0x08, 3D %s at >= %u)\n",
+             was, box->slider3d, box->slider3d >= STEREO_MIN_SLIDER ? "ON" : "OFF",
+             (unsigned)STEREO_MIN_SLIDER);
     return true;
 }
 
@@ -173,6 +190,11 @@ void mcu_init(u32 shim_pa, bool enable, int32_t rtc_offset, u32 ticks_per_s)
          (box->flags & MCUF_SHELL_OPEN) ? "open" : "closed", mask_ok ? "set" : "NOT set (no HOME/POWER events)");
 }
 
+u32 mcu_slider3d(void)
+{
+    return box && (box->valid & MCUV_SLIDERS) ? box->slider3d : 0;
+}
+
 /* ---- notification LED (MCU reg 0x2D) -------------------------------------
    Pattern (3dbrew "MCU Services" / libn3ds McuInfoLedPattern): delay, smoothing,
    loop delay, unknown, then 32 steps of red, green, blue. Unverified on
@@ -181,6 +203,35 @@ static bool led_enabled;
 static int led_shown = -1;              /* 0 off, 1 low-battery blink */
 
 void mcu_set_led(bool on) { led_enabled = on; }
+
+/* ---- Wi-Fi link LED (MCU reg 0x2A) ----------------------------------------
+   The state is cached: wifi_poll() updates it every monitor pass, but only a
+   change costs one I2C byte. Disabled by boot.cfg wifi_led=0. */
+static bool wifi_led_enabled = true;
+static int wifi_led_shown = -1;
+
+void mcu_set_wifi_led(bool on)
+{
+    if (!wifi_led_enabled || !box || box->state != MCU_ST_OK) return;
+    int want = on ? 1 : 0;
+    if (want == wifi_led_shown) return;
+    if (!wr(R_WIFI_LED, (u8)want)) return;
+    wifi_led_shown = want;
+    logp("[mcu] Wi-Fi LED %s (reg 0x2A = %u)\n", want ? "on" : "off", want);
+}
+
+/* The parallax barrier is a GPU/LCD register, so the MCU's own 3D LED stays
+   dark when we switch modes ourselves: drive it explicitly with the barrier.
+   3dbrew "I2C Registers" reg 0x2C, 1 = on (libn3ds MCU_set3dLedState). */
+static int stereo_led_shown = -1;
+
+void mcu_set_3d_led(bool on)
+{
+    if (!box || box->state != MCU_ST_OK || stereo_led_shown == (int)on) return;
+    if (!wr(R_3D_LED, (u8)(on ? 1 : 0))) return;
+    stereo_led_shown = (int)on;
+    logp("[stereo] 3D LED %s (MCU reg 0x2C = %u)\n", on ? "on" : "off", on ? 1u : 0u);
+}
 
 static void led_update(void)
 {
@@ -203,8 +254,68 @@ static void led_update(void)
     }
 }
 
+void mcu_config_wifi_led(bool on) { wifi_led_enabled = on; }
 void mcu_set_powersave(bool on) { if (box) box->ps_on = on; }
 void mcu_screen_off(bool off) { if (box) box->screen_off = off; }
+
+/* Auto-brightness: only wired up after the model check found a New 3DS.
+   The sensor is the inner camera's AE luminance (docs/mcu.md section 13). */
+void mcu_set_als(bool on)
+{
+    if (!box) return;
+    als_want = on && box->state == MCU_ST_OK;
+    als_paused = false;
+    camera_als_enable(als_want);
+    if (on && !als_want) return;
+    box->als_state = als_want ? 1 : 0;
+    if (!als_want) {
+        box->valid &= ~(uint32_t)MCUV_ALS;
+        box->als_luma = 0;
+        als_last = 0;
+    }
+    logp("[mcu] auto-brightness %s (New model; inner camera AE luminance)\n",
+         als_want ? "on" : "off");
+}
+
+static void als_sample(u32 now)
+{
+    if (!als_want || box->state != MCU_ST_OK) return;
+    if (t_als && (int)(now - t_als) < 0) return;
+    t_als = now + ms_ticks(500);
+    /* Camera.app (or any other camera client) owns the sensors while it
+       streams. Leave the last luma in the mailbox and tell mcud to hold its
+       factor; no I2C reads and no camera set-up happen until the stop. */
+    if (camera_als_busy()) {
+        if (!als_paused) {
+            als_paused = true;
+            box->als_state = 2;
+            logp("[mcu] ambient light paused (camera in use); holding luma %u/255\n",
+                 (unsigned)box->als_luma);
+            bump();
+        }
+        return;
+    }
+    if (als_paused) {
+        als_paused = false;
+        box->als_state = 1;
+        logp("[mcu] ambient light resumed after camera use\n");
+        bump();
+    }
+    u8 luma;
+    if (!camera_als_sample(&luma)) return;
+    int first = !(box->valid & MCUV_ALS);
+    int delta = (int)luma - (int)als_last;
+    if (delta < 0) delta = -delta;
+    box->als_luma = luma;
+    box->als_state = 1;
+    box->valid |= MCUV_ALS;
+    if (first || delta >= 8) {
+        logp("[mcu] ambient light: inner camera AE luma %u/255 (New model auto-brightness)\n",
+             (unsigned)luma);
+    }
+    als_last = luma;
+    bump();
+}
 
 void mcu_config_acc(bool on)
 {
@@ -293,6 +404,7 @@ static void power_off(u32 how)
         box->batt_percent = 100;
         led_update();
     }
+    mcu_set_wifi_led(false);        /* never leave the Wi-Fi LED lit on a switched-off console */
     log_warn("[mcu] iOS %s: log synced, powering off through the MCU\n",
              how == MCU_PWR_REBOOT ? "restarted" : "shut down");
     log_flush();
@@ -328,6 +440,11 @@ void mcu_poll(u32 now)
                  (int)total, w == n ? "ok" : "write failed");
         }
         if ((p == MCU_PWR_OFF || p == MCU_PWR_REBOOT) && !off_req) {
+            /* PEHaltRestart runs after iOS unmounted its file systems. XNU
+               normally sets the HFS+ clean flag itself; do it here too so a
+               clean shutdown always leaves the image marked clean, even if
+               Apple's unmount path skipped the volume header. */
+            blksrv_mark_clean();
             off_req = p;        /* let the monitor loop drain XNU's last lines first */
             off_at = now + ms_ticks(300);
         }
@@ -379,4 +496,5 @@ void mcu_poll(u32 now)
             bump();
         }
     }
+    als_sample(now);
 }

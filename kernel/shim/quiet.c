@@ -19,12 +19,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 
 #define KPI(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
 /* IORegistryEntry::fromPath(path, plane, residualPath, residualLength, fromEntry) */
-#define reg_from_path   KPI(0x801aae60, void *, const char *, const void *, char *, int *, void *)
+#define reg_from_path   KPI(IOS3DS_KPI_IOREGISTRYENTRY_FROMPATH, void *, const char *, const void *, char *, int *, void *)
 /* IOService::adjustBusy(SInt32) */
-#define svc_adjust_busy KPI(0x801aef24, void, void *, long)
+#define svc_adjust_busy KPI(IOS3DS_KPI_IOSERVICE_ADJUSTBUSY, void, void *, long)
 /* AppleARMPlatform: look up the platform function named by a device-tree
    property of the provider (waitForService on its phandle, no timeout) */
 #define arm_function_lookup KPI(0x802e4814, void *, void *, const char *)

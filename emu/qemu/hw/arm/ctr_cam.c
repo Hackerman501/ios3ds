@@ -27,6 +27,7 @@
 #include "qemu/timer.h"
 #include "qemu/log.h"
 #include "system/memory.h"
+#include <math.h>
 #include "ctr_cam.h"
 #include "cam_proto.h"
 #include "cam_pattern.h"
@@ -70,10 +71,39 @@ static struct {
     bool clock_on;
     int cur_bus_dev[3];         /* per I2C bus: addressed sensor, -1 none */
     uint64_t frames;
+    uint32_t ambient_lux;       /* qom ambient-light: inner camera's scene luminance */
     bool log;
 } K;
 
 #define LOG(...) do { if (K.log) qemu_log(__VA_ARGS__); } while (0)
+
+/* Inverse of als_luma_to_lux() in boot/common/als_curve.h: the anchor points
+   are 0,1,3,10,30,100,300,1000,3000 lux at luma 0,32,...,255. */
+static uint8_t lux_to_luma(uint32_t lux)
+{
+    static const float anchor[9] = { 0, 1, 3, 10, 30, 100, 300, 1000, 3000 };
+    if (lux == 0) return 0;
+    if (lux >= 3000) return 255;
+    for (int i = 0; i < 8; i++) {
+        if ((float)lux <= anchor[i + 1]) {
+            float f;
+            if (anchor[i] == 0) f = (float)lux / anchor[i + 1];
+            else f = logf((float)lux / anchor[i]) / logf(anchor[i + 1] / anchor[i]);
+            if (f < 0) f = 0;
+            if (f > 1) f = 1;
+            unsigned l = (unsigned)(i * 32 + (unsigned)(f * 32.0f + 0.5f));
+            return (uint8_t)(l > 255 ? 255 : l);
+        }
+    }
+    return 255;
+}
+
+void ctr_cam_set_ambient_lux(uint32_t lux)
+{
+    K.ambient_lux = lux;
+    LOG("[cam] ambient light set to %u lux (inner camera AE luma %u/255)\n",
+        (unsigned)lux, (unsigned)lux_to_luma(lux));
+}
 
 static uint16_t *var_slot(Sensor *s, uint16_t addr)
 {
@@ -110,6 +140,11 @@ static uint16_t sensor_read(Sensor *s, uint16_t idx)
         break;
     case 0x0990: {
         uint16_t a = s->reg[0x098C / 2];
+        /* The inner camera's AE luminance is what the ARM9 reads for
+           auto-brightness on New models (docs/mcu.md section 13). Serving it
+           here keeps it live even across the sensor's soft reset. */
+        if (s == &K.s[0] && (a & 0x7FFF) == 0x2218)
+            return lux_to_luma(K.ambient_lux);
         v = (a & 0x7FFF) == (0xA103 & 0x7FFF) ? 0 : *var_slot(s, a);   /* SEQ_CMD: done */
         break;
     }
@@ -335,6 +370,7 @@ void ctr_cam_init(MemoryRegion *shared, hwaddr regs_off, MemoryRegion *sys)
         { 1, CAM_I2C_OUTER_L, 1, 0 },   /* outer left: 1 block */
     };
     K.log = getenv("IOS3DS_CAM_LOG") && *getenv("IOS3DS_CAM_LOG") == '1';
+    if (!K.ambient_lux) K.ambient_lux = 100;   /* a normally lit room */
     for (int i = 0; i < NSENS; i++) {
         K.s[i].bus = map[i].bus;
         K.s[i].addr = map[i].addr;

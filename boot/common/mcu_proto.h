@@ -37,6 +37,7 @@ enum {                                      /* mcubox_t.state */
 #define MCUV_BATT       (1u << 1)
 #define MCUV_SLIDERS    (1u << 2)
 #define MCUV_ACC        (1u << 3)
+#define MCUV_ALS        (1u << 4)       /* ambient light from the inner camera (New models only) */
 
 /* mcubox_t.flags (MCU register 0x0F, libn3ds / 3dbrew "I2C Registers") */
 #define MCUF_SHELL_OPEN (1u << 1)
@@ -106,7 +107,10 @@ typedef struct {
     uint32_t ack_seq;       /* == req_seq once the ARM9 acted on it */
     uint32_t ps_on;         /* boot.cfg powersave: the shim may mask VBlank while the CLCD is off */
     uint32_t screen_off;    /* 1 while the ARM9 sees iOS' screen off (power saving active) */
-    uint32_t _r5[5];
+    /* line 5, ARM9: ambient light for auto-brightness (New models only) */
+    uint8_t  als_luma;      /* inner camera AE_LAST_LUMA (0x2218), 0..255 */
+    uint8_t  als_state;     /* 0 = no sensor / disabled, 1 = live, 2 = paused while a camera client streams */
+    uint8_t  _r5[18];
     uint32_t _r6[16];       /* lines 6-7: spare */
 } mcubox_t;
 
@@ -117,6 +121,7 @@ _Static_assert(__builtin_offsetof(mcubox_t, acc) == 96, "mcubox line 3");
 _Static_assert(__builtin_offsetof(mcubox_t, gyro) == 108, "mcubox gyro");
 _Static_assert(__builtin_offsetof(mcubox_t, req_seq) == 128, "mcubox line 4");
 _Static_assert(__builtin_offsetof(mcubox_t, ack_seq) == 160, "mcubox line 5");
+_Static_assert(__builtin_offsetof(mcubox_t, als_luma) == 172, "mcubox ALS line 5");
 
 /* ---- helpers shared by the ARM9 and the host tests ---------------------- */
 

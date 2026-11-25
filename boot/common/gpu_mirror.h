@@ -90,9 +90,25 @@ typedef struct {
        read the GPU block itself). The CPU copy writes only those. */
     uint32_t pdc_magic;     /* GM_PDC_MAGIC once published */
     uint32_t pdc_swap[2];   /* top, bottom */
-    uint32_t _r5[5];
-    /* lines 6-7: free */
-    uint32_t _r6[16];
+    /* stereo 3D mode switch (docs/stereo3d.md): ARM9 sets on + bumps seq,
+       ARM11 applies the PDC0 2D/3D preset and acknowledges here. The ARM9
+       enables the parallax barrier only after the ack. */
+    uint32_t stereo_on;
+    uint32_t stereo_seq;
+    uint32_t stereo_ack_seq;
+    /* stereo_k: eye shift (1..4) used by the GPU mirror's stereo list.
+       st_frames / flat_frames: frames finished in each mode after the latest
+       PDC ack, so the ARM9 only opens the barrier once both eyes are there. */
+    uint32_t stereo_k;
+    uint32_t st_frames;
+    uint32_t flat_frames;
+    /* lines 6-7: ARM11 mirror state for the ARM9 */
+    uint32_t mirror_busy;   /* 1 while a mirror frame is in flight */
+    uint32_t stereo_ok;     /* 1: gpumirror.bin has the stereo lists (v4) */
+    uint32_t idle_frames;   /* VBlanks skipped because nothing changed: the ARM9
+                               counts these as liveness too (the LCDs already
+                               hold the current picture) */
+    uint32_t _r6[12];
 } gmbox_t;
 _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
 
@@ -141,14 +157,20 @@ _Static_assert(sizeof(gmbox_t) == 256, "gmbox_t layout");
      0x208B8000  gpumirror blob (tools/ios3ds-pica/mirror/genmirror.c): the
                  command lists and vertex arrays; the GPU reads them in place. */
 #define GPU_PART_PA       0x208B0000u
-#define GPU_PART_VA       0x808B0000u
+#ifndef IOS3DS_GPU_PART_VA
+#define IOS3DS_GPU_PART_VA 0x808B0000u
+#endif
+#define GPU_PART_VA       IOS3DS_GPU_PART_VA
 #define GPU_PART_SIZE     0x8000u
 #define GPU_PART_MAGIC    0x30555047u   /* 'GPU0' */
 #define GM_BLOB_PA        0x208B8000u
-#define GM_BLOB_VA        0x808B8000u
+#ifndef IOS3DS_GM_BLOB_VA
+#define IOS3DS_GM_BLOB_VA 0x808B8000u
+#endif
+#define GM_BLOB_VA        IOS3DS_GM_BLOB_VA
 #define GM_BLOB_MAX       0x8000u
 #define GM_BLOB_MAGIC     0x424D4D47u   /* 'GMMB' */
-#define GM_BLOB_VERSION   3u
+#define GM_BLOB_VERSION   4u    /* v4: stereo lists + per-class shift patches */
 
 /* GPU diagnostics (tools/ios3ds-pica/src/pica_diag.c): small VRAM scratch
    areas above the mirror's buffers, in the window the shim maps uncached */
@@ -171,9 +193,24 @@ typedef struct {
     uint32_t diag_patch;                                /* blob offset of the solid list's colour-buffer
                                                            address word (PA >> 3), to render elsewhere */
     uint32_t tex_patch[2];                              /* blob offsets of list[n]'s texture address word */
-    uint32_t _r[11];
+    /* v4: two-eye mirror lists, one per sampling variant. Each list draws a
+       baseline pass (delta 0) and three class passes per eye (BG, FRONT,
+       ALERT) selected with the PICA200's alpha test on the *unshifted* stamp.
+       st_shift_off[v][eye*3+class] points at the uniform word holding the
+       shifted texture coordinate; the shim patches it from st_shift_tab for
+       the current slider k (no floating point in the kernel). */
+    uint32_t st_list_off[2], st_list_bytes[2];
+    uint32_t st_shift_off[2][6];
+    uint32_t st_shift_tab;                              /* blob offset: [k-1][6] IEEE float words,
+                                                           in st_shift_off order */
+    uint32_t st_tex_patch[2][4];                        /* texture-address words in each stereo list
+                                                           (two units x two program emissions) */
+    uint32_t st_pad_off;                                /* blob offset: [60][16] uint32 tiled word
+                                                           offsets: 8 (source edge pixel, dest tile
+                                                           base) pairs for the stereo texture padding */
+    uint32_t _r[1];
 } gm_blob_t;
-_Static_assert(sizeof(gm_blob_t) == 128, "gm_blob_t layout");
+_Static_assert(sizeof(gm_blob_t) == 192, "gm_blob_t layout");
 
 /*
  * The pixel mapping of the CPU copy (boot/arm9/display.c), as one function:

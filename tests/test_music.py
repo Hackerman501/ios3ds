@@ -117,6 +117,15 @@ class Library(unittest.TestCase):
             self.assertEqual(lib.execute("SELECT is_hidden FROM container WHERE pid=?", (master,)).fetchone(), (1,))
             self.assertEqual(lib.execute("SELECT COUNT(*) FROM item_to_container WHERE container_pid=?",
                                          (master,)).fetchone(), (2,))
+            # Music.app's Playlists tab shows only is_hidden=0; without this row
+            # the installed songs are invisible there (issue on the user's card).
+            visible = lib.execute("SELECT pid, name, distinguished_kind, media_kinds FROM container "
+                                  "WHERE is_hidden=0").fetchall()
+            self.assertEqual([(n, k, m) for _, n, k, m in visible], [(music.VISIBLE_PLAYLIST, 0, 1)])
+            vpid = visible[0][0]
+            self.assertNotEqual(vpid, master)
+            self.assertEqual(lib.execute("SELECT COUNT(*) FROM item_to_container WHERE container_pid=?",
+                                         (vpid,)).fetchone(), (2,))
             self.assertEqual(lib.execute("SELECT COUNT(*) FROM album").fetchone(), (2,))   # per (album, artist)
             self.assertEqual(lib.execute("SELECT genre FROM genre_map").fetchall(), [("Rock",)])
             loc = sqlite3.connect(os.path.join(itlp, "Locations.itdb"))
@@ -128,6 +137,7 @@ class Library(unittest.TestCase):
             self.assertEqual(ex.execute("SELECT * FROM db_schema_upgrade_info").fetchall(), [(8, 19)])
             dyn = sqlite3.connect(os.path.join(itlp, "Dynamic.itdb"))
             self.assertEqual(dyn.execute("SELECT COUNT(*) FROM item_stats").fetchone(), (2,))
+            self.assertEqual(dyn.execute("SELECT COUNT(*) FROM container_ui").fetchone(), (2,))
             self.assertTrue(os.path.exists(os.path.join(itlp, "Genius.itdb")))
             for c in (lib, loc, ex, dyn):
                 c.close()

@@ -71,7 +71,7 @@ list. A top-level node goes straight to the OID tree, and works.
 | `ALLOC` / `FREE` / `FREE_ALL` | arena blocks (128-byte granules), owned by the calling pid |
 | `WRITE` / `READ` | copy between a user buffer and arena memory (+ cache clean / invalidate) |
 | `SUBMIT` | copy a command list into the driver's staging buffer (optionally vertex data first), run it, wait for the end marker |
-| `FILL` | PSC memory fill, two slots |
+| `FILL` | constant fill of two arena blocks (CPU copy; PSC cannot write FCRAM, §13) |
 | `TRANSFER` | PPF display transfer |
 | `CONFIG` | boot.cfg switches for userland (`ca_gpu`), no bring-up |
 | `PRESENT` | PPF display transfer from an arena buffer straight into a *user* buffer, after a page-table walk proves the caller may write it (§15) |
@@ -103,9 +103,12 @@ address registers) before anything untrusted may use GL.
 - VRAM (0x18000000, 6 MiB) is taken: `/vram` gives iOS the first 3 MiB for the
   CLCD framebuffer, Luma's LCD framebuffers (which the ARM9 draws) start at
   0x18300000.
-- So the arena is FCRAM: `IOMallocContiguous(12 MiB, page aligned, &pa)` at the
-  first request (falling back to 8, 4 and 2 MiB; on a New 3DS with 256 MiB it
-  must lie below 0x28000000, docs/n3ds.md section 6). It is ordinary wired, cached
+- So the arena is FCRAM: `IOMallocContiguous(10 MiB on an Old 3DS, 12 MiB on a
+  New model, page aligned, &pa)` at the first request (falling back to 8, 4 and
+  2 MiB; on a New 3DS with 256 MiB it must lie below 0x28000000, docs/n3ds.md
+  section 6). The Old model's 10 MiB still holds the camera's 450 KiB frame
+  reservation (re-log 108) and gives apps 2 MiB more than the old default;
+  hardware verification of that size is still outstanding. It is ordinary wired, cached
   kernel memory; the GPU sees it by physical address. `CFG11_GPUPROT`
   (0x10140140) is written 0 so GPU DMA may reach all of FCRAM.
 - Right after allocating, the shim cleans and invalidates the whole D-cache
@@ -391,6 +394,15 @@ PPF  RT top + bottom (one transfer when Luma's bottom framebuffer follows the to
 ```
 
 Five GPU operations per frame in "both" mode (4 + 1 per set in the others).
+With `stereo3d=1` and the 3D slider up on a stamped home frame the P3D list is
+the v4 two-eye one instead: one baseline quad plus three alpha-tested passes
+per eye, with the class stamp read through texture unit 1 and the colour
+sample through unit 0 at that class's eye offset (docs/stereo3d.md §5). The
+left eye goes into the usual top render target, the right eye into the upload
+buffer (free after the texture copy); two extra PPF read-outs write the two
+LCD framebuffer sets the PDC0 stereo preset points at. Flat frames use the
+original list, so slider-down is the ordinary path. Seven operations per
+frame in "both" mode while in 3D.
 
 **Why this is a plain scaling.** The 3DS framebuffers are column-major:
 framebuffer row j is screen column j, and its 240 pixels run from the bottom
@@ -479,7 +491,7 @@ Fallbacks to the ARM9 CPU copy, each logged:
 |---|---|
 | shim+0x7F00 (PA 0x20847F00), 256 B | `gmbox_t` mailbox: lines 0-1 ARM9, lines 2-4 ARM11 |
 | PA 0x208B0000, 32 KiB | the shim's GPU part (pica.c, pica_drv.c, pica_mirror.c), from gpu.bin |
-| PA 0x208B8000, ≤ 32 KiB | gpumirror blob: command lists and vertex arrays, from gpu.bin |
+| PA 0x208B8000, ≤ 32 KiB | gpumirror blob: v4 command lists (flat + two-eye), vertex arrays, slider shift table, texture edge-padding table and diagnostics, from gpu.bin (32336 bytes) |
 | VRAM 0x18480000-0x185BEC00 | upload buffer and the two render targets |
 | FCRAM arena, 1 MiB | the 512x512 texture (allocated at mirror start-up; its address is patched into both lists) |
 
@@ -565,6 +577,13 @@ GL test runs on its own context, and every failure falls back to the CPU.
    `gltest: PICA200 offscreen frame took N ms` next to the software one.
 9. X still cycles the screen modes; the console must come back cleanly on the
    screen given back (the shim acknowledges each mode change first).
+10. With `stereo3d=1`: slider down must give the same `[stereo] active path:
+    flat (GPU mirror)` and frame times as the flag-off run. Slider up on the
+    home screen gives `[stereo] switch: PDC0 3D, PICA200 two-eye mirror`,
+    `[stereo] 3D LED on` and `[monitor] stereo 3D: both eyes ... barrier on`;
+    app frames and slider-down give the matching 2D/barrier-off lines. A
+    `[stereo] switch FAILED` means the shim never acked: the mirror stays flat
+    rather than showing a broken pair. See docs/stereo3d.md §8.
 
 If anything goes wrong: `gpu_mirror=0` in `sd:/ios3ds/boot.cfg` brings back
 the ARM9 copy exactly as on main; `gpu=0` keeps the kernel away from the GPU
@@ -636,7 +655,10 @@ How to read the outcomes:
   (list/attribute setup); `col-wr +0` with vertices read: nothing reached
   the colour buffer (shader output map, viewport, TEV, colour buffer setup).
 - solid ok, texture FAIL: texture unit (address, format, tiling); POT ok and
-  NPOT FAIL: the mirror needs a 512x512 texture instead.
+  NPOT FAIL: the GPU cannot sample a non-power-of-two texture at all. The
+  diagnostic's NPOT step now checks the *workaround* (§13), not a raw NPOT
+  texture: a padded 64x64 texture with scaled texcoords, as the GL back end
+  uploads it.
 
 ## 13. Hardware run 13: the diagnostics' answer, and what changed
 
@@ -652,6 +674,15 @@ Run 13 (`eab9618` = §12's build, docs/hwlogs/run13.txt):
 - **PSC fills do not write FCRAM.** Done bit set after 1 tick, `fill0 +256`
   (the engine ran), `ext-wr +0` (no external-memory write), 0 of 1024 words.
   Into VRAM: `vramB-wr +266`, all words. Taken as a hardware rule.
+  The only PSC fill left in the GL path was already replaced by P3D quads in
+  run 13 (clears, depth init, self-check); the mirror's black margins are
+  VRAM fills, which work. `PICA_OP_FILL`, the remaining API that could have
+  filled the FCRAM arena, now writes the constant with the CPU (`pica_drv_fill`)
+  and cleans the cache lines, so a caller can never silently get an unfilled
+  buffer. The raw PSC fill stays only in `[gpu-diag]`, to report the hardware
+  rule. Host test: `test_pica` checks 16/24/32-bit fills, both slots and a
+  rejected out-of-arena range; `test_mirror` still expects the diagnostic's
+  FCRAM bit to fail.
 - **P3D works**, into VRAM and FCRAM (`col-wr +1088` / `ext-wr +2176`), with
   a 64x64 texture (`tex +1024`). Command lists, the fixed-function shader,
   vertex fetch, TEV and colour writes are right as encoded.
@@ -673,6 +704,18 @@ noise (each said once in the log, not counted as a model error). With that,
 the old mirror and the old GL self-check failed in the host tests and in
 QEMU exactly as on hardware (re-log 30), and the model reproduces run 13's
 diagnostic summary bit for bit (`test_mirror`).
+
+**NPOT diagnostic check.** Since the hardware rule is confirmed, the second
+texture step no longer asks the GPU for a raw 48x40 texture. `genmirror.c`
+now builds its vertex array for a 64x64 texture with texcoords scaled by
+48/64 and 40/64; `pica_diag.c` writes the 48x40 image into the used corner
+of the padded texture (zero elsewhere) and compares the 1920 drawn texels.
+This is the same padding/coordinate path `pica_be.c use_texture()` uses for
+NPOT GL textures, so `PD_TEX_NPOT` now means "the engine's NPOT workaround
+renders on the GPU" and should read **ok** on hardware. A failure there
+points at tiling, scaled texcoords or the nearest-sampling fill rule; a
+raw NPOT texture is still expected to sample noise (the quirk stays in the
+model). `test_mirror` checks all diagnostic bits except the FCRAM fill.
 
 **Mirror.** The texture is 512x512 (power of two) in the FCRAM arena. The
 upload still goes linear → tiled into VRAM (320 wide), then a PPF texture

@@ -25,6 +25,8 @@
 @
 @ SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "kpi.h"
+
     .arch armv6k
     .arm
     .section .text, "ax"
@@ -36,7 +38,7 @@
     .equ RING_BUF_OFF,  16
 
     .equ PHYS_BASE,     0x20000000
-    .equ VIRT_BASE,     0x80000000
+    .equ VIRT_BASE,     IOS3DS_KPI_VIRT_BASE
     .equ PRIV_PA,       0x17E00000      @ MPCore private region (SCU/GIC/timers)
     .equ PRIV_VA,       0xBFF00000      @ 1 MiB section we add to the kernel L1
     .equ PRIV_SECTION,  (PRIV_PA | (1 << 10) | (1 << 4) | (1 << 2) | 2)  @ AP=01 XN B (device), section
@@ -69,7 +71,7 @@
     .equ PDC0,       0x400
     .equ AXI_PA,     0x1FF00000                     @ DSP RAM + AXI WRAM (fake S5L register pages)
     .equ AXI_VA,     0xBFD00000
-    .equ KERNEL_IRQ_CONT, 0x80066494                @ kernel IRQ handler after the 2 patched insns
+    .equ KERNEL_IRQ_CONT, IOS3DS_KPI_KERNEL_IRQ_CONT @ kernel IRQ handler after the 2 patched insns
 
     .global _shim_base
 _shim_base:
@@ -623,7 +625,7 @@ shim_user_panic:
     mcr p15, 0, r1, c7, c14, 1      @ back to RAM: the line must not stay dirty here
     mcr p15, 0, r2, c7, c10, 4
     adr r0, panic_msg
-    ldr r12, =0x80015c7d            @ _panic (Thumb)
+    ldr r12, =IOS3DS_KPI_PANIC + 1  @ _panic (Thumb, address from the staged kernelcache)
     blx r12
     b .
 panic_msg:

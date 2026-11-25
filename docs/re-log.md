@@ -1192,3 +1192,2166 @@ Design: docs/wifi.md §10.8. Hardware report: Settings joins the user's WPA2+WPA
   `Select a Wi-Fi Network` alert, types the password and joins again. The
   exact popup screenshot and the `[wifi] link up` / `[wifid] en0 configured
   by configd` lines are in `build/emu-wifi-popup/`; results TBD.
+
+## 85. Driver stability: inventory, stress harness, input and MCU fixes (2026-11-22)
+Goal (user): every driver stable inside iOS 4.2.1. This section covers the
+drivers no other worker owns: GPU/Core Animation and the screen copy, touch +
+buttons + circle pad/C-stick, accelerometer/gyroscope, audio out (speaker and
+headphones), microphone, cameras, the MCU daemon and the SD read path. The
+per-driver inventory (code, tests, open hardware checks, verdict) is
+[docs/driver-status.md](driver-status.md); it is kept there instead of
+repeating the table here.
+
+- **Stress harness.** `emu/stress.py` (docs/emulator.md "Driver stress") opens
+  the five apps whose home-screen slot `rootfs/recipe.json` pins (Photos,
+  Settings, Notes, Safari, Music), drags in them, swipes pages with the D-pad,
+  scrolls with the circle pad, starts/stops Camera.app, plugs and unplugs the
+  emulated headphones, cycles the accelerometer poses and locks/unlocks.
+  `--diag` turns on the boot jobs (gltest, gyrotest, the `[smp]` sampler) and
+  the default `--mem` adds `ios3ds_mem=1`; it reads `sd:/ios3ds/log.txt`
+  while the guest runs and reports panics, stalls, md0 errors, GPU
+  timeouts/present-check failures/CPU fallback, camera init failures and FIFO
+  overruns, audio DMA/CODEC errors, input stale-port messages, the MCU
+  reconnect line, `[mem]` free memory and `[smp]` samples. It needs a fresh
+  image per run (it edits that image's boot.cfg) and fails when a requested
+  camera cycle produced no start/stop.
+- **`emu/soak.py`** gained the same driver error checks, so the long soak
+  catches a GPU timeout, present-check failure or CPU fallback, a camera
+  init failure/overrun and an audio DMA/CODEC error, not just a panic. Its
+  cycle now waits for the app to render before pressing Home: on a loaded
+  `--icount 2` host the app's uniform gray launch image differs from the home
+  screen enough to look like a finished frame, and Home pressed on it is
+  ignored (the old fixed wait then made every such cycle "stuck").
+- **Input: leaked app send right and dead-name touches.**
+  `send_touch_gs()` cached the frontmost app's `PurpleSystemEventPort` send
+  right in a static. `GSCopyPurpleNamedPort` returns +1 and the old value was
+  overwritten on every app switch: one leaked send right per switch (the
+  32-bit port-name table is finite). The same cache could outlive its app: a
+  relaunch under the same bundle id kept `strcmp(id, app)` equal while the
+  cached name was dead, so touches were silently dropped. The daemon now
+  releases the previous right (`app_port_set`) and checks
+  `mach_port_type(..., MACH_PORT_TYPE_DEAD_NAME)` before reuse, re-resolving
+  and logging `[input] stale touch port ...` under `debug`.
+- **Input follow-up: the cached id was stale for the lookup, and home taps
+  need the system port.** Re-resolving a dead port was not enough:
+  `SBFrontmostApplicationDisplayIdentifier` can keep returning the app that
+  just went away, so the lookup used the stale bundle id again.
+  `SBSCopyFrontmostApplicationDisplayIdentifier` returns NULL when SpringBoard
+  is frontmost (and the app id otherwise) and is used when available, with the
+  old call as the fallback. With an empty id home-screen touches go through
+  `GSSendSystemEvent`, which does hit-test (apps opened and `touch target`
+  lines appeared only for app switches in the PASS runs). Touches also go to
+  SpringBoard for 1.5 s after a Home press (`home_grace_until`): SpringBoard's
+  frontmost state lags the close animation, and an app-targeted hand event in
+  that window is what triggers the QEMU panic below.
+- **QEMU-only panic on app-targeted drags.** A press/move/release delivered
+  to the frontmost app's `PurpleSystemEventPort` makes QEMU's ARM11 panic in
+  the kernel copy path: `undefined kernel instruction`, pc 0x80067e44,
+  r11 = 0x35ed5658 (the shared-cache address the app GSEvent points at), then
+  `Debugger message: Fatal Exception`. The same events work on hardware
+  (re-log 78). `emu/stress.py` keeps in-app drags behind `--app-drag` and
+  does the continuous drags on SpringBoard; both harnesses now match
+  `undefined kernel instruction`/`Fatal Exception` as a panic.
+- **MCU daemon: SpringBoard restart left brightness/rotation dead.**
+  ios3ds-mcud connected to SpringBoard's HID event system once. If
+  SpringBoard restarted, the per-client port at `client + 8` became a dead
+  name and every `DisplayBrightness`/accelerometer call failed silently until
+  reboot. It now checks the port every 2 s, drops the dead client and
+  reconnects (`[mcud] SpringBoard's HID event port went away; reconnecting`);
+  the `NoIdleSleepAssertion` and its two CFStrings are created once per
+  process instead of once per reconnect.
+- **Host tests:** `make test` passes (63 Python tests plus pica, GL, Wi-Fi,
+  GPS, `test_cpad` 206 checks and `test_n3ds` 35 checks).
+- **QEMU soak, Old 3DS** (`--cycles 5 --icount 2 --settle 45`, fresh image,
+  final tree and input daemon): **Result: PASS**, boot 100 s, 5 cycles, no
+  recoveries, 0 panics / stalls / crashes / md0 errors, 0 GPU fallback or
+  timeouts, last heartbeat `md0 4295 req 88771 KiB 0 err`.
+- **QEMU soak, New 3DS model** (`--new3ds`, same command, fresh image, final
+  tree): **Result: PASS**, boot 100 s, 5 cycles, no recoveries, 0 panics /
+  stalls / crashes / md0 errors, 0 GPU fallback or timeouts, last heartbeat
+  `md0 4342 req 90023 KiB 0 err`.
+- **Only a console can settle:** the hardware checks are listed in
+  [driver-status.md](driver-status.md) §"What only a console can settle",
+  with the exact log lines/files to capture (headphone CODEC readbacks, mic
+  FIFO overruns, camera frame dumps, gyro/`[gyrotest]`, the GPU
+  present/scatter path, `[hb] ... md0 ... N err`, a SpringBoard restart's
+  `[mcud] ... reconnecting`).
+
+## 86. Leaving iOS: long POWER = clean shutdown, HFS+ clean flag, and fsck's EBUSY (2026-11-21)
+
+- **Why:** holding POWER ~10 s used to be the only way out, and a killed QEMU left `rootfs.hfs` unclean. Every boot said `Running fsck on the boot volume...` then `GetMasterBlock: Error 16 opening /dev/md0` (EBUSY, also in `docs/hwlogs/run*.txt`); damage was never repaired.
+- **HFS+ state, measured on the image** (volume header at byte 1024; big-endian attributes at +4; bit 8 = `kHFSVolumeUnmountedMask`): pristine build 0x80000100; after `BSD root: md0` 0x80000000; after a "slide to power off" 0x80000100; after `kill -9` on QEMU 0x80000000. So bit 8 *is* a reliable clean/dirty record, and the slider already unmounts cleanly (`launchd: System: About to call: reboot(RB_HALT).` → `[mcu] iOS shut down: log synced, powering off through the MCU`). The next boot of that same image reaches SpringBoard normally.
+- **fsck:** the check runs *after* XNU has mounted md0 as root; launchd opens the same device for writing and gets EBUSY. A boot-args `ro` test (`cmdline=ro rd=md0 …` edited into `boot.cfg` on the image) still printed `GetMasterBlock: Error 16 opening /dev/md0`. Making fsck work would require changing Apple's mount/launchd sequence (initial read-only root, remount rw after the check); not attempted. Instead the ARM9 now reads the flag when it opens the image, logs `[blk] rootfs.hfs: (NOT) cleanly unmounted (attributes …)`, and never marks a dirty image clean at boot (that would hide damage). `scripts/hfs_clean.py` does the same check on the host (`--sd build/sd.img`; 4 unit tests in `tests/test_hfs_clean.py`).
+- **Long POWER press:** the MCU's "held" IRQ already produced a 6 s synthetic POWER down (the slider sheet) and bumped `box->power_holds`. `ios3ds-input` now watches that count through `kern.ios3ds_mcu` and, on a new value, does `sync(); reboot(RB_HALT)` (0x08), the same call Apple's launchd makes after unmount. QEMU (`--icount`-free session, `p` held 4 s from the home screen): `[mcu] POWER held: iOS power-off slider`, `[input] POWER held on the 3DS (count 1): sync + clean shutdown`, `[mcu] iOS shut down: log synced, powering off through the MCU`; QEMU exits and the image's flag is 0x80000100. The 3DS's ~10 s hardware cut is unchanged (last resort when iOS is hung, then the flag stays clear and the next boot reports it).
+- **Safety:** on `req_power` from `PEHaltRestart` (after iOS unmounted) the ARM9 sets bit 8 in the volume header if XNU has not; `f_sync()` makes it durable. In the QEMU runs XNU had already set it. The slider shutdown still works after the change.
+- **Dirty-boot limits:** a `kill -9` after a settled boot leaves bit 8 clear; the next boot logs the warning above and reports the same EBUSY from Apple's fsck. A `kill -9` *during* boot-time writes is worse: that image logged `Bug: launchctl.c:3849 … lstat(de->d_name) != -1` and stalled before SpringBoard. Setting bit 8 by hand on it removed the lstat bug but it still stalled, and the unmodified firmware stalled the same way — so the damage is in the catalog, not in our code. Without a working `fsck_hfs` in the guest there is no safe repair; the ARM9 only reports the condition and never claims a dirty volume is clean.
+
+## 87. Multi-version build plumbing and a 4.1 bring-up (2026-11-22)
+
+Design and the full verified/guessed analysis: docs/multi-version.md. This entry
+records the concrete steps and blockers of stages 2–3.
+
+- **Version selector.** `IOS=4.2.1` (default) and `IOS=4.1` select a build from
+  scripts/versions.py; `make fwprep IPSW=… IOS=4.1` stages firmware in
+  build/fw-4.1/staging instead of the shared build/staging symlink. The 4.2.1
+  path has no overrides, so its kernel/devtree/rootfs/boot.cfg are the same
+  recipes as before (hashes compared in docs/multi-version.md §5.1).
+- **Firmware source.** 4.1's IPSW came from Apple's own CDN link published by
+  api.ipsw.me; its sha1 (97abde6207660bd876fd476275dd526d0dcf3d19) matches.
+  All extracted Apple files live in build/fw-4.1/. The 3.1.3 (7E18) keys are
+  public but current firmware lists no downloadable iPod2,1 IPSW, so 4.1 is
+  the second version under test.
+- **Kernel patches.** 8C148's fixed virtual addresses cannot be reused: 4.1's
+  xnu-1504.55.33 kernelcache is 7,938,048 bytes (vs 8,273,920) but its entry
+  point is the same 0x80067050. The 8B117 set was derived by fixed address,
+  context search and function anchors; every original byte was verified. Six
+  patches (gyro ×2, two CLCD wake/log fixes, clock voltage lookup, IORTC wait)
+  changed too much and are skipped for now.
+- **Device tree.** dt_audio.py had hard-coded gpio/vic phandles from the 8C148
+  template; 8B117 assigns different ones. It now reads the phandles from the
+  tree. The 8C148 generated device tree stayed byte-identical.
+- **Rootfs.** File patches in the dyld cache were relocated by parsing the
+  cache's image and symbol tables (the technique already used by
+  tools/ios3ds-gl/genslots.py): 8C148 offset -> VA -> image symbol + delta ->
+  8B117 symbol -> file offset, with original bytes checked. 18 of 24 patches
+  relocated; the liblockdown lookup body, its table, the VirtualAudio routing
+  table, CoreMotion capability mask and MusicLibrary signing check are open
+  blockers. Cydia/TLSFix are disabled in the 4.1 overlay.
+- **QEMU.** This worktree's build/qemu is a shared symlink without a built
+  binary; emu/run.py and emu/viewer.py now accept IOS3DS_QEMU=/path/to/qemu-system-arm
+  so a local copy can be used without touching that symlink.
+- **Boot result (QEMU, 4.1 + full patch set):** XNU starts and drives the
+  S5L8720 peripherals, then panics in `OSDictionary::setOptions()+0x44`
+  (fault address 0x4) before launchd. With only the 19 CPU/timer/IRQ/UART
+  patches it reaches `BSD root: md0`, loads the filesystem-compression kext
+  and runs the display copy and heartbeats for 100 s; adding the relocated
+  md0 strategy gets to `BSD root: md0` and then takes an undefined-instruction
+  exception in the fake GPIO page (pc 0xc38b3e94). No 4.1 home screen yet;
+  the full panic logs and the remaining blockers are in
+  docs/multi-version.md §5.3.
+- **Final soak:** four fresh-image 5-cycle soaks of the default build on this
+  heavily shared host printed Result: FAIL only on "not home after Home"
+  (black/stale screenshots, boot 435–965 s; heartbeats barely advancing);
+  zero panics, md0 errors, crashes or hangs. The last run used the soak
+  script's new lit-home-reference re-acquisition. No PASS could be obtained
+  while other workers saturated the CPU. The 4.2.1
+  kernel/devtree/fakeio/shim/gpu/boot.cfg hashes were unchanged.
+- **Soak harness:** four more exact-command runs with fresh images (boot 425–554 s,
+  host load 30–40) still printed FAIL only on "not home after Home": black
+  references and mid-page-animation screenshots, zero panics/stalls/md0/crash/
+  hang events. `emu/soak.py` now re-acquires a lit reference after a dark boot;
+  a pre-tap Home recenter was tried and reverted because it made icon hits
+  worse. Once the host quietened down, the exact required fresh-image command
+  printed **Result: PASS** (5 cycles, boot 197 s, all eight failure checks at
+  0); the earlier FAILs were host contention, see docs/multi-version.md §5.4.
+
+## 88. Auto-brightness on New models: where the ambient light comes from, and a camera AE reading from the ARM9 (2026-11-21)
+
+Design/checklist: docs/mcu.md §12, docs/n3ds.md §7. Status: **QEMU only; the
+register-level source is unverified on hardware.**
+
+- **Research, primary sources.** 3dbrew "I2C Registers", device 3's complete
+  MCU register table has no lux/ambient register (0x0A–0x0F battery and flags,
+  0x45–0x4A accelerometer, 0x4F/0x7F diagnostics), so the "read an MCU
+  register" candidate is ruled out. 3dbrew "QTM Services" lists `qtm:s`
+  command 0x04020000 `GetCameraLux`, and libctru's `qtm.h` documents
+  `QTMS_GetCameraLuminance` as "average ambient luminance as perceived by the
+  inner camera (in lux)", affected by auto-exposure and fixed at 400.0 on New
+  2DS XL. Wikipedia's New Nintendo 3DS hardware section says the face-tracking
+  sensor is also the ambient light sensor for automatic brightness; Nintendo's
+  support pages say the setting is unavailable on New 2DS XL. 3dbrew "I2C
+  Registers" device 16 is the New-3DS-only QTM device at bus 1 / 0x40 but has
+  no documented luminance register. BlocksDS `nds/camera.h` (Aptina MT9V113,
+  the 3DS inner camera already driven by `boot/arm9/camera.c`) defines
+  `MCUREG_APT_AE_LAST_LUMA` (0x2218), the sensor's own measured luminance,
+  reachable through the camera's variable-address registers 0x098C/0x0990 on
+  I2C bus 1 / 0x7A. libn3ds `I2C_DEV_EXTHID` / GBATEK show the same ARM9 I2C
+  pattern used by our C-stick driver. **Confirmed:** a camera-based ambient
+  measurement exists on New 3DS and Horizon exposes it as lux. **Guess:** the
+  AE luma byte is the value QTM turns into lux, and that this works the same
+  way on a New 2DS XL. Nothing was measured on a console.
+- **Path.** `camera_als_sample()` (`boot/arm9/camera.c`) brings the inner
+  sensor up once (PLL + AE + sequencer refresh) and reads var 0x2218 at 2 Hz.
+  It never touches *any* camera while a client streams (inner, outer left or
+  outer right): `mcu.c` then sets `als_state=2` and publishes no new luma,
+  mcud holds its last factor, and both resume when the client stops (the
+  shared AE set-up is redone if Camera.app had the inner sensor). This follows
+  3dbrew's note that QTM refuses head tracking while another process uses a
+  camera. `mcu_set_als()` (`boot/arm9/mcu.c`) is armed by `main.c` **only**
+  after `n3ds_setup()` says New; `auto_brightness=0` prevents even that call
+  and `camera=0` disables the whole camera driver. The byte lands in line 5 of
+  `mcubox_t` (which had 20 spare bytes; all existing line offsets and the
+  256-byte size stay put), alongside `MCUV_ALS`. ios3ds-mcud reads SpringBoard's
+  `SBEnableALS` preference (absent on an iPod2,1 → on), converts luma → lux →
+  multiplier with hysteresis/slew (`boot/common/als_curve.h`) and multiplies
+  `DisplayBrightness × DisplayBrightnessFactor` before sending the backlight
+  through `kern.ios3ds_mcuctl`. The factor is kept across daemon loops: the
+  shim is also written on a slider change, so a local factor would cause a
+  brief jump to full brightness between two light samples. The shim and the
+  PWM registers are unchanged.
+- **Cost / LED.** The inner camera has to stay awake: a standby sensor has no
+  fresh AE result. Only the two-register read is duty-cycled (2 Hz, no CAM
+  FIFO or PICA work, no new ARM9 wakeups); re-running `apt_init()` every few
+  seconds would write ~80 registers, wait for PLL/AE and yield stale luma.
+  There is no documented standalone lux sensor (3dbrew's MCU table device 3
+  and I2C device 16), so this is the only ARM9-readable source. 3dbrew lists
+  an MCU "Camera LED state" register 0x2B, which we never write; whether the
+  LED is tied to camera power needs a console. Hardware current draw is
+  unmeasured (docs/mcu.md §12.2.1).
+- **Curve tests** (`tests/test_als.c`, added to `make test`): 765 checks —
+  monotonic luma→lux anchors, bounded monotonic multiplier, first-sample
+  snap, slew limit, one-frame flicker ignored, sustained change followed, no
+  oscillation on luma jitter. Host test of the ARM9 side
+  (`tools/ios3ds-mcu/tests/test_mcu.c`) also checks that the mailbox stays
+  empty unless the feature is enabled and the sensor answers, that a camera
+  client pauses sampling (`als_state=2`, last luma held) and that the sample
+  resumes afterwards.
+- **QEMU** (`emu/qemu/hw/arm/{nintendo3ds.c,ctr_cam.c}`): `/machine
+  ambient-light` (uint32 lux) feeds the inner camera's AE luma through the
+  existing I2C register model, including after a sensor soft reset. The
+  binary path can be overridden with `IOS3DS_QEMU` in run/viewer/soak so a
+  private QEMU build can be tested without touching the shared `build/qemu`
+  symlink (which other worktrees use). Runs of 2026-11-22 (fresh image,
+  `--icount 2`, user brightness 0.50): on a New model with
+  `auto_brightness=1`, `qom-set /machine ambient-light 5 / 800 / 80` gave
+  `lcd-backlight` **52 / 78 / 65**; the SD log has
+  `[mcu] auto-brightness on (New model; inner camera AE luminance)`,
+  `[cam] inner camera awake for ambient light (AE luma var 2218)`, luma
+  160 → 78 → 218 → 154/255 and `[mcud] auto-brightness: ... -> factor ...`
+  slewing the backlight (no jumps). With `auto_brightness=0` in boot.cfg the
+  same changes left `lcd-backlight` at **79** and logged `auto-brightness off`;
+  on the Old model there was no `[cam] inner camera awake` or `[mcu] ambient
+  light` line and the value stayed **79**. `make test`, `make userland` and
+  `make sdimg` clean (the image was built `--no-cydia --no-tlsfix` to keep the
+  shared Cydia cache untouched while several other workers were building).
+- **Soak harness:** earlier runs on a loaded host (load average 10–15, other
+  emulators and compilers) failed with "not home after Home" and lock rounds
+  ending on the lock screen while the SD log showed 0 panics, 0 stalls, 0 md0
+  errors: short synthetic key presses missed the ARM9 input polls. `emu/soak.py`
+  now holds keys 0.4 s (below the input daemon's 0.8 s long-press threshold),
+  waits up to 45 s for the screen to settle, retries Home before giving up,
+  wakes with two Home presses and retries the slide-to-unlock gesture. Those
+  are harness timing fixes, not changes to the pass criteria.
+- **Soaks (2026-11-22, final): PASS, with a private QEMU build in
+  `/tmp/opencode/qemu-als-src/b/qemu-system-arm` and `IOS3DS_QEMU` pointing at
+  it (the shared `build/qemu` was left untouched).** Each run got its own
+  fresh `build/sd.img` (`make sdimg CYDIA=0 TLSFIX=0`) and
+  `python3 emu/soak.py --cycles 5 --icount 2`, the second with `--new3ds`;
+  both printed `Result: PASS` (5 cycles, no "not home after Home", no
+  lock-round failures, 0 panics / stalls / md0 / log-write / crash / hang
+  failures). Earlier attempts on the overloaded host were killed during the
+  image build (`make: *** [Makefile:79: sdimg] Killed`) and were recorded as
+  unfinished in the interim; these final runs complete them.
+
+## 89. Experimental stereoscopic 3D home screen (2026-11-22)
+Design: docs/stereo3d.md. Status: experimental, off by default; the hardware
+path described in section 90 is implemented but still needs a console test.
+
+- **Mechanism:** CoreAnimation composites SpringBoard through our GL engine
+  (`tools/ios3ds-gl`), which stamps a depth class into the composed frame's
+  alpha byte with a second, alpha-only pass. The classes are wallpaper (0x33),
+  icon grid (0x66), dock/status bar (0x99), folders/alerts (0xCC), flat
+  (0x00). The ARM9 CPU screen copy reads that class map and builds the two
+  eye images with a horizontal offset per class; the 3D slider scales the
+  offset (0..4 px) and 0 turns the barrier off.
+- **Gate:** `boot.cfg stereo3d=1` appends `ios3ds_stereo=1` to the kernel
+  boot-args; only the CA render server (`IOS3DS_CA=1`) stamps. With the flag
+  off `stereo_prepare()` returns -1 at once and the normal path is unchanged.
+  Frames that are not the home screen are wiped flat (one full-screen quad),
+  so apps and the lock screen give both eyes the same image.
+- **Files:** `boot/common/stereo.h` (shared classes, offsets, classifier),
+  `tools/ios3ds-gl/stereo.c`, `tools/ios3ds-gl/{api,ca,draw,iface,pica_be}.c`,
+  `boot/arm9/main.c` (flag + boot-arg + gpu_mirror off for stereo),
+  `emu/qemu/hw/arm/nintendo3ds.c` (slider QOM property + anaglyph top screen),
+  `tests/test_stereo.py`.
+- **Tests:** `make test` passes (host tests for the depth/offset logic);
+  soak with the flag off and on both PASS.
+
+## 90. Stereoscopic 3D on real hardware: two eyes and the parallax barrier (2026-11-22)
+Review of section 89 found that `stereo3d=1` only made the display slower on
+an actual console: the ARM9 copied one image to both top-screen framebuffers,
+the top LCD stayed in 2D mode and nothing ever enabled the parallax barrier.
+This section closes that gap. The verdict on a console is still pending; the
+paths below are exercised in QEMU.
+
+- **ARM9 copy** (`boot/arm9/display.c`): `display_set_stereo()` receives the
+  boot flag and the MCU slider every monitor loop. With the flag on, a slider
+  above 16 and a stamped home frame (32x32 alpha grid, at least two distinct
+  non-flat classes), `blit_top_stereo()` reads one source row per screen
+  column, samples the left/right pixels at `x - stereo_eye_delta(cls,k,right)`
+  and writes BGR8 (alpha masked) to `top_fb[0]`/`top_fb[1]`. A flat frame, a
+  slider below the threshold, `SCREEN_BOTTOM` or no second framebuffer uses
+  the old `blit_top()` byte for byte; the bottom copy and touch map are
+  shared unchanged. The barrier is enabled after the copy and only while a
+  stereo frame was actually produced; any transition back clears it.
+- **Mailbox and shim**: `gmbox_t` line 5 gained `stereo_on`, `stereo_seq`,
+  `stereo_ack_seq` (still 256 bytes, same cache-line ownership). The ARM9's
+  `gm_set_stereo()` publishes a request and waits at most 200000 polls for the
+  ack. `kernel/shim/pica_stereo.c` (new GPU-part object, added to mkboot's
+  source list) checks the request in thread context via `shim_gpu_thread_poll()`,
+  saves Luma's 2D PDC0 preset on the first switch and writes the 3D preset.
+  Per 3dbrew GPU/External Registers: PDC0 `+0x68/+0x6C` = left-eye A0/A1,
+  `+0x94/+0x98` = right-eye B0/B1, `+0x70` bits 5-4 = 2 (AB interlace), bit
+  6 clear. Per 3dbrew LCD Registers: barrier enable `0x10202000` =
+  `0x00010001`, PWM `0x10202004` = `0x0A390A39` (libn3ds value); the ARM9
+  writes these after the ack and clears the enable on the way back to 2D.
+  The GPU part is 31744 of 32768 bytes (1024 bytes headroom).
+- **QEMU** (`emu/qemu/hw/arm/nintendo3ds.c`): the old shortcut (read iOS's
+  alpha from VRAM and draw an anaglyph) is gone. The model now has PDC0's
+  B0/B1 framebuffer registers, the PDC0 format bits and the barrier register
+  at `0x10202000` (aliased into the ARM9 address space), with QOM properties
+  `pdc-3d-mode` and `lcd-3d-barrier`. The anaglyph is composited from whatever
+  framebuffers those registers point at: left eye in red, right eye in cyan.
+  No 3D mode or barrier, no anaglyph: the ordinary top-screen copy runs.
+  `emu/run.py`/`emu/soak.py`/`emu/viewer.py` accept `IOS3DS_QEMU` (and soak
+  has `--qemu`, `--slider3d`) so this worktree builds and uses its own
+  private QEMU (`build/qemu-hy4`, binary copied to `build/qemu-local/b/`),
+  never the shared `build/qemu` symlink.
+- **Tests**: `tools/ios3ds-pica/tests/test_stereo_copy.c` (new) maps the CLCD,
+  LCD and framebuffer pages at their physical addresses and runs the real
+  `boot/arm9/display.c`: flag off is byte-for-byte the old copy with no
+  barrier or PDC request; the stamped frame gives class-dependent offsets
+  (front plane +/-4 px at slider 255, icon plane flat), opaque output and a
+  barrier request; slider down and unstamped frames restore the flat copy.
+  `test_mirror.c` gained the stubs for the new dependencies. `make test`
+  passes; fresh-image soaks with `stereo3d=0` and `stereo3d=1` both PASS.
+- **Frame time**: in QEMU under heavy host load, the flag-off run logged
+  `[monitor] CPU screen copy: 31 copies in 30 s, 15.4 ms each (ARM9)`; with
+  `stereo3d=1` and the slider up it logged `42 copies in 30 s, 120.3 ms each`
+  and, in a longer run, `33 copies in 38 s, 186.4 ms each`. The two-eye copy
+  costs roughly 8-12x the single-image copy in the emulator because it packs
+  both eye columns and writes both LCD buffers; on hardware this replaces the
+  GPU mirror (which is off in this mode), so the real console cost still has
+  to be measured. The GL side logs `CA stereo3D: N frames, ... stamped/wiped`
+  and its usual per-frame line with `diag=1`; no stamp pass runs with the flag
+  off.
+
+**Soak status on the shared, heavily loaded host:** the flag-on soak
+`--cycles 5 --icount 2 --slider3d 255` passed (`Result: PASS`, 5 cycles, no
+panic/IO/watchdog hits). Repeating both flag-off and flag-on runs on fresh
+images produced clean crash/IO checks but the soak's screenshot-based "home
+restored" check was flaky while the host ran 20-50 concurrent builds; one
+flag-off run did not reach SpringBoard within its 1200 s boot timeout. The
+soak input dwell/timeouts were increased (commits above) to cope with that
+host load; no code path other than the test harness was changed for those
+retries. A final confirmation run on an idle machine is still desirable.
+
+## 91. HTC TX credits: the "Mbox Full" back-pressure (2026-11-21)
+
+**Symptom:** dsiwifi calls it "Mbox Full"; with sustained traffic the AR6014
+can be asked to send more mailbox messages than it has buffers for. The host
+driver sent every WMI/data message as soon as iOS handed it a frame and never
+read the credit reports the target puts in RX trailers (ath6kl
+`htc_mbox.c`, `htc.h`: record 1 is `endpoint, credits`; `NEED_CREDIT_UPDATE`
+asks for a report when nothing else is sent).
+
+**What the target announces.** `HTC_READY` carries `cred_cnt, cred_sz` (the
+model: 8 x 1664 bytes). A message costs `ceil(padded_len / cred_sz)` credits,
+at least one; the padded length is what goes over SDIO (our block size 128).
+The pool is split the way ath6kl does it: one credit for EP0, one for each
+connected service, the rest for the first (BE) data endpoint. The firmware
+returns a credit for every message it consumes; a host that ignores the
+reports runs the pool to zero.
+
+**Driver** (`boot/arm9/wifi/ar6k.c`, `sdio.h`, `wifi_frame.c`):
+- `credit_init()`/`credit_assign()` distribute the pool; `mbox_send()` takes
+  `ceil()` credits before writing, sets `NEED_CREDIT_UPDATE` when an endpoint
+  falls below one maximum-sized message, and refuses data sends with the new
+  `SDIO_ERR_BUSY` (-5) instead of writing. `wifi.c` maps that to its "busy"
+  return, so the frame stays in the ARM9<->iOS TX ring for the next pass.
+  WMI/control sends wait for a report (bounded), rather than dropping a
+  command.
+- A credit wait must not re-enter the WMI/HTC state machine, so whole
+  packets that arrive while waiting are copied into a four-slot deferred
+  queue and run from the next `pump()` pass. The trailer parser itself moved
+  to `wifi_frame.c` (`wifi_htc_credits()`) so it can be tested on the host;
+  it ignores out-of-range endpoints and stops at a torn record.
+- `[wifi-diag]` logs every endpoint assignment and the first 16 reports,
+  plus a credit total when the link comes up.
+
+**QEMU model** (`emu/qemu/hw/arm/ctr_wifi.c`): it now *has* credit accounting,
+not just trailers. Host messages are dropped with `Mbox Full`, TX-overflow
+set and an `htc-overflows` counter when the endpoint is out of credits;
+credits are owed back for every accepted message and travel in the next RX
+trailer or an empty EP0 report one virtual ms after `NEED_CREDIT_UPDATE`.
+QOM (HTC credits used/reported/waits/overflows, frame counts) makes the
+evidence readable without a debugger. This is a real back-pressure test: a
+host that ignores credits fails in QEMU, where the old model let it through.
+
+**Host tests:** `make -C tools/ios3ds-wifi test` covers cumulative reports,
+unknown records, torn trailers, saturation and out-of-range endpoints.
+
+**QEMU evidence (2026-11-22, this worktree's QEMU):**
+`emu/wifi_test.py --case credit` PASS: the 4 MiB body was served with
+`[nettest] bulk 4194461 bytes (4194304 body, 0 bad) in 255 s: PASS`, the
+driver logged `[wifi-diag] ... htc: credit report: +1 ...` and the model
+`ctr-wifi: ... HTC credits: consumed 1216, returned 1216, 218 wait(s),
+0 overflow(s)`. No `Mbox Full`, TX overflow or lost byte was seen. Early
+runs on a loaded host timed out on an unrelated route/DNS check; the final
+run with a 900 s guest-time budget passed every check. `emu/run.py` and
+`emu/soak.py` now both accept `IOS3DS_QEMU` so a branch with its own QEMU
+build is tested with that binary. A fresh SD image with `wifi.cfg` and the
+dummy firmware, soaked with `emu/soak.py --cycles 5 --icount 2 --settle 20`,
+printed **Result: PASS** (boot to SpringBoard 441 s, 5 cycles, no panics,
+stalls, md0 errors or crashes, no home/restore failures).
+
+## 92. WPA2 with a TKIP group cipher, and WPA1 (TKIP pairwise) (2026-11-22)
+
+**Firmware first.** GBATEK "WMI Connect Functions" lists the AR6014's
+WMI_CONNECT values: auth 3 = WPA-PSK, 5 = WPA2-PSK, crypto 3 = TKIP, 4 = AES;
+"WMI Channel and Cipher Functions" says the host installs WPA/WPA2 keys with
+WMI_ADD_CIPHER_KEY after the 4-way handshake. Our key installer already put
+32-byte TKIP keys into that command with the MIC halves swapped (dsiwifi's
+order), so the firmware does the TKIP/Michael frame crypto itself. No software
+TKIP or Michael was added: the supplicant only derives/installs the keys.
+
+**TKIP group with WPA2 pairwise CCMP** was already handled in `wpa2.c` and the
+QEMU AP: the RSN IE's group suite becomes 00-0F-AC-02, the GTK is 32 bytes and
+the firmware gets a TKIP group key. The work here is a real end-to-end check
+(`emu/wifi_test.py --case tkip`) and keeping it working while WPA v1 landed.
+
+**WPA v1 differences** (IEEE 802.11i/D10 and hostapd's `wpa_auth.c`,
+`wpa_common.c`, `rsn_supp/wpa.c`): a WPA vendor IE (`DD 18 00:50:F2:01`)
+instead of an RSN IE; EAPOL-Key descriptor 0xFE, Key Info version 0;
+HMAC-MD5 MIC over the frame with the MIC field zeroed; a 64-byte PTK
+(KCK 16, KEK 16, TKIP TK 32) from the same PRF-SHA1; Key Data RC4 with the
+key `Key IV[16] || KEK[16]` and the first 256 stream bytes dropped; a 32-byte
+TKIP GTK in the same 00:0F:AC:01 KDE; M2 echoes M1's Key Length and the WPA
+IE; M4 does not. Message 3 carries the GTK key index in the bits that RSN
+calls Install, so WPA v1 must not require the Install bit.
+
+`boot/arm9/wifi/wpa2.c` gained MD5, HMAC-MD5, RC4-drop-256 and a 64-byte PTK,
+plus a WPA-IE parser/builder; `ar6k.c` detects the vendor IE in BSSINFO and in
+the iOS scan table, sends WMI_CONNECT with auth 3 / TKIP, uses the exact WPA
+IE from the firmware's association request in M2 and installs the 32-byte TK.
+The QEMU AP gained `security=wpa1` with the same authenticator rules; WPA2
+paths are unchanged. WEP is documented as unsupported: a WMI WEP key type
+exists, but open/shared-key association and WEP key management were not added.
+
+**Host tests:** RFC 1321 MD5 and RFC 2202 HMAC-MD5 vectors, the well-known RC4
+vectors and an independently computed RC4-drop-256 vector, a 64-byte PTK check,
+WPA-IE parse/reject cases, and a full WPA1 4-way + group rekey against a small
+authenticator in `tools/ios3ds-wifi/tests/test_host.c` (200 checks, 0 failed).
+QEMU evidence (2026-11-22): `--case tkip` PASS — `[wifi] connect
+"ios3ds-qemu" (WPA2-PSK/CCMP, TKIP group)` and `WMI_ADD_CIPHER_KEY group ...
+equals the AP's GTK`. The first `--case wpa1` run exposed two bugs:
+`target_lookup()` used its `RSN_MODE_WPA2` default as if an RSN IE had been
+seen, clearing WPA1 selection (QEMU: WMI auth 5/4/4, status 43), and the
+QEMU AP compared the pairwise TKIP key in raw order while both dsiwifi and
+our installer swap the MIC halves. With `saw_rsn` and the model's swapped
+comparison, `--case wpa1` PASS: `[wifi] connect ... WPA-PSK/TKIP`,
+`pairwise ... equals the AP's TK`, `4-way: message 4 OK` and `[nettest] all
+steps passed`. Host tests: 200 checks, 0 failed.
+
+## 93. Wi-Fi LED follows the link (2026-11-22)
+
+The blue Wi-Fi LED is MCU register 0x2A (4 bits, any non-zero value turns it
+on; 3dbrew "I2C Registers", device 3). `boot/arm9/mcu.c` caches the value and
+writes 1 while `netmbox_t.link` is up, 0 on link-down and before a power-off.
+The monitor loop samples the link once per pass; only a transition costs one
+I2C byte. `boot.cfg wifi_led=0` disables the feature (default on), next to
+`notify_led` for the separate RGB notification LED.
+
+The QEMU MCU now models reg 0x2A and counts writes: `/machine mcu-wifi-led`
+and `mcu-wifi-led-writes` are read-only QOM properties. Evidence (2026-11-22,
+`emu/wifi_test.py --case ok`, HMP `qom-get` at 180 guest seconds): default
+setting gave `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (initial 0 and one
+write of 1 at `[wifi] link up`); with `wifi_led=0` in `boot.cfg` both were 0
+and there was no `[mcu] Wi-Fi LED on` line (docs/mcu.md §14).
+
+## 94. Wi-Fi driver: end-of-task verification (2026-11-22)
+
+`make test`: all suites pass, including 200 Wi-Fi host checks and the 8
+`nwmfw` tests. `emu/wifi_test.py` with this worktree's QEMU: `ok`, `credit`,
+`tkip` and `wpa1` PASS (sections 85-87). Each run used a freshly built SD
+image; the Wi-Fi cases use a port outside the default 8080 so other workers
+on this PC are not disturbed.
+
+Fresh-image soak: `python3 emu/soak.py --cycles 5 --icount 2` printed
+**Result: PASS** (boot to SpringBoard + input 370 s, 5 cycles, no kernel
+panic, ARM11 stall, md0 I/O error, process crash or watchdog/hang). A
+second fresh-image soak with `wifi.cfg` and dummy firmware (Wi-Fi link up
+during the run) and `--settle 20` also printed **Result: PASS** (section 85).
+The soak harness now retries black screendumps and compares home screens after
+backlight normalisation: on a loaded host a raw comparison marked a lit
+home screen as "not home" (sections 85-87). Repeating that soak with this
+branch's own QEMU binary produced only the same home-screen heuristic
+false positives (1-3 cycles per run needed recovery, while every crash and
+I/O check stayed at 0); the Wi-Fi cases above all used that branch QEMU.
+`IOS3DS_QEMU` now selects the binary for both `emu/run.py` and `emu/soak.py`.
+
+## 95. NPOT textures: test the workaround, not the hardware quirk (2026-11-23)
+Hardware log (New 2DS XL, build 149; `docs/hwlogs/n2dsxl-run1.txt` and the
+user's report) says `[gpu-diag] summary: … texture POT ok, NPOT FAIL`. That is
+run 13's confirmed rule, not a new fault: the PICA200 samples a texture whose
+size registers are not powers of two as noise. The GL engine already works
+around it (`pica_be.c use_texture()` pads the image to a power of two and
+scales the texture matrix), and the display mirror has used a 512x512 texture
+since run 13, so no rendering path sends an NPOT size to the GPU.
+
+The diagnostic itself was still sending one. It drew a raw 48x40 texture and
+so could only ever fail on hardware, which made the summary useless for
+checking the workaround. Now:
+- `genmirror.c` diag list 2 uses a 64x64 texture, with the gl_quad texcoords
+  scaled by 48/64 and 40/64 (at a pixel centre, floor(t·64) is the used
+  image's texel);
+- `pica_diag.c` writes the 48x40 image into the used corner of the padded
+  texture (zeros elsewhere) and compares the same 1920 texels;
+- `test_mirror`'s expected diagnostic mask is now 0x7d (`PD_TEX_NPOT` set;
+  only the FCRAM fill bit remains FAIL as the hardware rule), and picasim
+  still produces noise for raw NPOT sizes.
+
+`make test`: 6678 pica checks and 39 mirror checks, 0 failures; diagnostic
+summary `0x7d` on the model; `gltest: PASS` on both back ends (scene 2
+already includes a 48x24 CLAMP texture, compared pixel by pixel).
+
+Docs: [pica200.md](pica200.md) §12/§13. On a console the NPOT line should
+now say ok; if it doesn't, the fault is in padding/texcoords/tiling, not in
+the hardware's NPOT rule.
+
+
+
+## 96. FCRAM fills: route PICA_OP_FILL around the PSC engine (2026-11-23)
+The hardware summary `fill VRAM ok->ok, fill FCRAM FAIL->FAIL` describes a
+PSC limit, not a fault in our setup (run 13, docs/pica200.md §13): a fill of
+FCRAM sets the done bit and its counter, but writes nothing. Audit of every
+call site:
+- GL clears, depth init and the GPU self-check have used P3D quads or CPU
+  writes since run 13 (`pica_be.c`) — no PSC fill on the GL hot path;
+- the display mirror's two fills are in VRAM (`pica_mirror.c`), which work;
+- the raw PSC fill is only in `[gpu-diag]`, to report the hardware rule;
+- `PICA_OP_FILL` (`kernel/shim/pica.c`) + `pica_drv_fill()` were the only way
+  a client could still ask for a fill of the FCRAM arena, and would silently
+  return success with the old contents.
+
+`pica_drv_fill()` now writes the constant into the mapped arena with the CPU
+(16/24/32-bit patterns, two slots, cache cleaned with `to_gpu`). A constant
+is the same in linear and tiled memory, so no GPU operation is needed and
+the caller gets what a working fill would have produced. The raw PSC quirk
+stays in the model and in `[gpu-diag]`.
+
+`make test`: 6691 pica checks + 39 mirror checks, 0 failures; the new
+`test_pica` checks both slots, 16/24/32-bit patterns and a rejected range;
+the diagnostic summary stays 0x7d (FCRAM fill still FAIL by design).
+
+## 97. ES 1.1 compatibility for iOS 3/4 games (2026-11-23)
+Games from that era probe for a handful of ES 1.1 extensions before they
+load assets. Audit against `tools/ios3ds-gl`:
+- `OES_draw_texture`, `OES_point_sprite`/`OES_point_size_array`,
+  `OES_framebuffer_object`, `OES_mapbuffer`, separate blend func/equation and
+  `APPLE_fence` were already implemented (gpu.md §3).
+- **PVRTC** was the one texture format games actually ship that we rejected.
+  `pvrtc.c` now decodes all four `IMG_texture_compression_pvrtc` formats
+  (RGB/RGBA, 2/4 bpp) to the engine's RGBA texels in
+  `api_CompressedTexImage2D`; 4bpp endpoints, 2-bit modulation and punch-
+  through alpha follow the documented 64-bit block layout. 2bpp uses the
+  neighbouring blocks' endpoint average as its low-frequency signal (an
+  approximation, not the PowerVR reference filter). The extension string and
+  `GL_COMPRESSED_TEXTURE_FORMATS` now list the four formats.
+- **`OES_matrix_palette`**: four new entry points fill per-context palette
+  matrices and index/weight arrays; `draw.c` blends 1..4 matrices per vertex
+  in object space (in addition to modelview) for positions and normals.
+- **`glGenerateMipmapOES`** now builds a box-filtered chain (level 0 stays the
+  sampled level, as documented).
+- **ES 2.0**: `EAGLSharegroup initWithAPI:` only uses our engine for api 1,
+  so an ES2 context request is refused. Shader/program/vertex-attribute
+  entry points reached through an ES1 context now set
+  `GL_INVALID_OPERATION` instead of the dispatch stub's silent 0.
+
+Tests: `make -C tools/ios3ds-gl host-test` passes a standalone PVRTC unit
+test (hand-encoded blocks) and, on both back ends, the new gltest checks for
+PVRTC upload, extension lists, palette-driven vertex motion, mipmap
+generation and the ES2 error. `make userland` cross-builds the engine and
+iOS gltest. `ios3ds-gltest` on iOS additionally probes EAGL with api 2 and
+checks that the ES1 context remains current.
+
+Docs: gpu.md §3/§5, README's OpenGL ES limitation.
+
+## 98. MBX2D: which framework prints the messages (2026-11-23)
+Every hardware log, including the New 2DS XL build 149 report, has:
+`Iterator had no matching services`, `Failed to open connection to MBX`,
+`Failed to initialized MBX2D driver (1).` — right after the first EAGL
+context is created. No Apple file is kept in the tree, so the search was run
+against the dyld cache in `build/staging/rootfs.hfs` (a build product made
+from the user's own IPSW):
+
+```
+build/tools/hfsplus build/staging/rootfs.hfs cat \
+  /System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6 > build/dyld-cache.tmp
+# header: mappingOffset 0x48, mappingCount 3, imagesOffset 0xa8, 362 images,
+# dyld_cache_image_info = {uint64 address, modTime, inode; uint32 pathOffset, pad}
+# VA = file offset + 0x30000000 (0x4ff9458 -> OpenGLES VA 0x34ff9458)
+```
+
+- offset 0x770c68 (VA 0x30770c68) is inside `MBX2D.framework` (base
+  0x3076a000): its `AppleMBXDevice` string and, at 0x7707d0+, `Iterator had
+  no matching services`, `Failed to open connection to MBX`, `Failed to find
+  an AppleMBXDevice service, error 0x%X`, `Failed to open the shared user
+  client...`. That is the same service lookup OpenGLES patched in gpu.md §1;
+  MBX2D's copy was deliberately left alone because GL no longer needed it.
+- offset 0x47bb418 / 0x47bb470 (VA 0x347bb418 / 0x347bb470) is inside
+  `QuartzCore.framework` (base 0x346dc000), next to `CA_ENABLE_MBX2D`,
+  `LK_ENABLE_MBX2D`, `CA_ENABLE_OGL`, `MBX2D_PAGE_FLIP` and the
+  `Failed to initialized MBX2D driver (%d).` format. QuartzCore's
+  `CA::RenderMBX2D` class and its `blit_*` methods are in the same image:
+  this is CoreAnimation's 2D blit renderer (layer images / video frames),
+  distinct from the GL compositor. MBX2D's own strings mention YUV420
+  texturing and `mbx3DQuadCopy*`, so CoreVideo/IOSurface frames are the other
+  likely consumer.
+
+The failure is benign in SpringBoard but not necessarily for a game that
+reaches the MBX2D path. SpringBoard's environment now sets
+`CA_ENABLE_MBX2D=0` and `LK_ENABLE_MBX2D=0` in `rootfs/recipe.json`; GL
+compositing and `MBX2D_PAGE_FLIP=0` are unchanged. A QEMU boot with those
+variables set still printed both lines (a test with `CA_ENABLE_OGL=0` also
+left our `IOS3DS_CA` GL compositor in charge), so this 8C148 QuartzCore does
+not skip the probe from those variables. The two format strings are
+therefore patched to empty in the dyld cache: `0x7707cc` (32 bytes +
+newline/NUL, MBX2D's `Failed to open connection to MBX`) and `0x47bb470`
+(40 bytes + newline/NUL, QuartzCore's `Failed to initialized MBX2D driver
+(%d).`). The callee still fails and QuartzCore still falls back; only the
+console noise is gone. `tests/test_mbx2d.py` guards the recipe and the two
+patches. Docs: gpu.md §8, architecture.md §SpringBoard.
+
+## 99. Public issue #1 (New 2DS XL): brightness floor, "180° rotation", boot delay, wallpaper (2026-11-23)
+Four small reports, one commit each. No GitHub reply was posted; the answers
+are in the README FAQ and in mcu.md / m1-design.md.
+
+- **Brightness 0 = black.** `ios3ds-mcud` used to send `DisplayBrightness ×
+  DisplayBrightnessFactor` unchanged and the shim mapped level 0 to PWM 0.
+  Factor 0 is iOS' *screen off* (lock / sleep) and is also the ARM9's
+  `backlight == 1` (screen off) sentinel in `mcu_poll()`'s shell handling, so
+  it must stay 0. Level 0 with the screen *on* is now clamped to 0.12 in the
+  daemon and every lit level maps to at least `BL_PWM_MIN = 0x26` (libn3ds /
+  Luma's darkest readable preset) instead of 0x10. Both limits are in
+  `boot/common/backlight.h`; `tests/test_backlight.py` checks the whole range
+  and the off sentinel. QEMU still logs the normal path
+  `[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000` and
+  `LCD backlight as Luma left it: top 0x5f, bottom 0x5f`. Real iPods keep the
+  backlight lit at slider 0; a hardware check of the new minimum is welcome.
+- **"No 180° rotation."** Not a missing sensor event. `build/emu-rot2` (Safari
+  open, `qom-set /machine mcu-orient` 0/1/2/3, 40 s apart) logged
+  `0 -> 1`, `1 -> 4`, `4 -> 2`, `2 -> 3`: pose 2 is MCU x = −1 g, which
+  becomes iOS y = +1 g and `UIDeviceOrientationPortraitUpsideDown = 2`.
+  `build/emu-rot5` repeats `0 -> 1` -> `1 -> 2` with the final shim. The axis
+  map now lives in `boot/common/accel_axes.h`; `tests/test_orientation.py`
+  checks all six QEMU poses and that the shim uses the shared map. Stock iOS
+  4 on an iPod touch never rotates SpringBoard's home screen, and each app
+  picks the orientations it draws (Safari's bookmarks view stays upright for
+  2 and 4, rotates for 3 in the screenshots): no code change to the behaviour
+  was made.
+- **Wait before XNU.** The only ARM9 countdown is the 1 s grace period at the
+  end of `a9_main()` (generated `boot.cfg` used `countdown_ms=1000`; there is
+  no hardware reason for a longer one). It exists so **B** can stop the jump
+  and leave the monitor running. Boot.cfg parsing moved to `boot/arm9/bootcfg.c`
+  so it can be host-tested (`tests/test_bootcfg.py`): `boot_delay=N` is the
+  user-facing alias of `countdown_ms`, `boot_delay=0` skips the wait, and the
+  old key still works. **A** during the countdown jumps at once. QEMU: default
+  `New 3DS check 11.625 s -> countdown over 11.880 s -> XNU 11.958 s`;
+  `boot_delay=0` logs `boot.cfg boot_delay=0: no countdown` and
+  `8.957 s -> 8.980 s -> 9.043 s` (guest timestamps differ between runs);
+  with `boot_delay=60000` and A pressed at 8 s, `A pressed: skipping the rest
+  of the countdown`, `8.163 s -> XNU 8.215 s` instead of a 60 s wait.
+- **Wallpaper only on the lock screen.** SpringBoard's capability key is
+  `homescreen-wallpaper`: the string is in the n72 SpringBoard binary (file
+  offset 0x11fa88, CFString pointer at 0x15c794, object at VM 0x15d790) and
+  in the dyld cache (0x54ca560, 0x57c73f8, 0x5f30d24). The iPod2,1's
+  `/System/Library/CoreServices/SpringBoard.app/N72AP.plist` `capabilities`
+  dict has no such key (it lists gamekit, nike-ipod, stand-alone-contacts,
+  wifi, opengles-1, accelerometer, microphone, volume-buttons, …), so Apple
+  disabled home-screen wallpaper on this model. Lock-screen wallpaper works
+  after the DeviceClass fix (§62). `mkrootfs.py` already has a `plist_merge`
+  recipe hook that could enable the key, but no memory or frame-time numbers
+  exist for a full-screen wallpaper layer in SpringBoard on the 128 MB
+  device, so no opt-in switch was added.
+- **Verification:** `make test` passes (including the three new host tests);
+  `make userland` + `rm -f build/sd.img && make sdimg` + `python3 emu/soak.py
+  --cycles 5 --icount 2` on a fresh image: **Result: PASS** (5 cycles, no
+  panics, stalls, crashes or md0 errors).
+
+## 100. App Store tap and power-off slider: input port lifetime, crash reports from a card (2026-11-23)
+
+- **Report** (New 2DS XL, build 149; `docs/hwlogs/n2dsxl-run1.txt` lines 816-846):
+  `down 220,262`, `touch target com.apple.AppStore`, a Wi-Fi scan timeout, 21
+  lines of `AMFI: Invalid signature but permitting execution` (the app launch),
+  then `[input] connected to SpringBoard's HID event system`. There is no
+  `panic(cpu`, no `[probe]` stall and — importantly — no
+  `[input] SpringBoard went away; restarting` line. The last line is printed
+  by `ios3ds-input` when *it* starts (`main()` in `input.c`, launchd `KeepAlive`); if
+  SpringBoard's HID port had died, the daemon would first print "went away".
+  So the reconnect alone does not prove a SpringBoard crash: the input daemon
+  died and was restarted (the finger-up event is missing from the log too).
+  The same signature appears in older hardware logs without an App Store tap:
+  run19 line 527 (right after `down 49,308`), run23 line 699 (camera start),
+  run28 line 761 (during gyrotest) — always a second `connected` with no
+  `went away`. CrashReporter reports on the user's card would name the process;
+  the new startup line includes the pid so two boots are unmistakable.
+- **Making that checkable:** `scripts/crashlogs.py IMAGE OUTDIR` reads a raw SD
+  image (FAT at 1 MiB, like `emu/session.py`), a mounted card directory or a
+  `rootfs.hfs` and copies every `*.plist`/`*.crash`/`*.panic` under
+  `/private/var/mobile/Library/Logs/CrashReporter` (plus the other standard
+  CrashReporter locations) into OUTDIR. It is shipped with releases and
+  documented in README's Troubleshooting and docs/emulator.md; `emu/soak.py
+  --crashlogs` runs it after a QEMU session. Only reads: for a raw image it
+  makes a temporary HFS copy under `build/`. Host tests cover the HFS+ header,
+  `ls` parsing, recursion and extraction from a real small HFS+ image.
+- **Fix:** the app touch path in `tools/ios3ds-input/daemon/input.c` cached the
+  frontmost app's `PurpleSystemEventPort` send right without ever releasing it
+  (`GSCopyPurpleNamedPort` returns +1, so one port name leaked per app switch),
+  reused a dead name when an app was relaunched under the same bundle id, and
+  trusted `SBFrontmostApplicationDisplayIdentifier`, which keeps returning the
+  app that just went away. With a finite 4.2.1 port-name table a misrouted hand
+  event can kill the receiving process; app launch and the power-off slider
+  (modal touch while an app is frontmost) both take that path. The daemon now
+  releases the old right (`app_port_set`), checks `MACH_PORT_TYPE_DEAD_NAME`
+  before reuse, prefers `SBSCopyFrontmostApplicationDisplayIdentifier`, and
+  routes touches to SpringBoard for 1.5 s after a HOME press, while
+  SpringBoard's frontmost state lags the close animation. A diagnostic
+  `[input] stale touch port ...` / `[input] no touch port ...` line names a
+  repeat of the original failure in a future log.
+- **Restart detection:** `emu/soak.py` used to print "SpringBoard restart" for
+  the first `[input] connected` line of every boot (re-log 63). It now fails
+  the run only when a *second* one appears, and prints the count in the report.
+- **QEMU app survey:** three 19-icon runs with the final input daemon on fresh
+  images (`emu/soak.py --unlock-first --no-extras --crashlogs --icount 2`,
+  `--targets` listing all 15 icons on page 1 plus the 4 dock slots; 12 s per
+  app, Home, wait for a settled screen). Every icon was tapped in every run;
+  no run logged a panic, process crash, watchdog, md0 error or *second*
+  `[input] connected` line. `scripts/crashlogs.py` found no CrashReporter file
+  in any of the three images — nothing crashed in QEMU, so the hardware
+  reports are still needed to name the process there. The App Store opened in
+  run 2 (`build/emu/apps-survey/c011_app.png`: the gray "Loading…" screen)
+  and Home brought the icons back; that is the expected "store servers are
+  gone" outcome. Screenshots/reports: `build/emu/soak/` (run 1),
+  `build/emu/apps-survey/` (run 2), `build/emu/apps-survey3/` (run 3).
+  Two runs had a harness-only issue: when a tap landed while SpringBoard was
+  still settling, the following Home opened Spotlight on page 1, so the next
+  few screenshots show the keyboard instead of an app. No process died; the
+  runs were not used as evidence for the affected apps.
+
+  | App (icon) | QEMU result | Notes |
+  |---|---|---|
+  | Game Center | opened | run 2, app/home diff 29/0 |
+  | Calendar | opened | run 1, 93/0 |
+  | Photos | opened | run 1, 95/4 |
+  | Contacts | opened | run 1, 96/0 |
+  | YouTube | opened | run 1, 95/2 |
+  | Stocks | opened | run 1, 45/2 |
+  | Maps | opened | run 1, 65/0; Spotlight on the next tap in runs 2/3 |
+  | Weather | opened | run 1, 41/0; Spotlight on the next tap in runs 2/3 |
+  | Notes | opened | run 1, 83/2 |
+  | Utilities (folder) | opened | run 1, 23/8 (folder close still animating) |
+  | iTunes Store | opened | run 2, 76/0 |
+  | App Store | opened, "Loading…" | run 2, 61/3; store requests fail, no restart |
+  | Settings | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home); needs a console check |
+  | Camera | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home) |
+  | Cydia | tapped; no crash | screenshot ambiguous in all three runs (Spotlight/home) |
+  | Music (dock) | opened | run 1, 95/2 |
+  | Mail (dock) | opened | run 1, 94/3 |
+  | Safari (dock) | opened | run 1, 94/2 |
+  | Videos (dock) | opened | run 2, 26/3; run 1 screenshot was still gray |
+
+- **Power-off slider:** `docs/re-log.md` §81 fixed the touch routing; this
+  change covers the restart report. On the final image, holding POWER brought
+  up the slider and tapping **Cancel** dismissed it, then the same sequence
+  ran a second time: `build/emu-session/{pre_slider,slider_cancel,slider2,
+  slider2_cancel}.png` and `build/emu-slider/` (`emu/slider_test.py --icount 2`,
+  two show/cancel rounds, `Result: PASS`, 0 panics, 0 `connected` lines beyond
+  the boot one). A later automated rerun timed out during boot because the
+  host was loaded by other emulators; it logged no crash.
+
+## 101. iOS 4.1: rootfs recipe and shim KPI relocation, SpringBoard in QEMU (2026-11-23)
+
+Continues §87 / docs/multi-version.md §5.3–5.5. All Apple files were fetched
+again into `build/fw-4.1/` via the API/CDN URL (sha1 verified by fwprep);
+nothing Apple-derived was committed.
+
+- **Recipe blocker.** The 4.1 dyld-cache patch list was positional. Two MBX2D
+  patches were added to `rootfs/recipe.json` on main afterwards, so the 24
+  relocated offsets were zipped onto 26 patches and every byte check failed
+  (`original bytes differ` / `21132 matches`). `rootfs/overlay-4.1.json` now
+  maps 8C148 base offsets → 8B117 offsets by key; the two new MBX strings have
+  unique verified hits (0x492c7cc / 0xa899a4). 20 patches apply, six skipped.
+- **Shim blocker, not the fake pages.** The earlier "undefined instruction in
+  the fake GPIO page" was a wild stack in FCRAM: QEMU `gva2gpa 0xc38b3f3c`
+  returned `0x20adef3c`. `kernel/shim/blk.c` and the input/Wi-Fi/MCU shims
+  called XNU KPIs at 8C148 addresses that all moved in 8B117; the early
+  PEGetGMTTimeOfDay hook also landed in the wrong function and produced the
+  `OSDictionary::setOptions()+0x44` panic. `scripts/kpi.py` now resolves the
+  addresses by LC_SYMTAB symbol (plus the gIOPlatform literal) and generates
+  `ios3ds-kpi.h` for the shim build; `kernel/shim/kpi.h` keeps the 4.2.1 values
+  as defaults.
+- **Byte-identical default.** A fresh 4.2.1 build was compared with one from
+  `git archive HEAD` sources: kernel/devtree/fakeio/shim/gpu/boot.cfg sha256
+  all match; the shim is `7906b596…` before and after the KPI change.
+- **QEMU.** With the relocated shim the full 8B117 patch set reaches
+  `BSD root: md0`, launchd, SpringBoard, `[gl]` PICA200 contexts and the CA
+  compositor, 0 md0 errors and live heartbeat/GPU logs; no early panic. The
+  control set (15 core + md0 patches) also gets past `BSD root: md0` now.
+- **SpringBoard crash loop (4.1):** with the relocated shim the boot no longer
+  panicked but never left the spinner. The image's
+  `LatestCrash-SpringBoard.plist` showed `EXC_BAD_ACCESS` at
+  `liblockdown.dylib+0x2dfc`: the 4.1 `lockdown_copy_value` patch had been
+  skipped in §87. 58 contexts/58 restarts in 900 s. The overlay now contains
+  the full 8B117 replacement (44-byte stub at 0x4fbde4 plus a 160-byte
+  key/value table at 0x4f9650), built from the 8B117 CFStringRef arrays and
+  CFString literals; all original bytes are verified at build time.
+- **4.1 home screen:** after that table patch, `make sd IOS=4.1` +
+  `make sdimg IOS=4.1` and `emu/run.py ... --icount 2` reached the stock iPod
+  home screen at t=120 s (screenshot
+  `build/fw-4.1/run-final41b/screen_120.0s.png`), 1 GL context (no crash loop),
+  0 panics, heartbeats with 0 md0 errors. Cydia/TLSFix stay disabled for 4.1.
+- **Final soak:** the exact sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` on a fresh image printed
+  **Result: PASS**: 5 cycles, SpringBoard/input up after 90 s, 0 restarts,
+  no "not home after Home", no failed lock rounds. Default 4.2.1 kernel and
+  shim hashes are unchanged (`505f451a…`, `7906b596…`).
+
+## 102. Older iPod2,1 firmwares: 3.1.3 and 2.2.1 in QEMU (2026-11-23)
+
+See docs/multi-version.md §6 for the full tables and hashes. All Apple files
+were downloaded into `build/fw-3.1.3/` and `build/fw-2.2.1/` and are never
+committed.
+
+- **Firmware.** Apple retired the public 7E18 IPSW link (403); the archived
+  Apple IPSW from archive.org was used instead (sha1 `5f4f5c01…`, pinned in
+  `versions.py`). Its public keys decrypt kernel, device tree and HFSX rootfs,
+  so the archive copy is authentic. 5H11a still comes from Apple's CDN with
+  the published sha1 `9af5625e…`. `fwprep.py` learned `Restore.plist` (2.x)
+  and basename-only key filenames (old img3 paths).
+- **Epoch and memory map.** Disassembling `_pe_identify_machine` gave
+  `ba_version=5` for 7E18 and `ba_version=3` for 5H11a. Both caches are linked
+  at `0xC0000000` (entry `0xc0069040` / `0xc00657f0`), so `mkboot.py`, the
+  shim linker script and `kpi.py` now take the base from `versions.py`; the
+  shim still sits at PA `0x20840000` but is linked at `0xC0840000`.
+  2.2.1's `__PAGEZERO` segment forced a `flat_kernel()` fix (ignore
+  file-size-zero segments).
+- **Shim VA bug.** The first 7E18 boot panicked in the shim at
+  `pc 0xc084310c`, `far 0x808c8020`: `audio.c`, `cam.c` and `pica.c` still
+  converted PA->VA with hardcoded `0x80000000`. They now use the generated
+  `IOS3DS_KPI_VIRT_BASE`; PEGetGMTTimeOfDay's `gIOPlatform` literal is also
+  per-build (`0xc025f53c` / `0xc02064a0`). All KPI *functions* resolve by
+  symbol on both old kernels; no symbol fallback was needed.
+- **Patches.** 24 of 37 8C148 kernel patches relocated to 7E18, 15 to 5H11a,
+  each with verified original bytes (new `kernel/patchsets/*.json`). Timer
+  hooks, `_fleh_irq`, `mdevstrategy` and the UART functions needed completely
+  new byte patterns. The 13/22 skipped patches are enumerated in §6.4 with
+  what each is needed for (gyro, CLCD wake, power waits, etc.).
+- **Rootfs/userland.** New overlays drop every 4.2.1 file patch, binary,
+  interposer and Cydia/TLSFix entry: 7E18 has a 96 MB dyld cache but no
+  relocated offsets yet, 5H11a has no dyld cache at all. One large stale cache
+  file is removed first so xpwn's `grow` has free allocation-map blocks. Our
+  4.2.1-linked userland tools need per-version stub symbols and a reduced
+  tool set before they can be installed (§6.5).
+- **QEMU (7E18):** after the shim fix, XNU boots the S5L8720 drivers, mounts
+  `BSD root: md0`, starts AppleFSCompression/AMFI, and then retries the root
+  mount forever with **0** md0 requests served by the ARM9; no launchd,
+  SpringBoard, panic or stall. That is the exact stop point: the memdev path
+  is patched but no buffer reaches the block server (§6.6).
+- **QEMU (5H11a):** first run used the pre-fix image and hit the same
+  `far=0x808c8020` shim fault. With the fixed shim XNU starts, brings up the
+  S5L8720 VIC/GPIO/clock/DMA drivers and then panics at `pc 0xc05fc55c`,
+  `far=0x0` in a prelinked USB/OTG kext right after
+  `AppleSynopsysOTG2::start` (backtrace through `IOService::startCandidate`);
+  no BSD root, launchd or md0 requests. Deleting `/arm-io/usb-otg` through a
+  per-version `dt_delete` override gets past that panic: 5H11a then reaches
+  `BSD root: md0`, AMFI and `mDNSResponder[11]` with 1,630 md0 requests and
+  0 errors, but never starts SpringBoard (black screenshots, no crash
+  reports) - the exact stop point is activation/userland, not the block server.
+- **4.x unchanged.** A `git archive origin/main` tree and this branch produced
+  byte-identical 4.2.1 *and* 4.1 kernel/devtree/fakeio/shim/gpu/boot.cfg
+  hashes from the same staged firmware (§6.7). Cydia/TLSFix and the skipped
+  4.1 patches are documented as open items, not changed (§6.8).
+- **Final soak.** The exact sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` on a fresh default image printed
+  **Result: PASS**: SpringBoard/input up after 80 s, 5 app/home cycles, zero
+  panics, stalls, md0/log/crash/hang/GPU failures; `make test` passed (94
+  offline tests plus all host harnesses and the stub-symbol check).
+- **Continuation (2026-11-24).** `make test` was rerun (all offline tests, host
+  harnesses, stub-symbol and conflict-marker checks pass), and a fresh default
+  build (`make userland`, `rm -f build/sd.img && make sdimg`) reproduced all six
+  4.2.1 boot-file sha256 values in §6.7. The 4.1 patch set, overlay and registry
+  entry are unchanged relative to `origin/main`. A second fresh image with
+  `IOS3DS_QEMU=... python3 emu/soak.py --cycles 5 --icount 2` again printed
+  **Result: PASS**: 5 cycles, SpringBoard/input up after 241 s (host loaded),
+  zero panic, stall, md0, log, crash, watchdog or GPU failures.
+
+## 103. Public issue #11 (New 3DS): "No way to enable WiFi" (2026-11-24)
+
+The reporter's `log.txt` (not committed) answers the two questions from the
+report directly. The firmware and chip **did** come up: `nwm.code` was read
+(348160 bytes, main type4), SDIO enumerated the AR6014 (chip id `0d000001`),
+BMI uploaded all four parts and ran the stub, `hi_board_data_initialized = 1`,
+and HTC answered: `HTC ready: 10 credits of 1544 bytes` followed by
+`htc: service 0100 -> status 0, endpoint 1, max message 1538 (1 polls)`.
+Then:
+
+```
+[wifi-diag]   5659 ms htc: tx waits for credits on endpoint 0 (0 < 1)
+[wifi] HTC services connected: -5 (WMI endpoint 1, ...)
+[wifi-diag]   5659 ms FAILED in stage htc: HTC service setup, error -5, sdio status 04212080
+[wifi] HTC service setup failed: -5 ...
+[wifid] waiting for the ARM9 network backend (state 10)
+```
+
+`-5` is `SDIO_ERR_BUSY` (`boot/arm9/wifi/sdio.h:17`): **our own** credit
+wait, not a rejected service or an SDIO error (STAT1 is 0). The credit model
+from §91 gives endpoint 0 one credit, and
+`mbox_send()`/`credit_wait()` (`boot/arm9/wifi/ar6k.c:513-536`, `485-511`)
+refuses the next CONNECT_SERVICE when the response does not return it. The
+QEMU model returns credits in the CONNECT_SERVICE response trailer
+(`emu/qemu/hw/arm/ctr_wifi.c:425-466`, `1690-1719`), but this firmware did
+not within the ~17 ms wait. dsiwifi's `htc_handle_pkt`
+(`arm_iop/source/ath/htc.twl.c:28-45`) sends all five CONNECT_SERVICE
+messages and SETUP_COMPLETE back-to-back, with no credit wait, on this chip.
+
+So "no way to enable WiFi" is downstream: the driver parked the chip in reset
+in state `failed`, the mailbox never got a backend/MAC, `ios3ds-wifid` kept
+waiting and configd had no interface to drive. No preset network is needed
+for scanning (docs/wifi.md §6 and §10); `wifi.cfg` was absent by design and
+is not the fix. `origin/main` is still at the reported commit `edf6444`, so
+nothing landed there after 0.4.0-126.
+
+**Change:** `mbox_send()` funds endpoint 0 locally for its fixed handful of
+control messages when a credit is not returned (at most 6 per bring-up:
+5 CONNECT_SERVICE + SETUP_COMPLETE), logs each refill and counts them in the
+`credits so far` diag line. Credits that *are* returned still top EP0 up;
+the credit accounting for WMI/data endpoints is unchanged. QEMU needed no
+model change: its model returns the credits, so the new branch is not taken
+there. Hardware still has to confirm that Type4 accepts the back-to-back
+handshake, as dsiwifi does.
+
+**Verification:** `make -C boot` and `make sdimg` clean; `make test` green;
+`emu/wifi_test.py --case ok` (18/18 checks), `--case settings` (no wifi.cfg:
+chip idle, a80211 loaded) and `--case nwm` (firmware from a synthetic
+BLZ-compressed `nwm.code`, full bring-up to HTTP fetch) all PASS. The UI test
+`emu/wifi_ui_test.py --nwm` also passed 8/8 in 535 s: with no `wifi.cfg`,
+Settings > Wi-Fi scanned, listed three networks, joined the WPA2 AP by
+touchscreen and got a DHCP lease — i.e. the control the reporter missed is
+there once bring-up succeeds. No new EP0 refill lines in QEMU, as expected.
+
+## 104. Safari's memory wall and TLS 1.2 in Safari: /usr/lib copies, no kernel patch (2026-11-23)
+
+Two tester reports, measured with the QEMU `ctr-wifi` model and slirp, every run
+`--icount 2` (Old 3DS timing unless `--new3ds`): a local HTTP server on
+`10.0.2.2:18080` serves the generated pages, a TLS 1.2-only HTTPS server on
+`:18443` (RSA leaf) and `:18444` (P-256 ECDSA leaf) both reject TLS 1.0 (minimum
+and maximum TLSv1.2). The test CA was added to `rootfs/certs/roots.pem` only
+while measuring and then reverted; it is not in the tree. The pages and certs
+stay in `build/tlstest/` (gitignored). `ios3ds-diag -urlpoll` opens the URL in
+Safari; the harness adds `ios3ds_mem=1 ios3ds_applog=1 ios3ds_urltest=1`, the
+new `ios3ds_urlport=<port>` override (the host's 8080 is often busy) and
+`ios3ds_probe=1`.
+
+**1. Big pages on the 128 MiB device.** The old reports were "Cannot allocate
+memory" on the first big page (NSPOSIXErrorDomain 12), a retry works.
+- **Page A:** a 4,013,130-byte HTML (2,200 paragraphs) with 24 generated JPEG
+  images (320x240, 24-58 KB each). Safari fetched the HTML and all 24 images;
+  `MobileSafari` 7.7-12.6 MiB resident (7,900-12,932 KiB), free 42.4-45.3 MiB
+  (43,416-46,380 KiB), `memorystatus_level` 59, no alert. Screenshot
+  `build/tlstest/shots/tls-big-final-page.png`.
+- **Page B:** a 3,648,172-byte HTML with 20 1024x1024 JPEGs (~480 KB each, ~3 MiB
+  decoded each), opened 5 s after the home screen to catch the boot-time
+  daemons. Safari fetched all 20 images; peak `MobileSafari` 27.0 MiB
+  (27,664 KiB), free **20.1 MiB** (20,588 KiB), level 49, mbuf 136 and
+  114/3806 clusters, no jetsam, page loaded.
+- **What fails:** no allocation fails in QEMU. `vm_stat` and
+  `kern.memorystatus_level` are the only figures available: `host_get_host_priv_port`
+  and the `host_priv_self()` Mach trap are both refused to the root `[mem]` job,
+  so `host_zone_info` (kernel zone sizes) cannot be read, and none of
+  `vm.zone_map_size`, `vm.page_free_count`, `vm.pages`,
+  `vm.page_pageable_internal_count`, `vm.max_proc_mmap`, `vm.max_map_count`,
+  `kern.max_task`, `kern.max_task_pages` exist in 4.2.1's sysctl tree (the new
+  `[mem N] sysctl` line is empty). Nothing points at a zone/VM limit.
+- **GPU arena:** still **12 MiB** wired (`[pica] arena 12288 KiB`), by far the
+  largest single allocation we own. It is used: at 301 CA frames SpringBoard
+  held 4,887 KiB of GPU memory in 76 textures; the earlier 8 MiB arena fragmented
+  on hardware (hwlogs/README, 704 KiB texture, 290 KiB free in 90 blocks). The
+  fallbacks 8/4/2 MiB stay, the default does not shrink.
+- **Daemons:** `profiled` (com.apple.managedconfiguration.profiled) was resident
+  in every measurement (2,420-2,428 KiB) and nothing on ios3ds uses it, so it is
+  now in `disable_daemons`; the reports no longer list it (**-2.4 MiB** at boot).
+  The rest of the list is Apple's (mediaserverd 4.0, configd 2.8, lsd 1.9,
+  installd 1.3, mDNSResponder 1.3) or ours and small (ios3ds-mcud 1.16,
+  ios3ds-diag 0.65, ios3ds-wifid/input ~0.5); no further safe cut.
+- **Conclusion:** QEMU cannot reproduce the hardware alert even with 20.1 MiB
+  free and 27 MiB Safari. The 2.4 MiB from `profiled` and accurate accounting are
+  all that is ours to fix here; the `[applog] MobileSafari load error` line
+  (now also appended to `/private/var/tmp/ios3ds-applog.txt` when the sandbox
+  denies `/dev/console`) is what a hardware log needs to name the layer.
+- **New 3DS:** `--new3ds` (n3ds_ram=1) after boot: **168.5 MiB free**
+  (172,576 KiB), level 79 (Old: 48.1 MiB / 49,212 KiB, 65); the same TLS 1.2
+  page loads in Safari (`build/tlstest/shots/tls-n3ds-final-page.png`).
+
+**2. TLS 1.2 in Safari.** The sandbox denies `/Library` and
+`/var/mobile/Library/ConfigurationProfiles` but allows `/usr/lib` (re-log 71/72).
+- **SANDBOX=1 is not the way.** With `make sdimg SANDBOX=1` (patch verified in
+  the image: `b` from 0x803ced98 to shim+0xF4, `shim_sb_evaluate` at that offset)
+  a probe in MobileSafari still got `EPERM` opening
+  `/Library/MobileSubstrate/MobileSubstrate.dylib`. A temporary shim that
+  returned allow for *every* `sb_evaluate` operation gave the same `EPERM`, so
+  the vnode-open check does not reach that function in this build. Safari showed
+  "could not establish a secure connection" and the TLS server saw no request;
+  no out-of-memory alert. The old "SANDBOX=1 OOMs" explanation was not
+  reproducible because TLSFix never loaded.
+- **Fix:** the build copies TLSFix's two dylibs to `/usr/lib` and rewrites the
+  strings that point at denied paths (same-length NUL padding, `scripts/cydia.py`
+  `sandbox_copies` / `sandbox_patch_load` / `sandbox_profile_copy` in
+  `rootfs/cydia.json`):
+  - `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` ->
+    `/usr/lib/ios3ds-CydiaSubstrate.dylib`;
+  - `tlsfix.dylib` -> `/usr/lib/ios3ds-tlsfix.dylib`, its CydiaSubstrate
+    `LC_LOAD_DYLIB` and its `/var/mobile/Library/ConfigurationProfiles` string
+    rewritten to the `/usr/lib` copies;
+  - the CA payload `ios3ds-roots.plist` -> `/usr/lib/ConfigurationProfiles/`.
+  `ios3ds-applog` still tries `/Library` first (SpringBoard, Cydia and other
+  unsandboxed apps unchanged); when that dlopen fails it loads
+  `/usr/lib/ios3ds-tlsfix.dylib` from a 0.25 s run-loop timer once CFNetwork is
+  up (constructors run before frameworks). No kernel patch, no change to the
+  sandbox profile.
+- **Results** (Old 3DS, same image; before = no copy fallback, after = final):
+  | | before | after |
+  |---|---|---|
+  | local TLS 1.2-only, RSA (Safari) | no connection, "could not establish a secure connection" (`tls-sandbox1-page.png`) | **loads**, host logs `TLSv1.2` (`tls-copy4-page.png`) |
+  | local TLS 1.2-only, P-256 ECDSA (Safari) | -9836 | **loads**, host logs `TLSv1.2`; TLSFix's OpenSSL check read `/usr/lib/ConfigurationProfiles` (`tls-ec1-page.png`) |
+  | MobileSafari resident, first page | 8.2 MiB (HTTP, 8,432 KiB) | 11.7 MiB with TLSFix (EC, 11,948 KiB), 12.6 MiB (big page, 12,932 KiB) |
+  | free / level after the page | 48.1 MiB / 65 at boot | 40.5 MiB / 59, no OOM |
+  The old OOM did not reappear; TLSFix costs about 2.5-3 MiB resident, its text
+  is file-backed. Screenshots: `build/tlstest/shots/`.
+- **Tools left in the tree:** `ios3ds-diag` honours `ios3ds_urlport=PORT` for
+  `-urlpoll` (host 8080 conflicts); `ios3ds-applog` gained
+  `ios3ds_probe=1` (writes executable path, `DYLD_INSERT_LIBRARIES`, `open()`
+  results and dlopen handles to `/private/var/tmp/ios3ds-applog-probe.txt`) and
+  falls back to `/private/var/tmp/ios3ds-applog.txt` for alerts/load errors when
+  `/dev/console` is denied; `ios3ds-sample` tries `host_priv_self()` and prints
+  the VM sysctls at the first report.
+- **Files:** `scripts/cydia.py` (`sandbox_copies`, `sandbox_patch_load`,
+  `sandbox_profile_copy`), `rootfs/cydia.json`, `rootfs/recipe.json` (profiled
+  disabled), `tools/ios3ds-diag/applog.c` (fallback, probe, tmp logging),
+  `tools/ios3ds-diag/diag.c` (`ios3ds_urlport`), `tools/ios3ds-sample/sample.c`
+  (`host_priv_self`, VM sysctls); docs: README, certificates.md, cydia.md,
+  location.md, n3ds.md, this section.
+- **Validation:** `make test` green (Python, pica, gl, wifi, gps, cpad, n3ds, ALS,
+  stub symbols, no conflict markers); a fresh `make sdimg` + `emu/soak.py
+  --cycles 5 --icount 2` printed **Result: PASS** (boot 90 s, 5 cycles, 0 panics,
+  0 ARM11 stalls, 0 md0 I/O errors, 0 process crashes, 0 jetsam; the one
+  "SpringBoard restart" is the boot-time connection), and again after rebasing
+  onto main's 4.1 work (fresh image, boot 81 s, same checks).
+
+**Continuation (2026-11-24):** re-verified on the rebased tree. A fresh
+`make userland` + `rm -f build/sd.img && make sdimg` printed the four
+`sandbox_copies` lines (81 trust-store roots, 121 profile roots; the test CA is
+not in the tree), `make test` was green, and `emu/soak.py --cycles 5 --icount 2`
+on that image printed **Result: PASS** (boot 120 s, 5 cycles, 0 panics, 0 ARM11
+stalls, 0 md0 errors, 0 crashes, 0 jetsam; the one "SpringBoard restart" is the
+boot-time connection). The memory figures above were rechecked against the
+sampler, which prints **KiB**: an earlier draft divided those values by 1000 and
+labelled them MiB, so the numbers here are corrected (20,588 KiB = 20.1 MiB, not
+20.6; 172,576 KiB = 168.5 MiB, not 172.6). Re-ran the pages: `huge.html` reached
+26,384 KiB Safari and 22,348 KiB (21.8 MiB) free with no alert (a loaded host
+meant the 240 s timeout caught 8 of 20 images; the full-load 20,588 KiB figure
+stands). With `build/tlstest/ca.pem` appended to `rootfs/certs/roots.pem` for the
+run and then reverted, Safari loaded the local TLS 1.2-only page over both the
+RSA (`:18443`) and P-256 ECDSA (`:18444`) certificates; the host logged
+`TLSv1.2` and Safari showed the lock icon
+(`build/tlstest/shots/tls-tls-verify2-page.png`, `tls-ec-verify-page.png`).
+New 3DS: 172,636 KiB (168.6 MiB) free / level 79, Old 49,004 KiB (47.9 MiB) /
+64. No code changed in the continuation.
+
+## 105. Cydia refresh/install time: local repo, md0 chunks, write-back (2026-11-23)
+
+- **Report:** public issue #1, New 2DS XL: adding a Cydia repository and
+  installing a tweak take "a really long time". The question was which part
+  is ours: software TLS/DNS, apt's Packages parse on the 400 MHz ARM11,
+  dpkg's `f_sync` storm on md0, the ARM9's block server, or Substrate
+  re-signing.
+- **Harness** (`emu/cydia_perf.py`): builds a 32-file `iphoneos-arm` `.deb`
+  with host `dpkg-deb -Zgzip` (no downloads), writes `Packages`, `Packages.gz`
+  and a `Release` with matching hashes, and serves them from a random high
+  host port through slirp (`http://10.0.2.2:<port>/repo`). It copies
+  `rootfs.hfs` out of a fresh `build/sd.img` with `mtype -b`, adds a launch
+  daemon (`/usr/libexec/ios3ds-cydia-perf`,
+  `com.ios3ds.cydia-perf.plist`), the source list, the `.deb` and
+  `wifi.cfg`/dummy firmware, copies the image back, boots with
+  `-icount shift=2,sleep=off`, and stops with QMP when `[cperf] ALL DONE`
+  appears in `sd:/ios3ds/log.txt`. `boot.cfg` gets `log_ts=1` and `ioprof=1`.
+  Two harness bugs bit the first runs and are fixed: `mtype` without `-b`
+  truncated the 1 GiB HFS image at the first `^Z` (only 914 MB was copied),
+  and host `dpkg-deb`'s
+  default zstd-compressed members are unreadable by iOS's dpkg 1.18
+  (`unknown compression for member 'control.tar.zst'`). The guest's bash has
+  no `ifconfig`, so network-ready is a `/dev/tcp/10.0.2.2:<port>` probe.
+- **Before** (stashed tree = `origin/main`, 215 s wall, guest times from the
+  ARM9 stamps): network ready 19.584 s; `apt-get update` 19.584→21.381 =
+  **1.797 s**; `--download-only install` 0.173 s; `dpkg -i` 21.555→24.048 =
+  **2.493 s**; total **4.463 s**, rc=0 everywhere. Host HTTP log: 404s for
+  `Release.gpg`/`Packages.bz2`/`Packages.lzma`, then 200 for `Release` and
+  `Packages.gz`. `ioprof=1`: during `dpkg -i` 618 md0 chunks, ~584 KiB
+  written, 316 ms ARM9 service time.
+- **First after run:** the new 64 KiB bounce made the shim compute
+  `secs = (0xFFE0 + 511) / 512 = 128`, i.e. 64 KiB, while the ARM9 accepts at
+  most 0xFFE0 bytes: large page-ins failed with
+  `[blk] read lba 287720 x128 ... failed (1000)` and iOS never reached
+  SpringBoard. Fixed by masking the chunk length down to a
+  whole 512-byte sector in `kernel/shim/blk.c`.
+- **Second after run** (256-slot cache, O(n²) flush, 183 ms idle): rc=0 but
+  *slower* than before (refresh 3.07 s, install 3.35 s). The `[io]` counter
+  showed 2,143 sectors written back in 29 guest seconds; sorting up to 256
+  dirty slots on every flush cost more than the saved SD commands.
+- **Final after run** (104 s wall): refresh 19.696→21.443 = **1.747 s**;
+  download **0.078 s**; `dpkg -i` 21.522→23.945 = **2.423 s**; total
+  **4.248 s** (−4.8 %). rc=0, no `[blk] ... failed`, panic or ARM9 exception.
+  During install: 556 chunks, ~612 KiB, 288 ms ARM9; the cache logged 0
+  direct writes and 0 errors. The remaining seconds are dpkg/apt CPU in
+  QEMU, where the SD is instant; the saved `f_sync` commands are worth much
+  more on the tester's card.
+- **Changes:** 64 KiB bounce in the FCRAM gap (docs/boot-perf.md §8);
+  512-sector write-back cache with deferred `f_sync`, clean-flag ordering and
+  host tests (`tests/test_blkcache.c`, `make test`); apt timeouts/retries and
+  no translation downloads in `/etc/apt/apt.conf.d/99ios3ds-speed`. The dead
+  2011 Cydia sources are still listed in Cydia, they now fail fast; HTTPS
+  root store and TLSFix are untouched.
+- **Not a cost:** no code path in our build re-signs Substrate or tweaks;
+  boot-args disable code signing (`amfi_allow_any_signature=1
+  cs_enforcement_disable=1`). DNS/TLS timings for real HTTPS repos are in
+  [certificates.md](certificates.md) §4 and are unchanged by this work.
+- **Re-run after the rebase onto `origin/main` edf6444** (same harness, fresh
+  images, `fill=0`; guest wall time on this loaded host): refresh 2.993 →
+  **2.443 s**, download 0.132 → 0.277 s, `dpkg -i` 3.438 → **2.664 s**, total
+  6.563 → **5.384 s**. Guest CPU (user+sys): refresh 0.72 → 0.67 s, install
+  0.67 → 0.58 s. The first, quiet-host numbers above are the fairer picture of
+  the code change; the second run shows how far the wall clock moves with
+  host load, which is why the docs ask for chunks/KiB/ARM9 time.
+- **apt's Packages work** is CPU on the ARM11, not the local HTTP: 2,000
+  synthetic stanzas (440 KB) take 1.3–1.6 s of guest CPU in `apt-get update`
+  and another second or two of blocked md0 time. apt 0.7 prefers bz2: that
+  run was 5.121 s / 1.60 s CPU; with `Acquire::CompressionTypes::Order
+  { "gz"; ... }` shipped it takes 3.762–4.257 s / 1.30–1.43 s. Disabling
+  `Dir::Cache::pkgcache` looked faster for `update` alone (6.1 s real but the
+  later `--download-only` CPU went 0.07 → 0.47 s because the text lists are
+  re-parsed), so it is not shipped.
+- **Dead default sources** are the refresh outlier on real networks. Adding
+  one (`cydia.zodttd.com`, still resolving) to the local repo's list:
+  `apt-get update` **2.544 s** without a fix (apt followed a 308 redirect and
+  retried) vs **1.490 s** with the host pointed at 127.0.0.1 in
+  `/private/etc/hosts` (connection refused at once). The same entries cover
+  ModMyi and repo666.ultrasn0w.com; the 10 s timeout and `Retries 0` stay as
+  a backstop. A per-host `Acquire::http::Proxy` was tried first and had no
+  effect in this apt build (it still resolved the origin host).
+- **Cache read path:** `blkc_dirty()` used to scan all 512 slots on every
+  monitor loop (the idle check) and `blkc_dirty_lba()` every sector of every
+  read. A dirty-slot count makes both O(1); when no sector is dirty, a read
+  takes the old single-`f_read` path instead of being split into runs. Host
+  tests still pass. A coalescing flush (sort dirty sectors and write adjacent
+  runs with one CMD25) was prototyped; QEMU's counters and ARM9 time could
+  not show a reliable win, and its write-call accounting disagreed with the
+  sectors-written counter, so it was dropped rather than shipping an
+  unexplained cache change.
+- **Harness additions:** `--fill N` (synthetic index stanzas), `--bz2`
+  (offer bz2 next to gz), `--skip-refresh` (isolate dpkg), `--extra-source`
+  (a second/dead source), `--apt-extra` (override config as
+  `99zzios3ds-perf`) and per-phase guest CPU times. See
+  [cydia.md](cydia.md) for the resulting tables.
+- **Verification:** after the rebase, `make test` passes (cache test, CI
+  stub-symbol check and conflict-marker check) and a fresh-image
+  `python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**
+  (5 cycles, 0 panics/restarts after boot, 0 md0 errors). The rebase conflict
+  in this file was section 101 arriving at the same tail; the 4.1 section is
+  kept before this one. On the continuation run the final tree was rebuilt
+  (`make userland`, fresh `make sdimg`) and re-measured: refresh 1.645 s,
+  download 0.385 s, `dpkg -i` 2.618 s, all rc=0 with no `[blk] ... failed`;
+  a second fresh-image 5-cycle soak again printed **Result: PASS**. The
+  `[io]` counters over the install still show the cache absorbing the small
+  dpkg writes (0 direct-write sectors, 0 sync errors).
+
+## 106. Both eyes without the 8x ARM9 copy (2026-11-23)
+
+Section 90 left the flag-on path at 120-186 ms per ARM9 screen copy in QEMU
+(section 90's numbers: 15.4 ms with the flag off), enough to break the soak's
+timing checks. This entry makes the two-eye copy incremental instead of
+rebuilding all 360 screen columns on every blit.
+
+- **What is cached:** `boot/arm9/display.c` keeps a two-accumulator signature
+  of the source row that feeds each screen column (all 320 pixels, including
+  the alpha depth stamp). A column whose row signature is unchanged keeps the
+  eye pixels already in `top_fb[0]`/`top_fb[1]`. When the frame changes
+  everywhere (a page swipe, a return to the home screen), at most 120 columns
+  are rebuilt per blit, so the extra work is spread over three copies rather
+  than spent in one long ARM9 turn. The cache is dropped on a slider,
+  `stereo3d`, screen-mode or shown-framebuffer-set change.
+- **Hot loop:** a 256-byte alpha→class table replaces `stereo_class_of`'s
+  switch per pixel; the two eye offsets are computed once per class per frame
+  instead of twice per pixel; the source row is copied into a buffer with
+  eight edge pixels of padding on each side, which removes the per-sample
+  clamps (the largest offset is 2*k = 8 iOS pixels). The maths and pixel
+  values are the same as section 90's; the host test compares a sampled grid
+  of both eyes with the original class/delta rules after convergence.
+- **Flag off:** none of this is reached. The normal `blit_top()`/`blit_bottom()`
+  pair is untouched, as are the flat/slider-down and unstamped-frame
+  fallbacks; `tools/ios3ds-pica/tests/test_stereo_copy.c` still checks the
+  byte-for-byte flag-off and flat copies.
+- **Why QEMU had no two-eye path at all:** instrumenting the CA frame
+  classifier showed `50 draws, phase START, 0 icons, 0 stamps` on the first
+  home frame: CA draws SpringBoard's wallpaper as many small layers, not as
+  one full-screen quad, and `stereo_draw()` refused to classify anything
+  while `phase == STP_START`. `stereo_draw()` now treats the first full-screen
+  draw (opaque or not) or the first `STEREO_MIN_ICONS` small draws as the
+  background; the following 46 draws of the QEMU home frame are stamped as
+  icons/dock. A tiny partial update (the next CA frame had two draws) no
+  longer wipes the class map from untouched pixels. `stereo_frame_t` gained a
+  `stamps` counter so a phase reached without any stamps is not called home.
+  Apps and the lock screen still go flat on a second full-screen opaque draw;
+  new host tests cover all three cases.
+- **Getting the stamp to the ARM9:** the PICA200's direct present swizzle uses
+  the render target's alpha byte for the surface's blue channel, so the
+  class map never reached `/vram` (a QEMU memory dump showed alpha 0 in every
+  sampled word). `tools/ios3ds-gl/pica_be.c` now uses the CPU read-back for
+  the display target when `stereo_enabled()`, which writes BGRA with the
+  stamp intact. Sending the stamp through the swizzle's alpha instead was
+  tried first: it broke the blue channel and the GPU present check (147199 of
+  153600 pixels, `0xff0000ff` vs `0xff000000`), so that approach was dropped.
+  With the flag off the direct present stays exactly as before.
+- **Logging:** `gm_report()` now adds `[monitor] stereo eye columns: R rebuilt,
+  U reused in N s` next to the 30-second CPU-copy line, so a log shows how
+  much of the two-eye work was actually done.
+- **Frame times, private QEMU, `--icount 2 --slider3d 255`:** before this work
+  section 90 logged `42 copies in 30 s, 120.3 ms each` and, on a longer run,
+  `33 copies in 38 s, 186.4 ms each` with the flag on, against `15.4 ms each`
+  with the flag off. After the fixes and the cache, a 360 s run first logged
+  `70 copies in 30 s, 14.3 ms each` (before the stamped home frame arrived)
+  and `[monitor] stereo 3D: both eyes ... barrier on`, then `382 copies in
+  30 s, 6.9 ms each` with `384 eye columns rebuilt, 4623 reused`, and
+  `401/409/409 copies, 6.6/6.4/6.4 ms each` with `9/0/9` columns rebuilt per
+  30 s. So the two-eye path is now cheaper than the old one-eye average:
+  almost every column is reused frame after frame. The GL side still pays
+  for the CPU read-back when the flag is on (the direct GPU present cannot
+  carry the stamp); that is ARM11 work, not the ARM9 copy measured here. The
+  flag-on soak logged `273 copies, 10.0 ms each` and `347 copies, 8.1 ms each`
+  while cycling apps (4253/4080 columns rebuilt and ~80-113k reused per 30 s).
+- **Soaks:** fresh `build/sd.img` each time, private QEMU, `emu/soak.py --cycles
+  5 --icount 2`: `stereo3d=0` PASS (boot 90 s); `stereo3d=1 --slider3d 255` PASS
+  (boot 80 s). One earlier flag-on run failed only its lock-round screenshot
+  check: the unlock ended on Spotlight, which the harness had treated as a
+  failed unlock after a single Home. `emu/soak.py` now dismisses Spotlight
+  after that Home (page swipe + Home), the same recovery the normal cycle
+  path already used; the final flag-on run passed with no lock-round failures.
+  Both runs had 0 panic/stall/md0/crash/GPU failures, and no "not home after
+  Home" failures.
+- **Continuation on 2026-11-24 (after the previous worker was OOM-stopped):**
+  reviewed the committed branch, rebuilt the shim (GPU part 31680/32768 bytes,
+  1088 bytes headroom), rebuilt the private QEMU from
+  `/tmp/opencode/qemu-stereoperf` (binary and bundled libslirp copied to
+  `build/qemu-local/b/`), and repeated `make test`, `make userland` and fresh
+  `--icount 2` soaks with that one binary. The flag-off run (boot 161 s) and
+  the flag-on run (`--slider3d 255`, boot 90 s) both end in `Result: PASS`,
+  with 0 panic/stall/md0/crash/GPU failures; each needed one "second Home"
+  recovery, but no lock-round failure and no "stuck" cycle. Frame times from
+  their logs: flag off `33 copies in 30 s, 14.7 ms each (ARM9)`; flag on
+  `85 copies, 13.0 ms each` before the stamped frame, then `292 copies,
+  9.4 ms each` (3826 eye columns rebuilt, 83129 reused) and `344 copies,
+  8.2 ms each` (3806 rebuilt, 111167 reused). So the final two-eye path is
+  at or below the ordinary copy's time in QEMU, down from 120-186 ms in
+  section 90. Two earlier flag-on retries failed only the harness's
+  screenshot checks: one unlock ended with the Spotlight keyboard up, one
+  cycle left a typed Spotlight query and keyboard ("Game Center"). No guest
+  failure was logged in either. `emu/soak.py` now shares one
+  `dismiss_spotlight()` helper between the normal and unlock paths: up to
+  three page-swipe + Home attempts, tapping the search field's X before the
+  later attempts, plus a "clear query + Home" step in the "not home"
+  recovery list. The passing runs above use that harness; screenshots and
+  reports are in `build/emu/soak-on3/` and `build/emu/soak-off2/`.
+## 107. Silent 3DS mic and a Music library that looked empty after carry-over (2026-11-24)
+
+Design: docs/audio.md §7 (microphone), §10 (Music). Hardware input:
+`issue-reports/run-2026-11-24.txt` (excerpts only): `mic on: 11901 Hz`,
+`rx stop words=219806 mic jumps>16=9 maxd=cd underruns=0 resyncs=4c`,
+`[music] 1 song(s)`, carry-over `partial`. The earlier run 14 has the same
+`maxd=ab`, so this is reproducible, not a one-off.
+
+**Mic, trace.** Samples really reach iOS: `rx start ch4`, 219,806 words,
+0 underruns, and the shim's own `mic jumps`/`maxd` are computed from what it
+delivered. On hardware the delivered frame-to-frame delta never exceeded
+0xcd/0xb4. With `AUD_MIC_GAIN_Q15` (x0.0657) that implies raw MIC halfwords of
+roughly 2000-3000, i.e. something reaches the ADC, but the absolute level is
+far below what the QEMU sine path needs. Two concrete differences from
+libn3ds `CODEC_init` were found:
+- `microphoneInit()` writes three coefficient-RAM filter sets: page 4 reg 8
+  (10 Hz high-pass), page 5 reg 8 and page 5 reg 72 (PRB_P25 chains). ios3ds
+  skipped all three on the assumption that reset coefficients pass audio
+  through; GBATEK's 3DS TSC summary lists exactly these as the 3DS microphone
+  filters. They must be written before the DACs power up: page 100 reg 118
+  then locks the coefficient RAM. `boot/arm9/audio.c` now writes them in the
+  unlocked window, plus page 100 reg 49's non-GBA bit.
+- MIC_CNT bits 0-1 were 0: GBATEK's "MakeStereo" duplicates every mono sample
+  into both halves of MIC_DATA. The shim reads the halves as *consecutive*
+  samples, so it must ask for format 2 ("Normal"). `mic_hw_start()` now writes
+  0x0e rather than 0x0c; the QEMU MIC model honors the format bits and logs
+  them at enable. The default CODEC bias, PGA (21.5 dB), ADC input selection
+  and page 0 0x51/0x52 power/mute already matched libn3ds.
+
+**Mic, diagnostics.** `aud_mic_t` gained a one-second report (three extra
+cache lines, written by the shim): raw MIC peak/sum-of-squares/sample count and
+delivered peak/sum-of-squares/frame count, plus a sequence number. The ARM9
+prints `[mic] 1 s: FIFO peak ... rms ..., iOS peak ... rms ... (N frames)`
+with one decimal and `[mic] CODEC on: ...` with the ADC/mute, MICBIAS/PGA,
+input-select, coefficient-lock, gain and I2S registers at ADC power-up.
+The next card run with `diag=1` decides it:
+- small FIFO peak (tens) but normal CODEC registers -> analog/bias/PGA path,
+  raise page 1 reg 47 or check the board's mic;
+- FIFO peak in the thousands and small iOS peak -> the +23.65 dB compensation
+  or the VirtualAudio route is wrong for RecordAudio, not the CODEC;
+- both peaks similar to a spoken voice -> the fix worked; listen to the memo.
+
+**Music, reproduction and fix.** A fresh `make sdimg CARRY_FROM=<old image>`
+in QEMU reproduced the report: `[music] 1 song(s)`, `carry-over result:
+carried`, Music.app opens, shows "Updating Library..." for ~45 s, then the
+Playlists tab contains only "Add Playlist...". Forcing a `partial` result by
+putting a symlink in the carried tree (hfsplus verification sees a different
+target size) reproduced the user's `partial` too; the new image still has
+1 `item`, a decodable ALAC `.m4a` and all post-processed DBs. So carry-over is
+not the missing-song cause. `scripts/music.py` only wrote the *hidden* master
+playlist ("iPod", `is_hidden=1`); no visible playlist existed. It now also
+writes one ordinary `ios3ds` playlist with every track, following libgpod's
+`itdb_sqlite.c` (`distinguished_kind=0`, `is_hidden=0`, `media_kinds=1`) and a
+`container_ui` row. QEMU on a `CARRY_FROM` image with a forced `partial` now
+shows `ios3ds` in the Playlists tab (`build/emu-session/music-visible.png`);
+host `tests/test_music.py` checks the row and its track membership.
+
+**Verification without hardware:** `make test` green (incl.
+`tests/test_audio.py`'s new MIC_CNT-format and one-second-report checks and
+`tests/test_music.py`'s visible-playlist check); `make userland` and
+`make sdimg` clean; shim main part 24268/24320 bytes, GPU part 31680/32768.
+A fresh QEMU image boots to SpringBoard with the local, format-aware MIC model
+(built only under `build/qemu-local`; the shared `build/qemu` symlink was left
+alone). `rm -f build/sd.img && make sdimg && python3 emu/soak.py --cycles 5
+--icount 2` on a fresh image: **Result: PASS** (5 cycles, 0 panics, stalls,
+md0 errors or crashes).
+A full Voice Memos tap sequence in `emu/tap.py` was timing-dependent under the
+shared host's load (the folder animation missed the scheduled tap), so the
+`[mic]` lines still need a real console run; host tests cover the shim side.
+## 108. Camera on the Old 3DS: START status 3 is out of frame-buffer memory, not a sensor fault (2026-11-24)
+
+- **Report** (`issue-reports/run-2026-11-24.txt`, git-excluded; only short
+  excerpts are quoted here): Old 3DS, `CFG11_SOCINFO 1`, `diag=1 powersave=0
+  hp_codec=1`. All three sensors answer `chip id 2280` at boot, `cameras
+  present 0x3`, then `stream 0: start camera outer -> status 3`,
+  `frame request failed, status 6`, `stopped after 0 frames`, `monitor at stop:
+  0 CAM_STAT samples`. Camera.app shows no camera and the shutter never opens.
+- **Decoding (docs/camera.md §3.3):** status 3 at START is
+  `CAM_ERR_NO_MEM` from `op_start()`'s `IOMallocContiguous()` loop; status 6 at
+  FRAME is `CAM_ERR_NOT_RUNNING` because `C.running` was never set. The ARM9's
+  `CAM_ST_FAILED` is *also* 3 but would come with `[cam] ... init failed
+  (step N)` and `kernel state 3`; this run has neither. The absence of
+  `[cam] start outer camera ...`, `[cam] iOS wants ...` and any `[cam-diag]`
+  start dump pins the failure to the first 150 KiB allocation, before the
+  mailbox request. `cameras present 0x3` is from the boot probe and does not
+  mean a start happened.
+- **History/old-vs-new bisect:** the card's own banner read
+  `m1-0.4.0-21-g5800f1e-dirty-20261122.1622` (21 commits after the camera-working
+  0.4.0 tag), not `edf6444` as reported. `git log`/`git diff` show **no changes
+  to cam.c/camera.c/cam_proto.h/vcd.c/docs/camera.md** from 0.4.0 (`6d963b6`)
+  to `5800f1e`; the last Old-3DS hardware run with pictures was run 29 (build
+  43, `53304df`) and the register sequence in this run matches it byte for
+  byte (`CFG11_CAMERA_CNT 00 -> 01`, CAM0 `4610`, CAM1 `4600`, the same I2C
+  buses and IDs). What changed between those builds is the rest of the image
+  (TLSFix/Substrate, Music library, GPS daemon, bigger rootfs, GPU arena
+  churn) - i.e. XNU's contiguous/wired heap at the moment Camera.app starts.
+  New 2DS XL has 256 MiB (`n3ds_ram=1`) and kept working; the 128 MiB Old 3DS
+  did not. A full boot bisect over ~100 commits is not possible here (one QEMU
+  boot is ~80 s and the failure needs hardware), so this is an evidence-based
+  narrowing, not a proven commit-level bisect. The two later camera-related
+  changes (`aab28fb`, `e7175ba`, ambient light) are not in the card's build.
+- **Fix:** `kernel/shim/pica.c` reserves one 450 KiB block for the three
+  150 KiB frames during GPU bring-up (single-threaded, private owner
+  `0xFFFFFFFE`, full-size arenas only), publishing its PA to
+  `kernel/shim/cam.c` with the arena VA/PA. cam.c uses those frames at START,
+  falls back to `IOMallocContiguous` when no block was reserved, gives back a
+  partial allocation on failure, and logs
+  `[cam] buffers: arena|IOKit ...`, `[cam] NO_MEM ...`, `[cam] FRAME status 6
+  ...` and the buffer source in `[cam] start ...`. `vcd.c` retries START four
+  times on `CAM_ERR_NO_MEM` instead of giving up after one. `pica.c` is now
+  built at `-Os` with `PICA_HOT` (-O2) on its three hot functions to keep
+  gpu.bin at 31776/32768 bytes (CI's larger codegen needs the room).
+  `docs/camera.md` §7.1/§7.2 record the diagnosis, the next-run checklist and
+  the Old/New comparison.
+- **Verified without the console:** `make test` green (host camera allocator:
+  arena used first with 0 IOKit calls; IOKit fallback; forced partial failure
+  freed and retried; pica: a private 450 KiB block survives GL free_all).
+  Shim/gpu.bin builds at 23756/24320 and 31776/32768 bytes. QEMU Old model,
+  `--icount 2`, fresh image: `[cam] reserved 3 x 150 KiB in the GPU arena at
+  PA <PA>`, `[cam] buffers: arena 3x150 KiB @<PA>`, `src 1`, START
+  status 0, frames delivered, 0 overruns, frame dump written;
+  `emu/stress.py --cycles 0 --camera-cycles 2 --icount 2`: 2 starts/3 stops,
+  0 camera start failures/OOM lines (the run's overall FAIL is the unrelated
+  unlock/home-screen flake).
+  Required fresh-image soak `rm -f build/sd.img && make sdimg && python3
+  emu/soak.py --cycles 5 --icount 2`: **Result: PASS**. `emu/stress.py`'s
+  camera icon coordinate was corrected to (123,360) for the current
+  IconState; with earlier app cycles the first QEMU touch still sometimes
+  lands in Spotlight (harness timing, unrelated to the camera), and that run's
+  unlock rounds also report the known home-screen diff flake.
+- **Still needs hardware:** reflash and open Camera.app on the same Old 3DS.
+  The log must show `[cam] buffers: arena ...`, `src 1`, START status 0, the
+  ARM9's start dump and frames, plus a live preview and a saved photo. If
+  `[cam] NO_MEM ...` or `src 2` appears instead, the next card run has to
+  include the `[pica] arena ...` line - that decides whether the arena was
+  absent/full or the fallback also failed. Video, 3D photos and New 3DS models
+  are not re-verified by this run (the change is common to both models).
+
+## 109. Stereo 3D on hardware: keep the GPU mirror on, build both eyes on the PICA200 (2026-11-24)
+
+Hardware run 3 (`issue-reports/run3-3d.txt`, git-excluded) answered the console
+question from section 90: with `stereo3d=1` the 3D slider did **nothing**.
+The log showed `[mcu] ... 3D slider 8` once at boot, then
+`[monitor] CPU screen copy: 43 copies in 30 s, 301.4 ms each (ARM9)` and
+`53 copies in 30 s, 229.1 ms each`. There were no `[stereo]` lines at all:
+at that revision none existed, so neither slider changes nor PDC/barrier
+transitions were observable.
+
+- **Why:** `a9_main()` forced `cfg.gpu_mirror = 0` whenever `stereo3d=1`, so
+  every frame was copied by the ARM9 (230-300 ms on an Old 3DS). The only
+  thing that could open the barrier was `display_blit()` finding a stamped
+  home frame, switching PDC0 through the mailbox, and getting an ack. That
+  gate never fired on the console. The MCU slider itself is read correctly
+  (reg 0x08 is "raw 3D slider position"; other logs show 0/8/9/10/14/253 at
+  boot, and threshold 16 rejects the resting 8/14), but no log line ever
+  proved whether the user's movement was published. The 3D LED is a separate
+  MCU register (0x2C) that the MCU firmware lights for Horizon's barrier;
+  writing the barrier register directly left it dark.
+- **Fix:** `stereo3d=1` no longer switches the mirror off. The GPU copies the
+  screen exactly as with the flag off while the slider is down or a frame is
+  flat, and the existing v4 `gpumirror.bin` two-eye lists do the eyes on the
+  PICA200 when a stamped home frame and a slider above 16 arrive. The ARM9
+  two-eye copy remains only as the fallback when the mirror stops.
+- **Diagnostics:** `[stereo] MCU 3D slider N -> M ...`, `[stereo] 3D LED ...`,
+  `[stereo] switch: PDC0 3D/2D, path, ack and mode-frame counts`, and
+  `[stereo] active path: ...` every 30 s. A hung mirror/PDC switch is logged
+  as a FAILED switch, never as a lock-up: every wait is bounded and serves
+  md0 with `blksrv_poll()`. The 3D LED (MCU reg 0x2C) follows the barrier.
+- **GPU lists (v4):** `tools/ios3ds-pica/mirror/genmirror.c` emits, per
+  sampling variant, a flat list and a two-eye list. Each eye draws a baseline
+  quad (unshifted, all pixels) plus three passes alpha-tested (`==` on the
+  stamp read through texture unit 1) for BG/FRONT/ALERT; unit 0's texture
+  matrix is patched per pass from a precomputed shift table for the slider's
+  k (1..4). The left eye renders into GM_RT_TOP_PA, the right eye into the
+  upload buffer (free after the texture copy); both are read out into the
+  two LCD framebuffer sets the PDC0 preset points at. The texture's unused
+  columns 320..327 are replicated from x=319 after every upload
+  (`pad_edge()`), so a shifted sample past the iOS edge clamps like the ARM9
+  copy instead of reading the padding. The bottom screen stays flat.
+- **Hand-over:** `gmbox_t` gained `stereo_k`, `st_frames`, `flat_frames`,
+  `mirror_busy`, `stereo_ok`. `gm_set_shift()` publishes k without a PDC
+  switch; `gm_set_stereo()` requests the 2D/3D preset and waits for both the
+  ack and one GPU frame in the new mode before the ARM9 opens the barrier.
+  Going back to 2D restores the preset before clearing the barrier. An old
+  blob without stereo lists pauses the mirror while the ARM9 builds the eyes.
+  All ARM11 cache ranges were widened to cover the whole mailbox (256 B):
+  line 5 is shared and the new counters live there.
+- **Sizes:** the stereo lists, shift patching and edge padding add about
+  1.6 KiB to the GPU part; the camera allocator from sections 107/108 already
+  took most of its remaining room. After rebasing on that work the final
+  build is main shim 24268/24320 and GPU part 32624/32768 (144 bytes below
+  the limit; compiling `pica_mirror.c` at -Os was rejected: at -Os the
+  constant divisions pull `__aeabi_idiv` into the *main* part and overflow
+  it, so mkboot keeps `pica_mirror.c` at -O2 and `pica.c` at -Os with
+  `PICA_HOT`). `gpumirror.bin` is 32336/32768 bytes (flat lists 2240 + 2240,
+  stereo lists 7360 + 7360, the rest vertex arrays, shift/pad tables and
+  diagnostics). The new version-stamp rule made `make -C boot` choose the
+  phony stamp as its default goal; `.DEFAULT_GOAL := all` restores the
+  firmware build.
+- **Version stamp:** `boot/Makefile` stamps the compiled `IOS3DS_VERSION`
+  into `build/boot/.version` and rebuilds both stubs' `main.c.o` when it
+  changes. Hardware run 3 showed a loader banner of `g64b0cd8` with an ARM11
+  stub still saying `g89178de`: incremental builds changed VERSION without
+  recompiling the untouched ARM11 object.
+- **Test:** `make test` passes; `test_mirror` now checks the GPU two-eye
+  output against the class/delta rule for all k=1..4 on a stamped picture
+  (9330 sampled eye pixels per k) and still checks the flat path byte for
+  byte against `boot/arm9/display.c`. `test_stereo_copy` runs the real ARM9
+  copy through `display_stereo_probe()` for flag off, slider up/down, apps
+  and a partial class-map update.
+- **Frame times (QEMU, `--icount 2`, fresh images, `[monitor] CPU screen copy`
+  averages; QEMU does not model ARM9 bus speed):**
+
+  | configuration | before (ARM9 copy) | after (GPU mirror, frame avg) |
+  |---|---|---|
+  | `stereo3d=0` | 13.6 ms (33 copies/30 s, before the mirror took over) | 306 frames/30 s, 13.2 ms |
+  | `stereo3d=1`, slider 0 | 8.7 ms then 7.3 ms (mirror forced off, ARM9 copied every frame) | 327 frames/30 s, 13.7 ms (flat list, k=0) |
+  | `stereo3d=1`, slider 255 | 9.4 ms then 8.2 ms with the cached ARM9 two-eye copy (§106); 120-186 ms before that cache (§90) | 312 frames/30 s, 14.3 ms (two-eye list, k=4) |
+
+  So the slider-down path is now the flag-off path (13.2 vs 13.7 ms in the
+  emulator, within run-to-run noise), and 3D adds about 1 ms per GPU frame,
+  against 120-186 ms for the original uncached ARM9 two-eye copy. The
+  `[stereo] active path` line in each run names the side that built the eyes.
+- **Soaks (fresh `build/sd.img` each, private QEMU, `--cycles 5 --icount 2`):**
+  `stereo3d=0`, `stereo3d=1` slider 0 and `stereo3d=1` slider 255 all ended
+  `Result: PASS`, with 0 panic/ARM11-stall/md0/crash/GPU-timeout findings.
+  After rebasing onto sections 107/108 the same three fresh-image soaks were
+  repeated on the final tree (`build/emu/soak-final-*`) and all three printed
+  `Result: PASS` again; the table above uses the earlier, longer steady-state
+  windows (the final runs were shorter under shared host load).
+  The 3D run logged 30 PDC0/barrier on-off pairs as apps opened and the home
+  screen returned, and its spot check was skipped while the eyes were offset.
+  A separate 300 s toggle run set the QOM slider 0→255→0→255 at 180/225/255 s:
+  each move gave one `[stereo] switch`, one `[stereo] 3D LED` line and one
+  `[monitor] stereo 3D: ... barrier on/off` line, with flat screenshots after
+  the 2D switches and anaglyph screenshots after the 3D switches
+  (`build/emu/stereo-toggle/`). No tearing or stale eyes were visible.
+- **Host:** `make test` passes; `test_mirror` checks the two-eye GPU output
+  against the ARM9's class/delta rule for k=1..4 (9330 sampled eye pixels per
+  k, 0 differences) and keeps the byte-for-byte flat comparison; host blob
+  32336 bytes. Raw `picasim` alpha test and the second texture unit are used
+  by the same list in QEMU, so the model and the machine agree.
+
+## 110. Old 3DS frame drops: [perf] frame histogram, emu/perf.py, and the CA render-thread trim
+
+Design: docs/perf.md. Hardware input: `issue-reports/run2-perf.txt`
+(stereo3d=0, GPU mirror on) and `run3-perf.txt` (stereo3d=1, CPU copy; the
+229-301 ms/frame there is agent/stereogpu's area). QEMU: `emu/perf.py --runs
+3 --safari --icount 2` on a fresh `build/sd.img`.
+
+- **Report:** an Old 3DS (128 MiB) still drops frames; the home screen is
+  fine but opening a folder and opening a page in Safari are slow.
+- **Hardware numbers (run2).** The ARM9 CPU copy of the framebuffer took
+  **347.2 ms/frame** (25 copies in 30 s) until the GPU mirror's self-test
+  passed, then the mirror runs **18.1 fps** (600 frames in 33 s) at
+  `upload 9388 us + draw 3086 us + read-out 6475 us` ≈ 19 ms GPU/frame, with
+  **764 busy skips** in 33 s (CoreAnimation holding the GPU). Free memory
+  falls 99.3 → 26 MiB over the run (wired 17.9 → 33.3 MiB, the 12 MiB arena
+  plus the kernel); one `[pica] present: … not physically contiguous` →
+  the arena copy (re-log 78/79), no process-wide read-back.
+- **QEMU, where a folder open goes** (`diag=1 ioprof=1 log_ts=1`, folder
+  opened at ~guest 30 s): md0 is quiet by then (`[io] t=26.8 … rd 96 KiB …
+  arm9 3 ms`) and `[mem 3]` shows 53 MiB free / 0 pageouts - so the folder
+  open is **CPU** (SpringBoard's animation + the CA render thread), not I/O
+  or memory. The `[smp]` sampler cannot dump SpringBoard's threads (its task
+  port is unreachable), so the per-frame cost is the new histogram.
+- **`[perf]` frame histogram (`tools/ios3ds-gl/ca.c`):** `ca_frame()` now
+  measures the wall interval between CA swaps on the render thread (mach
+  time) and, once per second while frames flow, prints one line -
+  `[perf] CA: 42 frames in 1037 ms; frame ms min/avg/max 4/24/281;
+  <17:21 17-33:18 33-66:1 66-100:1 >=100:1`. It prints only during an
+  animation, never on an idle screen, so a hardware log shows second by
+  second where a folder open or a scroll drops frames (next to the existing
+  `[gpu] mirror: … fps` display line). A folder open in QEMU is ~40 frames
+  in ~1 s at 24-26 ms/frame with a couple of drops; the `[gl] CA:` line puts
+  the render thread at 14-24 ms/frame (2-3 texture uploads/frame on the
+  first frames, ~1.2 after, presents 1.2-1.3/frame, ~0.2 read-backs/frame).
+- **Benchmark (`emu/perf.py`):** boots, waits for a stable home screen and
+  the `[sbwarm]` warm-up, taps the Utilities folder (120,237) and Home
+  `--runs` times, then optionally a Safari cold launch (dock 199,440);
+  writes `build/emu/perf/report.md`+`report.json` with the wall times and
+  the `[perf]`/`[gl] CA:` lines. Full page loads over the Wi-Fi model stay in
+  `emu/safari_test.py` (page-load time + memory).
+- **CA render-thread trim (`tools/ios3ds-gl/pica_be.c`, `ca.c`):** the
+  swizzle pass's command list and its six vertices are built once per render
+  target (they are identical every frame; keyed on the target's buffers,
+  dimensions and opacity) and resubmitted each frame instead of re-encoded
+  on every present; `ca_frame()` no longer calls `thread_info` (three Mach
+  syscalls) on every swap - the render-thread CPU is sampled only on the
+  reporting frames. Host test (`make -C tools/ios3ds-gl host-test`) still
+  passes, including the CA compositor gate's present check.
+- **Validation:** `make test` green; `make userland` + fresh `make sdimg`
+  clean; the required fresh-image soak `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**.
+- **Still needs hardware:** a card run with `diag=1` to see the `[perf] CA:`
+  histogram during a real folder open/close and a Safari scroll on the Old
+  3DS, next to `[gpu] mirror: … fps`, to decide whether a dropped frame is
+  the compositor or the mirror; and `[gl] CA: … render thread CPU …` against
+  re-log 78's 13.5-16 ms (GPU present) / 31-37 ms (read-back) hardware
+  figures. The dominant Old 3DS cost - the mirror's ~20 ms/frame and the GPU
+  split with CoreAnimation - is GPU-side and not fixed here.
+
+## 111. iOS 3.1.3 root mount: the patch was on the wrong memdev helper (2026-11-24)
+
+The 7E18 bring-up stopped in `BSD root: md0` with **0** md0 requests served by
+the ARM9. The earlier guess was a Darwin 10.0 `buf_t` ABI change inside the
+shim. It was not: the kernel patch was on the wrong function.
+
+- **Trace.** A GDB remote-protocol client (`emu/gdb/rsp.py`, from `build/`,
+  not committed) set a hardware breakpoint at the old 7E18 patch site
+  `0xc0073f94` and never hit it. A breakpoint at `0xc0073b64` hit once per root
+  mount retry (`mdevopen`), and a runtime dump of `bdevsw[2]` showed
+  `0xc0074021` as its strategy entry. The symtab had no name for either
+  function; the `bdevsw` pointer identified the real one.
+- **The real strategy.** `0xc0074020` calls `_buf_count` (`0xc007950c`) and
+  `_buf_biodone` (`0xc007ac6c`) just like 8C148's `0x80072bf8`, and it takes
+  `buf_t` in r0 (no Darwin 10 argument shuffle). The function at
+  `0xc0073f94` is a different `(dev,bp)` memdev helper that `bdevsw` never
+  calls. `kernel/patchsets/3.1.3.json` now patches `0xc0074020` with the
+  original Thumb `ldr r3,[pc]; bx r3; .word shim+0x20` stub.
+- **Result.** `make sdimg IOS=3.1.3` + `emu/run.py --icount 2`:
+  `/dev/md0 on / (hfs, local, noatime)`, launchd, fsck, mDNSResponder and the
+  display come up; 2,251 md0 requests / 49 MiB / 0 errors by t=70 s, no panic
+  or stall. Screenshots are still black (no SpringBoard): the next blocker is
+  userland activation, as on 2.2.1. 4.2.1 files were not touched; only a
+  3.1.3 patch recipe changed.
+
+### 114 (same section, continued): 3.1.3 offline activation
+
+- **[V]** 7E18's dyld cache has no 8C148 offsets, but its liblockdown symbols
+  do resolve. `rootfs/overlay-3.1.3.json` now carries five file patches:
+  the 8C148 `lockdown_copy_value` stub relocated to `0x3176a008`, a
+  240-byte key/value table in a verified zero gap of liblockdown's `__TEXT`
+  (`0x31767600`), and stubs for `lockdown_connect`, `lockdown_checkin` and
+  `lockdown_copy_identity` (no lockdownd on the 3DS). The table's eight
+  `__CFString` objects use 7E18's `___CFStringClass` isa `0x3852aa08`,
+  confirmed by reading an existing CFString in the cache.
+- **[V]** With these patches 3.1.3 still stops on the boot spinner;
+  SpringBoard writes nothing to the console even with its plist's stdout and
+  stderr redirected. A GDB breakpoint at the relocated `lockdown_copy_value`
+  hit only three unrelated keys (TrustedHostAttached, VolumeLimit,
+  ShutterClick), so activation state is not the observed blocker. The next
+  step is a SpringBoard-side trace (its `main`/activation path, or a 3.x
+  applog) rather than more liblockdown table work. 4.2.1/4.1 code paths are
+  untouched; the 2.2.1 interposer is a separate version-only tool.
+
+### 114 (same section, continued): 2.2.1 liblockdown, still no SpringBoard
+
+- **[V]** The 4.2.1 `DYLD_INSERT_LIBRARIES` approach does not transfer to 2.x:
+  a dylib built with the 4.2.1 stub toolchain produced
+  `dyld: could not load inserted library` on every SpringBoard restart. An
+  unsigned copy instead produced `CODESIGNING: vm_fault_enter ... INVALID PAGE`.
+  The inserted-library source was therefore removed, not shipped.
+- **[V]** The working path is to patch `/usr/lib/liblockdown.dylib` itself:
+  `lockdown_connect` → 1, `lockdown_copy_value` → an ARM table lookup over two
+  entries (ActivationState = an inline `Activated` CFString, BrickState =
+  CFBooleanFalse), with the table in a verified zero gap of `__TEXT`. Because
+  2.x checks each dylib page, `mkrootfs.py` re-signs patched files listed in
+  the recipe's `resign` map (`ldid -Hsha1 -S`); only the 2.2.1 overlay sets it.
+  Boot now has no `CODESIGNING` faults, but still no SpringBoard output and a
+  black screen: activation alone is not the 2.x blocker.
+
+### 114 (same section, continued): default build stays byte-identical
+
+- **[V]** `make userland` + a fresh `make sdimg` produced the same six 4.2.1
+  boot-file sha256 values as before any of this version work:
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`, `fakeio.bin e5fecd66…`,
+  `shim.bin 25b7721c…`, `gpu.bin 94909f36…`, `boot.cfg 414fa594…`.
+  All version-specific changes are in patch sets/overlays and one optional
+  `resign` step that only the 2.2.1 recipe sets.
+- **[V]** The exact fresh-image sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS**
+  (boot to SpringBoard + input 70 s, five app/home cycles, 0 panics, stalls,
+  md0/log/crash/watchdog/GPU failures). The 4.1 soak and the two older-version
+  runs are recorded below as they finish.
+
+### 114 (same section, continued): 4.1 soak PASS after a harness fix
+
+- **[V]** The first two 4.1 fresh-image soaks printed `Result: FAIL` with
+  `not home after Home: {'stuck': [0..4]}` and a ~70 home diff. The cycle
+  screenshots showed a normal 4.1 home screen, but `home_ref.png` was the
+  green-on-black M1 boot console: on a loaded host the console stayed lit
+  past the input daemon's connect, so the harness's "stable and bright"
+  reference test accepted it. This is a harness bug, not a 4.1 regression.
+- **[V]** `emu/soak.py` now rejects green-dominant console frames when picking
+  (or re-acquiring) the home reference. A third fresh image then printed
+  **Result: PASS**: five cycles, `not home after Home: never`, 0 panics,
+  stalls, md0/log/crash/watchdog/GPU failures. The change affects only the
+  harness; no firmware or userland payload was altered.
+
+### 114 (same section, final hash check after the rebase)
+
+- **[V]** Rebasing onto current `origin/main` brought in the stereo/GPU changes
+  from `agent/stereogpu` (`dd54b1a`), which legitimately change `shim.bin`,
+  `gpu.bin` and `boot.cfg`: after the rebase they are `c9791ac3…`, `ac5ea097…`
+  and `8d4079cf…` instead of the pre-rebase `25b7721c…`, `94909f36…` and
+  `414fa594…`. `kernel.bin`, `devtree.bin` and `fakeio.bin` are unchanged.
+- **[V]** To prove those six files are still *our* 4.2.1 payload unchanged, a
+  space-free `git archive origin/main` tree generated all six from the same
+  staged firmware: every hash matched the branch build byte for byte. None of
+  this task's files are on the 4.2.1 boot-file path (only patch sets/overlays
+  for older versions, a recipe-gated `resign` step, docs and the soak harness).
+- **[V]** Final fresh-image 4.2.1 soak after the rebase: **Result: PASS**,
+  five cycles, 70 s to SpringBoard + input, no failures. Final 4.1 soak:
+  **Result: PASS**, five cycles, 60 s to SpringBoard + input, no failures.
+  `make test` passes after the final rebase.
+## 112. Safari's "Cannot allocate memory": free pages, not jetsam; lean caches and a smaller Old-3DS arena (2026-11-24)
+
+**Reports.** Old 3DS (128 MiB), `diag=1`: Safari shows "Cannot allocate memory"
+(NSPOSIXErrorDomain 12) on bigger pages; a retry works. No zone/jetsam cause
+was found in re-log 104. The git-excluded `issue-reports/mem-lines.txt` has
+`[mem]` lines every few seconds from two console runs (run2: 61 samples, run3:
+6; no per-process lines in that file).
+
+**What those console numbers actually say.** `vm_stat`'s `free` *includes*
+speculative file pages (`spec`): run2 boots at 101,704 KiB free / 42,304 KiB
+speculative / 17,928 KiB wired / level 85, then settles at 25,276-40,820 KiB
+free with 23,328-54,020 KiB of it speculative. Subtracting speculative -
+now printed as `free_nospec` - leaves **1,948-3,856 KiB** of immediately
+usable free memory while the browser is warm, with wired 31,420-33,672 KiB
+(12 MiB of it the GPU arena) and `memorystatus_level` 60. That is why the
+process can get ENOMEM from a large allocation while no jetsam kill happens
+and the headline "free" figure still looks like 25 MiB. iOS 4.2.1 has no VM
+compressor, so there are no compressed pages to count; the new `[mem] VM`
+line says so explicitly.
+
+**QEMU reproduction attempts (`--icount 2`, Old model).** The harness
+`emu/safari_test.py` can now set `--settle` and `--port`. Tried: 65 MB HTML
+with six 65 KB JPEGs, 8 × 1024² JPEGs, a 2-million-element JS array, 26
+generated pages in one Safari (JS + 6 images each), and `mem_size` lowered to
+96 MiB (2 MiB free, level 16). No "Cannot allocate memory" alert appeared;
+one run with a 69 MB Safari process was killed with signal 9 instead (a
+jetsam kill, a different failure). Baseline for this pass: four heavy pages
+(`js.html`, `manyhuge.html`, `manybig.html`, `hugeimg.html`) loaded 4/4 in
+618 s, boot `[mem 1]` 102,832 KiB free / level 85, after settle 52,620 KiB
+free (`free_nospec` 1,188 KiB) / level 64, Safari peak 19,488 KiB, end
+47,428 KiB free / level 55, wired 33,800 KiB. This is still not a hardware
+reproduction of the alert; the console numbers above are the evidence that
+physical free pages, not jetsam or a named zone, run out first.
+
+**Fix (memory only).**
+1. `rootfs/files/memory/com.apple.mobilesafari.plist` (installed via
+   `rootfs/recipe.json`): WebPreferences is read from the app's standard
+   defaults (WebKit's `WebPreferences.mm` calls
+   `NSUserDefaults standardUserDefaults`). Set
+   `WebKitCacheModelPreferenceKey=1` (`WebCacheModelDocumentViewer`, the
+   smallest WebCore cache footprint), `WebKitUsesPageCachePreferenceKey=0`,
+   `WebKitApplicationCacheTotalQuota=0` and a 60 s back-forward cache
+   expiry. This keeps Safari's decoded images, page cache and app cache from
+   accumulating across pages. Trade-off: going Back may re-load a page; the
+   performance worker's Safari changes are separate (see overlap below).
+2. `kernel/shim/pica.c`: the wired GPU arena is now **10 MiB on Old models**
+   (skip the 12 MiB first size when `cfg_n3ds` lacks `N3RES_NEW`), 12 MiB on
+   New models, with the same 8/4/2 MiB fallbacks. The camera's 450 KiB frame
+   block is still reserved inside the arena (re-log 108) and the `>= 6 MiB`
+   gate still applies. This gives every app 2 MiB more wired-free RAM, not
+   just Safari. 10 MiB is above the 8 MiB size that fragmented in run16
+   (704 KiB texture found 290 KiB free in 90 blocks), but it is **not yet
+   confirmed on a console**; the `[pica] arena N KiB` log line must be
+   checked, as must a live camera preview and a non-black home screen.
+3. Diagnostics: `ios3ds-sample -mem` prints `free_nospec`, a
+   `[mem N] VM: compressed n/a ...` note on the first report, and a
+   `[mem N] VA MiB:` top-process list next to the resident list.
+   `ios3ds-applog.dylib` interposes `mmap`, `vm_allocate` and
+   `mach_vm_allocate`; failures >= 64 KiB are logged as
+   `[applog] <proc> ENOMEM <call> size N arg K caller 0xPC` (max 16 per
+   process; sandboxed Safari writes them to
+   `/private/var/tmp/ios3ds-applog.txt`). These lines name the failing call
+   and request size on the next hardware run; the kernel hook itself is not
+   feasible: the main shim has ~50 bytes and the GPU part ~100 bytes free,
+   and the 4.2.1 kernelcache has no exported allocation symbols in our stub.
+   Three new symbols were added to `scripts/ios-sdk-symbols.json` so CI's
+   stub SDK links the interposer.
+
+**Before/after (QEMU, Old, `--icount 2`, four heavy pages, same images and
+timing; each run a fresh image).** All memory figures are KiB (÷1024 = MiB):
+
+| | before (12 MiB arena, stock WebKit defaults) | after (10 MiB arena, lean WebKit defaults) |
+|---|---|---|
+| `[pica] arena` | 12,288 | **10,240** (-2,048) |
+| free after boot (`[mem 1]`) | 102,832 / level 85 | 103,104 / level 85 |
+| wired after boot | 17,756 | 17,720 |
+| free after 45 s settle (`[mem 2]`) | 52,620 / level 64 | **53,224 / level 66** |
+| wired after settle | 33,408 | **31,336** (-2,072) |
+| `free_nospec` after settle | 1,188 | 1,748 |
+| MobileSafari resident, end of run | 19,488 | 18,976 (peak sample before its jetsam kill: 72,940, see below) |
+| free at end | 47,428 / level 55 | **47,776 / level 55** |
+| wired at end | 33,800 | **31,656** (-2,144) |
+| pages loaded | 4/4, one jetsam kill + restart on page 1 | 4/4, one jetsam kill + restart on page 1 |
+
+The two MiB saved are physical wired pages, visible in every `[mem]` sample;
+the Safari footprint in this short run is unchanged within noise. Both runs
+killed the 2-million-string JS page with signal 9 (jetsam), then restarted
+Safari and loaded all four pages: QEMU still does not produce the hardware
+alert. The new ENOMEM interposer logged nothing in these runs - no
+`mmap`/`vm_allocate` call failed; the kill is a different path.
+
+A 26-page stress run (the same generated pages as re-log 75's six-page run)
+compares the longer session against the previous 26-page QEMU run
+(`build/emu-mem6`, before this pass):
+
+| | before (26 pages) | after (26 pages) |
+|---|---|---|
+| pages loaded | 26/26 | 26/26 |
+| MobileSafari peak resident | 43,788 KiB | 44,912 KiB (no measured reduction) |
+| minimum free during the run | 2,608 KiB / level 39 | **11,564 KiB / level 40** |
+| free at end | 6,488 KiB / level 39 | **12,600 KiB / level 40** |
+| wired at end | 31,352 KiB | **29,316 KiB** (-2,036) |
+
+So the prefs did **not** measurably shrink Safari's heap in QEMU; the useful
+gain is the 2 MiB of wired arena per app (and the additional slack in the
+file-cache / speculative balance). The plist stays as a low-risk guard for
+long sessions, but it is not claimed as a fix for the alert.
+
+**Validation:** `make test` green (after adding the three imported symbols to
+`scripts/ios-sdk-symbols.json`); `make userland` + fresh `make sdimg` shows
+`[pica] arena 10240 KiB`, `[cam] reserved 3 x 150 KiB in the GPU arena`,
+`[mkrootfs] added ... com.apple.mobilesafari.plist`, GPU shim 32,656/32,768
+bytes. The required fresh-image soak `rm -f build/sd.img && make sdimg &&
+python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** (boot 90 s,
+5 cycles, 0 panics, 0 ARM11 stalls, 0 md0 errors, 0 crashes, 0 jetsam, 0 GPU
+CPU fallbacks, 0 camera failures; the one "SpringBoard restart" is the
+boot-time HID connection). The GPU self-test and scene check passed with the
+10 MiB arena.
+
+**Still needs hardware:** reflash the Old 3DS, open Safari with `diag=1` and
+repeat the big page that shows the alert. The log must contain `[pica] arena
+10240 KiB`, `[cam] reserved 3 x 150 KiB in the GPU arena`, the new
+`[mem] free_nospec / VA` lines and, if the alert returns, the
+`[applog] MobileSafari ENOMEM ...` line and the existing load-error domain /
+code. That line will finally say whether JSC's heap reservation, an image
+decode mapping, or another call is failing. Check the camera preview and a
+saved photo after the arena shrink; if textures fall back to the CPU
+(`[gl] CA: ... CPU from now on`), restore 12 MiB on Old models in
+`kernel/shim/pica.c`.
+
+**Overlap:** agent/perf owns Safari page speed and the CA render-thread trim;
+the WebPreferences plist here is deliberately limited to cache/back-forward
+memory, not animation or rendering settings. The arena size is a GPU-side
+memory change; no display or stereo files were touched.
+
+## 113. Old 3DS frame drops round 2: damage-tracked mirror, present-driven scheduling, faster uploads
+
+Design: docs/perf.md. Hardware: `issue-reports/run2-perf.txt` (stereo3d=0):
+`[gpu] PICA200: … every 2. VBlank`, `25 copies in 30 s, 347.2 ms each` before
+the self-test passed, then `600 frames in 33 s (18.1 fps); upload 9388 us,
+draw 3086 us, read-out 6475 us; frame avg 20661 us … 764 busy skips, 0
+timeouts`, and `11 copies in 33 s, 75.6 ms each` when GL held the GPU.
+QEMU: `emu/perf.py --runs 3/8 --icount 2` on a fresh `build/sd.img`.
+
+### Space first
+The shim GPU part was **32624/32768** bytes (re-log 109). The staged
+`[gpu-diag]` bring-up diagnostics (`tools/ios3ds-pica/src/pica_diag.c`) are
+no longer linked into the shim (`scripts/mkboot.py`): they already served
+their purpose (runs 12/13 pinned the NPOT-texture and GX-clock facts), and
+the source + the picasim host tests stay, so `gpu_diag=1` in boot.cfg is now
+a no-op. That freed 6.7 KiB.
+
+`make shim` on the final rebased tree: main **24268/24320**, GPU part
+**26304/32768** bytes (after all the changes below; the arena-size work from
+section 112 adds 32 bytes).
+
+### Mirror: skip unchanged frames (damage tracking)
+A GL present/scatter now sets `m_dirty` (`kernel/shim/pica.c`); the
+VBlank-driven mirror only does GPU work when `m_dirty` is set and skips
+unchanged frames by incrementing a new `gmbox_t.idle_frames` counter (line 6,
+reusing a reserved word). The ARM9's `gm_live()` counts `idle_frames` as
+liveness too, so an idle screen no longer falls back to the 75 ms ARM9 CPU
+copy. On an idle home screen the mirror's ~19 ms/frame GPU cost drops to 0,
+and the LCDs simply keep the last picture. `gm_report()` now prints
+`[gpu] mirror: N idle VBlanks in 30 s (no new CA frame, no GPU work)` for such
+a window, instead of no mirror line at all; the spot check labels the last
+picture as the GPU copy while idle frames keep it alive. A line-0 `seq` change (screen
+mode, `stereo_k`, `want`) or a PDC 2D/3D switch (`pica_stereo.c`) also sets
+`m_dirty`, so the eyes are rebuilt even when the CA frame did not move (the
+3D slider on an idle home screen).
+
+### Mirror: CPU-written surfaces also mark the frame dirty
+`m_dirty` was only set by `PICA_OP_PRESENT`/`PICA_OP_SCATTER`. A display
+target that takes the CPU read-back path (every frame with `stereo3d=1`, so
+the alpha stamp reaches `/vram`, and any surface after a refused present
+switched the process to read-backs) writes straight into the IOSurface from
+userland: the mirror would have kept showing an older frame. Protocol 5 adds
+`PICA_OP_DIRTY` (`pica_dev_t.dirty()`); `sync_target()` calls it after a
+successful `read_back()` into a surface target, and the shim just sets
+`m_dirty`. Host test: `test_pica` calls the new op; `make test` green.
+GPU part +16 bytes.
+
+### Mirror: schedule right after a CA present
+A frame the VBlank skipped because GL held the GPU (`m_pending`) now starts
+in thread context right after that GL request finishes (`m_maybe_start` in
+`shim_gpu_thread_poll`), instead of waiting for the next interrupt. The
+frame stays VBlank-cadenced (`m_pending` is only set on a due VBlank), so
+the mirror cannot oversubscribe the GPU. The busy-skips now only count a
+present that collided, not a lost display refresh.
+
+### Mirror self-test: pixel-wise compare (shorter 347 ms boot phase)
+`pm_selftest` compared 518400 output bytes one at a time, re-deriving the
+source pixel through `gm_map()` (two integer divisions) three times per
+byte. It now compares one 24-bit BGR8 pixel at a time (one `gm_map` per
+pixel). The self-test runs once at boot while the ARM9 still copies at
+~347 ms/frame, so this shortens that phase. The host test still reports the
+exact same `0 of 518400 bytes differ` and per-variant byte counts.
+
+### CA render thread: faster texture tiling
+`pica_tex_upload`'s common case (every CA texture: BGRA8888 into an RGBA8
+texel) did four byte loads/stores per texel; it now does one 32-bit load, a
+rotate-left-by-8 and one 32-bit store, falling back to the byte path when
+either buffer is not 32-bit aligned. Host test: byte-identical.
+
+### Before / after (`emu/perf.py`, fresh image each)
+
+| metric | before (round 1) | after (final tree, fresh image) |
+|---|---|---|
+| boot to SpringBoard + input | 70 s | 70 s |
+| folder open (wall s, 3 runs) | 12.2 / 14.2 / 12.2 | **6.1 / 8.1 / 8.1** (host-load noisy) |
+| folder close (wall s, 3 runs) | 12.2 / 12.2 / 12.2 | 12.2 / 12.4 / 14.2 |
+| Safari cold launch (s) | not measured | 4.0 |
+| `[perf] CA:` frames per ~1 s window | 40–43, avg 23–24 ms | 43–47, avg 22–23 ms (same pace in QEMU) |
+| `[gl] CA:` render thread CPU | 14–24 ms/frame (re-log 110, range) | **16066 us**, 3.0 lists, 1.1 presents, 0.1 read-backs, 1.9 uploads (112 KiB) in the 8-run window; a later 301-frame window read 7633 us with 0.5 uploads (30 KiB) |
+
+The `[perf]` folder-open histogram keeps the same ~23–24 ms average because
+QEMU's folder open is vsync/CA-paced, and the render thread (7.6–16.1 ms) is
+already under that budget; the tiling win shows as fewer uploads and guest
+instructions per upload, not as a faster histogram. The wall times are host-
+load noisy (the same image has produced 4–16 s opens on this PC). On the Old
+3DS the render thread and the 19 ms mirror are serialised on the GPU, which is
+why the hardware `[perf] CA:` average (54 ms in run2) tracks the mirror's
+18 fps: the fixes that matter there are the damage tracking and the
+scheduling above, and they are GPU-side, so QEMU cannot show them (QEMU's GPU
+model finishes every operation instantly). The soak log does show the damage
+tracking working: a 30 s window with **901 idle VBlanks and no GPU work**.
+
+### Validation
+`make test` green (6698 + 59 + 2469 pica checks, gl host-test, wifi, gps,
+input, blkcache); `make shim` clean: main **24268/24320**, GPU part
+**26304/32768** bytes (PICA_OP_DIRTY added 16 bytes; the section-112 arena
+change adds another 32 on the rebased tree).
+`make userland` and fresh `make sdimg` clean.
+
+Fresh-image `emu/soak.py --cycles 5 --icount 2` soaks on the final rebased
+tree (`build/emu/soak-rebased-off/` and `soak-rebased-on/`):
+- `stereo3d=0` (shared QEMU): **Result: PASS**, boot 70 s, 0
+  panic/stall/md0/crash/GPU-timeout findings, no "not home after Home" or
+  failed lock rounds. The 30 s log shows the damage tracker explicitly:
+  `[gpu] mirror: 901 idle VBlanks in 30 s (no new CA frame, no GPU work)`
+  next to a window with 5 GPU frames.
+- `stereo3d=1`, `--slider3d 255` (private QEMU with the slider property):
+  **Result: PASS**, boot 70 s, no guest failures or failed lock rounds; two
+  cycles needed the harness's known "second Home" recovery for Spotlight.
+  The log has `[stereo] switch: PDC0 3D, PICA200 two-eye mirror`,
+  `[stereo] 3D LED on`, `[monitor] stereo 3D: both eyes … parallax barrier on`
+  and the matching 2D switches when an app opens; `active path: PICA200
+  two-eye mirror (k=4)`. No "reading surfaces back through the CPU" or GPU
+  present-check failure: protocol 5's dirty notification from the stereo
+  read-back path works.
+
+Both harnesses had to be repaired for a loaded host: the soak/perf home
+reference used to accept the still-lit boot console as "home" (greyscale
+stddev ~92 against ~54 for the icons), which made every cycle look stuck.
+`emu/soak.py` now waits for the `[sbwarm]` marker and `emu/perf.py` rejects
+the console's texture; with that the flag-off soak and all perf runs recovered
+in zero cycles (the flag-on soak only needed two Spotlight dismissals). The
+final perf numbers above are in `build/emu/perf-rebased/`.
+
+### Needs hardware
+A card run with `diag=1` on the Old 3DS to confirm:
+- `[gpu] mirror: … idle VBlanks …` on an idle home screen (damage tracking)
+  and fewer busy skips during a folder open/scroll, with the `[perf] CA:`
+  histogram avg dropping from 54 ms toward 30 ms;
+- `[gpu] display mirror ACTIVE` and the spot check still pass; the stereo
+  path (re-log 109) still opens the barrier when the slider moves on an idle
+  home screen (`[stereo] switch: PDC0 3D`, one stereo frame before the
+  barrier). With `stereo3d=1`, or after a refused present switches a process
+  to CPU read-backs, the display must keep changing every CA frame: that is
+  the new `PICA_OP_DIRTY` path, which QEMU cannot timing-test;
+- the remaining mirror per-frame cost (upload 9388 + read-out 6475 us) is
+  still there: the upload is linear→tiled + a texture re-stride (NPOT
+  textures are broken, run 13), and the read-out writes both framebuffer sets
+  to avoid tearing. Cutting those needs a console decision (RGB565 texture =
+  banding; one-set read-out = possible tearing), so they were left alone.
+## 114. iOS 3.1.3: SpringBoard starts, stops at the activation screen (2026-11-24)
+
+Continues §111. The root mount has been solid since the previous round; this
+round traced the userland stop point with GDB and dyld logging, all in this
+worktree's `build/` (no Apple files are committed).
+
+- **SpringBoard really was launching.** A GDB remote-protocol trace of
+  `_execve`/`_proc_exit` (kernel symbols from 7E18's `LC_SYMTAB`) showed
+  launchd at t≈9 s, fsck/mount/mount_hfs helpers exiting at t≈22–25 s, and
+  processes named `SpringBoard` exiting with status 1 at t≈64 s and t≈72 s;
+  launchd then stopped retrying. Before that the boot spinner was the only
+  screen, which is why earlier rounds concluded "no SpringBoard".
+- **Crash reports:** `rootfs/overlay-3.1.3.json` now asks `mkrootfs.py` for the
+  optional `mkdirs` step (new key, ignored by 4.2.1) to create
+  `/private/var/mobile/Library/Logs/CrashReporter`. No reports appeared: the
+  exits are normal `exit(1)` paths, not crashes. `DYLD_PRINT_LIBRARIES=1` in
+  SpringBoard's launchd plist (3.1.3 overlay only) showed dyld loading the
+  complete framework set through `ArtworkCache.framework` and then stopping,
+  with no dyld error.
+- **Missing lockdown stubs were the reason SpringBoard survived.** SpringBoard
+  imports `lockdown_disconnect`, `lockdown_remove_value` and
+  `lockdown_set_value` in addition to the four functions the previous round
+  had stubbed; the fake handle from `lockdown_connect` was passed to them.
+  Their 7E18 offsets (`0x176a260`, `0x176a1c4`, `0x176a210`) were located from
+  the 8C148 context and verified byte-for-byte against the cache, then stubbed
+  to return 0. With those three extra patches SpringBoard no longer exits: it
+  stays up, the heartbeat shows no kernel idle stall, and the screen changes
+  from the spinner to the **"Connect to iTunes" activation screen**. The
+  table's `BrickState` value was also corrected to 7E18's real
+  `kCFBooleanFalse` (`0x38521ff8`, verified via the CFBoolean array at that
+  address) from an out-of-cache pointer; this alone did not change the screen.
+  Writing stock-style activation record/plist files was tried and reverted:
+  it did not change the screen either.
+- **Remaining blocker:** activation. A GDB breakpoint at the relocated
+  `lockdown_copy_value` stub (`0x3176a008`) is not hit in this build, so the
+  offline activation table is not the code path that decides the screen; the
+  decision is inside SpringBoard's `SBLockdownManager`. The next step is
+  its Objective-C method implementation, not more liblockdown table work.
+- **4.x is unchanged:** `mkdirs` is a new optional recipe key and every other
+  edit is in `rootfs/overlay-3.1.3.json` (plus crash dirs in the 2.2.1
+  overlay). No 4.2.1 boot-file or shim code changed.
+
+### 114. 2.2.1: the same lockdown stubs, dyld stops after CoreSurface (2026-11-24)
+
+- **[V]** 2.2.1's SpringBoard imports `lockdown_disconnect`,
+  `lockdown_remove_value` and `lockdown_set_value` just like 7E18's. Their
+  file offsets in `/usr/lib/liblockdown.dylib` (`0x2be4`, `0x30a8`, `0x30f4`)
+  came from that dylib's own `LC_SYMTAB` (VA `0x30893be4` / `0x308940a8` /
+  `0x308940f4`, `__TEXT` base `0x30891000`); all three original byte
+  sequences were verified before stubbing them to return 0. The existing
+  `resign` step re-signs the file as before.
+- **[V]** With `DYLD_PRINT_LIBRARIES=1` the 2.2.1 SpringBoard loads
+  MultitouchSupport, IOKit, Apple80211, libIOAccessoryManager,
+  IOMobileFramebuffer and CoreSurface, then prints nothing further for a
+  600 s run (`--icount 2`, screenshots at 180/360/540/590 s are still the M1
+  monitor console). The stop point is the dyld load/initialisation of
+  `/usr/lib/liblockdown.dylib` (the next `LC_LOAD_DYLIB`) or CoreSurface's
+  initialiser; extra `DYLD_PRINT_WARNINGS/INITIALIZERS/BINDINGS` variables
+  produced no extra output. A control build without the three new stubs
+  stops at exactly the same place, so they neither caused nor fixed this.
+- **[G]** Next: a userland GDB trace at 2.x dyld/CoreSurface to see whether
+  the signature on the re-signed liblockdown is accepted and where
+  CoreSurface blocks; 2.x has no shared cache, so every dylib is a separate
+  page-signed file. No 4.x code is involved in this overlay.
+
+### 114. 3.1.3: activation-state experiments (2026-11-24, diagnostic only)
+
+- **[V]** SpringBoard 3.1.3 contains `-[SBLockdownManager _setupActivationState]`
+  at Thumb VA `0x6ec30` (IMP from the `__objc` method list in the executable,
+  file offset `0x6dc30`). Its disassembly calls `lockdown_connect` then
+  `lockdown_copy_value`, checks `CFGetTypeID == CFStringGetTypeID`, and uses
+  several `CFEqual` comparisons to choose an activation state 0–7; state 0
+  takes the branch that sets the "Connect to iTunes" screen.
+- **[V]** Forcing the first `CFEqual` branch (`beq` → `b`, file offset
+  `0x6dc8e`, original `0ad0` verified) removes the activation screen and
+  leaves SpringBoard alive on the boot spinner. Forcing the state value
+  (`mov r2,sl` → `movs r2,#N`, file offset `0x6dc94`) to 1, 2, 4, 5, 6 or 7
+  also gives the spinner; 3 gives the activation screen again. A HOME key
+  press does not unlock the spinner. These are diagnostic patches, **not**
+  shipped in `rootfs/overlay-3.1.3.json`: the spinner is a different stop
+  point and the correct activation semantics still need to be established.
+- **[V]** Disabling the 18 4.2.1-style daemons that also exist on 7E18 made
+  the boot worse (console full of dyld lines, no UI), so that experiment was
+  reverted too.
+
+### 114. Final byte-identical check and 4.x soaks after the rebase (2026-11-24)
+
+- **[V]** Rebased `agent/compat5` onto current `origin/main` (conflict in this
+  log resolved by keeping both sections). `make test` passes (94 offline tests
+  plus host harnesses/stub-symbol check) after updating
+  `tests/test_versions.py` for the three extra liblockdown stubs in each old
+  overlay. Those overlays and the optional `mkdirs` recipe key are the only
+  code changes on this branch; 4.x boot paths are untouched.
+- **[V]** A clean `git archive origin/main` tree in a space-free `/tmp/opencode`
+  path and this worktree generated the same six 4.2.1 boot files from the same
+  staged firmware (SHA-256, origin/main = branch):
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`,
+  `fakeio.bin e5fecd66…`, `shim.bin 5e522c4e…`,
+  `gpu.bin 439cae2d…`, `boot.cfg 8d4079cf…`. The shim/GPU/boot.cfg values
+  reflect the other workers' current main; our branch does not shift them.
+- **[V]** The exact fresh-image sequence `rm -f build/sd.img && make sdimg &&
+  python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** on
+  4.2.1: SpringBoard + input up after 70 s, five app/home cycles, no failures.
+
+- **[V]** 4.1 needed one more harness fix: the first fresh-image soak picked
+  the **white-on-black M1 boot console** as its home reference (`home_ref.png`
+  was frozen console text with RGB means 48/52/48), so every cycle reported
+  `home diff 73.1` and **Result: FAIL**, even though the screenshot after each
+  Home was a normal 4.1 home screen. The existing green-dominance test missed
+  this white console. `emu/soak.py:is_bootlog()` now also rejects frames with
+  almost no saturated pixels in the top screen (measured: 194 sampled
+  saturated pixels on the console vs 3128 on the home screen and 13082 in an
+  app). A fresh 4.1 image then printed **Result: PASS**: SpringBoard + input
+  up after 60 s, five cycles with `home diff 0.0`, no failures. The harness
+  change affects no boot files.
+- **[V]** The exact documented sequence was rerun on a fresh image after the
+  harness fix (`rm -f build/sd.img && make sdimg IOS=4.1 && python3
+  emu/soak.py --cycles 5 --icount 2`): **Result: PASS**, SpringBoard + input
+  up after 60 s, five cycles, zero failures. The 4.2.1 exact-sequence PASS is
+  recorded just above.
+
+## 115. Harness conflict after the perf2 rebase, and older-version bring-up (2026-11-24)
+
+### Harness: restore the warm-up gate beside the console-colour test
+
+- **[V]** The rebase of the six compat5 commits onto `f46d155` (perf2) had a
+  conflict in `emu/soak.py:is_bootlog()`. Keeping compat5's whole function also
+  dropped perf2's `[sbwarm]` gate (`0272d9d`): the home reference could be
+  taken before SpringBoard's icon warm-up finished, i.e. from a lit boot
+  console or a partially drawn first frame. That is the combined-harness
+  regression; neither side had it alone (perf2 gated on `[sbwarm]`, compat5
+  rejected console colours). A loaded host makes the window long enough to
+  matter, and a run that waits 300 s for a reference plus up to 180 s per tap
+  produces exactly the reported long, silent soak.
+- **[V]** Measured on the rebased 4.2.1 guest (unmodified harness, idle host):
+  the boot console is monochrome, the lit home screen has RGB means
+  44/44/44, greyscale stddev **53.6** and **3264** saturated samples in the
+  top-screen crop, against 194/3128 (console/home) recorded for 4.1 in §114.
+  The saturation test alone can also reject a *dim* home frame: it has no
+  idea whether the frame has console-like texture.
+- **[V]** `emu/soak.py` now waits for the `[sbwarm]` marker (300 s bound, logs
+  a fallback when a firmware does not emit it) *and* keeps the colour test,
+  but only applies the saturation part to frames whose greyscale stddev is
+  >= 70 (console text, measured ~92 in §113, vs 53.6 for the icons). The
+  reference-acquisition line now logs its brightness/stddev so a future
+  misclassification is visible in the run log instead of only in the report.
+- **[V]** Fresh-image exact sequence with the fixed harness printed
+  **Result: PASS** on 4.2.1: SpringBoard + input after 70 s, `[sbwarm]` after
+  135 s, home reference at 145 s (stddev 53.6), five app/home cycles with
+  `home diff 0.0`, no recoveries, zero failures. The 4.1 exact-sequence soak
+  is recorded in the next subsection.
+- **[V]** 4.2.1 boot files are unchanged: `git archive origin/main` and this
+  branch, built from the same staged firmware, produce identical SHA-256 for
+  `kernel.bin 505f451a…`, `devtree.bin 25b1bd23…`, `fakeio.bin e5fecd66…`,
+  `shim.bin e0609de9…`, `gpu.bin 7e696f65…` and `boot.cfg 8d4079cf…`.
+- **[V]** The documented 4.1 sequence with the fixed harness
+  (`rm -f build/sd.img && make sdimg IOS=4.1 && IOS3DS_QEMU=… python3
+  emu/soak.py --cycles 5 --icount 2`) also printed **Result: PASS**: input up
+  after 60 s, `[sbwarm]` at 130 s, home reference at 140 s (stddev 53.3),
+  five cycles with `home diff 0.0`, no recoveries or failures. Both harnesses
+  now agree on what a home frame looks like; the guest payload is unchanged.
+
+### 3.1.3: SpringBoard is alive but never enters the lockdown path
+
+- **[V]** Rebuilt the archived 7E18 firmware in this worktree (sha1
+  `5f4f5c01…` verified) and extracted SpringBoard from the staged HFSX image.
+  Its ObjC method list puts `-[SBLockdownManager _setupActivationState]` at
+  Thumb VA `0x6ec30` (file `0x6dc30`), `lockdownState` at `0x6e450`,
+  `_lockdownChanged` at `0x6ebdc` and `init` at `0x6e964`. The CFString
+  literals in `_setupActivationState` are `Unactivated`, `Expired`,
+  `Activated`, `WildcardActivated`, `Unlocked`, …; the value returned by
+  `lockdown_copy_value` selects state 1–7 from those comparisons.
+- **[V]** A GDB trace (QEMU `-gdb`, hardware breakpoints, no periodic
+  interrupts) on the unmodified 7E18 image: kernel `_execve` fires at t=13 s,
+  SpringBoard's Mach-O entry `0x34e8` at t=38 s, and
+  `-[SpringBoard applicationDidFinishLaunching:]` (`0xa6f4`) at t=33–38 s
+  and **returns** at `0xad30` by t=32 s. Neither `-[SBLockdownManager init]`,
+  `_setupActivationState`, `lockdownState` nor our relocated
+  `lockdown_copy_value` breakpoint is hit during that time. The surviving
+  SpringBoard therefore stops *after* its app delegate returns but *before*
+  any lockdown/activation state is computed; the "Connect to iTunes" screen
+  is a default view, not the result of a live activation query.
+- **[V]** Diagnostic-only patch, reverted: force `-[SBLockdownManager
+  lockdownState]` to return 3 (`Activated`) by replacing its first two
+  Thumb words at SpringBoard file offset `0x6d450` (`b0b502af` → `03207047`)
+  and re-signing the executable with `ldid -Hsha1 -S` as on 2.2.1. A fresh
+  240 s QEMU run stays on the Apple logo/spinner at t=120/180/230 s, with the
+  same heartbeat and zero md0 errors. Forcing one getter is not sufficient;
+  the state is either not consulted on this path or another default view is
+  already up. No 4.x code was changed by the experiment.
+
+### 2.2.1: the liblockdown re-sign, not its byte patches, stops dyld early
+
+- **[V]** Control experiment with the archived 5H11a IPSW (sha1
+  `9af5625e…` verified) extracted in this worktree. Three fresh images were
+  built from the same kernel/devtree and booted with `--icount 2`:
+  1. the shipped overlay (six liblockdown byte patches + `ldid -Hsha1 -S`):
+     dyld stops after `CoreSurface.framework` (re-log 114);
+  2. no file patches but the **same re-sign step**: dyld also stops after
+     `CoreSurface.framework`;
+  3. no file patches and **no re-sign**: dyld continues through WebCore,
+     WebKit, OpenGLES, MBX2D, MBXConnect, MobileSync, Message and
+     `libCGFreetype.A.dylib`, with 1,498 md0 requests / 0 errors by t=187 s.
+  So it is the pseudo-signature written by `ldid -Hsha1` on the 2.x dylib
+  that prevents dyld from loading the rest of SpringBoard's framework set,
+  not the activation bytes. (SpringBoard still draws no UI in the control:
+  the CLCD never sees a first iOS frame, and the top screen stays on the M1
+  console through t=280 s.)
+- **[V]** `rootfs/overlay-2.2.1.json` now keeps the stock, signed
+  `/usr/lib/liblockdown.dylib`: its six `extra_file_patches` and the `resign`
+  step were removed, and `tests/test_versions.py` expects an empty 2.2.1
+  patch list. 4.x recipes and boot files are untouched; no Apple file is
+  committed. Activation on 2.x remains an open item, but the boot now gets
+  substantially further than before.

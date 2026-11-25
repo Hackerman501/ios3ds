@@ -53,6 +53,22 @@ static void hmic_push(u32 samples)              /* a ramp of 6 per sample, two p
         hmic_q[hmic_head++ & 4095] = (u16)(int16_t)((int)hmic_next * 6 - 3000) |
                                      (u32)(u16)(int16_t)((int)(hmic_next + 1) * 6 - 3000) << 16;
 }
+static u32 h_rms(u32 lo, u32 hi, u32 n)           /* the ARM9's integer sqrt of mean square */
+{
+    u32 sq = n ? (u32)(((uint64_t)hi << 32 | lo) / n) : 0, v = 0, bit = 1u << 30;
+    while (bit > sq) bit >>= 2;
+    while (bit) {
+        if (sq >= v + bit) { sq -= v + bit; v = (v >> 1) + bit; }
+        else v >>= 1;
+        bit >>= 2;
+    }
+    return v << 8;
+}
+static void hmic_push_const(u32 words, int16_t v) /* a constant level, for the level report */
+{
+    for (u32 i = 0; i < words; i++)
+        hmic_q[hmic_head++ & 4095] = (u16)v | (u32)(u16)v << 16;
+}
 
 extern volatile aud_blk_t shim_audio;
 void aud_service(u32 now);
@@ -337,6 +353,7 @@ static void test_mic(void)
     aud_service(t);
     CHECK(m->magic == AUD_MIC_MAGIC && m->want == 1 && m->state == AUD_MIC_RUNNING, "input stream -> mic on");
     CHECK((hmic_cnt & MIC_CNT_EN) && ((hmic_cnt >> 2) & 3) == AUD_MIC_DIV, "MIC_CNT %x", hmic_cnt);
+    CHECK((hmic_cnt & 3) == MIC_CNT_FMT_NORMAL, "MIC_CNT data format %x (want Normal = 2)", hmic_cnt & 3);
     CHECK(m->rate == 11901, "rate %u", m->rate);
     for (int i = 0; i < 48; i++) {      /* 1 ms services, ~12 mic samples each, as on the device */
         hmic_push(12);
@@ -406,6 +423,41 @@ static void test_mic(void)
     start_chan(1, 0, RX_CFG);
     aud_service(t = 100);
     CHECK(m->state == AUD_MIC_DISABLED && !(hmic_cnt & MIC_CNT_EN), "mic=0: MIC block untouched");
+}
+
+/* the one-second [mic] level report: a constant MIC FIFO level must show up
+   both before (raw) and after (iOS) the shim's gain compensation, with an RMS
+   and a frame count the ARM9 can log. */
+static void test_mic_level_report(void)
+{
+    reset();
+    hmic_cnt = hmic_head = hmic_tail = hmic_next = 0;
+    volatile aud_mic_t *m = (volatile aud_mic_t *)aud_host_p2v(AUD_MIC_PA, sizeof(aud_mic_t));
+    lli(0)[0] = I2S_RX_FIFO; lli(0)[1] = BUF_PA; lli(0)[2] = 0;
+    lli(0)[3] = TX_CTL | DI | 4000 | IBIT;
+    start_chan(1, 0, RX_CFG);
+    u32 t = 100;
+    logbuf[0] = 0;
+    aud_service(t++);
+    for (int i = 0; i < 1050; i++) {
+        hmic_push_const(6, 3000);
+        aud_service(t += 1047);
+        if (!(CH(1, CFG) & 1)) {                /* keep iOS's input DMA alive past one second */
+            lli(0)[3] = TX_CTL | DI | 4000 | IBIT;
+            start_chan(1, 0, RX_CFG);
+        }
+    }
+    u32 want = G(3000);
+    u32 raw_rms = h_rms(m->diag_raw_sq_lo, m->diag_raw_sq_hi, m->diag_raw_n);
+    u32 out_rms = h_rms(m->diag_out_sq_lo, m->diag_out_sq_hi, m->diag_frames);
+    CHECK(m->state == AUD_MIC_RUNNING && m->diag_seq >= 1, "report not published: state %u seq %u why %u log %s",
+          m->state, m->diag_seq, m->why, logbuf);
+    CHECK(m->diag_raw_peak == 3000 && raw_rms == 3000u * 256 && m->diag_raw_n > 10000,
+          "raw peak %u rms %u n %u (want 3000, %u): %s", m->diag_raw_peak, raw_rms,
+          m->diag_raw_n, 3000u * 256, logbuf);
+    CHECK(m->diag_out_peak == want && out_rms >= want * 245 && out_rms <= want * 267,
+          "iOS peak %u rms %u (want %u, ~%u)", m->diag_out_peak, out_rms, want, want * 256);
+    CHECK(m->diag_frames > 40000 && m->diag_frames < 50000, "frames in report %u", m->diag_frames);
 }
 
 /* headphones: the ARM9's jack state -> the detect pin + a jack interrupt */
@@ -578,6 +630,7 @@ int main(void)
     test_csnd_resync();
     test_iic();
     test_mic();
+    test_mic_level_report();
     test_headphones();
     if (fails) {
         printf("%d check(s) failed\n", fails);

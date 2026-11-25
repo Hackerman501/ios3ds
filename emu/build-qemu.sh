@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Build QEMU with the ios3ds "nintendo3ds" machine into build/qemu.
 #   emu/build-qemu.sh          (first run clones QEMU v10.2.4, ~10 min)
+#   QEMU_DIR=/abs/path emu/build-qemu.sh   (private build for this worktree;
+#     build/qemu is a symlink shared with other worktrees - never write there)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-Q="$ROOT/build/qemu"
+Q="${QEMU_DIR:-$ROOT/build/qemu}"
 VER=v10.2.4
 if [[ ! -d "$Q/.git" ]]; then
     git clone -q --depth 1 --branch "$VER" https://gitlab.com/qemu-project/qemu.git "$Q"
@@ -30,6 +32,8 @@ ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.c" "$Q/hw/arm/ctr_cam.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_cam.h" "$Q/hw/arm/ctr_cam.h"
 ln -sf "$ROOT/boot/common/cam_proto.h" "$Q/hw/arm/cam_proto.h"
 ln -sf "$ROOT/boot/common/cam_pattern.h" "$Q/hw/arm/cam_pattern.h"
+# the stereo depth classes/deltas shared with the ARM9 copy and the GL engine
+ln -sf "$ROOT/boot/common/stereo.h" "$Q/hw/arm/stereo.h"
 # the Wi-Fi model: TMIO SDIO controller 2 + AR6014 + WPA2 access point (docs/wifi.md section 7)
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.c" "$Q/hw/arm/ctr_wifi.c"
 ln -sf "$ROOT/emu/qemu/hw/arm/ctr_wifi.h" "$Q/hw/arm/ctr_wifi.h"

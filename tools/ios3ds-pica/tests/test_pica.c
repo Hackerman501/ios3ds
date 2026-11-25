@@ -715,6 +715,7 @@ static void test_sim(void)
     CHECK_EQ(dev->info(&info), PICA_OK);
     CHECK_EQ(info.state, PICA_OK);
     CHECK_EQ(info.version, PICA_PROTO_VERSION);
+    CHECK_EQ(dev->dirty(), PICA_OK);        /* surface read-back -> mirror damage flag */
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &color), PICA_OK);
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &depth), PICA_OK);
     CHECK_EQ(dev->alloc(64 * 64 * 4, 0, &lin), PICA_OK);
@@ -724,8 +725,9 @@ static void test_sim(void)
     CHECK_EQ(dev->write(info.arena_pa, vtx, 16), PICA_ERR_RANGE);       /* the driver's own block */
     CHECK_EQ(dev->write(info.arena_pa + info.arena_size - 8, vtx, 16), PICA_ERR_RANGE);
 
-    /* The fill engine does not write FCRAM (hardware run 13; the model does
-       the same): the arena is FCRAM, so a fill is "done" and changes nothing */
+    /* The PSC engine cannot write FCRAM (hardware run 13 and picasim), so
+       the driver now does PICA_OP_FILL on the CPU. A constant is the same
+       tiled or linear, so the result is what a working fill would give. */
     {
         static uint32_t pat[64 * 64];
         for (unsigned i = 0; i < 64 * 64; i++)
@@ -733,10 +735,22 @@ static void test_sim(void)
         CHECK_EQ(dev->write(lin, pat, sizeof pat), PICA_OK);
         CHECK_EQ(dev->fill(lin, 64 * 64 * 4, 0x0000FFFF, PSC_FILL_32, 0, 0, 0, 0), PICA_OK);
         CHECK_EQ(dev->read(lin, out, sizeof out), PICA_OK);
-        CHECK_EQ(out[0], 0x12345678u);
-        CHECK_EQ(out[64 * 64 - 1], 0x12345678u);
-        /* so: blue, alpha 255, and depth 1.0 are written by the CPU (constant
-           values look the same tiled or linear) */
+        CHECK_EQ(out[0], 0x0000FFFFu);
+        CHECK_EQ(out[64 * 64 - 1], 0x0000FFFFu);
+        /* 16- and 24-bit widths fill repeated halfwords / byte triples */
+        CHECK_EQ(dev->fill(lin, 64, 0xABCDABCDu, PSC_FILL_16, 0, 0, 0, 0), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 64), PICA_OK);
+        CHECK_EQ(out[0], 0xABCDABCDu);
+        CHECK_EQ(out[15], 0xABCDABCDu);
+        CHECK_EQ(dev->fill(lin, 64, 0xAABBCCDDu, PSC_FILL_24, 0, 0, 0, 0), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 64), PICA_OK);
+        CHECK_EQ(out[0], 0xDDBBCCDDu);       /* only the low 24 bits repeat */
+        CHECK_EQ(out[15], 0xDDBBCCDDu);
+        CHECK_EQ(dev->fill(lin, 64, 0, PSC_FILL_32, lin + 64, 64, 0x11223344, PSC_FILL_32), PICA_OK);
+        CHECK_EQ(dev->read(lin, out, 128), PICA_OK);
+        CHECK_EQ(out[0], 0u);
+        CHECK_EQ(out[16], 0x11223344u);
+        CHECK_EQ(dev->fill(info.arena_pa + 0x1000, 16, 0, PSC_FILL_32, 0, 0, 0, 0), PICA_ERR_RANGE);
         for (unsigned i = 0; i < 64 * 64; i++)
             pat[i] = 0x0000FFFFu;
         CHECK_EQ(dev->write(color, pat, sizeof pat), PICA_OK);
@@ -899,6 +913,33 @@ static void test_alloc(void)
     printf("alloc: 150 targets placed in a 3/4 full arena, %u KiB of textures evicted for them\n", kb);
 }
 
+/* The camera's frame buffers live in the arena under an owner that no client
+   pid can have (kernel/shim/pica.c shim_pica_cam_buffers). A GL client's
+   free_all must not hand that block back to the texture allocator. */
+static void test_cam_reserve(void)
+{
+    static pica_plat_t plat;
+    static pica_drv_t d;
+    const uint32_t frames = 3u * 320u * 240u * 2u, owner = 0xFFFFFFFEu;
+    uint32_t cam_pa, gl_pa, again_pa;
+    plat.alive = t_alive;
+    plat.log = t_log;
+    d.p = &plat;
+    d.pa = 0x24000000;
+    d.size = 12u << 20;
+    d.state = PICA_OK;
+    d.block[0].size = PICA_DRV_CMD_SIZE;        /* as pica_drv_init() leaves it */
+    d.nblocks = 1;
+    CHECK_EQ(pica_drv_alloc(&d, owner, frames, 32, &cam_pa), PICA_OK);
+    CHECK_EQ(cam_pa & 31u, 0u);                                 /* the CAM FIFO needs 32-byte alignment */
+    CHECK_EQ(pica_drv_alloc(&d, 42, 4096, 0, &gl_pa), PICA_OK);
+    CHECK(gl_pa + 4096 <= cam_pa || gl_pa >= cam_pa + frames);   /* no overlap with the camera frames */
+    CHECK_EQ(pica_drv_free_all(&d, 42), 1u);                     /* one GL block given back */
+    CHECK_EQ(pica_drv_alloc(&d, 43, frames, 32, &again_pa), PICA_OK);
+    CHECK(again_pa != cam_pa);                                  /* the camera block survived free_all */
+    printf("arena: camera reserves %u KiB under a private owner, GL churn leaves it alone\n", frames >> 10);
+}
+
 /* PICA_OP_SCATTER's page copy: an arena block into destination pages that
    are not physically contiguous (CA's second 320x480 surface after an app
    returns to the home screen), each through its own mapping, with the
@@ -975,6 +1016,7 @@ int main(int argc, char **argv)
     test_ff();
     test_sim();
     test_alloc();
+    test_cam_reserve();
     test_scatter();
     (void)argc; (void)argv;
     printf("%d checks, %d failures\n", checks, failures);

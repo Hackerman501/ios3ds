@@ -1,0 +1,67 @@
+{
+ "_comment": "iOS 4.1 (8B117) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-4.1/recipe.json; the base recipe is never changed. Cydia/TLSFix packages in the base recipe are built for 4.2.1 and are left out until a 4.1 set exists (docs/multi-version.md).",
+ "cydia": false,
+ "tlsfix": false,
+ "file_patches_search": true,
+ "_new_hex_replace": "relocate the literal CFStrings in liblockdown's activation table: ProductVersion 4.2.1 -> 4.1 (length 5 -> 3, keeping the 160-byte patch), BuildVersion 8C148 -> 8B117 (same length)",
+ "new_hex_replace": [
+  [
+   "050000005055923ec807000046ba8436",
+   "030000005055923ec807000046ba8436"
+  ],
+  [
+   "342e322e3100",
+   "342e31000000"
+  ],
+  [
+   "384331343800",
+   "384231313700"
+  ]
+ ],
+ "file_patch_offsets_by_base": {
+  "0x7707cc": "0x492c7cc",
+  "0x47bb470": "0xa899a4",
+  "0x684b894": "0x4fbd98",
+  "0x684b9ac": null,
+  "0x684ba84": "0x4fbe24",
+  "0x684bb48": "0x4fbf7c",
+  "0x684bb94": "0x4fbfc8",
+  "0x684bbe4": "0x4fc018",
+  "0x684bc28": "0x4fc05c",
+  "0x684bc44": "0x4fc078",
+  "0x684bc64": "0x4fc098",
+  "0x684bc94": "0x4fc0c8",
+  "0x684bcb0": "0x4fc0e4",
+  "0x684bcc4": "0x4fc0f8",
+  "0x684bd94": "0x4fc1c8",
+  "0x684c68c": "0x4fca90",
+  "0x684c7b8": "0x4fcbbc",
+  "0x54cba4c": "0x2c0aa4c",
+  "0x54cd6a0": "0x2c0c6a0",
+  "0x684b8e0": null,
+  "0x684b9b4": null,
+  "0x4ff9458": "0x30b4458",
+  "0x46de6a8": "0x9b3d94",
+  "0x287228": null,
+  "0x3224dd4": null,
+  "0x8530c": null
+ },
+ "_file_patch_offsets_by_base": "Keys are 8C148 dyld-cache offsets in rootfs/recipe.json; values are 8B117 offsets relocated by dyld-cache symbol+offset (see docs/multi-version.md). Keying by the base offset makes the map independent of patches inserted into the base recipe; null entries are skipped.",
+ "extra_file_patches": [
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x4fbde4",
+   "orig": "90402de904708de204d04de204308de200c0a0e304c023e5000090e57ffbffeb0040a0e100009de5000050e3",
+   "new": "20c09fe508309ce4000053e30000a0031eff2f01003093e5020053e1f8ffff1a04001ce51eff2fe150964f30",
+   "why": "8B117 liblockdown: stub lockdown_copy_value as on 8C148 (key table lookup; else NULL). SpringBoard calls this during activation, and the unpatched body dereferences NULL +4 in a crash loop (58 GL contexts, no home screen). Keys are the 8B117 addresses of the CFStringRef arrays (0x3e0812xx/33x), values the 8B117 'Activated', kCFBooleanFalse and 'iPod' literals plus inline strings at 0x304f9650."
+  },
+  {
+   "path": "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv6",
+   "offset": "0x4f9650",
+   "orig": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "new": "7012083e4839a73e3013083e2c18bc3e6012083ebcd8003e6c12083ebcd8003e8412083e94964f307c12083ea4964f307812083eb4964f305812083ec4964f3000000000ac28bc3ec8070000d4964f3007000000ac28bc3ec8070000dc964f3003000000ac28bc3ec8070000e0964f3005000000ac28bc3ec8070000e6964f300500000069506f64322c3100342e31003842313137004e373241500000000000",
+   "why": "8B117 lockdown_copy_value key/value table in a zero-filled gap of liblockdown (VA 0x304f9650): ActivationState/BrickState/DeviceClass/DeviceName/ProductType/ProductVersion/BuildVersion/HardwareModel, with 4.1/8B117/N72AP literals (same layout as the 8C148 table)."
+  }
+ ],
+ "_extra_file_patches": "Patches absent from the 4.2.1 recipe: the base recipe's lockdown_copy_value body and table changed too much to relocate (\u00a75.2), so the equivalent 8B117 stub/table is spelled out here with verified original bytes."
+}

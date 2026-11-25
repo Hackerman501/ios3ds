@@ -40,6 +40,7 @@
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
+#include "stereo.h"              /* symlinked from boot/common by emu/build-qemu.sh */
 #include "qapi/visitor.h"
 #include "hw/sysbus.h"
 #include "hw/boards.h"
@@ -548,6 +549,8 @@ typedef struct {
 #define PDC_V_COUNT (0x54 / 4)
 #define PDC_FB_A0   (0x68 / 4)
 #define PDC_FB_A1   (0x6C / 4)
+#define PDC_FB_B0   (0x94 / 4)       /* right eye (3dbrew GPU/External Registers) */
+#define PDC_FB_B1   (0x98 / 4)
 #define PDC_FORMAT  (0x70 / 4)
 #define PDC_CNT     (0x74 / 4)
 #define PDC_SELECT  (0x78 / 4)
@@ -606,6 +609,7 @@ typedef struct {
     uint32_t led_idx;
     uint32_t led_rgb0;          /* qom mcu-led-rgb0: first step's colour, 0xRRGGBB */
     uint32_t led_lit;           /* qom mcu-led-steps: steps (of 32) with any colour */
+    uint32_t wifi_led_writes;   /* qom mcu-wifi-led-writes: reg 0x2A writes */
 } CtrMcu;
 
 /* Gyroscope: an InvenSense ITG-3200-family chip (the Old 3DS' ITG-3270) on
@@ -658,6 +662,7 @@ typedef struct {
     uint32_t exthid_btn;           /* bit 2 ZL, bit 1 ZR (qom exthid-buttons; keys z / n) */
     uint32_t exthid_reads;
     uint8_t  exthid_idx;
+    uint32_t ambient_lux;          /* qom ambient-light: inner camera luminance in lux */
     struct { uint32_t off, val; int64_t due; } gx_q[8];   /* started GPU operations, not run yet */
     int gx_nq;
     QEMUTimer *gx_timer;
@@ -680,7 +685,10 @@ typedef struct {
     CtrMcu mcu;
     CtrGyro gyro;
     qemu_irq mcu_irq;              /* GIC 113 (GPIO3 bit 9, falling edge) */
-    MemoryRegion lcd;              /* LCD registers 0x10202000 (backlight PWM) */
+    MemoryRegion lcd;              /* LCD registers 0x10202000 (barrier, backlight PWM) */
+    MemoryRegion lcd9;             /* the ARM9 owns the parallax barrier register */
+    uint32_t lcd_barrier;          /* 0x10202000 bit0: parallax barrier on */
+    uint32_t pdc3d;                /* PDC0 format bits 5-4 == 2: stereo mode */
     uint32_t lcd_abl[2];           /* top / bottom backlight level */
     bool lcd_abl_set;              /* the guest wrote one: the display shows it */
 
@@ -1315,6 +1323,13 @@ static void mcu_write_reg(CtrMachine *s, uint8_t reg, uint8_t v)
         m->rtc_offset = qemu_timedate_diff(&tm);
         return;
     }
+    if (reg == 0x2A) {                                        /* Wi-Fi LED state (4 bits) */
+        m->regs[reg] = v & 0x0F;
+        m->wifi_led_writes++;
+        qemu_log_mask(LOG_UNIMP, "nintendo3ds: MCU Wi-Fi LED %s (reg 0x2A = %u)\n",
+                      (v & 0x0F) ? "on" : "off", v & 0x0F);
+        return;
+    }
     if (reg == 0x2D) {                                        /* notification LED pattern */
         if (m->led_idx < sizeof(m->led)) {
             m->led[m->led_idx++] = v;
@@ -1372,6 +1387,7 @@ static void mcu_reset(CtrMachine *s)
     m->reg = 0;
     m->got_reg = false;
     m->irq = m->irq_mask = 0;
+    m->wifi_led_writes = 0;
     m->regs[0x00] = 0x13;       /* firmware 3.56 */
     m->regs[0x01] = 0x38;
     m->regs[0x09] = 0x20;       /* volume slider */
@@ -1679,6 +1695,23 @@ static bool gyro_prop_get_awake(Object *obj, Error **errp)
     return !(ctr->gyro.regs[0x3E] & 0x40);
 }
 
+/* Ambient light for auto-brightness (New models): QOM `ambient-light` is in
+   lux. The inner camera model turns it into the AE luma byte the ARM9 reads
+   over I2C (docs/mcu.md section 12). */
+static void ambient_prop_get(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    visit_type_uint32(v, name, (uint32_t *)opaque, errp);
+}
+
+static void ambient_prop_set(Object *obj, Visitor *v, const char *name, void *opaque, Error **errp)
+{
+    uint32_t val;
+    if (visit_type_uint32(v, name, &val, errp)) {
+        *(uint32_t *)opaque = val;
+        ctr_cam_set_ambient_lux(val);
+    }
+}
+
 static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
 {
     static const char *const axes[3] = { "gyro-x", "gyro-y", "gyro-z" };
@@ -1689,10 +1722,18 @@ static void ctr_add_mcu_props(CtrMachine *s, Object *obj)
     object_property_add_uint32_ptr(obj, "gyro-reads", &s->gyro.reads, OBJ_PROP_FLAG_READ);
     object_property_add_uint8_ptr(obj, "mcu-battery", &s->mcu.regs[0x0B], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-volume", &s->mcu.regs[0x09], OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-3d-slider", &s->mcu.regs[0x08], OBJ_PROP_FLAG_READWRITE);
     object_property_add_uint8_ptr(obj, "mcu-orient", &s->mcu.orient, OBJ_PROP_FLAG_READWRITE);
+    object_property_add_uint8_ptr(obj, "mcu-wifi-led", &s->mcu.regs[0x2A], OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "mcu-wifi-led-writes", &s->mcu.wifi_led_writes, OBJ_PROP_FLAG_READ);
     object_property_add_bool(obj, "mcu-charging", mcu_prop_get_charging, mcu_prop_set_charging);
     object_property_add_bool(obj, "mcu-shell-open", mcu_prop_get_shell, mcu_prop_set_shell);
     object_property_add_uint32_ptr(obj, "lcd-backlight", &s->lcd_abl[0], OBJ_PROP_FLAG_READ);
+    object_property_add(obj, "ambient-light", "uint32", ambient_prop_get, ambient_prop_set,
+                        NULL, &s->ambient_lux);
+    /* 3dbrew LCD Registers + PDC0 format: what the guest actually programmed */
+    object_property_add_uint32_ptr(obj, "lcd-3d-barrier", &s->lcd_barrier, OBJ_PROP_FLAG_READ);
+    object_property_add_uint32_ptr(obj, "pdc-3d-mode", &s->pdc3d, OBJ_PROP_FLAG_READ);
     object_property_add_uint32_ptr(obj, "mcu-led-rgb0", &s->mcu.led_rgb0, OBJ_PROP_FLAG_READ);
     object_property_add_uint32_ptr(obj, "mcu-led-steps", &s->mcu.led_lit, OBJ_PROP_FLAG_READ);
 }
@@ -1763,6 +1804,11 @@ static void ctr_add_n3ds_props(CtrMachine *s, Object *obj)
 static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
 {
     CtrMachine *s = opaque;
+    /* 3dbrew "LCD Registers": +0x00 parallax barrier enable, +0x04 PWM */
+    if (addr == 0x00)
+        return s->lcd_barrier;
+    if (addr == 0x04)
+        return 0x0A390A39u;
     if (addr == 0x240 || addr == 0xA40) {
         return s->lcd_abl[addr == 0xA40];
     }
@@ -1772,6 +1818,12 @@ static uint64_t lcd_read(void *opaque, hwaddr addr, unsigned size)
 static void lcd_write(void *opaque, hwaddr addr, uint64_t v, unsigned size)
 {
     CtrMachine *s = opaque;
+    if (addr == 0x00) {
+        s->lcd_barrier = v;
+        return;
+    }
+    if (addr == 0x04)
+        return;                     /* barrier PWM timing, modelled as always set */
     if (addr == 0x240 || addr == 0xA40) {
         s->lcd_abl[addr == 0xA40] = v & 0x3FF;
         s->lcd_abl_set = true;
@@ -2315,6 +2367,75 @@ static void ctr_draw_screen(CtrMachine *s, int n, uint32_t *dst, int dst_stride_
     }
 }
 
+/* Stereo 3D display model. The guest writes the two eye images into PDC0's
+   framebuffers A (left) and B (right), switches +0x70 to AB interlace and
+   turns on the parallax barrier at 0x10202000 (3dbrew GPU/External Registers,
+   LCD Registers). This function only scans out what those registers point at,
+   tinted red/cyan so a screenshot shows the per-layer offsets. When any part
+   is missing the normal top-screen copy is used. */
+static int ctr_draw_stereo_top(CtrMachine *s, uint32_t *dst, int dst_stride_px)
+{
+    CtrPdc *p = &s->pdc_regs[0];
+    if (s->mcu.regs[0x08] < STEREO_MIN_SLIDER || !(s->lcd_barrier & 1))
+        return 0;
+    if ((p->regs[PDC_FORMAT] & ST_PDC_FMT_MASK) != ST_PDC_FMT_INTER ||
+        !(p->regs[PDC_CNT] & PDC_CNT_EN))
+        return 0;
+    uint32_t fb[2] = { p->cur_fb ? p->regs[PDC_FB_A1] : p->regs[PDC_FB_A0],
+                       p->cur_fb ? p->regs[PDC_FB_B1] : p->regs[PDC_FB_B0] };
+    if (!fb[0] || !fb[1])
+        return 0;
+    unsigned fmt = p->regs[PDC_FORMAT] & 7;
+    unsigned bpp = (fmt == 0) ? 4 : (fmt == 1) ? 3 : 2;
+    uint32_t stride = p->regs[PDC_STRIDE] ? p->regs[PDC_STRIDE] : CTR_SCR_H * bpp;
+    size_t len = (size_t)stride * CTR_TOP_W;
+    uint8_t *buf[2] = { NULL, NULL };
+    for (int e = 0; e < 2; e++) {
+        buf[e] = g_malloc(len);
+        if (address_space_read(&address_space_memory, fb[e], MEMTXATTRS_UNSPECIFIED,
+                               buf[e], len) != MEMTX_OK) {
+            g_free(buf[0]);
+            g_free(buf[1]);
+            return 0;
+        }
+    }
+    uint32_t bl = s->lcd_abl_set ? MIN(s->lcd_abl[0] * 256 / 0x8F, 256) : 256;
+    if (!(s->mcu.regs[MCU_REG_EX_HW_STAT] & 0x40))
+        bl = 0;
+    /* AB interlace puts one scanline from A (left) and the next from B
+       (right) on the panel; the barrier sends each set to one eye. A single
+       screenshot combines both eye images into a red/cyan anaglyph. */
+    for (int x = 0; x < CTR_TOP_W; x++) {
+        for (int y = 0; y < CTR_SCR_H; y++) {
+            size_t off = (size_t)x * stride + (size_t)(CTR_SCR_H - 1 - y) * bpp;
+            uint32_t rgb[2];
+            for (int e = 0; e < 2; e++) {
+                const uint8_t *px = buf[e] + off;
+                switch (fmt) {
+                case 0: rgb[e] = ((uint32_t)px[3] << 16) | ((uint32_t)px[2] << 8) | px[1]; break;
+                case 1: rgb[e] = ((uint32_t)px[2] << 16) | ((uint32_t)px[1] << 8) | px[0]; break;
+                case 2: { uint16_t v = px[0] | px[1] << 8;
+                          rgb[e] = (((uint32_t)(v >> 11) << 3) << 16) | (((uint32_t)((v >> 5) & 63) << 2) << 8) |
+                                   ((uint32_t)(v & 31) << 3); break; }
+                case 3: { uint16_t v = px[0] | px[1] << 8;
+                          rgb[e] = (((uint32_t)(v >> 11) << 3) << 16) | (((uint32_t)((v >> 6) & 31) << 3) << 8) |
+                                   ((uint32_t)(v >> 1) << 3); break; }
+                default: { uint16_t v = px[0] | px[1] << 8;
+                           rgb[e] = (((uint32_t)(v >> 12) << 4) << 16) | (((uint32_t)((v >> 8) & 15) << 4) << 8) |
+                                    ((uint32_t)((v >> 4) & 15) << 4); break; }
+                }
+            }
+            /* anaglyph: left eye red, right eye cyan */
+            uint32_t r = (rgb[0] >> 16) & 255, g = (rgb[1] >> 8) & 255, b = rgb[1] & 255;
+            r = r * bl >> 8; g = g * bl >> 8; b = b * bl >> 8;
+            dst[(size_t)y * dst_stride_px + x] = (r << 16) | (g << 8) | b;
+        }
+    }
+    g_free(buf[0]);
+    g_free(buf[1]);
+    return 1;
+}
+
 static void ctr_gfx_update(void *opaque)
 {
     CtrMachine *s = opaque;
@@ -2323,7 +2444,9 @@ static void ctr_gfx_update(void *opaque)
     int stride_px = surface_stride(surf) / 4;
 
     memset(d, 0x20, (size_t)surface_stride(surf) * surface_height(surf));
-    ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
+    s->pdc3d = s->pdc_regs[0].regs[PDC_FORMAT] & ST_PDC_FMT_MASK;
+    if (!ctr_draw_stereo_top(s, d, stride_px))
+        ctr_draw_screen(s, 0, d, stride_px, CTR_TOP_W, 0, 0);
     ctr_draw_screen(s, 1, d, stride_px, CTR_BOT_W, (CTR_TOP_W - CTR_BOT_W) / 2, CTR_SCR_H);
     dpy_gfx_update_full(s->con);
 }
@@ -2656,6 +2779,8 @@ static void ctr_init(MachineState *machine)
     ctr_wifi_init(&s->io_shared, CTR_IO_SHARED_BASE);
     ctr_mic_init(&s->io_shared, 0x10162000 - CTR_IO_SHARED_BASE);
     ctr_cam_init(&s->io_shared, 0x10120000 - CTR_IO_SHARED_BASE, sys);    /* docs/camera.md */
+    s->ambient_lux = 100;                  /* QOM ambient-light: a lit room */
+    ctr_cam_set_ambient_lux(s->ambient_lux);
     /* headphone jack GPIO2 bit 0 + machine property "headphones" (ctr_csnd.c) */
     ctr_jack_init(OBJECT(machine), &s->io_shared, 0x10147010 - CTR_IO_SHARED_BASE);
     {
@@ -2721,6 +2846,9 @@ static void ctr_init(MachineState *machine)
     memory_region_add_subregion_overlap(sys, 0x10400000, &s->gx, -1);
     memory_region_init_io(&s->lcd, NULL, &lcd_ops, s, "ctr.lcd", 0x1000);
     memory_region_add_subregion(sys, 0x10202000, &s->lcd);
+    /* the ARM9 writes the parallax barrier enable at +0x00 (3dbrew LCD Registers) */
+    memory_region_init_alias(&s->lcd9, NULL, "ctr.lcd9", &s->lcd, 0, 0x1000);
+    memory_region_add_subregion(&s->arm9_root, 0x10202000, &s->lcd9);
     s->lcd_abl[0] = s->lcd_abl[1] = 0x5F;          /* Luma's default brightness preset */
     ctr_add_unimp(sys, "ctr.io11.unimp", CTR_IO11_BASE, 0x400000);
 

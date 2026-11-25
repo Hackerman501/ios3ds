@@ -40,6 +40,7 @@
 #include "hw/qdev-properties.h"
 #include "net/net.h"
 #include "crypto/aes.h"
+#include "crypto/hash.h"
 #include "ctr_wifi.h"
 
 #define TYPE_CTR_WIFI "ctr-wifi"
@@ -136,7 +137,7 @@ enum {
     EV_READY = 0x1001, EV_CONNECT = 0x1002, EV_DISCONNECT = 0x1003, EV_BSSINFO = 0x1004,
     EV_CMD_ERROR = 0x1005, EV_REG_DOMAIN = 0x1006, EV_SCAN_COMPLETE = 0x100A,
 };
-enum { AUTH_NONE = 1, AUTH_WPA2_PSK = 5 };
+enum { AUTH_NONE = 1, AUTH_WPA_PSK = 3, AUTH_WPA2_PSK = 5 };
 enum { CRYPT_NONE = 1, CRYPT_WEP = 2, CRYPT_TKIP = 3, CRYPT_AES = 4 };
 enum { BSS_FILTER_NONE = 0, BSS_FILTER_ALL = 1, BSS_FILTER_PROBED = 6 };
 /* WMI_DISCONNECT_EVENT reasons (ath6kl wmi.h) */
@@ -207,6 +208,9 @@ struct CtrWifiState {
     uint16_t ep_svc[8];             /* service id per endpoint, 0 = free */
     int next_ep, wmi_ep;
     uint8_t owed[8];                /* credits to return per endpoint */
+    uint8_t credits[8];             /* credits granted to the host per endpoint */
+    uint8_t credit_pool;            /* unassigned credits (rest go to the first data endpoint) */
+    uint32_t credit_used, credit_reports, credit_overflow, credit_waits;
     QEMUTimer *credit_timer;
 
     /* WMI / station */
@@ -227,12 +231,12 @@ struct CtrWifiState {
 
     /* access point */
     uint8_t bssid[6];
-    bool wpa2, group_tkip;
+    bool wpa2, wpa1, group_tkip;
     uint8_t pmk[32];
     uint8_t assoc_ie[24];           /* RSN IE of the association request */
     int assoc_ie_len;
     HsState hs;
-    uint8_t anonce[32], snonce[32], ptk[48], gtk[32];
+    uint8_t anonce[32], snonce[32], ptk[64], gtk[32];
     int gtk_len, gtk_idx;
     uint64_t replay;
     int hs_tries;
@@ -310,7 +314,7 @@ static void psk_to_pmk(const char *pass, const char *ssid, uint8_t pmk[32])
 static void derive_ptk(CtrWifiState *s)
 {
     static const char label[] = "Pairwise key expansion";
-    uint8_t data[76], out[60];
+    uint8_t data[76], out[80];
     const uint8_t *a = s->bssid, *b = s->sta_mac;
     if (memcmp(a, b, 6) > 0) {
         const uint8_t *t = a; a = b; b = t;
@@ -323,13 +327,14 @@ static void derive_ptk(CtrWifiState *s)
     }
     memcpy(data + 12, n1, 32);
     memcpy(data + 44, n2, 32);
-    for (uint8_t i = 0; i < 3; i++) {
+    for (uint8_t i = 0; i < (s->wpa1 ? 4 : 3); i++) {
         uint8_t zero = 0;
         const uint8_t *p[4] = { (const uint8_t *)label, &zero, data, &i };
         size_t l[4] = { strlen(label), 1, sizeof(data), 1 };
         hmac_sha1(s->pmk, 32, p, l, 4, out + 20 * i);
     }
-    memcpy(s->ptk, out, 48);                /* KCK 0-15, KEK 16-31, TK 32-47 */
+    /* KCK 0-15, KEK 16-31, TK 32-47 (CCMP) or 32-63 (TKIP) */
+    memcpy(s->ptk, out, s->wpa1 ? 64 : 48);
 }
 
 /* RFC 3394 key wrap; n = plaintext bytes (multiple of 8), out gets n + 8 */
@@ -357,6 +362,54 @@ static void key_wrap(const uint8_t kek[16], const uint8_t *in, int n, uint8_t *o
     memcpy(out, a, 8);
 }
 
+/* WPA v1 uses HMAC-MD5 for the EAPOL-Key MIC and RC4 (dropping 256 bytes of
+   keystream) for Key Data. glib provides MD5; RC4-drop is a few lines. */
+static void md5_raw(const uint8_t *data, size_t n, uint8_t out[16])
+{
+    uint8_t *r = NULL;
+    size_t len = 0;
+    Error *err = NULL;
+    if (qcrypto_hash_bytes(QCRYPTO_HASH_ALGO_MD5, data, n, &r, &len, &err) == 0 && len >= 16)
+        memcpy(out, r, 16);
+    else
+        memset(out, 0, 16);
+    g_free(r);
+}
+
+static void md5_hmac16(const uint8_t key[16], const uint8_t *data, size_t n, uint8_t out[16])
+{
+    uint8_t k[64], buf[640], inner[16], result[16];
+    size_t take = n > sizeof(buf) - 64 ? sizeof(buf) - 64 : n;
+    memset(k, 0, sizeof(k));
+    memcpy(k, key, 16);
+    for (int i = 0; i < 64; i++) buf[i] = k[i] ^ 0x36;
+    memcpy(buf + 64, data, take);
+    md5_raw(buf, 64 + take, inner);
+    for (int i = 0; i < 64; i++) buf[i] = k[i] ^ 0x5C;
+    memcpy(buf + 64, inner, 16);
+    md5_raw(buf, 80, result);
+    memcpy(out, result, 16);
+}
+
+static void rc4_drop(const uint8_t key[32], uint8_t *data, int len)
+{
+    uint8_t s[256];
+    for (int i = 0; i < 256; i++) s[i] = i;
+    int j = 0;
+    for (int i = 0; i < 256; i++) {
+        j = (j + s[i] + key[i & 31]) & 255;
+        uint8_t t = s[i]; s[i] = s[j]; s[j] = t;
+    }
+    int i = 0;
+    j = 0;
+    for (int k = 0; k < 256 + len; k++) {
+        i = (i + 1) & 255;
+        j = (j + s[i]) & 255;
+        uint8_t t = s[i]; s[i] = s[j]; s[j] = t;
+        if (k >= 256) data[k - 256] ^= s[(s[i] + s[j]) & 255];
+    }
+}
+
 /* ======================================================================== */
 /* target -> host mailbox                                                    */
 /* ======================================================================== */
@@ -372,12 +425,16 @@ static uint32_t io_block(CtrWifiState *s)
 static void htc_queue(CtrWifiState *s, int ep, const uint8_t *body, uint32_t len)
 {
     uint8_t trailer[2 + 16];
-    uint32_t tl = 0;
+    uint32_t tl = 0, returned = 0;
     int n = 0;
     for (int e = 0; e < 8; e++) {
         if (s->owed[e]) {
             trailer[2 + 2 * n] = e;
             trailer[3 + 2 * n] = s->owed[e];
+            returned += s->owed[e];
+            /* the report gives the buffers back to the host; the model and
+               the driver must count the same pool from here on */
+            s->credits[e] = MIN(255, s->credits[e] + s->owed[e]);
             s->owed[e] = 0;
             n++;
         }
@@ -386,6 +443,11 @@ static void htc_queue(CtrWifiState *s, int ep, const uint8_t *body, uint32_t len
         trailer[0] = HTC_REC_CREDITS;
         trailer[1] = 2 * n;
         tl = 2 + 2 * n;
+        s->credit_reports += returned;
+        if (!(s->credit_reports % 64)) {
+            WLOG(s, 1, "HTC credits: consumed %u, returned %u, %u wait(s), %u overflow(s)",
+                 s->credit_used, s->credit_reports, s->credit_waits, s->credit_overflow);
+        }
     }
     uint32_t padded = ROUND_UP(6 + len + tl, io_block(s));
     uint8_t *m = g_malloc0(padded);
@@ -679,7 +741,7 @@ static int channel_of(uint32_t mhz)
 
 /* the AP's own RSN IE (beacon, probe response, message 3): CCMP pairwise,
    PSK, capabilities 0x000C (16 PTKSA replay counters, as hostapd with WMM) */
-enum { SEC_WPA2 = 0, SEC_MIXED, SEC_WPA3 };
+enum { SEC_WPA2 = 0, SEC_MIXED, SEC_WPA3, SEC_WPA1 };
 
 static int ap_rsn_ie(CtrWifiState *s, uint8_t *o)
 {
@@ -692,6 +754,17 @@ static int ap_rsn_ie(CtrWifiState *s, uint8_t *o)
     /* security=wpa3: SAE only, PMF required */
     static const uint8_t wpa3[22] = { 0x30, 20, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 4,
                                       1, 0, 0x00, 0x0F, 0xAC, 8, 0xCC, 0x00 };
+    /* security=wpa1: the WPA Alliance vendor IE, version 1, TKIP everywhere.
+       Group cipher suite at offset 10, pairwise/AKM suite type at offset 17/23. */
+    static const uint8_t wpa1[26] = {
+        0xDD, 24, 0x00, 0x50, 0xF2, 0x01, 0x01, 0x00,
+        0x00, 0x50, 0xF2, 0x02, 0x01, 0x00, 0x00, 0x50, 0xF2, 0x02,
+        0x01, 0x00, 0x00, 0x50, 0xF2, 0x02, 0x00, 0x00,
+    };
+    if (s->sec_mode == SEC_WPA1) {
+        memcpy(o, wpa1, sizeof(wpa1));
+        return sizeof(wpa1);
+    }
     const uint8_t *src = s->sec_mode == SEC_MIXED ? mixed : s->sec_mode == SEC_WPA3 ? wpa3 : ie;
     int n = src[1] + 2;
     memcpy(o, src, n);
@@ -825,6 +898,10 @@ static void build_assoc_ie(CtrWifiState *s)
 {
     static const uint8_t ie[22] = { 0x30, 20, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 4,
                                     1, 0, 0x00, 0x0F, 0xAC, 2, 0x00, 0x00 };
+    if (s->sec_mode == SEC_WPA1) {
+        s->assoc_ie_len = ap_rsn_ie(s, s->assoc_ie);
+        return;
+    }
     memcpy(s->assoc_ie, ie, 22);
     s->assoc_ie[7] = s->conn[5] == CRYPT_TKIP ? 2 : 4;
     s->assoc_ie_len = 22;
@@ -871,7 +948,15 @@ static void assoc_done(void *opaque)
         disconnect_event(s, DISC_NO_NETWORK, 0);
         return;
     }
-    if (s->wpa2) {
+    if (s->sec_mode == SEC_WPA1) {
+        if (c[2] != AUTH_WPA_PSK || c[3] != CRYPT_TKIP || c[5] != CRYPT_TKIP) {
+            WLOG(s, 1, "connect: auth %u pairwise %u group %u; the AP needs WPA-PSK (3), TKIP (3)",
+                 c[2], c[3], c[5]);
+            disconnect_event(s, DISC_ASSOC_FAILED, 43);
+            return;
+        }
+        build_assoc_ie(s);
+    } else if (s->wpa2) {
         uint8_t want_group = s->group_tkip ? CRYPT_TKIP : CRYPT_AES;
         if (c[2] != AUTH_WPA2_PSK || c[3] != CRYPT_AES || c[5] != want_group) {
             WLOG(s, 1, "connect: auth %u pairwise %u group %u; the AP needs WPA2-PSK (5), AES (4), group %u",
@@ -936,6 +1021,7 @@ static void assoc_done(void *opaque)
 #define K_INFO 5
 #define K_REPLAY 9
 #define K_NONCE 17
+#define K_IV 49                             /* WPA v1 RC4 Key IV */
 #define K_MIC 81
 #define K_DLEN 97
 #define K_DATA 99
@@ -947,28 +1033,34 @@ static void assoc_done(void *opaque)
 #define KI_SECURE 0x0200
 #define KI_ENC 0x1000
 
-static void eapol_mic(const uint8_t kck[16], const uint8_t *f, int len, uint8_t mic[16])
+static void eapol_mic(CtrWifiState *s, const uint8_t *f, int len, uint8_t mic[16])
 {
     uint8_t *tmp = g_memdup2(f, len), d[20];
     memset(tmp + K_MIC, 0, 16);
-    const uint8_t *p[1] = { tmp };
-    size_t l[1] = { (size_t)len };
-    hmac_sha1(kck, 16, p, l, 1, d);
-    memcpy(mic, d, 16);
+    if (s->wpa1) {
+        md5_hmac16(s->ptk, tmp, len, mic);
+    } else {
+        const uint8_t *p[1] = { tmp };
+        size_t l[1] = { (size_t)len };
+        hmac_sha1(s->ptk, 16, p, l, 1, d);
+        memcpy(mic, d, 16);
+    }
     g_free(tmp);
 }
+
+static inline uint16_t key_ver(CtrWifiState *s) { return s->wpa1 ? 0 : KI_V2; }
 
 static void eapol_key(CtrWifiState *s, uint16_t info, const uint8_t *data, int dlen, bool mic)
 {
     uint8_t f[256];
     int len = K_DATA + dlen;
     memset(f, 0, len);
-    f[0] = 2;                                       /* 802.1X-2004 */
+    f[0] = s->wpa1 ? 1 : 2;                         /* WPA v1: 802.1X-2001 */
     f[1] = 3;                                       /* EAPOL-Key */
     wr16be(f + 2, len - 4);
-    f[4] = 2;                                       /* RSN key descriptor */
+    f[4] = s->wpa1 ? 0xFE : 2;                      /* WPA vendor / RSN descriptor */
     wr16be(f + K_INFO, info);
-    wr16be(f + 7, 16);                              /* CCMP key length */
+    wr16be(f + 7, s->wpa1 ? 32 : 16);               /* TKIP / CCMP key length */
     for (int i = 0; i < 8; i++) {
         f[K_REPLAY + i] = s->replay >> (56 - 8 * i);
     }
@@ -976,9 +1068,16 @@ static void eapol_key(CtrWifiState *s, uint16_t info, const uint8_t *data, int d
     wr16be(f + K_DLEN, dlen);
     if (dlen) {
         memcpy(f + K_DATA, data, dlen);
+        if (s->wpa1 && (info & KI_ENC)) {
+            uint8_t ek[32];
+            for (int i = 0; i < 16; i++) f[K_IV + i] = g_random_int_range(0, 256);
+            memcpy(ek, f + K_IV, 16);
+            memcpy(ek + 16, s->ptk + 16, 16);
+            rc4_drop(ek, f + K_DATA, dlen);
+        }
     }
     if (mic) {
-        eapol_mic(s->ptk, f, len, f + K_MIC);
+        eapol_mic(s, f, len, f + K_MIC);
     }
     eapol_send(s, f, len);
 }
@@ -987,14 +1086,15 @@ static void hs_send_m1(CtrWifiState *s)
 {
     s->replay++;
     s->hs = HS_M1;
-    eapol_key(s, KI_V2 | KI_PAIRWISE | KI_ACK, NULL, 0, false);
+    eapol_key(s, key_ver(s) | KI_PAIRWISE | KI_ACK, NULL, 0, false);
     WLOG(s, 1, "4-way: message 1 sent (try %d)", s->hs_tries + 1);
 }
 
 static void hs_send_m3(CtrWifiState *s)
 {
     uint8_t kd[104], wrapped[112];
-    int n = ap_rsn_ie(s, kd);
+    const uint8_t *keydata;
+    int keylen, n = ap_rsn_ie(s, kd);
     kd[n++] = 0xDD;                                 /* GTK KDE */
     kd[n++] = 6 + s->gtk_len;
     kd[n++] = 0x00; kd[n++] = 0x0F; kd[n++] = 0xAC; kd[n++] = 0x01;
@@ -1008,19 +1108,28 @@ static void hs_send_m3(CtrWifiState *s)
             kd[n++] = 0;
         }
     }
-    key_wrap(s->ptk + 16, kd, n, wrapped);
+    if (s->wpa1) {
+        keydata = kd;                              /* WPA v1: RC4, no 8-byte wrap */
+        keylen = n;
+    } else {
+        key_wrap(s->ptk + 16, kd, n, wrapped);
+        keydata = wrapped;
+        keylen = n + 8;
+    }
     s->replay++;
     s->hs = HS_M3;
-    eapol_key(s, KI_V2 | KI_PAIRWISE | KI_INSTALL | KI_ACK | KI_MIC | KI_SECURE | KI_ENC,
-              wrapped, n + 8, true);
-    WLOG(s, 1, "4-way: message 3 sent (GTK index %d, %d key data bytes)", s->gtk_idx, n + 8);
+    uint16_t info = key_ver(s) | KI_PAIRWISE | KI_ACK | KI_MIC | KI_SECURE | KI_ENC;
+    info |= s->wpa1 ? (uint16_t)((s->gtk_idx & 3) << 5) : KI_INSTALL;
+    eapol_key(s, info, keydata, keylen, true);
+    WLOG(s, 1, "4-way: message 3 sent (GTK index %d, %d key data bytes)", s->gtk_idx, keylen);
 }
 
 /* group key handshake message 1 (rekey): new GTK, other key index */
 static void hs_send_g1(CtrWifiState *s)
 {
     uint8_t kd[48], wrapped[56];
-    int n = 0;
+    const uint8_t *keydata;
+    int keylen, n = 0;
     kd[n++] = 0xDD;                                 /* GTK KDE */
     kd[n++] = 6 + s->gtk_len;
     kd[n++] = 0x00; kd[n++] = 0x0F; kd[n++] = 0xAC; kd[n++] = 0x01;
@@ -1034,10 +1143,17 @@ static void hs_send_g1(CtrWifiState *s)
             kd[n++] = 0;
         }
     }
-    key_wrap(s->ptk + 16, kd, n, wrapped);
+    if (s->wpa1) {
+        keydata = kd;
+        keylen = n;
+    } else {
+        key_wrap(s->ptk + 16, kd, n, wrapped);
+        keydata = wrapped;
+        keylen = n + 8;
+    }
     s->replay++;
     s->hs = HS_GROUP;
-    eapol_key(s, KI_V2 | KI_ACK | KI_MIC | KI_SECURE | KI_ENC, wrapped, n + 8, true);
+    eapol_key(s, key_ver(s) | KI_ACK | KI_MIC | KI_SECURE | KI_ENC, keydata, keylen, true);
     WLOG(s, 1, "group rekey: message 1 sent (GTK index %d, try %d)", s->gtk_idx, s->hs_tries + 1);
 }
 
@@ -1102,7 +1218,7 @@ static bool rsn_equal(const uint8_t *a, int al, const uint8_t *b, int bl)
 
 static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
 {
-    if (len < K_DATA || f[1] != 3 || f[4] != 2) {
+    if (len < K_DATA || f[1] != 3 || f[4] != (s->wpa1 ? 0xFE : 2)) {
         WLOG(s, 1, "4-way: ignoring a non-RSN EAPOL frame (%d bytes)", len);
         return;
     }
@@ -1118,14 +1234,14 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
         rc = rc << 8 | f[K_REPLAY + i];
     }
     int dlen = rd16be(f + K_DLEN);
-    if (s->hs == HS_GROUP && (info & 7) == KI_V2 && !(info & (KI_PAIRWISE | KI_ACK | KI_INSTALL)) &&
+    if (s->hs == HS_GROUP && (info & 7) == key_ver(s) && !(info & (KI_PAIRWISE | KI_ACK | KI_INSTALL)) &&
         (info & KI_MIC) && (info & KI_SECURE)) {
         uint8_t gm[16];
         if (rc != s->replay) {
             WLOG(s, 1, "group rekey: replay counter %" PRIu64 ", expected %" PRIu64, rc, s->replay);
             return;
         }
-        eapol_mic(s->ptk, f, len, gm);
+        eapol_mic(s, f, len, gm);
         if (memcmp(gm, f + K_MIC, 16)) {
             WLOG(s, 1, "group rekey: message 2 MIC is wrong");
             return;
@@ -1139,7 +1255,7 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
         }
         return;
     }
-    if ((info & 7) != KI_V2 || !(info & KI_PAIRWISE) || (info & (KI_ACK | KI_INSTALL)) || !(info & KI_MIC)) {
+    if ((info & 7) != key_ver(s) || !(info & KI_PAIRWISE) || (info & (KI_ACK | KI_INSTALL)) || !(info & KI_MIC)) {
         WLOG(s, 1, "4-way: unexpected key info %04x", info);
         return;
     }
@@ -1151,18 +1267,20 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
     if (s->hs == HS_M1 && !(info & KI_SECURE)) {
         memcpy(s->snonce, f + K_NONCE, 32);
         derive_ptk(s);
-        eapol_mic(s->ptk, f, len, mic);
+        eapol_mic(s, f, len, mic);
         if (memcmp(mic, f + K_MIC, 16)) {
             WLOG(s, 1, "4-way: message 2 MIC is wrong (wrong passphrase?)");
             return;
         }
-        if (K_DATA + dlen > len || !rsn_equal(f + K_DATA, dlen, s->assoc_ie, s->assoc_ie_len)) {
+        if (K_DATA + dlen > len || (s->wpa1 ?
+            (dlen != s->assoc_ie_len || memcmp(f + K_DATA, s->assoc_ie, dlen)) :
+            !rsn_equal(f + K_DATA, dlen, s->assoc_ie, s->assoc_ie_len))) {
             WLOG(s, 1, "4-way: message 2 RSN IE differs from the association request: deauth");
             disconnect_event(s, DISC_BSS_DISCONNECTED, 17);
             return;
         }
         WLOG(s, 1, "4-way: message 2 OK (MIC, RSN IE)");
-        s->gtk_len = s->group_tkip ? 32 : 16;
+        s->gtk_len = (s->wpa1 || s->group_tkip) ? 32 : 16;
         s->gtk_idx = 1;
         for (int i = 0; i < s->gtk_len; i++) {
             s->gtk[i] = g_random_int_range(0, 256);
@@ -1171,7 +1289,7 @@ static void ap_rx_eapol(CtrWifiState *s, const uint8_t *f, int len)
         hs_send_m3(s);
         timer_mod(s->hs_timer, now_ns() + 1000 * SCALE_MS);
     } else if (s->hs == HS_M3 && (info & KI_SECURE)) {
-        eapol_mic(s->ptk, f, len, mic);
+        eapol_mic(s, f, len, mic);
         if (memcmp(mic, f + K_MIC, 16)) {
             WLOG(s, 1, "4-way: message 4 MIC is wrong");
             return;
@@ -1471,8 +1589,20 @@ static void wmi_cmd(CtrWifiState *s, const uint8_t *b, uint32_t len)
         }
         if (usage == 0) {                           /* PAIRWISE_USAGE */
             s->sta_tk_set = true;
-            s->sta_tk_ok = s->wpa2 && type == CRYPT_AES && klen == 16 && s->hs == HS_DONE &&
-                           !memcmp(key, s->ptk + 32, 16);
+            bool tk_ok = false;
+            if (s->wpa1 && type == CRYPT_TKIP && klen == 32) {
+                /* dsiwifi's WMI_ADD_CIPHER_KEY order: the two 8-byte MIC
+                   halves of a TKIP key are swapped (the driver does the
+                   same for the group key below). */
+                uint8_t want[32];
+                memcpy(want, s->ptk + 32, 32);
+                memcpy(want + 16, s->ptk + 56, 8);
+                memcpy(want + 24, s->ptk + 48, 8);
+                tk_ok = !memcmp(key, want, 32);
+            } else if (!s->wpa1 && type == CRYPT_AES && klen == 16) {
+                tk_ok = !memcmp(key, s->ptk + 32, 16);
+            }
+            s->sta_tk_ok = s->wpa2 && s->hs == HS_DONE && tk_ok;
             WLOG(s, 1, "WMI_ADD_CIPHER_KEY pairwise, index %d, type %d, %d bytes: %s", idx, type, klen,
                  s->sta_tk_ok ? "equals the AP's TK" : "DOES NOT equal the AP's TK");
         } else if (usage == 1) {                    /* GROUP_USAGE */
@@ -1537,7 +1667,23 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
         WLOG(s, 1, "HTC: message for unconnected endpoint %d dropped", ep);
         return;
     }
-    s->owed[ep] = MIN(s->owed[ep] + 1, 255);
+    /* ath6kl htc_mbox.c: every message consumes credits for the padded
+       length. A host that ignores the reports overruns the firmware mailbox
+       ("Mbox Full", dsiwifi): refuse the message and flag TX overflow. */
+    uint32_t need = (ROUND_UP(avail, io_block(s)) + HTC_CREDIT_SIZE - 1) / HTC_CREDIT_SIZE;
+    if (!need) {
+        need = 1;
+    }
+    if (s->credits[ep] < need) {
+        s->credit_overflow++;
+        s->err_int |= ERR_TX_OVERFLOW;
+        WLOG(s, 1, "HTC: Mbox Full on endpoint %d (%u credits needed, %u left): message dropped",
+             ep, need, s->credits[ep]);
+        return;
+    }
+    s->credits[ep] -= need;
+    s->credit_used += need;
+    s->owed[ep] = MIN(s->owed[ep] + need, 255);
     const uint8_t *p = m + 6;
     if (ep == 0) {
         uint16_t id = len >= 2 ? rd16le(p) : 0;
@@ -1556,6 +1702,12 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
                 r[4] = 0;
                 r[5] = s->next_ep;
                 s->ep_svc[s->next_ep] = svc;
+                /* one credit for one maximum-sized message, like ath6kl's
+                   htc_setup_tx_allocs; the remainder goes to the BE data ep */
+                if (s->credit_pool) {
+                    s->credits[s->next_ep] = 1;
+                    s->credit_pool--;
+                }
                 if (svc == 0x0100) {
                     s->wmi_ep = s->next_ep;
                 }
@@ -1571,6 +1723,16 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
                 return;
             }
             s->htc_setup_done = true;
+            /* the host and the target must agree: the leftover credits all go
+               to the first data endpoint (ath6kl's BE endpoint) */
+            for (int e = 1; e < 8 && s->credit_pool; e++) {
+                if (s->ep_svc[e] && e != s->wmi_ep) {
+                    s->credits[e] += s->credit_pool;
+                    s->credit_pool = 0;
+                    WLOG(s, 1, "HTC: endpoint %d has %u credits (%u bytes each)",
+                         e, s->credits[e], HTC_CREDIT_SIZE);
+                }
+            }
             uint8_t rd[7], reg[4] = { 0 };
             memcpy(rd, s->sta_mac, 6);
             rd[6] = 0x02;                           /* phy capability: 11g */
@@ -1590,6 +1752,7 @@ static void htc_rx(CtrWifiState *s, const uint8_t *m, uint32_t avail)
         sta_tx(s, p, len);
     }
     if (m[1] & HTC_FLG_NEED_CREDIT) {
+        s->credit_waits++;
         timer_mod(s->credit_timer, now_ns() + SCALE_MS);
     }
 }
@@ -2163,6 +2326,10 @@ static void target_reset(CtrWifiState *s, bool cold)
     s->htc_setup_done = false;
     memset(s->ep_svc, 0, sizeof(s->ep_svc));
     memset(s->owed, 0, sizeof(s->owed));
+    memset(s->credits, 0, sizeof(s->credits));
+    s->credits[0] = 1;                      /* endpoint 0 always gets one */
+    s->credit_pool = HTC_CREDITS - 1;       /* the rest are handed out on CONNECT_SERVICE */
+    s->credit_used = s->credit_reports = s->credit_overflow = s->credit_waits = 0;
     s->wmi_ep = -1;
     s->bss_filter = 0;
     s->probed_len = 0;
@@ -2275,7 +2442,9 @@ static void ctr_wifi_realize(DeviceState *dev, Error **errp)
     }
     s->wpa2 = !s->security || strcmp(s->security, "open");
     s->sec_mode = !s->security ? SEC_WPA2 : !strcmp(s->security, "wpa2-wpa3") ? SEC_MIXED :
-                  !strcmp(s->security, "wpa3") ? SEC_WPA3 : SEC_WPA2;
+                  !strcmp(s->security, "wpa3") ? SEC_WPA3 :
+                  !strcmp(s->security, "wpa1") ? SEC_WPA1 : SEC_WPA2;
+    s->wpa1 = s->sec_mode == SEC_WPA1;
     if (s->wpa2 && (!s->psk || strlen(s->psk) < 8 || strlen(s->psk) > 63)) {
         error_setg(errp, "ctr-wifi: psk must be an 8-63 character passphrase");
         return;
@@ -2325,6 +2494,15 @@ static const Property ctr_wifi_props[] = {
     DEFINE_PROP_BOOL("fifo32", CtrWifiState, fifo32, true),
     DEFINE_PROP_BOOL("decoys", CtrWifiState, decoys, true),
     DEFINE_PROP_UINT32("rekey", CtrWifiState, rekey_s, 0),
+    /* HTC credits: read with HMP 'qom-get /machine/...' (diagnostics, docs/wifi.md 7) */
+    DEFINE_PROP_UINT32("htc-credits-used", CtrWifiState, credit_used, 0),
+    DEFINE_PROP_UINT32("htc-credit-reports", CtrWifiState, credit_reports, 0),
+    DEFINE_PROP_UINT32("htc-credit-waits", CtrWifiState, credit_waits, 0),
+    DEFINE_PROP_UINT32("htc-overflows", CtrWifiState, credit_overflow, 0),
+    DEFINE_PROP_UINT32("wifi-tx-frames", CtrWifiState, tx_frames, 0),
+    DEFINE_PROP_UINT32("wifi-rx-frames", CtrWifiState, rx_frames, 0),
+    DEFINE_PROP_UINT32("wifi-tx-drop", CtrWifiState, tx_drop, 0),
+    DEFINE_PROP_UINT32("wifi-rx-drop", CtrWifiState, rx_drop, 0),
     DEFINE_PROP_UINT32("debug", CtrWifiState, debug, 1),
 };
 

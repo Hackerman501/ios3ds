@@ -367,9 +367,11 @@ void ctr_csnd_init(MemoryRegion *parent, hwaddr offset, MemoryRegion *fcram, hwa
 /*
  * MIC (0x10162000): the microphone FIFO behind the CODEC's ADC (I2S2).
  * Layout as GBATEK documents the DSi's (the 3DS block is the same design):
- *   0x000 MIC_CNT (u16): 2-3 rate divider (I2S2 rate / (1 + n)), 8 FIFO empty,
- *         9 half full (>= 8 words), 10 full (16 words), 11 overrun, 12 clear
- *         (write 1), 13-14 IRQ mode (not modelled), 15 enable
+ *   0x000 MIC_CNT (u16): 0-1 data format (0 = MakeStereo: both halves the same
+ *         sample, 2 = Normal: two consecutive samples, 3 = no data), 2-3 rate
+ *         divider (I2S2 rate / (1 + n)), 8 FIFO empty, 9 half full (>= 8 words),
+ *         10 full (16 words), 11 overrun, 12 clear (write 1), 13-14 IRQ mode
+ *         (not modelled), 15 enable
  *   0x004 MIC_DATA (u32): two signed 16-bit samples, older one in the low half
  * Samples are produced on the virtual clock at 47605 / (1 + n) Hz (I2S2 as
  * boot/arm9/audio.c programs it) from IOS3DS_MIC:
@@ -438,17 +440,25 @@ static uint64_t mic_read(void *opaque, hwaddr addr, unsigned size)
     mic_advance();
     if (addr < 4) {
         uint32_t n = (uint32_t)(M.made - M.taken), v = M.cnt & ~0x0700u;
-        if (!(M.cnt & 0x8000) || n < 2) v |= 1u << 8;
+        uint32_t need = (M.cnt & 3) == 0 ? 1 : 2;   /* MakeStereo repeats one sample */
+        if (!(M.cnt & 0x8000) || (M.cnt & 3) == 3 || n < need) v |= 1u << 8;
         if (n >= MIC_FIFO_SAMPLES / 2) v |= 1u << 9;
         if (n >= MIC_FIFO_SAMPLES) v |= 1u << 10;
         return extract32(v, (addr & 3) * 8, size * 8);
     }
     if (addr >= 4 && addr < 8) {
-        uint32_t v = 0;
-        if ((M.cnt & 0x8000) && M.made - M.taken >= 2) {
-            v = (uint16_t)mic_sample(M.taken) | (uint32_t)(uint16_t)mic_sample(M.taken + 1) << 16;
-            M.taken += 2;
-            M.total_taken += 2;
+        uint32_t v = 0, fmt = M.cnt & 3;
+        if ((M.cnt & 0x8000) && fmt != 3 && M.made - M.taken >= (fmt == 0 ? 1u : 2u)) {
+            int16_t s = mic_sample(M.taken);
+            if (fmt == 0) {                        /* GBATEK: FIFO fills twice as fast */
+                v = (uint16_t)s | (uint32_t)(uint16_t)s << 16;
+                M.taken++;
+                M.total_taken++;
+            } else {
+                v = (uint16_t)s | (uint32_t)(uint16_t)mic_sample(M.taken + 1) << 16;
+                M.taken += 2;
+                M.total_taken += 2;
+            }
         }
         if (M.total_taken && M.total_taken % (5u * MIC_I2S2_HZ / 4) < 2) {
             int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);

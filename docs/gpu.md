@@ -112,15 +112,26 @@ buffer.
 (checked against QuartzCore's import list). So is the rest of ES 1.1 common
 profile, plus `OES_framebuffer_object`, `OES_draw_texture`, `OES_point_size_array`, `OES_mapbuffer`, blend equation/func separate,
 `APPLE_fence`, the `APPLE` multisample entry points (single-sampled) and
-`EXT_discard_framebuffer` (a no-op). Paletted compressed textures are decoded.
+`EXT_discard_framebuffer` (a no-op). `OES_compressed_paletted_texture` and
+`IMG_texture_compression_pvrtc` (all four 2bpp/4bpp RGB/RGBA formats) are
+decoded to RGBA words at upload (`pvrtc.c`); 2bpp uses an averaged
+low-frequency signal rather than the PowerVR reference interpolation.
+`OES_matrix_palette` is implemented: `glCurrentPaletteMatrixOES`,
+`glLoadPaletteFromModelViewMatrixOES`, `glMatrixIndexPointerOES` and
+`glWeightPointerOES` feed a per-vertex 1..4 matrix blend in object space, in
+addition to the modelview matrix. `glGenerateMipmapOES` builds a box-filtered
+level chain, but sampling still uses level 0. ES 2.0-only entry points
+(shaders, programs, vertex attributes) set `GL_INVALID_OPERATION` instead of
+silently returning 0; `EAGLContext initWithAPI:2` is refused before our
+engine is reached, so a game's ES2 probe fails and its ES1 fallback works.
 
 **Not done:**
-- PVRTC compressed textures (`glCompressedTexImage2D` logs and fails);
-- mipmap levels > 0: minification samples the base level;
+- mipmap sampling: minification uses level 0 even after `glGenerateMipmapOES`;
 - stencil: the state is kept, but there is no stencil buffer;
 - user clip planes (the state is kept, but nothing is clipped);
 - logic op, multisampling, smooth points and lines;
-- `matrix_palette` and `weight_pointer`.
+- bit-exact PVRTC 2bpp low-frequency interpolation;
+- ES 2.0 (deliberately: ES1 games must keep running).
 
 ## 4. Back ends
 
@@ -163,6 +174,14 @@ software GPU model used to test it are described in [pica200.md](pica200.md).
 
 The test is `tools/ios3ds-gl/test/gltest.c`. It uses only the public API: an
 `EAGLContext` through the ObjC runtime, plus `gl*` from OpenGLES.framework.
+
+It also checks the ES 1.1 compatibility paths a 3/4-era game probes:
+hand-encoded PVRTC 4bpp/2bpp images, the compressed-format and extension
+lists, `OES_matrix_palette` index/weight arrays, `glGenerateMipmapOES`, and a
+clean `GL_INVALID_OPERATION` for an ES2-only shader call. The extra checks
+run after the two frame grabs, so the compared frames stay the same. On iOS
+it also asks EAGL for an ES2 context and verifies the request is refused
+before continuing on the ES1 context.
 
 1. It renders the test scene into an offscreen FBO (RGBA8 colour + DEPTH16). The
    scene has:
@@ -386,3 +405,55 @@ Results (QEMU, re-log 51): CA frames have 0 read-backs; render thread CPU per
 frame under `--icount 2` dropped from 19–27 ms to about 8 ms; screenshots
 match the software compositor except for the status-bar clock and moments
 where the runs are at different animation times.
+
+## 8. MBX2D: the messages in every hardware log
+
+The New 2DS XL log (and every earlier run) has:
+
+```
+Iterator had no matching services
+Failed to open connection to MBX
+Failed to initialized MBX2D driver (1).
+```
+
+The dyld cache was searched with `hfsplus cat` on `build/staging/rootfs.hfs`
+and the image table at file offset 0xa8 (362 `dyld_cache_image_info` entries,
+32 bytes each, `pathFileOffset` at +24; VA = file offset + 0x30000000). This
+attributes the messages precisely:
+
+| string | file offset / VA | image |
+|---|---|---|
+| `Iterator had no matching services`, `AppleMBXDevice`, `Failed to open connection to MBX` | 0x770c68 / 0x30770c68 and nearby | `/System/Library/PrivateFrameworks/MBX2D.framework/MBX2D` (base 0x3076a000) |
+| `Failed to initialized MBX2D driver (%d).`, `CA_ENABLE_MBX2D`, `LK_ENABLE_MBX2D`, `CA_ENABLE_OGL`, `MBX2D_PAGE_FLIP` | 0x47bfe0 / 0x347bfe0 and nearby | `/System/Library/Frameworks/QuartzCore.framework/QuartzCore` (base 0x346dc000) |
+
+So MBX2D itself prints the first two when its `IOServiceMatching("AppleMBXDevice")`
+returns nothing — the same missing service OpenGLES sees before our one-file
+string patch (§1) — and **QuartzCore** prints the third when its
+`CA::RenderMBX2D` 2D blit renderer fails to initialise. That renderer is the
+accelerated blit path CoreAnimation can pick for layer contents, images and
+video frames; it is not the GL compositor, which uses our engine instead.
+MBX2D's own strings mention `YUV420 texturing ... mbx3DQuadCopy*` and surface
+mapping, i.e. CoreVideo/IOSurface-backed video frames are a likely user,
+besides QuartzCore's layer blits.
+On hardware the failure is only logged and SpringBoard carries on, but a game
+that reaches the MBX2D path can treat the failed driver as fatal.
+
+Fix, in two parts (both in `rootfs/recipe.json`):
+1. SpringBoard's `EnvironmentVariables` set `CA_ENABLE_MBX2D=0` and
+   `LK_ENABLE_MBX2D=0`, so a QuartzCore version that honours them skips the
+   probe. `CA_ENABLE_OGL=1`, `MBX2D_PAGE_FLIP=0` and `IOS3DS_CA=1` are
+   unchanged.
+2. A QEMU boot with those variables set still printed both lines: this
+   8C148 QuartzCore attempts the probe regardless (the GL compositor is
+   selected by our own `IOS3DS_CA` gate, not by `CA_ENABLE_OGL`). Rather than
+   fake an `AppleMBXDevice` user client the
+   cache's two format strings are patched to empty
+   (`0x7707cc` in MBX2D, `0x47bb470` in QuartzCore, verified against the
+   bytes from the user's own cache). The init call still fails and
+   QuartzCore still falls back to the working GL/software renderer; only
+   the alarming console lines disappear. A future iOS build with a real
+   MBX2D user client does not need the patches.
+
+`tests/test_mbx2d.py` checks the recipe. Only the native MBX2D framework's
+own strings were read from the dyld cache; no Apple binary or private file
+is shipped.

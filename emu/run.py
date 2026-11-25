@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QEMU = os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
+QEMU = os.environ.get("IOS3DS_QEMU") or os.path.join(ROOT, "build", "qemu", "b", "qemu-system-arm")
 OUT = os.path.join(ROOT, "build", "emu")
 
 
@@ -43,6 +43,7 @@ def hmp(sock_path, cmd, timeout=5):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--qemu", default="", help="QEMU binary to use (default: env IOS3DS_QEMU or the shared build/qemu)")
     ap.add_argument("--firm", default=os.path.join(ROOT, "build", "boot", "ios3ds.firm"))
     ap.add_argument("--sd", default=os.path.join(ROOT, "build", "sd.img"))
     ap.add_argument("--time", type=float, default=8.0)
@@ -60,9 +61,18 @@ def main():
                          "Old 3DS ARM11): reproduces real-hardware timer ordering; single-threaded TCG")
     ap.add_argument("--new3ds", action="store_true", help="model a New 3DS (-M nintendo3ds,new3ds=on; env IOS3DS_NEW3DS=1 does the same, docs/n3ds.md)")
     ap.add_argument("--regs", action="store_true", help="dump ARM11/ARM9 registers before quitting")
+    ap.add_argument("--slider3d", type=int, default=-1,
+                    help="set the 3D slider (MCU reg 0x08) at boot, e.g. 255 for stereo3d=1")
     a = ap.parse_args()
+    global QEMU
+    if a.qemu:
+        QEMU = a.qemu
     if a.new3ds:
         os.environ["IOS3DS_NEW3DS"] = "1"
+    # a worktree-private QEMU build bundles libslirp next to the binary
+    libdir = os.path.dirname(QEMU)
+    if os.path.exists(os.path.join(libdir, "libslirp.so.0")):
+        os.environ["LD_LIBRARY_PATH"] = libdir + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
     out_dir = a.out
     os.makedirs(out_dir, exist_ok=True)
     mon = os.path.join(out_dir, "monitor.sock")
@@ -106,6 +116,8 @@ def main():
     for h in filter(None, a.hmp.split(";")):
         t, c = h.split("=", 1)
         events.append((float(t), "hmp", c.strip()))
+    if a.slider3d >= 0:
+        events.append((0.1, "hmp", "qom-set /machine mcu-3d-slider %d" % a.slider3d))
     events.append((a.time, "quit", None))
     events.sort(key=lambda e: e[0])
 

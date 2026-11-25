@@ -443,6 +443,41 @@ def substrate_setup(img, hfs, hfs_cat, recipe, manifest, verbose=True):
             im.put(path, text.encode(), int(modes.get(path, "644"), 8))
         for path, target in sub.get("symlink", {}).items():
             im.symlink(path, target)
+        # Copies under /usr/lib for sandboxed apps (MobileSafari, App Store
+        # apps): their profile allows /usr/lib but not /Library, so applog's
+        # load_substrate() falls back to these when the /Library dlopen fails.
+        # A dylib whose LC_LOAD_DYLIB points into /Library (TLSFix depends on
+        # CydiaSubstrate's absolute path) gets that path rewritten to its copy;
+        # the shorter string is NUL-padded inside the same load command.
+        patches = sub.get("sandbox_patch_load", {})
+        for src, dst in sub.get("sandbox_copies", {}).items():
+            if im.mode(src) is None:
+                continue
+            im.makedirs(dst.rsplit("/", 1)[0])
+            data = hfs_cat(img, im.real(src))
+            for spec in patches.get(src, []):
+                old, new = spec["old"], spec["new"]
+                needle, repl = old.encode() + b"\0", new.encode() + b"\0"
+                if len(repl) > len(needle):
+                    raise SystemExit("[cydia] %s: replacement path too long" % src)
+                if needle not in data:
+                    raise SystemExit("[cydia] %s: no occurrence of %s" % (src, old))
+                data = data.replace(needle, repl + b"\0" * (len(needle) - len(repl)))
+                if verbose:
+                    say("substrate: %s: %s -> %s" % (src, old, new))
+            im.put(dst, data, 0o755)
+            if verbose:
+                say("substrate: %s -> %s (sandboxed apps)" % (src, dst))
+        # TLSFix's EC-chain certificate check reads the profile CA payloads
+        # from /var/mobile/Library/ConfigurationProfiles, which the sandbox
+        # denies too; the copy it now looks in (path patched above) lives here.
+        for src, dst in sub.get("sandbox_profile_copy", {}).items():
+            if im.mode(src) is None:
+                continue
+            im.makedirs(dst.rsplit("/", 1)[0])
+            im.put(dst, hfs_cat(img, im.real(src)), 0o644)
+            if verbose:
+                say("substrate: %s -> %s (sandboxed apps)" % (src, dst))
         # dpkg diversions (local, package ":"): the package's file moves to
         # <path>.real (a later mobilesubstrate upgrade unpacks there too) and our
         # guard takes its place: cynject refuses pid 1 (launchd injection hangs 4.2.1)

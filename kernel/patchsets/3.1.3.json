@@ -1,0 +1,176 @@
+[
+ {
+  "name": "ppmr-read",
+  "orig": "923f1fee",
+  "new": "0030a0e3",
+  "why": "MRC c15,c2,4 (ARM1176 peripheral port remap) does not exist on ARM11 MPCore -> mov r3,#0",
+  "find": {}
+ },
+ {
+  "name": "ppmr-write",
+  "orig": "920f0fee",
+  "new": "0000a0e1",
+  "why": "MCR c15,c2,4 in the vector-page reset path -> nop",
+  "find": {}
+ },
+ {
+  "name": "ifar-pabt-user",
+  "orig": "501f16ee",
+  "new": "0e10a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: the handler already did lr -= 4 at 0x800662ac, so fault address = lr (mov r1, lr)",
+  "find": {}
+ },
+ {
+  "name": "ifar-pabt-kernel",
+  "orig": "505f16ee",
+  "new": "0e50a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: fault address = lr after the entry lr -= 4 (mov r5, lr)",
+  "find": {}
+ },
+ {
+  "name": "actlr-write",
+  "orig": "300f01ee",
+  "new": "0000a0e1",
+  "why": "ARM1176 ACTLR bits mean different things on MPCore (bit5 = SMP): ignore writes",
+  "find": {}
+ },
+ {
+  "name": "uart-tx-data",
+  "orig": "0c309fe57000efe6",
+  "new": "04f01fe5@shim+0x0@",
+  "why": "S5L UART transmit: ldr pc,=shim_putc (log ring read by the ARM9)",
+  "find": {}
+ },
+ {
+  "name": "uart-rx-data",
+  "orig": "08309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive: mov r0,#0; bx lr",
+  "find": {}
+ },
+ {
+  "name": "rtc-wait-0s",
+  "orig": "1e23",
+  "new": "0023",
+  "why": "AppleARMPE::getGMTTimeOfDay waits 30 s for an RTC that doesn't exist yet (PMU/MCU driver TODO): timeout 0",
+  "find": {
+   "before": "b0b502af86b0154c",
+   "after": "002503930021134b"
+  }
+ },
+ {
+  "name": "iortc-wait-2s",
+  "orig": "1e23",
+  "new": "0223",
+  "why": "IOKitInitializeTime (bsd_init, 0x8024a53e) waits 30 s for resourceMatching(\"IORTC\") before clock_initialize_calendar; nothing publishes IORTC yet (no RTC driver). 2 s, not 0: with 0 the calendar can be initialised before AppleARMPE (gIOPlatform) is up, and early userland gettimeofday deltas then read 0 (gltest \"frame took 0 ms\", QEMU and hardware run10). AppleARMPE is up within 1 s even in plain QEMU, so 2 s keeps the original order",
+  "va": "0xc0175b3e"
+ },
+ {
+  "name": "clcd-backlight-log-set",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in the backlight-level setter (0x807a9514)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log",
+  "find": {
+   "before": "10109fe510309fe5",
+   "after": "b080bde8024001e0"
+  }
+ },
+ {
+  "name": "iic-device-transfer",
+  "orig": "90b501af8ab0002a01d0002b2bd0",
+  "new": "c0467847c04604f01fe5@shim+0x24@",
+  "why": "AppleARMIICDevice transfer (vtable slot 0x35c: op, sub-address, data) -> shim_iic_transfer: a register file per I2C device instead of a bus that does not exist (Thumb: nop; bx pc; nop; ARM: ldr pc,[pc,#-4]; .word)",
+  "find": {}
+ },
+ {
+  "name": "pe-get-gmt",
+  "orig": "80b500af04480068",
+  "new": "004b1847@shim+0x30@",
+  "why": "PEGetGMTTimeOfDay -> shim_mcu_get_gmt (Thumb: ldr r3,[pc]; bx r3): Unix time from the 3DS MCU RTC (ARM9 mailbox, docs/mcu.md); without an RTC the shim runs the original body (gIOPlatform->getGMTTimeOfDay(), vtable +0x390)",
+  "va": "0xc01953e0"
+ },
+ {
+  "name": "pe-set-gmt",
+  "orig": "80b500af011c0548",
+  "new": "004b1847@shim+0x3c@",
+  "why": "PESetGMTTimeOfDay -> shim_mcu_set_gmt: AppleARMPE::setGMTTimeOfDay (0x802e7834) waits 30 s for an IORTC that never appears; the shim keeps iOS' time as an offset to the RTC instead (the 3DS RTC is not written)",
+  "va": "0xc01953fc"
+ },
+ {
+  "name": "pe-halt-mcu",
+  "orig": "0268e2239b00291cd358",
+  "new": "291c004b01e0@shim+0x38@",
+  "why": "PEHaltRestart: gIOPlatform->haltRestart(type) (ldr r2,[r0]; movs r3,#0xe2; lsls; adds r1,r5,#0; ldr r3,[r2,r3]) -> adds r1,r5,#0; ldr r3,[pc,#0]; b +2; .word shim_mcu_halt_restart; the blx r3 at 0x801c9900 stays. Halt/restart power the console off through the MCU (ARM9), other types go to the platform as before",
+  "va": "0xc01967fe"
+ },
+ {
+  "name": "pe-halt-skip-pm",
+  "orig": "9847",
+  "new": "c046",
+  "why": "PEHaltRestart: skip the IOPMrootDomain halt/restart broadcast (blx r3 -> 0x801db12b). It messages IOMobileGraphicsFamily -> AppleM2CLCD (disable_backlight) -> AppleARMPlatform function -> AppleS5L8720X's SWI backlight function, which sleeps on a command gate (AppleS5L8720X+0x37cc) for an interrupt the 3DS never raises: every iOS shutdown hung there forever (QEMU, SELECT+START thread dump, re-log 33). File systems are already unmounted and md0 writes are synchronous; the platform call that follows (pe-halt-mcu) powers the console off",
+  "va": "0xc01967f4"
+ },
+ {
+  "name": "uart-init",
+  "orig": "90402de9",
+  "new": "1eff2fe1",
+  "why": "7E18 S5L UART init: return at once (MMIO does not exist on the 3DS; tx/rx go to the shim)",
+  "va": "0xc01a891c"
+ },
+ {
+  "name": "uart-tx-ready",
+  "orig": "0c309fe5003093e5",
+  "new": "0400a0e31eff2fe1",
+  "why": "7E18 UART transmit-ready: always ready (mov r0,#4; bx lr)",
+  "va": "0xc01a8968"
+ },
+ {
+  "name": "uart-rx-ready",
+  "orig": "0c309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "7E18 UART receive-ready: never (mov r0,#0; bx lr)",
+  "va": "0xc01a8998"
+ },
+ {
+  "name": "timer-get-abstime",
+  "orig": "78c093e580109ce5",
+  "new": "04f01fe5@shim+0x10@",
+  "why": "7E18 cpu_data timer hook (offsets +4 vs 8C148): 64-bit timebase from the MPCore watchdog",
+  "va": "0xc006a078"
+ },
+ {
+  "name": "timer-get-decrementer",
+  "orig": "78c093e5b4009ce5",
+  "new": "04f01fe5@shim+0x14@",
+  "why": "7E18 timer hook: MPCore private timer counter",
+  "va": "0xc006a0a4"
+ },
+ {
+  "name": "timer-set-decrementer",
+  "orig": "640083e578c093e5",
+  "new": "04f01fe5@shim+0x18@",
+  "why": "7E18 timer hook: arm the MPCore private timer",
+  "va": "0xc006a0b8"
+ },
+ {
+  "name": "irq-entry",
+  "orig": "04e04ee200d04fe1",
+  "new": "04f01fe5@shim+0x1c@",
+  "why": "7E18 _fleh_irq: IRQ entry -> shim (GIC ack, timer -> kernel FIQ); continuation 0xc0068458",
+  "va": "0xc0068450"
+ },
+ {
+  "name": "mdevstrategy",
+  "orig": "f0b55e4655464446",
+  "new": "004b1847@shim+0x20@",
+  "why": "7E18 memdev strategy -> ARM9 block server. The bdevsw[2] strategy pointer installed at runtime is 0xc0074021, i.e. the function at 0xc0074020 (it calls buf_count 0xc007950c and buf_biodone 0xc007ac6c, like 8C148's 0x80072bf8). The earlier patch hit 0xc0073f94, a different memdev helper with (dev,bp) arguments that bdevsw never calls, so the root mount looped with 0 md0 requests. The real strategy takes buf_t in r0, so the original Thumb ldr r3,[pc]; bx r3 stub works here.",
+  "va": "0xc0074020"
+ },
+ {
+  "name": "commpage-gtod-off",
+  "orig": "64d0",
+  "new": "64e0",
+  "why": "7E18 commpage_set_timestamp: beq -> b, never publish the gettimeofday timestamp",
+  "va": "0xc006d1d8"
+ }
+]

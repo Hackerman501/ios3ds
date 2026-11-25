@@ -139,3 +139,56 @@ The deciding unknown is the real SD card: what one md0 chunk costs (fixed comman
 | `[iobusy] 0s: 0 of N services busy` (with `diag=1`) | The IOKit fix also holds on hardware, with no other driver stuck. |
 | `[io] ...` (with `ioprof=1`) | Real md0 cost per second: ARM9 ms vs KiB and chunks, i.e. the cost model §5 needs. |
 | `[wifid] waiting ...` right after `Running fsck` | No 5 s gap between launchctl and the first daemons. |
+
+## 8. Bigger md0 chunks and a write-back cache (re-log 105)
+
+§5 listed bigger transfers and an ARM9 cache as "not done". Both are now in,
+aimed at Cydia/dpkg rather than boot (where UBC re-reads are rare):
+
+- **Bounce:** the shim's 32 KiB bounce was the upper half of the 64 KiB shim
+  region. There is unused FCRAM from the end of the XNU log ring
+  (0x20890010) to the Wi-Fi mailbox (0x208A0000); the same static map covers
+  it, so the bounce moved to PA 0x20890020 / VA 0x80890020 and is now 0xFFE0
+  bytes (127 sectors, 63.5 KiB) instead of 0x8000. No new mapping or bounce
+  memory is taken from XNU. `kernel/shim/blk.c` rounds the chunk length *down*
+  to whole sectors: rounding 0xFFE0 up gave 128 sectors = 64 KiB, which the
+  ARM9 rejected as too large (found by the first QEMU run of this change).
+- **Write-back:** `boot/arm9/blkcache.c` keeps 512 dirty sectors (256 KiB) in
+  ARM9 BSS, with a hash for overlay lookups so reads see a written sector
+  before it reaches the card. Small writes (≤ 8 KiB, excluding the HFS+
+  volume header at LBA 2) stay in the cache; larger writes go straight to the
+  file. Both paths defer `f_sync` until the disk has been idle for 500 ms (2 s
+  hard cap) or iOS asks for a clean unmount. `blksrv_mark_clean()` flushes and
+  syncs *before* setting `kHFSVolumeUnmounted`; if that fails it clears the
+  bit on disk, so lost write-back data can never look like a clean unmount.
+  This keeps the crash behaviour of the original synchronous path.
+- **Cost:** a first attempt sorted dirty slots with an O(n²) scan per flush,
+  which cost more ARM9 time than it saved; flushing is one linear pass now.
+  The cache keeps a dirty-slot count, so `blkc_dirty()` is O(1): it used to
+  scan all 512 slots on every monitor loop (the idle check) and to test every
+  sector of every read request. With no dirty overlay at all, an md0 read is
+  one `f_read` as before; only a read that can see a dirty sector is split
+  into runs. Host tests: `tests/test_blkcache.c` (`make test`).
+
+With `ioprof=1` during a local-repo `dpkg -i` (same 32-file `.deb` before and
+after, guest seconds, [cydia.md](cydia.md) has the full timing table):
+
+| | md0 chunks | bytes written | ARM9 service time |
+|---|---:|---:|---:|
+| before | 618 | ~584 KiB | 316 ms |
+| after | 556 | ~612 KiB | 288 ms |
+
+The bytes are the same — dpkg writes mostly distinct sectors, so there is
+little to coalesce — but there are 10 % fewer round trips and the small writes
+reach the card in batches instead of one `f_sync` each. QEMU's SD is instant,
+so this shows up as −0.07 s on the install; a real card's per-command cost is
+what makes it useful. Re-runs under host load vary by ±1 s in guest wall time
+and by a few hundred chunks, so compare the chunks/KiB/ARM9 columns, not one
+wall-clock number. The `[io]` summary now ends in
+`cache H hit E evict W flushed D direct F fail` (`W` is the cumulative number
+of sectors written back, `D` direct-write sectors, `F` sync/idle-flush
+errors). For a real-hardware A/B, boot with `ioprof=1` and compare the ARM9
+ms/KiB/chunk figures here with the old ones; `[io] t=... rd/wr` and the
+`cache` fields are enough to see whether the card, not the CPU, is the
+bottleneck.
+

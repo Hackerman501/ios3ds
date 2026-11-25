@@ -1,0 +1,110 @@
+[
+ {
+  "name": "ppmr-read",
+  "orig": "923f1fee",
+  "new": "0030a0e3",
+  "why": "MRC c15,c2,4 (ARM1176 peripheral port remap) does not exist on ARM11 MPCore -> mov r3,#0",
+  "find": {}
+ },
+ {
+  "name": "ppmr-write",
+  "orig": "920f0fee",
+  "new": "0000a0e1",
+  "why": "MCR c15,c2,4 in the vector-page reset path -> nop",
+  "find": {}
+ },
+ {
+  "name": "uart-tx-data",
+  "orig": "0c309fe57000efe6",
+  "new": "04f01fe5@shim+0x0@",
+  "why": "S5L UART transmit: ldr pc,=shim_putc (log ring read by the ARM9)",
+  "find": {}
+ },
+ {
+  "name": "uart-rx-data",
+  "orig": "08309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive: mov r0,#0; bx lr",
+  "find": {}
+ },
+ {
+  "name": "rtc-wait-0s",
+  "orig": "1e23",
+  "new": "0023",
+  "why": "AppleARMPE::getGMTTimeOfDay waits 30 s for an RTC that doesn't exist yet (PMU/MCU driver TODO): timeout 0",
+  "find": {
+   "before": "b0b502af86b0154c",
+   "after": "002503930021134b"
+  }
+ },
+ {
+  "name": "iic-device-transfer",
+  "orig": "90b501af8ab0002a01d0002b2bd0",
+  "new": "c0467847c04604f01fe5@shim+0x24@",
+  "why": "AppleARMIICDevice transfer (vtable slot 0x35c: op, sub-address, data) -> shim_iic_transfer: a register file per I2C device instead of a bus that does not exist (Thumb: nop; bx pc; nop; ARM: ldr pc,[pc,#-4]; .word)",
+  "find": {}
+ },
+ {
+  "name": "uart-init",
+  "orig": "b0402de9",
+  "new": "1eff2fe1",
+  "why": "5H11a S5L UART init: return at once (tx/rx go to the shim)",
+  "va": "0xc017b5d8"
+ },
+ {
+  "name": "uart-tx-ready",
+  "orig": "0c309fe5003093e5",
+  "new": "0400a0e31eff2fe1",
+  "why": "5H11a UART transmit-ready: always ready",
+  "va": "0xc017b684"
+ },
+ {
+  "name": "uart-rx-ready",
+  "orig": "0c309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "5H11a UART receive-ready: never",
+  "va": "0xc017b6b4"
+ },
+ {
+  "name": "timer-get-abstime",
+  "orig": "78c093e580109ce5",
+  "new": "04f01fe5@shim+0x10@",
+  "why": "5H11a cpu_data timer hook: 64-bit timebase from the MPCore watchdog",
+  "va": "0xc0066750"
+ },
+ {
+  "name": "timer-get-decrementer",
+  "orig": "78c093e5b4009ce5",
+  "new": "04f01fe5@shim+0x14@",
+  "why": "5H11a timer hook: MPCore private timer counter",
+  "va": "0xc006677c"
+ },
+ {
+  "name": "timer-set-decrementer",
+  "orig": "640083e578c093e5",
+  "new": "04f01fe5@shim+0x18@",
+  "why": "5H11a timer hook: arm the MPCore private timer",
+  "va": "0xc0066790"
+ },
+ {
+  "name": "irq-entry",
+  "orig": "04e04ee200d04fe1",
+  "new": "04f01fe5@shim+0x1c@",
+  "why": "5H11a _fleh_irq: IRQ entry -> shim; continuation 0xc006540c",
+  "va": "0xc0065404"
+ },
+ {
+  "name": "mdevstrategy",
+  "orig": "f0b55646454660b4",
+  "new": "004b1847@shim+0x20@",
+  "why": "5H11a memdev strategy -> ARM9 block server",
+  "va": "0xc007056c"
+ },
+ {
+  "name": "commpage-gtod-off",
+  "orig": "65d0",
+  "new": "65e0",
+  "why": "5H11a commpage_set_timestamp: beq -> b",
+  "va": "0xc006978c"
+ }
+]

@@ -48,11 +48,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 #include "pica_drv.h"
 #include "pica_regs.h"
 #include "pica_mirror.h"
-#include "pica_diag.h"
 #include "gpu_mirror.h"
+#include "stereo.h"
+#include "cam_proto.h"              /* frame-buffer reservation for the cameras */
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -74,20 +76,20 @@ struct sysctl_oid {
 
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))    /* Thumb */
 #define KPA(addr, ret, ...) ((ret (*)(__VA_ARGS__))(addr))          /* ARM */
-#define sysctl_register_oid   KPT(0x80159c54, void, struct sysctl_oid *)
-#define sysctl_handle_opaque  KPT(0x80159242, int, struct sysctl_oid *, void *, int, void *)
-#define SYSCTL_ROOT_CHILDREN  ((void *)0x8027f7a8)      /* _sysctl__children: top level */
-#define k_copyin              KPA(0x80067c84, int, u32, void *, u32)
-#define k_copyout             KPA(0x80067d04, int, const void *, u32, u32)
-#define IOMallocContiguous    KPT(0x801a70e0, void *, u32, u32, uint32_t *)
-#define IOFreeContiguous      KPT(0x801a727c, void, void *, u32)
-#define ml_io_map             KPT(0x80067780, void *, u32, u32)
-#define IODelay               KPT(0x801a6c2c, void, u32)
-#define IOSleep               KPT(0x801a6c40, void, u32)
-#define k_printf              KPT(0x8001c4c4, void, const char *, ...)
-#define proc_selfpid          KPT(0x8014f1be, int, void)
-#define proc_find             KPT(0x8014f94c, void *, int)
-#define proc_rele             KPT(0x8014f862, int, void *)
+#define sysctl_register_oid   KPT(IOS3DS_KPI_SYSCTL_REGISTER_OID, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPT(IOS3DS_KPI_SYSCTL_HANDLE_OPAQUE, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_ROOT_CHILDREN  ((void *)IOS3DS_KPI_SYSCTL__CHILDREN)      /* _sysctl__children: top level */
+#define k_copyin              KPA(IOS3DS_KPI_COPYIN, int, u32, void *, u32)
+#define k_copyout             KPA(IOS3DS_KPI_COPYOUT, int, const void *, u32, u32)
+#define IOMallocContiguous    KPT(IOS3DS_KPI_IOMALLOCCONTIGUOUS, void *, u32, u32, uint32_t *)
+#define IOFreeContiguous      KPT(IOS3DS_KPI_IOFREECONTIGUOUS, void, void *, u32)
+#define ml_io_map             KPT(IOS3DS_KPI_ML_IO_MAP, void *, u32, u32)
+#define IODelay               KPT(IOS3DS_KPI_IODELAY, void, u32)
+#define IOSleep               KPT(IOS3DS_KPI_IOSLEEP, void, u32)
+#define k_printf              KPT(IOS3DS_KPI_PRINTF, void, const char *, ...)
+#define proc_selfpid          KPT(IOS3DS_KPI_PROC_SELFPID, int, void)
+#define proc_find             KPT(IOS3DS_KPI_PROC_FIND, void *, int)
+#define proc_rele             KPT(IOS3DS_KPI_PROC_RELE, int, void *)
 
 #define GX_VA       0xBFE00000u         /* entry.S: 1 MiB device section over PA 0x10400000 */
 #define PRIV_VA     0xBFF00000u         /* entry.S: MPCore private region (watchdog = clock) */
@@ -105,7 +107,12 @@ struct sysctl_oid {
 __attribute__((section(".gpuhdr"), used))
 static const uint32_t gpu_part_hdr[4] = { GPU_PART_MAGIC, 1, GPU_PART_PA, GM_BLOB_PA };
 
-static pica_drv_t drv;
+pica_drv_t drv;                     /* shared with cam.c (arena VA/PA) */
+/* The camera's three frame buffers are reserved here, once, while the GPU
+   driver is being initialised (no concurrent GL requests yet). cam.c reads
+   the PA at START; if there is no arena it falls back to IOMallocContiguous. */
+uint32_t shim_cam_reserved_pa;
+#define PICA_CAM_OWNER  0xFFFFFFFEu /* never a pid: pica_drv_free_all(client) cannot free it */
 static uint32_t bringup_state;               /* 0 = not tried, 1 = done (drv.state says how it went) */
 static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror frame */
 /* A VBlank found the GPU busy with GL: the mirror goes next. New GL requests
@@ -113,6 +120,11 @@ static volatile uint32_t busy;              /* 0 free, 1 GL request, 2 mirror fr
    a GL client drawing back to back cannot starve the screen copy (QEMU
    lockburst: the ARM9 saw no GPU frames for 1 s and copied with the CPU). */
 static volatile uint32_t m_pending;
+/* 1 = a GL present (or scatter) wrote a fresh frame into the iOS framebuffer,
+   or the display config changed (mode / stereo k / want), since the last
+   mirror frame: the mirror only does GPU work when there is new content or a
+   rebuild is required (docs/perf.md). Cleared when a frame is started. */
+volatile uint32_t m_dirty;              /* also set by pica_stereo.c's PDC switch */
 
 /* ---- the ARM9 <-> ARM11 display mailbox (gmbox_t at shim+0x7F00) ---- */
 extern uint32_t cfg_clcd_pa;                /* entry.S: fake CLCD page (PA), patched in by mkboot */
@@ -124,7 +136,9 @@ static void dc_clean(volatile void *p, uint32_t len)
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
 void shim_l2_inv(uint32_t pa, uint32_t len);   /* entry.S: New 3DS L2, write-through (docs/n3ds.md) */
-static uint32_t arena_va, arena_pa, arena_size;
+extern u32 cfg_n3ds;                       /* entry.S: ARM9 N3RES_* word (boot/common/ios3ds.h) */
+uint32_t arena_va, arena_pa;       /* shared with cam.c; arena_size stays private */
+static uint32_t arena_size;
 /* drop stale L2 lines of a kernel buffer: the arena (IOMallocContiguous VA)
    or XNU's linear map. Invalidating clean lines never loses data (the L2
    runs write-through), so a wrong guess only costs time. */
@@ -132,7 +146,8 @@ static void l2_inv_kbuf(const volatile void *p, uint32_t len)
 {
     uint32_t v = (uint32_t)p;
     if (v - arena_va < arena_size) shim_l2_inv(arena_pa + (v - arena_va), len);
-    else if (v - 0x80000000u < FCRAM_N3DS_SIZE) shim_l2_inv(v - 0x60000000u, len);
+    else if (v - IOS3DS_KPI_VIRT_BASE < FCRAM_N3DS_SIZE)
+        shim_l2_inv(v - (IOS3DS_KPI_VIRT_BASE - 0x20000000u), len);
 }
 static void dc_inval(volatile void *p, uint32_t len)
 {
@@ -141,10 +156,11 @@ static void dc_inval(volatile void *p, uint32_t len)
     for (; a < end; a += 32) __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(a) : "memory");
     __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
 }
-/* lines 0-1 are the ARM9's (it writes FCRAM uncached): drop our copy first */
-static void gm_fetch(void) { dc_inval(GM, 64); }
-/* lines 2-4 are ours: write them back so the ARM9 sees them */
-static void gm_publish(void) { dc_clean(&GM->state, 96); }
+/* lines 0-1 and the ARM9's stereo request (line 5) are written uncached by
+   the monitor: drop our copies first (256 bytes = the whole mailbox) */
+static void gm_fetch(void) { dc_inval(GM, sizeof(gmbox_t)); }
+/* lines 2-5 are ours: write them back so the ARM9 sees the mode counters */
+static void gm_publish(void) { dc_clean(&GM->state, sizeof(gmbox_t) - 32); }
 static int gm_valid(void) { gm_fetch(); return GM->magic == GM_MAGIC; }
 
 static uint32_t p_rd(uint32_t off) { return *(vu32 *)(GX_VA + off); }
@@ -198,15 +214,18 @@ static int p_alive(uint32_t pid)
 
 static pica_plat_t plat;                /* filled at bring-up (k_printf is not a constant expression) */
 
-static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size);
 static void gpu_clock_fix(void);
-static void gpu_diag_after(void);
 
 static void bringup(void)
 {
-    /* 12 MiB first: run16 (CA on the GPU) fragmented 8 MiB (a 704 KiB texture
-       found 290 KiB free in 90 blocks) and fell back to CPU read-backs */
-    static const uint32_t sizes[] = { 0xC00000, 0x800000, 0x400000, 0x200000 };
+    /* Old 3DS has only 128 MiB for XNU: 10 MiB first here gives every app 2 MiB
+       more wired-free memory than the old 12 MiB default. run16 (CA on the GPU)
+       fragmented 8 MiB (a 704 KiB texture found 290 KiB free in 90 blocks), so
+       10 - not 8 - is the floor; the camera's 450 KiB block still fits. New
+       models keep 12 MiB (re-log 75): they have the extra 128 MiB of FCRAM.
+       Fallbacks stay 8/4/2 MiB if even 10 MiB is too fragmented to allocate. */
+    static const uint32_t sizes[] = { 0xC00000, 0xA00000, 0x800000, 0x400000, 0x200000 };
+    unsigned first = (cfg_n3ds & N3RES_NEW) ? 0 : 1;   /* skip 12 MiB on Old models */
     vu32 *pdn, *cfg11;
     uint32_t cnt = 0, prot = 0, pa = 0, size = 0, i, st;
     void *va = 0;
@@ -252,7 +271,7 @@ static void bringup(void)
     cfg11[GPUPROT_OFF / 4] = 0;         /* GPU DMA may reach all of FCRAM (the arena lives there) */
 
     drv.state = PICA_ERR_NO_ARENA;
-    for (i = 0; i < sizeof sizes / sizeof sizes[0] && !va; i++) {
+    for (i = first; i < sizeof sizes / sizeof sizes[0] && !va; i++) {
         size = sizes[i];
         va = IOMallocContiguous(size, 0x1000, &pa);
         if (va && pa + size > 0x20000000u + FCRAM_SIZE) {
@@ -276,16 +295,24 @@ static void bringup(void)
     arena_pa = pa;
     arena_size = size;
     shim_l2_inv(pa, size);              /* New 3DS L2: no stale copies either */
-    /* staged diagnostics on the GPU as Luma left it, then the part of
-       libn3ds' hardwareReset() Luma never does (GX clock, VRAM banks, DMA
-       priorities), then the same tests again (docs/pica200.md section 12) */
-    gpu_diag_before((uint8_t *)va, pa, size);
+    /* the part of libn3ds' hardwareReset() Luma never does (GX clock, VRAM
+       banks, DMA priorities; docs/pica200.md section 12). The staged
+       [gpu-diag] diagnostics were moved out of the shim to make room
+       (scripts/mkboot.py). */
     gpu_clock_fix();
     st = pica_drv_init(&drv, &plat, va, pa, size, cnt);
+    /* Leave the small (2/4 MiB fallback) arenas to the display mirror: the
+       camera then uses the old IOKit path. */
+    if (st == PICA_OK && size >= (6u << 20)) {
+        if (pica_drv_alloc(&drv, PICA_CAM_OWNER, CAM_NBUF * CAM_FRAME_BYTES, 32,
+                           &shim_cam_reserved_pa) != PICA_OK)
+            shim_cam_reserved_pa = 0;
+        if (shim_cam_reserved_pa)
+            k_printf("[cam] reserved %u x %u KiB in the GPU arena at PA 0x%08x\n",
+                     (unsigned)CAM_NBUF, CAM_FRAME_BYTES >> 10, (unsigned)shim_cam_reserved_pa);
+    }
     k_printf("[pica] arena %u KiB at VA %p = PA 0x%08x; driver %s (state %u)\n",
              size >> 10, va, pa, st == PICA_OK ? "ready" : "FAILED", st);
-    if (st == PICA_OK)
-        gpu_diag_after();
 }
 
 /* ---- PICA_OP_PRESENT: the caller's memory as a GPU destination ----------
@@ -295,7 +322,8 @@ static void bringup(void)
 static uint32_t fcram_va(uint32_t pa, int *ok)
 {
     *ok = pa >= 0x20000000u && pa < 0x20000000u + FCRAM_N3DS_SIZE;    /* New 3DS: page tables up there too */
-    return pa + 0x60000000u;            /* XNU's linear map of FCRAM at 0x80000000 */
+    /* XNU's linear map of FCRAM: VA = PA + (virtBase - physBase) */
+    return pa + (IOS3DS_KPI_VIRT_BASE - 0x20000000u);
 }
 
 static uint32_t last_l1, last_l2;          /* descriptors of the last walk (for the log) */
@@ -377,7 +405,12 @@ static uint32_t present(uint32_t src_pa, uint32_t dim, uint32_t va, uint32_t byt
     if (!said_ok++)
         k_printf("[pica] present: GPU writes the caller's surface directly: user VA 0x%08x = PA 0x%08x (%s, %u KiB)\n",
                  va, pa0, pa0 >= 0x20000000u ? "FCRAM" : "VRAM", bytes >> 10);
-    return pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+    {
+        uint32_t st = pica_drv_transfer_out(&drv, src_pa, dim, pa0, dim, flags);
+        if (st == PICA_OK)
+            m_dirty = 1;                /* a fresh frame is waiting to be mirrored */
+        return st;
+    }
 }
 
 /* PICA_OP_SCATTER: the destination PRESENT refused as not one contiguous run
@@ -404,6 +437,7 @@ static uint32_t scatter(uint32_t src_pa, uint32_t va, uint32_t bytes)
             return st;
         shim_l2_inv(pa, len);               /* New 3DS L2: write-through, safe to drop */
     }
+    m_dirty = 1;                            /* a fresh frame is waiting to be mirrored */
     return PICA_OK;
 }
 
@@ -427,6 +461,10 @@ static void run(pica_req_t *r, uint32_t pid)
     case PICA_OP_TRANSFER: r->status = pica_drv_transfer(&drv, a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_PRESENT:  r->status = present(a[0], a[1], a[2], a[3], a[4]); break;
     case PICA_OP_SCATTER:  r->status = scatter(a[0], a[1], a[2]); break;
+    case PICA_OP_DIRTY:    /* a CPU read-back wrote a surface: the mirror must copy it */
+        m_dirty = 1;
+        r->status = PICA_OK;
+        break;
     case PICA_OP_CONFIG:
         a[0] = gm_valid() && GM->gpu_enable && GM->ca_gpu ? PICA_CFG_CA_GPU : 0;
         r->status = PICA_OK;
@@ -449,7 +487,11 @@ static int take(void)
 
 void shim_gpu_thread_poll(void);
 
-static int pica_sysctl(struct sysctl_oid *oidp, void *arg1, int namelen, void *req)
+/* This file is built at -Os to leave room in gpu.bin for the camera frame
+   buffers' allocator (kernel/shim/cam.c). Keep the three hot paths at -O2;
+   the rest (bring-up, display-mirror setup) runs once. */
+#define PICA_HOT __attribute__((optimize("O2")))
+static PICA_HOT int pica_sysctl(struct sysctl_oid *oidp, void *arg1, int namelen, void *req)
 {
     int *name = (int *)arg1;
     pica_req_t r;
@@ -514,8 +556,6 @@ static void m_from_gpu(void *p, uint32_t len) { dc_inval(p, len); }
 
 static pm_plat_t mplat;
 static pica_mirror_t mir;
-static pd_env_t denv;                       /* diagnostics; denv.vram = 0 when not mapped */
-static uint32_t d_before, d_on;
 
 static void m_relax(void) { IODelay(10); }
 
@@ -529,30 +569,6 @@ static void mplat_init(void)
     mplat.from_gpu = m_from_gpu;
     mplat.log = k_printf;
     mplat.relax = m_relax;
-}
-
-/* bring-up, before pica_drv_init: diagnostics as Luma left the GPU. The
-   FCRAM scratch is the arena's last 64 KiB, unused until the driver runs. */
-static void gpu_diag_before(uint8_t *va, uint32_t pa, uint32_t size)
-{
-    mplat_init();
-    d_on = !gm_valid() || GM->gpu_diag;
-    if (!denv.vram)
-        denv.vram = (volatile uint8_t *)ml_io_map(PD_VRAM_PA, PD_VRAM_SIZE);
-    denv.p = &mplat;
-    denv.fc_va = va + size - PD_FC_SIZE;
-    denv.fc_pa = pa + size - PD_FC_SIZE;
-    denv.blob_va = (uint8_t *)GM_BLOB_VA;
-    denv.blob_pa = GM_BLOB_PA;
-    if (!d_on)
-        return;
-    if (!denv.vram) {
-        k_printf("[gpu-diag] cannot map VRAM 0x%08x: no diagnostics\n", PD_VRAM_PA);
-        d_on = 0;
-        return;
-    }
-    pd_dump_regs(&denv, "as found");
-    d_before = pd_fill_tests(&denv, "as found");
 }
 
 /* libn3ds hardwareReset() minus the reset: Luma's screen init never sets the
@@ -574,22 +590,6 @@ static void gpu_clock_fix(void)
     k_printf("[pica] GX setup as libn3ds hardwareReset: clock 0x%08x -> 0x%08x, psc_vram 0x%08x -> 0x%08x, "
              "dma prio 0x%08x/0x%08x -> 0x%08x/0x%08x\n", clk, p_rd(0x004), vram, p_rd(0x030), pr0, pr1,
              p_rd(0x050), p_rd(0x054));
-}
-
-static void gpu_diag_after(void)
-{
-    uint32_t after, gpu;
-    if (!d_on)
-        return;
-    pd_dump_regs(&denv, "after setup");
-    after = pd_fill_tests(&denv, "after setup");
-    gpu = pd_gpu_tests(&denv);
-    k_printf("[gpu-diag] summary: fill VRAM %s->%s, fill FCRAM %s->%s (as found -> after setup); PPF %s; "
-             "P3D solid VRAM %s, FCRAM %s; texture POT %s, NPOT %s\n",
-             d_before & PD_FILL_VRAM ? "ok" : "FAIL", after & PD_FILL_VRAM ? "ok" : "FAIL",
-             d_before & PD_FILL_FCRAM ? "ok" : "FAIL", after & PD_FILL_FCRAM ? "ok" : "FAIL",
-             gpu & PD_PPF ? "ok" : "FAIL", gpu & PD_SOLID_VRAM ? "ok" : "FAIL", gpu & PD_SOLID_FCRAM ? "ok" : "FAIL",
-             gpu & PD_TEX_POT ? "ok" : "FAIL", gpu & PD_TEX_NPOT ? "ok" : "FAIL");
 }
 static volatile uint32_t m_state;           /* GM_ST_* (the IRQ side only acts on ACTIVE) */
 static uint32_t m_tried, m_vbl, m_fb[4], m_nsets;
@@ -614,12 +614,81 @@ static int fb_ok(uint32_t pa, uint32_t len)
     return pa + len <= GM_VRAM_LO || pa >= GM_VRAM_HI;
 }
 
-/* Thread context. Brings the mirror up once the ARM9 asks for it. */
-void shim_gpu_thread_poll(void)
+/* Start a mirror frame now: read the CLCD geometry and begin the GPU ops.
+   The caller owns the GPU (busy == 2). Returns 1 if a frame started, 0 if it
+   was skipped (display off or a bad framebuffer); on 0 the caller clears
+   busy = 2 again. */
+static int m_begin_frame(void)
 {
-    uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4] = { 0, 0, 0, 0 }, t0, i;
+    vu32 *clcd;
+    pm_frame_t f;
+    gm_fetch();
+    if (GM->ack_seq != GM->seq) {
+        GM->ack_seq = GM->seq;          /* nothing built from an older line 0 is in flight */
+        gm_publish();
+    }
+    if (!GM->want)
+        return 0;
+    /* the iOS framebuffer as AppleM2CLCD scans it out (fake CLCD page) */
+    clcd = (vu32 *)(cfg_clcd_pa - AXI_PA + AXI_VA);
+    f.src_pa = clcd[0x24 / 4];
+    if (!(clcd[0] & 1) || clcd[0x28 / 4] != GM_SRC_W || clcd[0x30 / 4] != (GM_SRC_W << 16 | GM_SRC_H) ||
+        f.src_pa < PICA_VRAM_PA || f.src_pa + GM_SRC_W * GM_SRC_H * 4 > GM_IOS_VRAM_HI || (f.src_pa & 7)) {
+        GM->reason = GM_WHY_GEOMETRY;   /* skipped; the ARM9 copies while frames stand still */
+        return 0;
+    }
+    f.mode = GM->mode;
+    f.nsets = m_nsets;
+    f.stereo = GM->stereo_on && GM->stereo_ok;
+    f.k = GM->stereo_k;
+    f.tex_va = (void *)(drv.va + (mir.tex_pa - drv.pa));
+    f.top[0] = m_fb[0];
+    f.top[1] = m_fb[1];
+    f.bot[0] = m_fb[2];
+    f.bot[1] = m_fb[3];
+    m_dirty = 0;
+    pm_begin(&mir, &f);
+    GM->mirror_busy = 1;
+    gm_publish();                       /* the ARM9 must see an in-flight frame */
+    return 1;
+}
+
+/* Thread context (after a GL request, or the input daemon's poll): a mirror
+   frame was skipped because GL held the GPU (m_pending, set only on a due
+   VBlank); start it now instead of waiting for the next interrupt. The frame
+   stays VBlank-cadenced: m_pending is what the VBlank left behind. */
+static void m_maybe_start(void)
+{
+    uint32_t cpsr, start = 0;
+    if (m_state != GM_ST_ACTIVE || !m_dirty || !m_pending)
+        return;
+    __asm__ volatile("mrs %0, cpsr" : "=r"(cpsr));
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr | 0x80) : "memory");
+    if (!busy) {
+        busy = 2;
+        m_pending = 0;
+        start = 1;
+    }
+    __asm__ volatile("msr cpsr_c, %0" :: "r"(cpsr) : "memory");
+    if (start && !m_begin_frame())
+        busy = 0;
+}
+
+/* Thread context. Brings the mirror up once the ARM9 asks for it. */
+PICA_HOT void shim_gpu_thread_poll(void)
+{
+    uint32_t src_pa = 0, out_pa = 0, tex_pa = 0, bad0 = 0, fbad[4], t0, i;
+    fbad[0] = fbad[1] = fbad[2] = fbad[3] = 0;
     int v, keep_tex = 0;
 
+    /* PDC0 3D mode is needed even when the display mirror is off (the stereo
+       path uses the ARM9 CPU copy), so this runs before the mirror gates. */
+    extern void shim_stereo_poll(void);
+    shim_stereo_poll();
+    /* a present left a fresh frame and a VBlank had skipped the mirror while
+       GL held the GPU: start it right away (the frame after a present is the
+       mirror's natural slot). */
+    m_maybe_start();
     if (m_tried || !gm_valid())
         return;
     if (!GM->gpu_enable || !GM->mirror_enable) {
@@ -699,19 +768,12 @@ void shim_gpu_thread_poll(void)
     }
     if (v < 0) {
         k_printf("[gpu] display mirror: self-test FAILED (%u bytes differ as modelled): CPU copy stays\n", bad0);
-        if (denv.vram) {
-            /* the variants left their own last state: draw variant 0 once more and show it */
-            mir.variant = 0;
-            pm_begin(&mir, &(pm_frame_t){ src_pa, 1, 1, { out_pa + GUARD, out_pa + GUARD },
-                                          { out_pa + GUARD + GM_TOP_FB_BYTES, out_pa + GUARD + GM_TOP_FB_BYTES } });
-            while (pm_poll(&mir, mir.timeout_ticks) == PM_BUSY)
-                ;
-            pd_dump_mirror(&denv, (const uint32_t *)(drv.va + (tex_pa - drv.pa)));
-        }
         m_set(GM_ST_FAILED, GM_WHY_SELFTEST);
         goto out;
     }
     mir.variant = (uint32_t)v;
+    GM->stereo_ok = ((const gm_blob_t *)mir.blob)->st_list_bytes[0] != 0;
+    GM->st_frames = GM->flat_frames = GM->mirror_busy = 0;
     mir.frames = 0;
     mir.timeouts = 0;
     for (i = 0; i < 3; i++)
@@ -753,7 +815,16 @@ static void m_after(int st)
     if (st == PM_BUSY)
         return;
     busy = 0;
+    GM->mirror_busy = 0;
     m_stats();
+    if (st == PM_DONE) {
+        /* the ARM9 waits for a frame in the new mode before it moves the
+           barrier or gives the screen back to the CPU copy */
+        if (mir.stereo)
+            GM->st_frames++;
+        else
+            GM->flat_frames++;
+    }
     if (st == PM_TIMEOUT) {
         /* the GPU did not finish: stop mirroring for good; the ARM9 notices
            (frames stop) and copies with the CPU again */
@@ -766,11 +837,9 @@ static void m_after(int st)
 }
 
 /* IRQ mode, IRQs masked, private stack (entry.S). id = GIC interrupt ID. */
-void shim_gpu_irq(uint32_t id)
+PICA_HOT void shim_gpu_irq(uint32_t id)
 {
     uint32_t t0, spin;
-    vu32 *clcd;
-    pm_frame_t f;
 
     if (id == PICA_IRQ_PDC0) {
         /* which framebuffer set each LCD shows: for the ARM9's CPU copy */
@@ -805,6 +874,7 @@ void shim_gpu_irq(uint32_t id)
     gm_fetch();
     if (GM->ack_seq != GM->seq) {
         GM->ack_seq = GM->seq;          /* nothing built from an older line 0 is in flight */
+        m_dirty = 1;                    /* a mode / stereo-k / want change needs a rebuild */
         gm_publish();
     }
     if (!GM->want)
@@ -814,22 +884,17 @@ void shim_gpu_irq(uint32_t id)
         m_pending = 1;
         return;
     }
-    /* the iOS framebuffer as AppleM2CLCD scans it out (fake CLCD page) */
-    clcd = (vu32 *)(cfg_clcd_pa - AXI_PA + AXI_VA);
-    f.src_pa = clcd[0x24 / 4];
-    if (!(clcd[0] & 1) || clcd[0x28 / 4] != GM_SRC_W || clcd[0x30 / 4] != (GM_SRC_W << 16 | GM_SRC_H) ||
-        f.src_pa < PICA_VRAM_PA || f.src_pa + GM_SRC_W * GM_SRC_H * 4 > GM_IOS_VRAM_HI || (f.src_pa & 7)) {
-        GM->reason = GM_WHY_GEOMETRY;   /* skipped; the ARM9 copies while frames stand still */
+    if (!m_dirty) {
+        /* nothing new since the last frame: the LCDs already hold the current
+           picture. Skip the GPU work but keep the liveness counter moving so
+           the ARM9 does not fall back to the CPU copy (docs/perf.md). */
+        GM->idle_frames++;
+        gm_publish();
         return;
     }
-    f.mode = GM->mode;
-    f.nsets = m_nsets;
-    f.top[0] = m_fb[0];
-    f.top[1] = m_fb[1];
-    f.bot[0] = m_fb[2];
-    f.bot[1] = m_fb[3];
     busy = 2;
-    pm_begin(&mir, &f);
+    if (!m_begin_frame())
+        busy = 0;                       /* display off or a bad framebuffer */
     GM->steps++;
     m_after(pm_poll(&mir, spin));
 out:

@@ -37,7 +37,7 @@ static double gps_number(const char *s, char **end)
         if (*q == '+' || *q == '-') { eneg = (*q == '-'); q++; }
         const char *first = q;
         int e = 0;
-        while (*q >= '0' && *q <= '9') { e = e * 10 + (*q - '0'); q++; }
+        while (*q >= '0' && *q <= '9') { if (e < 1000) e = e * 10 + (*q - '0'); q++; }
         if (q != first) {
             p = q;
             while (e-- > 0) { if (eneg) v *= 0.1; else v *= 10.0; }

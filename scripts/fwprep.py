@@ -31,6 +31,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import versions  # noqa: E402
 from fwlib import appledt, udif, vfdecrypt  # noqa: E402
 from fwlib.crypto import BACKEND  # noqa: E402
 from fwlib.img3 import Img3  # noqa: E402
@@ -66,6 +67,22 @@ def progress_printer(label):
     return cb
 
 
+def key_for(keys, name):
+    """Find a key by its IPSW path, falling back to its basename.
+
+    4.x keys use the full firmware/... path, while the older firmwares'
+    published key lists name only e.g. DeviceTree.n72ap.img3. The exact
+    match always wins, so the default 4.2.1 path is unchanged.
+    """
+    if name in keys:
+        return keys[name]
+    base = os.path.basename(name)
+    hits = [v for k, v in keys.items() if os.path.basename(k) == base]
+    if len(hits) != 1:
+        sys.exit("[fwprep] ERROR: %d key entries for %s (basename %s)" % (len(hits), name, base))
+    return hits[0]
+
+
 def load_keys(args, product, build):
     cache = os.path.join(args.out, "keys-%s-%s.json" % (product, build))
     src = args.keys or (cache if os.path.exists(cache) else None)
@@ -95,34 +112,52 @@ def main():
     ap.add_argument("--no-rootfs", action="store_true", help="skip the (slow, ~1 GB) root filesystem")
     ap.add_argument("--keep-dmg", action="store_true", help="keep the decrypted UDIF dmg")
     ap.add_argument("--force", action="store_true", help="allow an IPSW other than iPod2,1 8C148")
+    ap.add_argument("--ios", default=versions.DEFAULT, help="iOS version (default 4.2.1)")
     args = ap.parse_args()
+    want = versions.get(args.ios)
     os.makedirs(args.out, exist_ok=True)
     log("crypto backend: %s" % BACKEND)
 
     z = zipfile.ZipFile(args.ipsw)
-    bm = plistlib.loads(z.read("BuildManifest.plist"))
-    product = bm["SupportedProductTypes"][0]
-    build = bm["ProductBuildVersion"]
-    version = bm["ProductVersion"]
+    names = z.namelist()
+    # iOS 2.x IPSWs predate BuildManifest.plist: Restore.plist has the same
+    # identity fields (ProductType instead of SupportedProductTypes).
+    if "BuildManifest.plist" in names:
+        bm = plistlib.loads(z.read("BuildManifest.plist"))
+        product = bm["SupportedProductTypes"][0]
+        build = bm["ProductBuildVersion"]
+        version = bm["ProductVersion"]
+    elif "Restore.plist" in names:
+        bm = plistlib.loads(z.read("Restore.plist"))
+        product = bm.get("ProductType", bm.get("SupportedProductTypes", [None])[0])
+        build = bm["ProductBuildVersion"]
+        version = bm["ProductVersion"]
+    else:
+        sys.exit("[fwprep] ERROR: IPSW has neither BuildManifest.plist nor Restore.plist")
     log("IPSW: %s iOS %s (%s)" % (product, version, build))
-    if (product, build) != (TARGET["product"], TARGET["build"]):
-        msg = "expected %s %s; this project targets that exact firmware" % (TARGET["product"], TARGET["build"])
+    expected = ("iPod2,1", want["build"])
+    if (product, build) != expected:
+        msg = "expected %s %s for iOS %s" % (expected[0], expected[1], args.ios)
         if not args.force:
             sys.exit("[fwprep] ERROR: " + msg + " (use --force to try anyway)")
         log("WARNING: " + msg)
     if os.path.getsize(args.ipsw) < 1 << 30:
         digest = sha1_file(args.ipsw)
-        ok = digest == TARGET["ipsw_sha1"]
-        log("IPSW sha1 %s (%s)" % (digest, "matches Apple's published file" if ok else "UNEXPECTED - continuing"))
+        want_sha1 = want["sha1"] or (TARGET["ipsw_sha1"] if args.ios == versions.DEFAULT else None)
+        ok = want_sha1 is not None and digest == want_sha1
+        status = "matches Apple's published file" if ok else "UNEXPECTED - continuing"
+        if want_sha1 and not ok and not args.force and args.ios != versions.DEFAULT:
+            sys.exit("[fwprep] ERROR: IPSW sha1 %s, expected %s for iOS %s (use --force to override)"
+                     % (digest, want_sha1, args.ios))
+        log("IPSW sha1 %s (%s)" % (digest, status))
 
     keys = load_keys(args, product, build)
-    names = z.namelist()
     manifest = {"source": {"product": product, "version": version, "build": build,
                            "ipsw": os.path.basename(args.ipsw)}, "outputs": {}}
 
     # --- kernelcache ---------------------------------------------------------
     kname = next(n for n in names if re.match(r"kernelcache\.release\.", n))
-    k = keys[kname]
+    k = key_for(keys, kname)
     img = Img3(z.read(kname))
     raw = img.data(k["key"], k["iv"])
     kernel, info = unpack_complzss(raw)
@@ -148,7 +183,7 @@ def main():
 
     # --- device tree ---------------------------------------------------------
     dname = next(n for n in names if re.search(r"/DeviceTree\.[^/]+\.img3$", n))
-    d = keys[dname]
+    d = key_for(keys, dname)
     dt = Img3(z.read(dname)).data(d["key"], d["iv"])
     root = appledt.parse(dt)
     if appledt.serialise(root) != dt[: len(appledt.serialise(root))]:

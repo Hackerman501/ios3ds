@@ -59,6 +59,11 @@ u32 wifi_frame_to_wmi(const u8 *eth, u32 len, u8 *out, u32 cap);
    and passes frames that are already Ethernet II. Returns the Ethernet frame
    length, or 0 for anything that cannot be converted. *ethertype is set. */
 u32 wifi_frame_from_wmi(const u8 *wmi, u32 len, u8 *out, u32 cap, u16 *ethertype);
+/* HTC RX trailer (ath6kl htc.h): records of {id, len, payload}; record 1 is a
+   list of {endpoint, credits}. Applies the reports to credits[8] (saturating)
+   and returns the number of credit units, 0 for a malformed/unknown trailer. */
+#define WMI_HTC_REC_CREDITS 1u
+u32 wifi_htc_credits(const u8 *trailer, u32 len, u8 credits[8]);
 
 /* ---- backends ---------------------------------------------------------- */
 typedef struct {

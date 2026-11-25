@@ -10,4 +10,13 @@ void gm_set_mode(int mode, u32 (*now)(void));
    GPU gets a second to resume before the CPU copies again. */
 bool gm_live(u32 now, bool display_on);
 u32 gm_shown(void);     /* display_set_shown() mask from the shim's PDC select readout */
+/* Ask the ARM11 GPU part to switch PDC0 between its 2D and 3D (AB interlace,
+   two eye framebuffers) presets. The ARM9 waits for the ack before it enables
+   the parallax barrier. Returns true when acked, false if no shim is there. */
+bool gm_set_stereo(bool on);
+/* Publish the slider's eye shift to the GPU mirror's stereo lists (no PDC
+   switch: the classes are stamped whatever the slider position). */
+void gm_set_shift(u32 k);
+/* Which side built the last top-screen pair (for the [stereo] log line). */
+const char *gm_stereo_path(void);
 void gm_report(u32 now, u32 cpu_blits, u32 cpu_ticks, u32 regs_pa, int mode, bool shown);

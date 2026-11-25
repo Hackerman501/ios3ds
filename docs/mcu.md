@@ -12,9 +12,11 @@ assumptions it checks.
 | Shell close / open | IRQ bits 5/6, reg 0x0F bit 1 | POWER tap (lock) / HOME tap (wake), from the ARM9 | see §6 |
 | Volume slider | reg 0x09 (0..63) | ios3ds-mcud → `AVSystemController setActiveCategoryVolumeTo:` | see §6 |
 | Brightness | LCD backlight PWM 0x10202240 / 0x10202A40 (ARM11) | SpringBoard's `DisplayBrightness` × `DisplayBrightnessFactor` → ios3ds-mcud → sysctl → shim | see §6 |
+| Auto-brightness (New models) | inner camera AE luminance, I2C bus 1 / 0x7A, MCU var 0x2218 | ARM9 → `mcubox_t.als_luma` → ios3ds-mcud (`SBEnableALS`) → backlight | §12, emulator only |
 | Accelerometer | reg 0x40 (on), 0x45–0x4A (x, y, z) | Apple's AppleLIS302DL driver on an emulated LIS302DL (shim I2C register file) → SpringBoard orientation, UIAccelerometer | see §6.2 |
 | Gyroscope | ITG-3270 class chip on I2C bus 3 (not the MCU) | Apple's AppleLIS331DLH driver on a new `gyro` DT node, two vtable words patched → IOHID gyro events → CoreMotion (`CMMotionManager` gyro / deviceMotion) | see §11 |
-| iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9 | see §6 |
+| iOS shut down / restart | reg 0x20 bit 0 (power off) | `PEHaltRestart` → shim → ARM9; a long POWER press calls `reboot(RB_HALT)` from `ios3ds-input` | see §6, §12 |
+| Wi-Fi LED | reg 0x2A (non-zero = on, 4 bits) | ARM9 follows `netmbox_t.link` | see §14 |
 
 ## 1. Data path
 
@@ -71,14 +73,18 @@ mailbox (+0x6200..+0x63FF) and the free space below the GPU mirror mailbox
   or wake). The MCU's "held" IRQ → POWER down for 6 s, long enough for the
   input daemon's 0.8 s hold detection plus SpringBoard's 2.5 s timer with a
   lagging run loop → the "slide to power off" sheet (a late release is
-  ignored once the sheet is up).
+  ignored once the sheet is up). It also bumps `power_holds` in the mailbox:
+  `ios3ds-input` sees the new count and starts iOS's own clean shutdown with
+  `sync(); reboot(RB_HALT)` (§12), so there is no need to drag the slider. The
+  3DS's own ~10 s cut stays as the last resort.
 - **Shell:** close → POWER tap unless iOS' screen is already off; open →
   HOME tap if it is off. "Off" = the shim's last backlight level is 0
   (`backlight == 1`), so it follows iOS' own screen state. In both cases the
   two LCD backlights are also switched through MCU reg 0x22 (0x14 off,
   0x28 on), so the screens follow the shell even if iOS ignored the press.
-- **Power off:** on `req_power`, wait 300 ms (the monitor loop drains the
-  kernel's last log lines), sync the log, write reg 0x20 = 1.
+- **Power off:** on `req_power`, make sure the HFS+ clean-unmount flag is set
+  (§12), wait 300 ms (the monitor loop drains the kernel's last log lines),
+  sync the log, write reg 0x20 = 1.
 - **boot.cfg:** `mcu=0` disables all of it; `rtc_offset=N` is added to the
   RTC to get UTC (the 3DS RTC usually runs on local time: e.g. `-3600` for
   CET). iOS' own time zone (Settings → General → Date & Time) is separate.
@@ -125,8 +131,14 @@ RE details: [re-log.md](re-log.md) §33–34.
   console off when the battery is empty.
 - **Backlight.** `kern.ios3ds_mcuctl` carries `{acc, backlight}` from the
   daemon. The shim maps the LCD registers with `ml_io_map(0x10202000)`, logs
-  the values Luma left, and writes `0x10 + level × (0x8F − 0x10)` to both
-  screens' backlight PWM (0 when iOS' screen is off).
+  the values Luma left, and writes `BL_PWM_MIN + level × (0x8F − BL_PWM_MIN)`
+  to both screens' backlight PWM (`BL_PWM_MIN = 0x26`, Luma's darkest readable
+  setting; 0 only when iOS' screen is off). The level floor (0.12) is applied
+  by the daemon while the screen is on, so a brightness slider at 0 still
+  leaves a readable picture, like a real iPod. `factor = 0` (lock / sleep)
+  stays level 0, which is also the ARM9's `backlight == 1` "screen off"
+  sentinel for shell open/close. Both limits live in
+  `boot/common/backlight.h` and are host-tested (`tests/test_backlight.py`).
 
 ## 5. Userland (tools/ios3ds-mcu/daemon/mcud.c)
 
@@ -138,7 +150,10 @@ polls `kern.ios3ds_mcu` every 100 ms:
 - **Brightness:** twice a second it reads `DisplayBrightness` and
   `DisplayBrightnessFactor` from SpringBoard's HID event system
   (`IOHIDEventSystemClientCopyProperty`; SpringBoard keeps its backlight
-  state there) and sends `brightness × factor` to the shim.
+  state there) and sends `brightness × factor` to the shim, clamped to at
+  least 0.12 while the screen is on (`boot/common/backlight.h`). A slider at
+  0 is reported as `[mcud] iOS brightness 0.00 x factor 1.00 -> LCD backlight
+  120/1000 (minimum)`; a factor of 0 still means screen off.
 - **Accelerometer, old route** (only with the `acc` argument; superseded by
   the kernel driver, §6.2): while the screen is on it asks the ARM9 for
   samples and sends `IOHIDEventCreateAccelerometerEvent(x, y, z)` (type 13) into
@@ -147,6 +162,14 @@ polls `kern.ios3ds_mcu` every 100 ms:
   argument): iOS x, y, z from the 3DS axes, see §7.
 - **Clock check:** logs the same interval measured by the RTC,
   `gettimeofday` and `mach_absolute_time` at ~60 s and ~300 s (§8).
+
+SpringBoard owns the HID event system the daemon talks to. If SpringBoard
+restarts (a crash, or launchd killing it), the client's per-client port
+(`IOHIDEventSystemClient` + 8) becomes a dead name; every brightness and
+accelerometer read then fails silently. ios3ds-mcud checks the port every
+2 s and reconnects (`[mcud] SpringBoard's HID event port went away;
+reconnecting`), and it holds its one `NoIdleSleepAssertion` for the life of
+the process, so reconnecting cannot stack assertions.
 
 ## 6. QEMU model and verification
 
@@ -175,7 +198,8 @@ committed: the screenshots show Apple's UI).
 | Battery | `ios3ds-mcu: battery 100%, charger, 4200 mV: IOPMPowerSource registered`; full battery with bolt → `qom-set mcu-charging off`, `mcu-battery 50` → half battery without bolt; `mcu-battery 15` → SpringBoard's "Low Battery, 20% of battery remaining" alert |
 | HOME | key `h` → `[input] key 40 down/up` → Spotlight (Home on page 1) |
 | POWER | `p` tap → `key 30` (lock); `p` held 5 s → `[mcu] POWER held: iOS power-off slider` → "slide to power off" sheet |
-| Shutdown | sliding the sheet → `launchd: System: About to call: reboot(RB_HALT).` → `[mcu] iOS shut down: log synced, powering off through the MCU` → the QEMU model's reg 0x20 write ends QEMU (§6.1) |
+| Shutdown | sliding the sheet → `launchd: System: About to call: reboot(RB_HALT).` → `[mcu] iOS shut down: log synced, powering off through the MCU` → the QEMU model's reg 0x20 write ends QEMU (§6.1); `rootfs.hfs` ends with the HFS+ clean flag set (§12) |
+| Long POWER press | `p` held 4 s → `[mcu] POWER held: iOS power-off slider`, `[input] POWER held on the 3DS (count 1): sync + clean shutdown` → `[mcu] iOS shut down: log synced, powering off through the MCU`; QEMU exits, rootfs clean (§12) |
 | Shell | `c` → `[mcu] shell closed: locking iOS (POWER tap); LCD backlights off` (both screens black); `c` → `[mcu] shell opened; LCD backlights on` |
 | Volume | `=` twice → `[mcud] volume slider 40/63 -> iOS volume 0.63`, `48/63 -> 0.76` |
 | Brightness | `[mcud] iOS brightness 0.50 x factor 1.00 -> LCD backlight 500/1000`, `ios3ds-mcu: LCD backlight as Luma left it: top 0x5f, bottom 0x5f`, `qom-get lcd-backlight` = 79 (0x4F); the screenshots are dimmed accordingly |
@@ -234,6 +258,24 @@ Safari's bookmarks view turns to landscape, to the other landscape, and back
 to portrait in the screenshots. SpringBoard and the home screen behave as
 before (the home screen does not rotate on an iPod touch).
 
+**Issue #1: the missing 180° rotation.** Checked again with `build/emu-rot2`
+(Safari open, `mcu-orient` set to 0/1/2/3 in turn, 40 s apart):
+```
+[mcud] SpringBoard device orientation 0 -> 1
+[mcud] SpringBoard device orientation 1 -> 4
+[mcud] SpringBoard device orientation 4 -> 2     (pose 2 = upside down)
+[mcud] SpringBoard device orientation 2 -> 3
+```
+So `UIDeviceOrientationPortraitUpsideDown = 2` **is** reported by our
+accelerometer path: pose 2 is MCU x = −1 g, which the shared axis map
+(`boot/common/accel_axes.h`, host-tested in `tests/test_orientation.py`) turns
+into iOS y = +1 g. No mapping fix was needed. The screenshots show that the
+*app* stays upright for orientations 2 and 4 and turns only for 3: that is
+iOS 4 on an iPod touch, where SpringBoard never rotates the home screen and
+each app decides which of the orientations it reports it will draw. The
+camera app, games and other apps that accept upside-down get state 2; if a
+built-in view does not use it, that is Apple's UI, not a missing sensor event.
+
 Kill switch: `mcu_acc=0` in boot.cfg. The shim then answers the driver's
 probe with kIOReturnNoDevice, so no accelerometer service exists. Without a
 working MCU it does the same.
@@ -290,7 +332,7 @@ settles it on the first hardware run:
 | Writing the IRQ mask (0x18) unmasks HOME/POWER/shell events; reading 0x10 clears them | libn3ds `MCU_init` | `IRQ mask set`; `[mcud] … irq 0000000c home 1 …` after pressing HOME |
 | POWER "held" (bit 1) comes while still pressed, early enough before the MCU's own forced power-off | 3dbrew | `[mcu] POWER held: iOS power-off slider` and the slider sheet |
 | Volume slider 0x09 is 0..63 | libn3ds | `[mcud] volume slider N/63 -> iOS volume …` while moving the slider |
-| 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x10..0x8F a safe range | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
+| 3DS LCD backlight PWM at 0x10202240 / 0x10202A40, 0x26..0x8F a readable range (0 = off) | libn3ds `lcd.h`, Luma's presets (0x26..0x5F) | `ios3ds-mcu: LCD backlight as Luma left it: top 0x.., bottom 0x..`; does the iOS brightness slider change the screens? |
 | MCU reg 0x22 bits 2-5 switch the backlights | libn3ds `MCU_LCD_PWR_*` | closing the shell darkens both screens: `[mcu] shell closed: …; LCD backlights off` |
 | Accelerometer: reg 0x40 bit 0 enables it, 0x45-0x4A are x/y/z s16; axes as in the QEMU model (x right, y hinge, z out of the lower screen) | 3dbrew, libn3ds | `[mcu] accelerometer on`; `ios3ds-mcu: accelerometer sample #1: x y z counts (|a| = …)` (about 55 on the gravity axis, `|a|` = the MCU's 1 g); `[mcud] SpringBoard device orientation …` while turning the console in Safari. Wrong axes: the map in `acc_sample()` (tools/ios3ds-mcu/shim/mcu.c); off: `mcu_acc=0` |
 | Gyro: an ITG-3200-family chip at bus 3 / 0xD0 (Old 3DS, libn3ds "ITG-3270"), or an ST L3G at 0xD6, or something at 0xD2; the ARM9 can drive bus 3 (0x10148000) | libn3ds device table, Horizon's 14.375 LSB/(deg/s) | `[gyro] ITG-3200 family at I2C 3:d0 (WHO_AM_I 68), asleep, …` (good), `[gyro] no gyroscope on I2C bus 3` (then CoreMotion gets no rates); `gyro=0` in boot.cfg if bus 3 misbehaves |
@@ -530,3 +572,234 @@ ios3ds-mcu: gyro off
   HID unit is deg/s (re-log §64). Without `gyro-interrupt-calibration` it
   also logged `CLDeviceMotion::startSensorFusion … Could not get gyro dt`;
   with the property that line is gone.
+
+## 12. Leaving iOS cleanly: POWER hold, HFS+ flag, and the fsck limitation
+
+**Short press / slider.** A POWER tap locks or wakes iOS. The "slide to power
+off" sheet (POWER held 2.5 s on an iPod) still goes through all of Apple's
+shutdown handlers: `launchd: System: About to call: reboot(RB_HALT).` →
+`PEHaltRestart` → our shim → ARM9 → MCU reg 0x20. The file systems have been
+unmounted by then, so HFS+ writes its volume header with the
+*kHFSVolumeUnmountedMask* bit set. QEMU with the user's exact recipe
+(`python3 emu/session.py key backspace 4`, then `python3 emu/session.py drag
+30 60 300 60 1.2`) ends in `[mcu] iOS shut down: log synced, powering off
+through the MCU`, and the next boot of the **same** image reaches SpringBoard.
+
+**Long press.** `boot/arm9/mcu.c` bumps `mcubox.power_holds` on every MCU
+"held" IRQ (bit 1 of regs 0x10–0x13). `ios3ds-input` already reads this
+mailbox to find out whether the screen is off; when the count changes it now
+does `sync(); reboot(RB_HALT)` (Darwin's RB_HALT = 0x08) and stops sending HID
+events. That is the same system call launchd makes, so the BSD shutdown path
+unmounts md0 and the 3DS powers off through the same shim/MCU route. In QEMU,
+holding `p` for 4 s from the home screen logs
+`[mcu] POWER held: iOS power-off slider`,
+`[input] POWER held on the 3DS (count 1): sync + clean shutdown`, then
+`[mcu] iOS shut down: log synced, powering off through the MCU`; the image is
+clean afterwards. The 3DS's own ~10 s hardware cut is untouched and still
+works when iOS is hung (in that case the clean flag cannot be written).
+
+**The clean-unmount flag** is the 32-bit big-endian attributes word at byte
+1028 of `rootfs.hfs` (volume header at 1024): bit 8 (0x0100) is set on a clean
+unmount, clear while mounted and after a hard cut. `boot/arm9/blksrv.c` reads
+it when it opens the image (before XNU mounts md0) and logs
+
+```
+[blk] rootfs.hfs: cleanly unmounted (attributes 0x80000100)
+```
+
+or, after a killed QEMU,
+
+```
+[blk] rootfs.hfs: NOT cleanly unmounted (attributes 0x80000000, bit 8 clear): the last iOS run
+was cut short. ...
+```
+
+On a clean halt (`req_power` from `PEHaltRestart`, after the unmount) the
+ARM9 sets the bit itself if XNU has not done so already. Host check:
+`python3 scripts/hfs_clean.py --sd build/sd.img` (exit 0 clean, 1 dirty, 2 no
+header). A QEMU image killed mid-run reads 0x80000000; a slider or long-press
+shutdown reads 0x80000100.
+
+**Apple's boot-time fsck cannot be made to run here.** Every boot logs
+`Running fsck on the boot volume...` followed by
+`GetMasterBlock: Error 16 opening /dev/md0` (EBUSY): launchd opens the *same*
+device XNU has already mounted as root, so the check is refused. Adding `ro`
+to the boot-args does not help (the mount still opens md0). Mounting the root
+read-only from the start and remounting it read-write after fsck would need
+changes to Apple's launchd/mount path; we do not patch that. The volume is
+not journaled, so a hard cut can still damage files: back up the SD card,
+prefer the clean shutdown, and treat the `[blk] ... NOT cleanly unmounted`
+line as a prompt to check the image. The ARM9 deliberately does **not** set
+the flag on a dirty image at boot — that would hide the damage. A cut during
+heavy boot-time writes can corrupt directory entries badly enough that
+launchd still stalls (`Bug: launchctl.c:3849 … lstat(de->d_name) != -1`); our
+boot-time log is the warning, but only a real `fsck_hfs` (or reinstalling the
+image) can repair that.
+
+## 13. Auto-brightness on New models (emulator only)
+
+**Unverified on hardware.** The light source is confirmed by documentation at
+the *service* level; the exact register-level path we use from the ARM9 is an
+informed choice, not a measurement that has been checked on a console. Section 13.3 says
+what a hardware run must show.
+
+### 13.1 What the console actually uses for ambient light
+
+Research sources (also recorded in re-log §88):
+
+| Source | What it says |
+|---|---|
+| 3dbrew "I2C Registers", device 3 (MCU) | The complete MCU register table has **no** ambient-light/lux register. Registers 0x0A–0x0F are battery/temperature/flags, 0x45–0x4A the accelerometer, 0x4F/0x7F diagnostics. There is nothing for the ARM9 to read from the MCU. |
+| 3dbrew "QTM Services" | `qtm:s` command 0x04020000 = `GetCameraLux`; the New-3DS-only QTM module publishes a luminance in lux. |
+| libctru `include/3ds/services/qtm.h` | `QTMS_GetCameraLuminance`: "average ambient luminance as perceived by the inner camera (in lux)"; auto-exposure affects the value; QTM is unavailable on New 2DS XL (400.0 lux is returned instead). |
+| Wikipedia, "New Nintendo 3DS", Hardware | The face-tracking sensor is "also used as an ambient light sensor for automatic brightness adjustment". Nintendo's support pages say Auto-Brightness is unavailable on New 2DS XL. |
+| 3dbrew "I2C Registers", device 16 | New-3DS-only QTM device on I2C bus 1 / 0x40; no register-level luminance format is documented. |
+| BlocksDS `nds/camera.h` (Aptina MT9V113) | The inner camera's auto-exposure reports `MCUREG_APT_AE_LAST_LUMA` = 0x2218. It is an 8-bit measured scene luminance, not a calibrated lux value. Registers are reached over I2C bus 1 / 0x7A via index 0x098C (variable address) and data 0x0990. |
+| GBATEK "3DS I2C"; libn3ds `I2C_DEV_EXTHID` | The pattern for reading a New-3DS-only device from the ARM9 over the same I2C buses (used by our C-stick/ZL/ZR driver). |
+
+So: the existence of a camera-based ambient measurement on New 3DS is
+**confirmed**; that Horizon exposes it through `GetCameraLux` is **confirmed**;
+using the inner camera's AE luma byte from the ARM9 as the same measurement is
+a **reasoned choice** (it is the sensor QTM reads), but that these numbers are
+what Horizon's lux value is derived from, and where the camera sits on a New
+2DS XL, are **guesses**. Nothing here has been measured on hardware.
+
+### 13.2 Data path and curve
+
+```
+ inner camera (I2C bus 1, 0x7A, Aptina AE var 0x2218)
+   │  ARM9 (boot/arm9/camera.c): power the sensor once, AE runs, read 2 Hz
+   ▼
+ mcubox line 5: als_luma, als_state + MCUV_ALS        (boot/common/mcu_proto.h)
+   ▼
+ ios3ds-mcud: CFPreferences SBEnableALS (com.apple.springboard)
+   │  luma -> approximate lux -> brightness factor, with hysteresis/slew
+   ▼
+ kern.ios3ds_mcuctl.backlight = 1 + 1000 * DisplayBrightness
+                                    * DisplayBrightnessFactor * als_factor
+   ▼
+ shim writes the LCD backlight PWM (as before)
+```
+
+- **Old models:** `boot/arm9/main.c` does not call `mcu_set_als()` unless
+  `CFG11_SOCINFO` says New; the camera bus is never touched for this, the
+  mailbox field stays zero and the daemon logs `auto-brightness off`.
+- **New models:** `auto_brightness=1` is the default; `auto_brightness=0` in
+  `boot.cfg` leaves the user's slider alone. The iPod2,1 Settings switch
+  (`SBEnableALS`) is honoured too: `0` disables, a missing key (the normal
+  iPod2,1 case) counts as on. Command-line `noals` in mcud's launchd arguments
+  is a third kill switch.
+- **Curve** (`boot/common/als_curve.h`, host tests in `tests/test_als.c`):
+  luma→lux uses coarse log-scale anchors (0,1,3,10,30,100,300,1000,3000 lux);
+  the multiplier around the user's brightness goes 0.45 (dark) → 1.0 (bright).
+  A new target needs two agreeing samples and a 0.03 dead band; the applied
+  factor slews at most 0.15/s. No flicker from one-frame changes.
+- **Camera co-existence:** the ARM9 checks `camera_als_busy()` before every
+  sample. While any camera client streams (inner, outer left or outer right),
+  no camera register is touched: `als_state` becomes 2 and the last luma is
+  held, so mcud holds its factor instead of jumping; when the client stops,
+  `als_state` goes back to 1. If Camera.app used the inner camera, the stop
+  puts it in standby, so the next ambient sample runs the AE set-up again. If
+  auto-brightness is switched off during a session, the sensor is put in
+  standby when that session ends. This mirrors QTM, which refuses head
+  tracking whenever another process uses a camera (3dbrew "QTM Services").
+- **`camera=0`:** with the cameras disabled in boot.cfg `camera_init()` marks
+  the whole driver disabled, so `camera_als_sample()` refuses to run and the
+  light path stays inactive even on New models. This is intentional: the
+  setting is a kill switch for the camera hardware, not just Camera.app.
+
+#### 12.2.1 Does the inner camera have to stay awake? What it costs
+
+Yes, for a usable reading. The AE statistic is produced by the sensor's own
+microcontroller while it images the scene; a standby sensor has no fresh
+`AE_LAST_LUMA`. We therefore bring the inner camera up once (PLL, AE window,
+sequencer refresh) and leave it awake while `auto_brightness=1`, the same way
+Horizon's QTM face tracking keeps it running. The *reads* are brief: two I2C
+register accesses (write index 0x098C, read data 0x0990) every 500 ms, no
+CAM FIFO transfers, no PICA work and no interrupt. Power-cycling the sensor
+between samples is a false economy: `apt_init()` writes around 80 registers
+and waits for wake/PLL/sequencer events (up to 500 ms per wait) and AE needs
+settling time, so waking it every few seconds would cost more peak current
+and deliver stale luma. The 500 ms read rate is already far slower than a
+camera preview (≈12 fps). The screen-off path still polls at 4 Hz in mcud,
+but no extra wakeups are added to the ARM9: the sample piggybacks on its
+existing monitor loop.
+
+No milliwatt figure is claimed: that needs a current measurement on a console.
+**Camera activity LED:** 3dbrew's MCU register table has a dedicated "Camera
+LED state" at register 0x2B, driven by Horizon's camera services. Our driver
+never writes 0x2B, so it does not deliberately turn the LED on; whether the
+LED is also wired to camera power is unverified without a console. The
+notification LED (§10) is likewise untouched by this feature. The QEMU model
+cannot answer either question.
+- **New 2DS XL:** Nintendo does not offer auto-brightness there and libctru
+  says QTM's camera lux is fixed at 400.0. Our code treats every New model
+  alike; a hardware run on a 2DS XL must show whether its inner camera gives a
+  varying luminance. If it does not, set `auto_brightness=0` there.
+
+### 13.3 QEMU evidence and hardware checklist
+
+The `nintendo3ds` model exposes `ambient-light` (uint32, lux, read/write) on
+`/machine`. It sets the inner camera's AE luma the ARM9 reads. QOM/HMP example
+(`IOS3DS_QEMU` selects a locally built binary; docs/emulator.md):
+
+```sh
+IOS3DS_QEMU=/path/to/private/qemu-system-arm python3 emu/run.py \
+  --new3ds --icount 2 --time 440 \
+  --hmp "200=qom-set /machine ambient-light 5;260=qom-get /machine lcd-backlight;\
+280=qom-set /machine ambient-light 800;340=qom-get /machine lcd-backlight;\
+360=qom-set /machine ambient-light 80;420=qom-get /machine lcd-backlight"
+```
+
+The shared `build/qemu` tree belongs to another worktree, so the evidence
+below used a private copy of that source with its symlinks pointing here and
+`IOS3DS_QEMU` selecting the resulting binary (no shared tree was rebuilt).
+
+New model, `auto_brightness=1`, user brightness 0.50 (2026-11-22;
+`build/emu-als-new-on/log.txt`): `lcd-backlight` **52** at 5 lux, **78** at 800
+lux, **65** at 80 lux. The SD log shows
+`[mcu] auto-brightness on (New model; inner camera AE luminance)`,
+`[cam] inner camera awake for ambient light (AE luma var 2218)`, luma 160 → 78
+→ 218 → 154 and `[mcud] auto-brightness: ... -> factor ... -> LCD backlight ...`
+slewing in the same direction (no jumps). With `auto_brightness=0` in
+`boot.cfg`, the same changes leave `lcd-backlight` at **79** and the log says
+`auto-brightness off`. On the Old model there is no `[cam] inner camera awake`
+or `[mcu] ambient light` line at all (only mcud's single `auto-brightness off`
+line) and the backlight stays at **79**. `make test` (including the 765-check
+curve test) passes.
+
+A later re-run under a heavy host load set `ambient-light` before SpringBoard
+had published `DisplayBrightness`: the ARM9 still logged the luma changes
+(160 → 78 → 218 → 154), but `lcd-backlight` stayed at Luma's 0x5F default
+because mcud had no user brightness to scale yet. Take the QOM backlight
+readings after the `[mcud] iOS brightness ...` line.
+
+First hardware run must show:
+1. `[mcu] auto-brightness on (New model; ...)`, `[cam] inner camera awake for
+   ambient light (AE luma var 2218)` and a varying `[mcu] ambient light: ...
+   luma N/255` when covering/uncovering the console.
+2. `[mcud] auto-brightness: ambient luma ... (~N lux) -> factor ...` and a
+   backlight that follows without flicker in a dark and a bright room.
+3. No new `[cam]` errors, no camera-preview regression, no extra wakeups on
+   the Old model. If the luma never changes, leave `auto_brightness=0` on
+   hardware and report the log; the rest of the brightness path is unchanged.
+
+## 14. Wi-Fi LED (default on, `wifi_led=0` to disable)
+
+The 3DS's blue Wi-Fi LED is MCU register 0x2A: 4 bits, any non-zero value
+turns it on (3dbrew "I2C Registers", device 3). `boot/arm9/mcu.c` writes 1
+while the network link is up and 0 when it goes down or iOS shuts down;
+`mcu_set_wifi_led()` caches the value, so only a transition costs one I2C
+byte. The link comes from `netmbox_t.link`, which `wifi_poll()` maintains;
+without Wi-Fi firmware or with `backend=off` it stays 0 and the LED is off.
+`wifi_led=0` in `sd:/ios3ds/boot.cfg` disables all of it (the notification
+LED of §10 is a separate register and switch, `notify_led`).
+
+The QEMU MCU models reg 0x2A and counts writes: `qom-get /machine
+mcu-wifi-led` (0 or 1) and `qom-get /machine mcu-wifi-led-writes`. Wi-Fi QEMU
+runs (2026-11-22, `emu/wifi_test.py --case ok` with HMP queries at 180 guest
+seconds) showed `mcu-wifi-led = 1`, `mcu-wifi-led-writes = 2` (one initial 0,
+one 1 at `[wifi] link up`) with the default setting, and `0` / `0` with
+`wifi_led=0` in `boot.cfg` — no write of 1 in the latter run. Hardware check:
+the blue LED next to the power LED comes on when Settings joins a network and
+goes dark on "Turn Wi-Fi Off" or shutdown.

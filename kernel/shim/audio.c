@@ -31,6 +31,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "ios3ds.h"
+#include "kpi.h"
 #include "audio.h"
 
 /* ---- PL080 register map (ARM DDI 0196) ---------------------------------- */
@@ -106,13 +107,16 @@ static struct {
     int32_t dbg_prev;
     u32 dbg_jumps, dbg_maxd;            /* RX output: frame-to-frame jumps > 16 and the largest (logged at rx stop) */
     int32_t mic_last;
+    u32 mic_diag_t0, mic_diag_frames, mic_diag_raw_n; /* one-second [mic] report in aud_mic_t */
+    u32 mic_diag_raw_peak, mic_diag_out_peak;
+    u64 mic_diag_raw_sq, mic_diag_out_sq;
 } A AUD_DATA = { .vol = 0x8000 };
 
 /* ======================================================================== */
 #ifndef AUD_HOST_TEST
 
 #define PHYS_BASE   0x20000000u
-#define VIRT_BASE   0x80000000u
+#define VIRT_BASE   IOS3DS_KPI_VIRT_BASE
 #define AXI_PA      0x1FF00000u     /* 1 MiB device sections added by kernel/shim/entry.S shim_init */
 #define AXI_VA      0xBFD00000u
 #define PRIV_VA     0xBFF00000u
@@ -460,12 +464,21 @@ static void csnd_resync(void)
    behind jumps. The ARM9 powers the CODEC's ADC while aud_mic_t.want is set.
    Anything unexpected from the MIC block -> one log line, mic off, silence. */
 #define MIC_LAG_DIV 50          /* trail by rate / 50 samples (20 ms) */
+#define AUD_TICK_HZ  1047311u   /* the shim's time base (entry.S), for the [mic] report */
 
 static volatile aud_mic_t *mic_ring(void) { return (volatile aud_mic_t *)p2v(AUD_MIC_PA, sizeof(aud_mic_t)); }
 
-static void mic_publish(volatile aud_mic_t *m)     /* the ARM9 reads line 0 from RAM */
+static void mic_publish(volatile aud_mic_t *m)     /* the ARM9 reads our three lines from RAM */
 {
-    dclean((const void *)m, 32);
+    dclean((const void *)m, 96);
+}
+/* Sum of sample^2 over a report (u64: 44.1 kHz x 32768^2 fits in a second).
+   The ARM9 turns it into RMS; this side only adds samples at IRQ time. */
+static u32 mic_peak(u32 v) { int32_t s = (int32_t)v; return (u32)(s < 0 ? -s : s); }
+static void mic_acc(u32 mag, u32 *peak, u64 *sq)
+{
+    if (mag > *peak) *peak = mag;
+    *sq += (u64)mag * mag;
 }
 
 static void mic_hw_stop(volatile aud_mic_t *m, u32 state)
@@ -497,10 +510,19 @@ static void mic_hw_start(volatile aud_mic_t *m, u32 now)
     aud_map_io();
     if (!A.io_ok) { mic_fail(m, 4, 0); return; }
     mic_cnt_w(0);
-    mic_cnt_w(MIC_CNT_EN | MIC_CNT_CLEAR | MIC_CNT_DIV(AUD_MIC_DIV));
+    /* GBATEK: bits 0-1 = 0 would duplicate each mono sample into both halves of
+       MIC_DATA ("MakeStereo"). We read the halves as consecutive samples. */
+    mic_cnt_w(MIC_CNT_EN | MIC_CNT_FMT(MIC_CNT_FMT_NORMAL) | MIC_CNT_CLEAR | MIC_CNT_DIV(AUD_MIC_DIV));
     A.mic_on = 1;
     A.mic_t_data = now;
     A.mic_synced = 0;
+    A.mic_diag_t0 = now;
+    A.mic_diag_frames = A.mic_diag_raw_n = A.mic_diag_raw_peak = A.mic_diag_raw_sq = 0;
+    A.mic_diag_out_peak = A.mic_diag_out_sq = 0;
+    m->diag_seq = m->diag_raw_peak = m->diag_raw_n = 0;
+    m->diag_raw_sq_lo = m->diag_raw_sq_hi = 0;
+    m->diag_out_peak = m->diag_out_sq_lo = m->diag_out_sq_hi = 0;
+    m->diag_frames = 0;
     m->rate = AUD_I2S2_HZ / (1 + AUD_MIC_DIV);
     m->state = AUD_MIC_RUNNING;
     m->starts++;
@@ -527,6 +549,9 @@ static void mic_drain(volatile aud_mic_t *m, u32 now)
         v = mic_data_r();
         m->s[wr & (AUD_MIC_SAMPLES - 1)] = (int16_t)v;
         m->s[(wr + 1) & (AUD_MIC_SAMPLES - 1)] = (int16_t)(v >> 16);
+        mic_acc(mic_peak((u32)(int16_t)v), &A.mic_diag_raw_peak, &A.mic_diag_raw_sq);
+        mic_acc(mic_peak((u32)(int16_t)(v >> 16)), &A.mic_diag_raw_peak, &A.mic_diag_raw_sq);
+        A.mic_diag_raw_n += 2;
         wr += 2;
     }
     m->wr = wr;
@@ -542,8 +567,8 @@ typedef struct { u32 rd, frac, phase; int32_t last; } mic_cur_t;
    ring ran dry (the value repeats). `real` = count statistics. */
 static int mic_word(volatile aud_mic_t *m, u32 wr, mic_cur_t *c, int16_t *out, int real)
 {
-    int ok = 1;
-    if (!c->phase) {                            /* a new frame: between mic samples rd and rd + 1 */
+    int ok = 1, fresh = !c->phase;
+    if (fresh) {                                /* a new frame: between mic samples rd and rd + 1 */
         if ((int)(wr - c->rd) >= 2) {
             int32_t s0 = m->s[c->rd & (AUD_MIC_SAMPLES - 1)];
             int32_t s1 = m->s[(c->rd + 1) & (AUD_MIC_SAMPLES - 1)];
@@ -566,6 +591,10 @@ static int mic_word(volatile aud_mic_t *m, u32 wr, mic_cur_t *c, int16_t *out, i
             if ((u32)dd > A.dbg_maxd) A.dbg_maxd = (u32)dd;
             A.dbg_prev = c->last;
         }
+    }
+    if (real && fresh) {
+        mic_acc(mic_peak((u32)c->last), &A.mic_diag_out_peak, &A.mic_diag_out_sq);
+        A.mic_diag_frames++;
     }
     *out = (int16_t)c->last;
     c->phase ^= 1;
@@ -880,6 +909,28 @@ void aud_service(u32 now)
        the mic stays on until the input stream has been gone for a while */
     if (rx_seen) A.rx_last = now;
     mic_want(rx_seen || (A.mic_want && now - A.rx_last < AUD_MIC_HOLD_TICKS), now);
+
+    /* one [mic] level report a second, for the ARM9's log: raw FIFO samples and
+       what iOS actually receives. Both paths run at interrupt time; the ARM9
+       only reads the snapshot (cache cleaned by mic_publish). */
+    if (A.mic_on && now - A.mic_diag_t0 >= AUD_TICK_HZ) {
+        volatile aud_mic_t *m = mic_ring();
+        if (m) {
+            m->diag_raw_peak = A.mic_diag_raw_peak;
+            m->diag_raw_n = A.mic_diag_raw_n;
+            m->diag_raw_sq_lo = (u32)A.mic_diag_raw_sq;
+            m->diag_raw_sq_hi = (u32)(A.mic_diag_raw_sq >> 32);
+            m->diag_out_peak = A.mic_diag_out_peak;
+            m->diag_out_sq_lo = (u32)A.mic_diag_out_sq;
+            m->diag_out_sq_hi = (u32)(A.mic_diag_out_sq >> 32);
+            m->diag_frames = A.mic_diag_frames;
+            m->diag_seq++;
+            mic_publish(m);
+        }
+        A.mic_diag_t0 = now;
+        A.mic_diag_frames = A.mic_diag_raw_n = A.mic_diag_raw_peak = A.mic_diag_raw_sq = 0;
+        A.mic_diag_out_peak = A.mic_diag_out_sq = 0;
+    }
 
     /* the sink gets exactly `words` words per step: what iOS played, then silence */
     if (A.csnd_on) {

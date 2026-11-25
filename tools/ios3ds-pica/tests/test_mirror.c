@@ -20,6 +20,7 @@
 #include "pica_regs.h"
 #include "../sim/picasim.h"
 #include "display.h"
+#include "stereo.h"
 
 #define VRAM_PA   0x18000000u
 #define VRAM_SIZE 0x600000u
@@ -43,8 +44,12 @@ static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
                            printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* display.c's only outside dependency */
+/* display.c's outside dependencies (stereo is off in this test) */
 bool blksrv_poll(void) { return false; }
+bool gm_set_stereo(bool on) { (void)on; return true; }
+void gm_set_shift(u32 k) { (void)k; }
+void mcu_set_3d_led(bool on) { (void)on; }
+void log_color(unsigned color, const char *fmt, ...) { (void)color; (void)fmt; }
 
 static uint8_t *h_mem(void *o, uint32_t pa, uint32_t len, int write)
 {
@@ -142,6 +147,16 @@ static int compare_with_cpu(pica_mirror_t *m, int mode, const char *name)
 
     memset(vram + (FB_LO - VRAM_PA), 0, FB_HI - FB_LO);
     display_set_mode(mode);
+    /* The monitor keeps the boot console until the CLCD buffer changes after
+       AppleM2CLCD programmed the page (issue #10: the stale loader picture
+       was mirrored for the first one to two minutes). The first call takes
+       the probe, a changed buffer is the first iOS frame. */
+    static bool first_frame;
+    if (!first_frame) {
+        CHECK(!display_active(CLCD_PA), "display_active waits for the first frame");
+        ((uint32_t *)vram)[30 * GM_SRC_W + 20] ^= 0x01010101u;   /* a probed word (i = 0) */
+        first_frame = true;
+    }
     CHECK(display_active(CLCD_PA), "display_active");
     display_blit(CLCD_PA);
     memcpy(cpu, vram + (FB_LO - VRAM_PA), sizeof cpu);
@@ -160,6 +175,77 @@ static int compare_with_cpu(pica_mirror_t *m, int mode, const char *name)
     printf("mode %-6s: GPU mirror vs ARM9 CPU copy (display.c): %u of %u bytes differ; %u GPU ops\n",
            name, diff, (unsigned)sizeof cpu, m->nops);
     return (int)diff;
+}
+
+/* A stamped picture: three horizontal bands use three different depth
+   classes, so the stereo list's alpha-test passes all have work to do. */
+static void stereo_picture(void)
+{
+    uint32_t *p = (uint32_t *)vram;
+    for (uint32_t y = 0; y < GM_SRC_H; y++) {
+        uint32_t cls = y < 120 ? SA_FRONT : y < 360 ? SA_ICONS : SA_BG;
+        for (uint32_t x = 0; x < GM_SRC_W; x++) {
+            uint32_t v = (x * 3 + y * 7) & 0xFFFFFF;
+            p[y * GM_SRC_W + x] = v | cls << 24;
+        }
+    }
+}
+
+/* Compare a two-eye GPU frame with the class/delta rule of stereo.h, sampled
+   on the same grid the ARM9's host test uses. */
+static void compare_stereo(pica_mirror_t *m, uint32_t k)
+{
+    pm_frame_t f = { VRAM_PA, 1, 2, { TOP0, TOP1 }, { BOT0, BOT1 }, 1, k, arena + (TEX_PA - ARENA_PA) };
+    const uint32_t *src = (const uint32_t *)vram;
+    uint32_t diff = 0, first = 0, n = 0;
+    uint32_t sx, sy;
+
+    memset(vram + (FB_LO - VRAM_PA), 0, FB_HI - FB_LO);
+    CHECK(pm_clear_targets(m) == 0, "stereo: clear targets");
+    CHECK(run_frame(m, &f) == PM_DONE, "stereo: frame did not finish");
+    CHECK(m->stereo == 1 && m->nops <= PM_MAX_OPS, "stereo: %u ops, stereo flag %u", m->nops, m->stereo);
+    for (uint32_t eye = 0; eye < 2; eye++)
+        for (uint32_t j = 20; j < 380; j += 3) {
+            if (!gm_map(0, 0, j, &sx, &sy))
+                continue;
+            for (uint32_t i = 0; i < GM_RT_W; i += 7) {
+                uint32_t x, y, sample;
+                int cls, delta;
+                uint8_t *d = vram + ((eye ? TOP1 : TOP0) - VRAM_PA) + (j * GM_RT_W + i) * 3;
+                if (!gm_map(0, i, j, &x, &y))
+                    continue;
+                cls = stereo_class_of((uint8_t)(src[y * GM_SRC_W + x] >> 24));
+                delta = stereo_eye_delta(cls, (int)k, (int)eye);
+                sample = (int)x - delta < 0 ? 0 : (uint32_t)((int)x - delta);
+                if (sample >= GM_SRC_W) sample = GM_SRC_W - 1;
+                n++;
+                if ((d[0] | d[1] << 8 | d[2] << 16) != (src[y * GM_SRC_W + sample] & 0xFFFFFF)) {
+                    if (!diff) {
+                        first = j * GM_RT_W + i;
+                        if (getenv("STDBG")) printf("  DBG k=%u eye=%u x=%u y=%u cls=%d delta=%d sample=%u got=%06x want=%06x\n",
+                               k, eye, x, y, cls, delta, sample,
+                               d[0] | d[1] << 8 | d[2] << 16, src[y * GM_SRC_W + sample] & 0xFFFFFF);
+                    }
+                    diff++;
+                }
+            }
+        }
+    /* bottom stays flat even in stereo mode */
+    for (uint32_t i = 14; i < 227; i += 7)
+        for (uint32_t j = 0; j < GM_RT_BOT_H; j += 11) {
+            uint32_t x, y;
+            uint8_t *d = vram + (BOT0 - VRAM_PA) + (j * GM_RT_W + i) * 3;
+            if (!gm_map(1, i, j, &x, &y))
+                continue;
+            n++;
+            if ((d[0] | d[1] << 8 | d[2] << 16) != (src[y * GM_SRC_W + x] & 0xFFFFFF)) {
+                if (!diff) first = 0x80000000u + j * GM_RT_W + i;
+                diff++;
+            }
+        }
+    CHECK(diff == 0, "stereo k=%u: %u of %u sampled pixels differ (first %08x)", k, diff, n, first);
+    printf("stereo GPU mirror k=%u: %u of %u sampled eye pixels differ from the class/delta rule (%u ops)\n",
+           k, diff, n, m->nops);
 }
 
 int main(int argc, char **argv)
@@ -236,6 +322,13 @@ int main(int argc, char **argv)
     compare_with_cpu(&m, SCREEN_BOTTOM, "bottom");
     picture(7);
     compare_with_cpu(&m, SCREEN_BOTH, "both#2");
+    /* two-eye lists, all slider shifts: compare with the ARM9's class/delta
+       rule on a stamped picture (the GPU does the offsets now) */
+    stereo_picture();
+    for (i = 1; i <= 4; i++)
+        compare_stereo(&m, i);
+    picture(7);
+    compare_with_cpu(&m, SCREEN_BOTH, "both#3");
     /* the CPU copy writes only the framebuffer set the LCDs show (PDC select,
        published by the shim): set 1 stays untouched, set 0 is the same */
     {
@@ -277,9 +370,10 @@ int main(int argc, char **argv)
     /* 4a. the staged hardware diagnostics (pica_diag.c) pass on the model */
     {
         pd_env_t e = { &plat, vram + (PD_VRAM_PA - VRAM_PA), arena + 0x180000, ARENA_PA + 0x180000, blob, GM_BLOB_PA };
-        /* what hardware run 13 reported, and what the model now does too:
-           everything but FCRAM fills and NPOT textures */
-        uint32_t r, all = PD_FILL_VRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT;
+        /* FCRAM PSC fills still fail (a hardware rule, run 13); the NPOT
+           check now uploads a padded POT texture with scaled texcoords, the
+           same workaround the GL back end uses, so it passes on hardware. */
+        uint32_t r, all = PD_FILL_VRAM | PD_PPF | PD_SOLID_VRAM | PD_SOLID_FCRAM | PD_TEX_POT | PD_TEX_NPOT;
         pd_dump_regs(&e, "host");
         r = pd_fill_tests(&e, "host") | pd_gpu_tests(&e);
         CHECK(r == all, "diagnostics on the model: 0x%x, hardware run 13 gave 0x%x", r, all);

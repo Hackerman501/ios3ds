@@ -12,8 +12,11 @@
  * points stdout and stderr at /dev/console, and logs every alert's title and
  * text as "[applog] <program> alert ..." (UIModalView/UIAlertView setters and
  * popup), and MobileSafari's page-load errors with domain, code and userInfo.
- * Otherwise only the load errors (MobileSafari, re-log 75), SpringBoard's
- * modal state and SpringBoard's cache warm-up (below) are on.
+ * It also interposes mmap/vm_allocate/mach_vm_allocate and logs failed calls
+ * >= 64 KiB as "[applog] <program> ENOMEM ..." (up to 16 per process).
+ * Otherwise only the load errors (MobileSafari, re-log 75), failed big
+ * allocations, SpringBoard's modal state and SpringBoard's cache warm-up
+ * (below) are on.
  *
  * Cydia Substrate (docs/cydia.md): every executable inside a .app bundle
  * (SpringBoard, which inserts us through its launchd plist, and every app, which
@@ -21,10 +24,12 @@
  * /Library/MobileSubstrate/MobileSubstrate.dylib from here, before main(), as if
  * it had been inserted with it; without Substrate on the image nothing happens.
  * No launchd plist names Substrate: mobilesubstrate's extrainst_ strips it there.
- * Sandboxed apps cannot read /Library and stay without it (docs/cydia.md).
+ * Sandboxed apps (MobileSafari, App Store) cannot read /Library; they load the
+ * /usr/lib copies instead (docs/cydia.md, docs/certificates.md).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <fcntl.h>
@@ -51,6 +56,73 @@ static IMP (*p_setImplementation)(Method, IMP);
 static SEL (*p_sel)(const char *);
 static id (*p_msgSend)(id, SEL, ...);
 
+static void applog_write(int fd, const char *line, int l)
+{
+    if (fd >= 0 && write(fd, line, l) == l) return;
+    /* A sandboxed app (MobileSafari) is denied /dev/console: keep the line in
+       the one directory it may write, so a QEMU/hardware log still has it. */
+    int f = open("/private/var/tmp/ios3ds-applog.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f < 0) return;
+    write(f, line, (size_t)l);
+    close(f);
+}
+
+/* ENOMEM from the three allocation entry points WebKit/JSC can use. The
+   hardware "Cannot allocate memory" alert only gives NSPOSIXErrorDomain 12;
+   these lines name the call, the requested size and the caller's PC, which is
+   enough to tell a JSC heap reservation from a file/image mapping. No output
+   on success; at most 16 lines per process, so a failing loop cannot flood
+   the console. Only active when this dylib is inserted (diag/applog). */
+static int nomem_lines;
+static void log_nomem(const char *what, unsigned long long size, unsigned arg, unsigned pc)
+{
+    if (nomem_lines++ >= 16)
+        return;
+    char line[256];
+    int l = snprintf(line, sizeof(line),
+                     "[applog] %s ENOMEM %s size %llu arg %u caller 0x%08x\n",
+                     getprogname(), what, size, arg, pc);
+    if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;
+    if (l > 0) applog_write(2, line, l);
+}
+
+/* Declared here, not in a SDK header: the stub SDK has no sys/mman.h or Mach
+   VM declarations and these symbols live in libsystem. */
+extern void *mmap(void *addr, size_t len, int prot, int flags, int fd, long long off);
+extern int vm_allocate(unsigned task, unsigned *addr, unsigned size, int anywhere);
+extern int mach_vm_allocate(unsigned task, unsigned long long *addr, unsigned long long size, int anywhere);
+
+static void *my_mmap(void *addr, size_t len, int prot, int flags, int fd, long long off)
+{
+    void *r = mmap(addr, len, prot, flags, fd, off);
+    if (r == (void *)-1 && errno == ENOMEM && len >= 65536)
+        log_nomem("mmap", len, (unsigned)flags, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+static int my_vm_allocate(unsigned task, unsigned *addr, unsigned size, int anywhere)
+{
+    int r = vm_allocate(task, addr, size, anywhere);
+    if (r && size >= 65536)
+        log_nomem("vm_allocate", size, (unsigned)r, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+static int my_mach_vm_allocate(unsigned task, unsigned long long *addr, unsigned long long size, int anywhere)
+{
+    int r = mach_vm_allocate(task, addr, size, anywhere);
+    if (r && size >= 65536)
+        log_nomem("mach_vm_allocate", size, (unsigned)r, (unsigned)__builtin_return_address(0));
+    return r;
+}
+
+__attribute__((used, section("__DATA,__interpose")))
+static const struct { const void *rep, *orig; } nomem_interpose[] = {
+    { (const void *)my_mmap, (const void *)mmap },
+    { (const void *)my_vm_allocate, (const void *)vm_allocate },
+    { (const void *)my_mach_vm_allocate, (const void *)mach_vm_allocate },
+};
+
 static void say(const char *what, id str)
 {
     const char *c = "";
@@ -59,7 +131,7 @@ static void say(const char *what, id str)
     int l = snprintf(line, sizeof(line), "[applog] %s alert %s \"%s\"\n", getprogname(), what, c ? c : "");
     if (l > (int)sizeof(line) - 1) l = sizeof(line) - 1;
     if (l > (int)sizeof(line) - 1) l = (int)sizeof(line) - 1;   /* snprintf returns the untruncated length */
-    if (l > 0) write(2, line, l);
+    if (l > 0) applog_write(2, line, l);
 }
 
 /* one trampoline per hooked method (a subclass may call its superclass' one) */
@@ -127,10 +199,9 @@ static void say_error(const char *what, id err)
         if (line[k] == '\n') line[k] = ' ';
     if (quiet_app && errfd == 2) {
         int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
-        if (fd < 0) return;
-        errfd = fd;
+        if (fd >= 0) errfd = fd;
     }
-    write(errfd, line, l);
+    applog_write(errfd, line, l);
 }
 
 static id hook_fail0(id self, SEL cmd, id wv, id err, id frame);
@@ -364,6 +435,43 @@ static void warm_start(void)
     if (t) add(main_rl(), t, *defmode);
 }
 
+static void probe(const char *fmt, ...);
+static void (*p_tlsfix_invalidate)(void *);
+static int tlsfix_loaded, tlsfix_tries;
+static void tlsfix_poll(void *timer, void *info)
+{
+    (void)info;
+    if (tlsfix_loaded || ++tlsfix_tries > 240) {   /* give up after a minute */
+        if (p_tlsfix_invalidate) p_tlsfix_invalidate(timer);
+        return;
+    }
+    /* TLSFix only makes sense once CFNetwork (its Substrate filter) is up */
+    if (dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork", RTLD_LAZY | 0x10 /* NOLOAD */)) {
+        tlsfix_loaded = 1;
+        dlopen("/usr/lib/ios3ds-CydiaSubstrate.dylib", RTLD_LAZY | RTLD_GLOBAL);
+        void *t = dlopen("/usr/lib/ios3ds-tlsfix.dylib", RTLD_LAZY | RTLD_GLOBAL);
+        const char *e = dlerror();
+        probe("TLSFix copy loaded: %p dlerror=%s", t, e ? e : "(none)");
+        if (p_tlsfix_invalidate) p_tlsfix_invalidate(timer);
+    }
+}
+static void tlsfix_deferred(void)
+{
+    void *cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
+    if (!cf) return;
+    void *(*mk)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *) =
+        (void *(*)(void *, double, double, unsigned long, long, void (*)(void *, void *), void *))
+            dlsym(cf, "CFRunLoopTimerCreate");
+    double (*now)(void) = (double (*)(void))dlsym(cf, "CFAbsoluteTimeGetCurrent");
+    void *(*main_rl)(void) = (void *(*)(void))dlsym(cf, "CFRunLoopGetMain");
+    void (*add)(void *, void *, void *) = (void (*)(void *, void *, void *))dlsym(cf, "CFRunLoopAddTimer");
+    void **common = (void **)dlsym(cf, "kCFRunLoopCommonModes");
+    p_tlsfix_invalidate = (void (*)(void *))dlsym(cf, "CFRunLoopTimerInvalidate");
+    if (!mk || !now || !main_rl || !add || !common) return;
+    void *t = mk(NULL, now() + 0.5, 0.25, 0, 0, tlsfix_poll, NULL);
+    if (t) add(main_rl(), t, *common);
+}
+
 static void load_substrate(void)
 {
     static const char ms[] = "/Library/MobileSubstrate/MobileSubstrate.dylib";
@@ -376,9 +484,74 @@ static void load_substrate(void)
     snprintf(v, sizeof(v), "%s:%s", old, ms);
     /* Substrate's loader looks for itself in DYLD_INSERT_LIBRARIES and takes
      * itself out again, leaving ours. Sandboxed apps (MobileSafari, App Store
-     * apps) may not read /Library: the dlopen fails and they run without it. */
+     * apps) may not read /Library, so the dlopen fails there; they load the
+     * /usr/lib copies instead (see below). */
     setenv("DYLD_INSERT_LIBRARIES", v, 1);
-    if (!dlopen(ms, RTLD_LAZY | RTLD_GLOBAL)) setenv("DYLD_INSERT_LIBRARIES", old, 1);
+    void *h = dlopen(ms, RTLD_LAZY | RTLD_GLOBAL);
+    if (!h) {
+        /* Sandboxed app (MobileSafari, App Store): the profile denies every
+           file under /Library, so Substrate's loader cannot read its own
+           directory or scan DynamicLibraries. Load the copies under /usr/lib
+           (allowed by the profile) instead and bring TLSFix in by hand. This
+           needs neither the SANDBOX=1 kernel patch nor a wider sandbox.
+           CFNetwork is not loaded yet when an app's constructors run, so
+           TLSFix is loaded from a run-loop timer once it is. */
+        tlsfix_deferred();
+        setenv("DYLD_INSERT_LIBRARIES", old, 1);
+    }
+}
+
+/* Sandbox probe (issue: TLSFix in MobileSafari). With boot-arg
+ * ios3ds_probe=1 every app appends what its sandbox lets it do to
+ * /private/var/tmp/ios3ds-applog-probe.txt (the one directory sandboxed apps
+ * may write): executable, DYLD_INSERT_LIBRARIES, open() of the Substrate,
+ * TLSFix and profile paths, and the dlopen results. The console is denied to
+ * a sandboxed app, so this is the only way to see the decision from inside. */
+static int probe_on;
+static void probe(const char *fmt, ...)
+{
+    if (!probe_on) return;
+    char line[1024];
+    int n = snprintf(line, sizeof(line), "[probe] %s pid %d: ", getprogname(), (int)getpid());
+    va_list ap;
+    va_start(ap, fmt);
+    int m = vsnprintf(line + n, sizeof(line) - (size_t)n - 2, fmt, ap);
+    va_end(ap);
+    if (m < 0) return;
+    n += m;
+    if (n > (int)sizeof(line) - 2) n = (int)sizeof(line) - 2;
+    line[n++] = '\n';
+    int fd = open("/private/var/tmp/ios3ds-applog-probe.txt",
+                  O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return;
+    write(fd, line, (size_t)n);
+    close(fd);
+}
+static void probe_init(void)
+{
+    char ba[512];
+    size_t n = sizeof(ba) - 1;
+    if (sysctlbyname("kern.bootargs", ba, &n, NULL, 0) != 0) return;
+    ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
+    if (!strstr(ba, "ios3ds_probe=1")) return;
+    probe_on = 1;
+    char exe[1024];
+    unsigned int en = sizeof(exe);
+    int r = _NSGetExecutablePath(exe, &en);
+    probe("exe %s (r=%d) DYLD_INSERT_LIBRARIES=%s", r == 0 ? exe : "?",
+          r, getenv("DYLD_INSERT_LIBRARIES") ? getenv("DYLD_INSERT_LIBRARIES") : "(unset)");
+    static const char *paths[] = {
+        "/Library/MobileSubstrate/MobileSubstrate.dylib",
+        "/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib",
+        "/var/mobile/Library/ConfigurationProfiles/ios3ds-roots.plist",
+        "/usr/lib/libobjc.A.dylib",
+        "/private/var/tmp",
+    };
+    for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        int fd = open(paths[i], O_RDONLY);
+        probe("open %s -> %d errno %d", paths[i], fd, fd < 0 ? errno : 0);
+        if (fd >= 0) close(fd);
+    }
 }
 
 /* ---- fake GPS (CoreLocation hooks, docs/location.md) ------------------
@@ -762,11 +935,21 @@ static void gps_register_notify(void)
 
 __attribute__((constructor)) static void applog_init(void)
 {
+    probe_init();
     if (!strcmp(getprogname(), "SpringBoard")) {
         modal_start();
         warm_start();
     }
     load_substrate();
+    if (probe_on) {
+        void *ms = dlopen("/Library/MobileSubstrate/MobileSubstrate.dylib", RTLD_LAZY | 0x10 /* NOLOAD */);
+        void *lf = dlopen("/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib", RTLD_LAZY | 0x10);
+        void *us = dlopen("/usr/lib/ios3ds-CydiaSubstrate.dylib", RTLD_LAZY | 0x10);
+        void *ut = dlopen("/usr/lib/ios3ds-tlsfix.dylib", RTLD_LAZY | 0x10);
+        const char *e = dlerror();
+        probe("after Substrate: ms=%p tlsfix=%p usr_cs=%p usr_tls=%p dlerror=%s",
+              ms, lf, us, ut, e ? e : "(none)");
+    }
     gps_register_notify();
     gps_reload_config();
     char ba[512];

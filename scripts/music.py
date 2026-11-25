@@ -46,6 +46,11 @@ EXTS = {".mp3": ("MP3 ", "MPEG audio file", 301), ".m4a": ("M4A ", "AAC audio fi
         ".aif": ("AIFF", "AIFF audio file", 0), ".aiff": ("AIFF", "AIFF audio file", 0)}
 TEST_SONG = {"title": "ios3ds Test Song", "artist": "ios3ds", "album": "ios3ds Test Tones",
              "genre": "Electronic", "year": 2026, "track": 1}
+# The hidden master playlist ("iPod") is not shown anywhere in Music.app's
+# Playlists tab: a user who opens the app sees only "Add Playlist..." and
+# concludes that no song was installed. Give the tracks one ordinary, visible
+# playlist as well; the master stays the db_info primary container.
+VISIBLE_PLAYLIST = "ios3ds"
 
 # ---- the test song --------------------------------------------------------------
 
@@ -348,6 +353,7 @@ def build_library(tracks, out):
     now = int(os.environ.get("SOURCE_DATE_EPOCH", time.time())) - MAC_EPOCH
     lib_pid = pid("ios3ds library")
     master = pid("ios3ds master playlist")
+    user_playlist = pid("ios3ds visible playlist")
     for t in tracks:
         t["artist"] = t.get("artist") or UNKNOWN_ARTIST
         t["album"] = t.get("album") or UNKNOWN_ALBUM
@@ -397,6 +403,7 @@ def build_library(tracks, out):
         lib.execute("INSERT INTO avformat_info VALUES(?,0,?,?,?,0,0,0,0,0,0,0,0)",
                     (t["pid"], audio_format, t.get("bitrate") or 0, float(t.get("rate") or 44100)))
         lib.execute("INSERT INTO item_to_container VALUES(?,?,?,NULL)", (t["pid"], master, i))
+        lib.execute("INSERT INTO item_to_container VALUES(?,?,?,NULL)", (t["pid"], user_playlist, i))
         if album_pid not in seen_album:
             seen_album.add(album_pid)
             lib.execute("INSERT INTO album VALUES(?,2,0,0,?,0,?,?,0,NULL,0)",
@@ -407,6 +414,10 @@ def build_library(tracks, out):
                         (artist_pid, t["artist"], o_artist[t["artist"]], t["artist"]))
     lib.execute("INSERT INTO container VALUES(?,0,?,?,?,0,0,1,0,1,0,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,"
                 "NULL,NULL)", (master, now, now, "iPod"))
+    # iTunes writes an ordinary playlist with distinguished_kind 0, is_hidden 0
+    # (libgpod itdb_sqlite.c). This is the one Music.app shows on its first tab.
+    lib.execute("INSERT INTO container VALUES(?,0,?,?,?,1,0,1,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,"
+                "NULL,NULL)", (user_playlist, now, now, VISIBLE_PLAYLIST))
     lib.commit()
     lib.close()
 
@@ -428,6 +439,7 @@ def build_library(tracks, out):
                     "user_rating,user_rating_common) VALUES(?,0,0,0,0,0,0,0,0,0,0,0)",
                     [(t["pid"],) for t in tracks])
     dyn.execute("INSERT INTO container_ui VALUES(?,7,0,1,0,0,0)", (master,))
+    dyn.execute("INSERT INTO container_ui VALUES(?,7,0,1,0,0,0)", (user_playlist,))
     dyn.commit()
     dyn.close()
     for name, sql in (("Extras.itdb", EXTRAS_SQL), ("Genius.itdb", GENIUS_SQL)):

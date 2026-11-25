@@ -407,10 +407,81 @@ static int http_get(const char *url)
     return strstr(resp, " 200 ") ? 0 : -1;
 }
 
+/* Optional second URL: read a multi-MB body end to end and check every byte.
+   This is the sustained-TX/RX exercise for the HTC credit path (wifi.md 7.3). */
+static int http_bulk_get(const char *url)
+{
+    char host[64], path[128];
+    unsigned port = 80;
+    const char *p = url;
+    if (strncmp(p, "http://", 7)) return -1;
+    p += 7;
+    size_t hl = strcspn(p, ":/");
+    if (!hl || hl >= sizeof host) return -1;
+    memcpy(host, p, hl);
+    host[hl] = 0;
+    p += hl;
+    if (*p == ':') port = (unsigned)strtoul(p + 1, (char **)&p, 10);
+    snprintf(path, sizeof path, "%s", *p ? p : "/");
+    uint32_t a = 0;
+    if (resolve(host, &a) != 0) { say("[nettest] bulk: cannot resolve %s", host); return -1; }
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) { say("[nettest] bulk: socket: %d", errno); return -1; }
+    struct timeval tv = { 60, 0 };
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    struct sockaddr_in sin;
+    memset(&sin, 0, sizeof sin);
+    sin.sin_len = sizeof sin;
+    sin.sin_family = AF_INET;
+    sin.sin_port = (uint16_t)(port >> 8 | (port & 0xFF) << 8);
+    sin.sin_addr.s_addr = a;
+    if (connect(s, (struct sockaddr *)&sin, sizeof sin) != 0) {
+        say("[nettest] bulk: connect failed, errno %d", errno);
+        close(s);
+        return -1;
+    }
+    char req[256], buf[4096];
+    int n = snprintf(req, sizeof req,
+                     "GET /bulk HTTP/1.0\r\nHost: %s\r\nUser-Agent: ios3ds-nettest-bulk\r\n\r\n", host);
+    send(s, req, (size_t)n, 0);
+    time_t t0 = time(NULL);
+    size_t total = 0, body = 0, bad = 0;
+    int headers = 0;
+    char hdr[512];
+    size_t hlen = 0;
+    for (;;) {
+        ssize_t r = recv(s, buf, sizeof buf, 0);
+        if (r <= 0) break;
+        size_t from = 0;
+        if (!headers) {
+            for (size_t i = 0; i < (size_t)r && hlen + 1 < sizeof hdr; i++) hdr[hlen++] = buf[i];
+            hdr[hlen] = 0;
+            char *e = strstr(hdr, "\r\n\r\n");
+            if (!e) {
+                if (hlen + 1 >= sizeof hdr) break;  /* no header in 512 bytes */
+                continue;               /* header may span reads; bytes are in hdr */
+            }
+            headers = 1;
+            from = (size_t)(e + 4 - hdr);
+        }
+        for (size_t i = from; i < (size_t)r; i++) {
+            if (buf[i] != (char)(body % 251)) bad++;
+            body++;
+        }
+        total += (size_t)r;
+    }
+    close(s);
+    int ok = headers && body >= 1024 * 1024 && !bad;
+    say("[nettest] bulk %u bytes (%u body, %u bad) in %ld s: %s",
+        (unsigned)total, (unsigned)body, (unsigned)bad, (long)(time(NULL) - t0), ok ? "PASS" : "FAILED");
+    return ok ? 0 : -1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        say("[nettest] usage: ios3ds-nettest <interface> <url> [dns name]");
+        say("[nettest] usage: ios3ds-nettest <interface> <url> [dns name] [bulk]");
         return 2;
     }
     snprintf(ifname, sizeof ifname, "%s", argv[1]);
@@ -444,6 +515,7 @@ int main(int argc, char **argv)
         if (ok != 0) rc = 1;
     }
     if (http_get(argv[2]) != 0) rc = 1;
+    if (argc > 4 && !strcmp(argv[4], "bulk") && http_bulk_get(argv[2]) != 0) rc = 1;
     int hrc = 0;
     for (char *q = https_list, *nl; *q && (nl = strchr(q, '\n')) != NULL; q = nl + 1) {
         *nl = 0;

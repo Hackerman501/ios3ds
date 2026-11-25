@@ -148,6 +148,8 @@ def main():
                     help="name in the URLs, e.g. 10.0.2.2.nip.io to make Safari resolve it (slirp's DNS asks the host's)")
     ap.add_argument("--boot-timeout", type=float, default=900)
     ap.add_argument("--page-timeout", type=float, default=300)
+    ap.add_argument("--settle", type=float, default=60,
+                    help="seconds to wait after boot before opening page 1 (0 = as early as the harness can)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     state["www"] = a.www
@@ -161,7 +163,10 @@ def main():
     wifi_test.mtools(["mcopy", "-o", "::/ios3ds/boot.cfg", saved], a.sd)
     with open(saved) as f:
         cfg = f.read()
-    cfg = re.sub(r"(?m)^(cmdline=.*)$", lambda m: m.group(1) + " ios3ds_mem=1 ios3ds_applog=1 ios3ds_urltest=1", cfg)
+    extra = " ios3ds_mem=1 ios3ds_applog=1 ios3ds_urltest=1"
+    if a.port != 8080:                  # ios3ds_urlport: 8080 is often taken on the host
+        extra += " ios3ds_urlport=%d" % a.port
+    cfg = re.sub(r"(?m)^(cmdline=.*)$", lambda m: m.group(1) + extra, cfg)
     if a.mem_size:
         cfg = re.sub(r"(?m)^mem_size=.*$", "mem_size=" + a.mem_size, cfg)
     with open(os.path.join(tmp, "b.cfg"), "w") as f:
@@ -186,7 +191,7 @@ def main():
                 not wait_log(r"\[input\] connected to SpringBoard", a.boot_timeout):
             print("[safari] boot or DHCP did not finish")
             return 1
-        time.sleep(60)                      # let the boot settle (launch-time daemons exit)
+        time.sleep(a.settle)                # let the boot settle (launch-time daemons exit)
         if a.nolink:                        # ios3ds-diag -urlpoll opens p1 by itself after 40 s
             ok = wait_log(r"\[applog\] MobileSafari alert", a.page_timeout * 3)
             text = log_text()

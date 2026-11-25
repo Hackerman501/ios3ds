@@ -312,6 +312,12 @@ with just the type (`GSEventLockDevice` = type 1014 to the system port). Why thi
 frontmost app's event port itself for touches outside SpringBoard, and it
 bypasses SpringBoard's tracking state.
 
+`ios3ds-input`'s GSEvent path caches the frontmost app's port
+(`GSCopyPurpleNamedPort`, one +1 send right) together with its bundle id. On
+a switch it releases the previous right, and it re-resolves the port when
+`mach_port_type` reports a dead name — an app relaunched under the same
+bundle id would otherwise keep every touch after the relaunch.
+
 ### 4.3 Rejected: fake kernel HID service (option b)
 
 Needs a kext (IOHIDEventService subclass, C++ runtime, prelink or kext loading)

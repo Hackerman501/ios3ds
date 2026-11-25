@@ -34,33 +34,36 @@
  */
 #include "ios3ds.h"
 #include "mcu_proto.h"
+#include "backlight.h"
+#include "accel_axes.h"
+#include "kpi.h"
 
 /* ---- kernel KPIs (Thumb unless noted) ---------------------------------- */
 #define KPT(addr, ret, ...) ((ret (*)(__VA_ARGS__))((addr) | 1))
-#define IOLog                   KPT(0x801a6be8, void, const char *, ...)
-#define ml_io_map               KPT(0x80067780, u32, u32, u32)
-#define waitForService          KPT(0x801b18f0, void *, void *, void *)
-#define getPlatform             KPT(0x801ac744, void *, void)
-#define getResourceService      KPT(0x801ac75c, void *, void)
-#define svc_attach              KPT(0x801adc54, int, void *, void *)
-#define svc_registerService     KPT(0x801b0844, void, void *, u32)
-#define ps_powerSource          KPT(0x801bb624, void *, void)
-#define ps_setMaxCapacity       KPT(0x801bb3d0, void, void *, u32)
-#define ps_setCurrentCapacity   KPT(0x801bb3fc, void, void *, u32)
-#define ps_setIsCharging        KPT(0x801bb1f8, void, void *, int)
-#define ps_setExternalConnected KPT(0x801bb288, void, void *, int)
-#define ps_setExternalChargeCapable KPT(0x801bb258, void, void *, int)
-#define ps_setBatteryInstalled  KPT(0x801bb228, void, void *, int)
-#define ps_setVoltage           KPT(0x801bb348, void, void *, u32)
-#define ps_setPSProperty        KPT(0x801bb0dc, void, void *, void *, void *)
-#define ps_updateStatus         KPT(0x801bb428, void, void *)
-#define sym_withCStringNoCopy   KPT(0x8019a5d0, void *, const char *)
-#define num_withNumber          KPT(0x80197684, void *, u64, u32)
-#define kOSBooleanTrue          (**(void ***)0x80232e4c)   /* a C++ reference: &gOSBooleanTrue */
-#define kOSBooleanFalse         (**(void ***)0x80232e50)
-#define gIOPlatform             (*(void **)0x8029d490)
-#define data_bytes              KPT(0x8018d534, const u8 *, void *)   /* OSData::getBytesNoCopy() */
-#define data_length             KPT(0x8018d510, u32, void *)          /* OSData::getLength() */
+#define IOLog                   KPT(IOS3DS_KPI_IOLOG, void, const char *, ...)
+#define ml_io_map               KPT(IOS3DS_KPI_ML_IO_MAP, u32, u32, u32)
+#define waitForService          KPT(IOS3DS_KPI_IO_WAITFORSERVICE, void *, void *, void *)
+#define getPlatform             KPT(IOS3DS_KPI_IO_GETPLATFORM, void *, void)
+#define getResourceService      KPT(IOS3DS_KPI_IO_GETRESOURCESERVICE, void *, void)
+#define svc_attach              KPT(IOS3DS_KPI_IO_ATTACH, int, void *, void *)
+#define svc_registerService     KPT(IOS3DS_KPI_IO_REGISTERSERVICE, void, void *, u32)
+#define ps_powerSource          KPT(IOS3DS_KPI_PM_POWERSOURCE, void *, void)
+#define ps_setMaxCapacity       KPT(IOS3DS_KPI_PM_SETMAXCAPACITY, void, void *, u32)
+#define ps_setCurrentCapacity   KPT(IOS3DS_KPI_PM_SETCURRENTCAPACITY, void, void *, u32)
+#define ps_setIsCharging        KPT(IOS3DS_KPI_PM_SETISCHARGING, void, void *, int)
+#define ps_setExternalConnected KPT(IOS3DS_KPI_PM_SETEXTERNALCONNECTED, void, void *, int)
+#define ps_setExternalChargeCapable KPT(IOS3DS_KPI_PM_SETEXTERNALCHARGE_CAPABLE, void, void *, int)
+#define ps_setBatteryInstalled  KPT(IOS3DS_KPI_PM_SETBATTERYINSTALLED, void, void *, int)
+#define ps_setVoltage           KPT(IOS3DS_KPI_PM_SETVOLTAGE, void, void *, u32)
+#define ps_setPSProperty        KPT(IOS3DS_KPI_PM_SETPSProperty, void, void *, void *, void *)
+#define ps_updateStatus         KPT(IOS3DS_KPI_PM_UPDATESTATUS, void, void *)
+#define sym_withCStringNoCopy   KPT(IOS3DS_KPI_OSSYMBOL_WITHCSTRINGNOCOPY, void *, const char *)
+#define num_withNumber          KPT(IOS3DS_KPI_OSNUMBER_WITHNUMBER, void *, u64, u32)
+#define kOSBooleanTrue          (**(void ***)IOS3DS_KPI_KOSBOOLEAN_TRUE)   /* a C++ reference: &gOSBooleanTrue */
+#define kOSBooleanFalse         (**(void ***)IOS3DS_KPI_KOSBOOLEAN_FALSE)
+#define gIOPlatform             (*(void **)IOS3DS_KPI_GIO_PLATFORM)
+#define data_bytes              KPT(IOS3DS_KPI_OSDATA_GETBYTESNOCOPY, const u8 *, void *)   /* OSData::getBytesNoCopy() */
+#define data_length             KPT(IOS3DS_KPI_OSDATA_GETLENGTH, u32, void *)          /* OSData::getLength() */
 
 struct sysctl_oid {
     void       *oid_parent;
@@ -77,9 +80,9 @@ struct sysctl_oid {
 #define CTLFLAG_WR      0x40000000
 #define CTLTYPE_OPAQUE  5
 #define OID_AUTO        (-1)
-#define sysctl_register_oid   KPT(0x80159c54, void, struct sysctl_oid *)
-#define sysctl_handle_opaque  KPT(0x80159242, int, struct sysctl_oid *, void *, int, void *)
-#define SYSCTL_KERN_CHILDREN  ((void *)0x8027f7b8)
+#define sysctl_register_oid   KPT(IOS3DS_KPI_SYSCTL_REGISTER_OID, void, struct sysctl_oid *)
+#define sysctl_handle_opaque  KPT(IOS3DS_KPI_SYSCTL_HANDLE_OPAQUE, int, struct sysctl_oid *, void *, int, void *)
+#define SYSCTL_KERN_CHILDREN  ((void *)IOS3DS_KPI_SYSCTL__KERN_CHILDREN)
 
 #define BOX ((volatile mcubox_t *)(SHIM_VA + SHIM_MCU_OFF))
 
@@ -256,8 +259,8 @@ static void ps_update(void)
 #define LCD_PA          0x10202000u
 #define LCD_ABL0        0x240u
 #define LCD_ABL1        0xA40u
-#define BL_MIN          0x10u
-#define BL_MAX          0x8Fu       /* Luma's brightest preset is 0x5F; keep headroom but stay below 0x90 */
+/* BL_PWM_MIN / BL_PWM_MAX and the iOS level floor are in backlight.h, shared
+   with ios3ds-mcud (the daemon), and host-tested in tests/test_backlight.py. */
 
 static vu32 *lcd;
 static u32 bl_luma[2], bl_cur = 0xFFFFFFFFu;
@@ -273,7 +276,7 @@ static void backlight_set(u32 level)   /* level 0..1000 (iOS brightness x factor
         IOLog("ios3ds-mcu: LCD backlight as Luma left it: top 0x%x, bottom 0x%x\n",
               (unsigned)bl_luma[0], (unsigned)bl_luma[1]);
     }
-    u32 v = level == 0 ? 0 : BL_MIN + (level > 1000 ? 1000 : level) * (BL_MAX - BL_MIN) / 1000;
+    u32 v = ios_backlight_pwm(level);   /* 0 = screen off; any lit level >= BL_PWM_MIN */
     if (v == bl_cur) return;
     bl_cur = v;
     lcd[LCD_ABL0 / 4] = v;
@@ -365,17 +368,18 @@ static int nub_is_acc(void *nub)
     return 0;
 }
 
-/* newest MCU sample -> LIS302DL counts in iOS device axes (iOS x = -3DS y,
-   y = -3DS x, z = -3DS z; docs/mcu.md section 5). The sign of y was flipped
-   after the first hardware test: landscape was right, portrait upside down. */
+/* newest MCU sample -> LIS302DL counts. The axis map (including the y sign
+   fixed after the first hardware test) is shared with the host orientation
+   test in boot/common/accel_axes.h; all four portrait/landscape poses,
+   including the 180 degree one, are checked there. */
 static void acc_sample(int8_t out[3])
 {
     volatile mcubox_t *b = BOX;
     int v[3], g;
+    int16_t raw[3];
     dinval(b->acc, 32);
-    v[0] = -b->acc[1];
-    v[1] = -b->acc[0];
-    v[2] = -b->acc[2];
+    raw[0] = b->acc[0]; raw[1] = b->acc[1]; raw[2] = b->acc[2];
+    ios_accel_axes(raw, v);
     g = (int)isqrt((u32)(v[0] * v[0]) + (u32)(v[1] * v[1]) + (u32)(v[2] * v[2]));
     if (g > 64)
         acc_g = acc_g ? acc_g - (acc_g >> 4) + ((u32)g >> 4) : (u32)g;

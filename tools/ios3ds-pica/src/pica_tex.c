@@ -165,11 +165,15 @@ int pica_tex_upload(void *dst, unsigned fmt, uint32_t dw, uint32_t dh,
         const uint8_t *row = (const uint8_t *)src + (size_t)y * stride;
         uint32_t ty = dh - 1 - (dy + y);        /* GL row -> stored row */
 
-        if (fmt == PICA_TEX_RGBA8 && sfmt == PICA_SRC_BGRA8888) {
-            /* the common case (CoreGraphics / IOSurface pixels) without the detour */
-            for (uint32_t x = 0; x < sw; x++, row += 4) {
-                uint8_t *p = (uint8_t *)dst + pica_tex_index(dx + x, ty, dw) * 4;
-                p[0] = row[3]; p[1] = row[0]; p[2] = row[1]; p[3] = row[2];
+        if (fmt == PICA_TEX_RGBA8 && sfmt == PICA_SRC_BGRA8888 && !((uintptr_t)row & 3) && !((uintptr_t)dst & 3)) {
+            /* the common case (CoreGraphics / IOSurface pixels) without the
+               detour: source bytes B,G,R,A become the RGBA8 texel bytes
+               A,B,G,R, i.e. one 32-bit load, rotate left by 8, one 32-bit
+               store. Both src and dst are 32-bit aligned (dst is the tiled
+               scratch buffer, texel offsets are multiples of 4 bytes). */
+            for (uint32_t x = 0; x < sw; x++) {
+                uint32_t v = ((const uint32_t *)row)[x];
+                *(uint32_t *)((uint8_t *)dst + pica_tex_index(dx + x, ty, dw) * 4) = (v << 8) | (v >> 24);
             }
             continue;
         }

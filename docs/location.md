@@ -11,7 +11,7 @@ location the user chooses. It is **off unless configured**.
 | Option | Verdict |
 |---|---|
 | Feed a location provider to `locationd` | iOS 4.2.1 has no public simulation provider; `locationd` is disabled in our rootfs, and injecting into launchd-managed daemons hangs the boot ([cydia.md](cydia.md), re-log 71/73). No daemon injection is used here. |
-| Substrate tweak in every app | Substrate cannot load in sandboxed MobileSafari because `/Library` is denied ([cydia.md](cydia.md), re-log 71/72). |
+| Substrate tweak in every app | Substrate itself still cannot load from `/Library` in sandboxed MobileSafari ([cydia.md](cydia.md), re-log 71/72); TLSFix now does through `/usr/lib` copies (re-log 104), but a general tweak loader is not what this needs. |
 | Our own dylib, inserted into SpringBoard and every app | **Chosen.** `ios3ds-applog.dylib` is already inserted into SpringBoard (launchd plist) and into every app via `libgmalloc.dylib` → applog ([cydia.md](cydia.md)); it lives in `/usr/lib`, which the Safari sandbox allows. Sandboxed apps get the hooks too, with no kernel sandbox patch. |
 
 The hooks are installed on `-locationServicesEnabled` / `+authorizationStatus`

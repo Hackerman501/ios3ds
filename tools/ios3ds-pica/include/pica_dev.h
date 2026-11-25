@@ -29,6 +29,8 @@ typedef struct pica_dev {
     /* copy an arena block into the caller's memory page by page, for a
        destination PRESENT refused as not physically contiguous (PICA_OP_SCATTER) */
     uint32_t (*scatter)(uint32_t src_pa, void *dst, uint32_t bytes);
+    /* announce that the CPU has finished writing a surface target (PICA_OP_DIRTY) */
+    uint32_t (*dirty)(void);
 } pica_dev_t;
 
 const pica_dev_t *pica_dev_ios(void);

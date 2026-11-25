@@ -149,11 +149,19 @@ and runs the connection through a statically linked **OpenSSL 1.1.1w** instead
 (TLS 1.0 to 1.3, AES-GCM, ChaCha20, ECDHE, SNI), while CFNetwork keeps driving the
 socket. It loads into every process that has CFNetwork and Cydia Substrate
 (Cydia and other unsandboxed apps, `ios3ds-nettest`) except SpringBoard, launchd,
-lockdownd and securityd. **Not in MobileSafari or App Store apps:** their sandbox
-refuses the files under `/Library` that Substrate and TLSFix live in
-(docs/cydia.md, re-log 71), so by default Safari still speaks TLS 1.0 only. The
-opt-in `SANDBOX=1` kernel patch lets TLSFix into Safari, but Safari then runs out
-of memory on the 128 MB device (docs/cydia.md), so it is off by default.
+lockdownd and securityd. **Safari and App Store apps** run in the sandbox, which denies every file under
+`/Library` but allows `/usr/lib`. The build therefore installs the two dylibs
+TLSFix needs where they can be read: `/usr/lib/ios3ds-CydiaSubstrate.dylib`
+(the CydiaSubstrate framework binary) and `/usr/lib/ios3ds-tlsfix.dylib`.
+`ios3ds-applog`, which is already inserted into every app, falls back to them
+when its `dlopen("/Library/MobileSubstrate/MobileSubstrate.dylib")` fails, and
+loads TLSFix from a run-loop timer once CFNetwork is up (an app's constructors
+run before its frameworks). Two strings inside the TLSFix copy are rewritten
+because they point under `/Library` or `/var/mobile`: the `LC_LOAD_DYLIB` of
+CydiaSubstrate and the ConfigurationProfiles directory, whose CA payload file
+(`ios3ds-roots.plist`) is copied to `/usr/lib/ConfigurationProfiles/`. The old
+opt-in kernel patch (`make sd SANDBOX=1`, docs/cydia.md) is not needed for this
+and is no longer the way TLSFix reaches Safari.
 
 **Certificate checks** stay iOS's: the server's chain is handed to
 `SecTrustEvaluate` with an SSL policy for the host name, i.e. the trust store of
@@ -183,7 +191,9 @@ with Substrate + TLSFix 1.3; re-log 71):
 | https://moreinfo.thebigboss.org/, https://apt.thebigboss.org/ | -9807 | -9807: certificate expired 2026-06-15 (section 3) |
 | https://expired.badssl.com/, untrusted-root, wrong.host | -9807 | -9807 (still refused) |
 | Cydia app home page | loads | loads (Substrate + TLSFix in Cydia) |
-| Safari: github.com, www.apple.com | "could not establish a secure connection" | unchanged: sandboxed, no TLSFix |
+| Safari: github.com, www.apple.com | "could not establish a secure connection" | **loads**, lock icon (TLSFix via the `/usr/lib` copies, NEW) |
+| Safari: local TLS 1.2-only server, RSA certificate | "could not establish a secure connection" | **loads**, server saw `TLSv1.2` (NEW) |
+| Safari: local TLS 1.2-only server, P-256 ECDSA certificate | -9836 | **loads**, server saw `TLSv1.2`; OpenSSL verified the EC chain against `/usr/lib/ConfigurationProfiles` (NEW) |
 
 **Cost** (`--icount 2`, about the Old 3DS ARM11 speed, whole request incl.
 DNS and body): cydia.saurik.com 2 s with and without TLSFix, www.google.com 3 s
@@ -191,6 +201,16 @@ vs 2 s, www.apple.com 4 s and en.wikipedia.org 9 s (EC chain, OpenSSL check)
 where the stock stack fails. TLSFix's armv6 code is 1.9 MB (file-backed, shared)
 plus 144 KB `__DATA` per process that loads it; OpenSSL is set up on the first TLS
 connection, not at launch.
+
+**Safari in QEMU** (`--icount 2`, local TLS 1.2-only server on the host's slirp
+address): without the copies Safari shows "Safari cannot open the page because it
+could not establish a secure connection" and the host sees no TLS request; with
+them the host logs `TLSv1.2` and Safari shows the page with the lock icon, for an
+RSA certificate and for a P-256 ECDSA one (the latter goes through TLSFix's
+OpenSSL check and the profile copy). MobileSafari reaches 11.7 MiB resident with
+TLSFix after the first page (8.2 MiB without); the system still has 40.5 MiB free
+of 128 MiB, so the old `SANDBOX=1` out-of-memory failure does not occur. Numbers
+and screenshots: re-log 104.
 
 Turn it off: `make sd TLSFIX=0`, `install.py --no-tlsfix`, `IOS3DS_TLSFIX=0`, or
 `"tlsfix": false` in `rootfs/recipe.json`.

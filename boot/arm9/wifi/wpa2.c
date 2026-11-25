@@ -105,6 +105,132 @@ void hmac_sha1(const hmac_ctx *k, const u8 *a, u32 alen, const u8 *b, u32 blen, 
 }
 
 /* ------------------------------------------------------------------------ */
+/* MD5 and HMAC-MD5 (RFC 1321 / RFC 2104): WPA v1's MIC. Written from the
+   RFCs; no tables are copied from any implementation. */
+
+typedef struct { u32 h[4]; u32 total, fill; u8 buf[64]; } md5_ctx;
+
+static const u8 md5_s[64] = {
+     7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,
+     5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,
+     4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,
+     6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21,
+};
+static const u32 md5_k[64] = {
+    0xd76aa478u,0xe8c7b756u,0x242070dbu,0xc1bdceeeu,0xf57c0fafu,0x4787c62au,0xa8304613u,0xfd469501u,
+    0x698098d8u,0x8b44f7afu,0xffff5bb1u,0x895cd7beu,0x6b901122u,0xfd987193u,0xa679438eu,0x49b40821u,
+    0xf61e2562u,0xc040b340u,0x265e5a51u,0xe9b6c7aau,0xd62f105du,0x02441453u,0xd8a1e681u,0xe7d3fbc8u,
+    0x21e1cde6u,0xc33707d6u,0xf4d50d87u,0x455a14edu,0xa9e3e905u,0xfcefa3f8u,0x676f02d9u,0x8d2a4c8au,
+    0xfffa3942u,0x8771f681u,0x6d9d6122u,0xfde5380cu,0xa4beea44u,0x4bdecfa9u,0xf6bb4b60u,0xbebfbc70u,
+    0x289b7ec6u,0xeaa127fau,0xd4ef3085u,0x04881d05u,0xd9d4d039u,0xe6db99e5u,0x1fa27cf8u,0xc4ac5665u,
+    0xf4292244u,0x432aff97u,0xab9423a7u,0xfc93a039u,0x655b59c3u,0x8f0ccc92u,0xffeff47du,0x85845dd1u,
+    0x6fa87e4fu,0xfe2ce6e0u,0xa3014314u,0x4e0811a1u,0xf7537e82u,0xbd3af235u,0x2ad7d2bbu,0xeb86d391u,
+};
+
+static void md5_block(md5_ctx *c, const u8 *p)
+{
+    u32 m[16];
+    for (int i = 0; i < 16; i++)
+        m[i] = (u32)p[4*i] | (u32)p[4*i+1] << 8 | (u32)p[4*i+2] << 16 | (u32)p[4*i+3] << 24;
+    u32 a = c->h[0], b = c->h[1], cc = c->h[2], d = c->h[3];
+    for (int i = 0; i < 64; i++) {
+        u32 f, g;
+        if (i < 16)       { f = (b & cc) | (~b & d);       g = i; }
+        else if (i < 32)  { f = (d & b) | (~d & cc);       g = (5 * i + 1) & 15; }
+        else if (i < 48)  { f = b ^ cc ^ d;                g = (3 * i + 5) & 15; }
+        else              { f = cc ^ (b | ~d);             g = (7 * i) & 15; }
+        u32 t = d;
+        d = cc; cc = b;
+        b += rol(a + f + md5_k[i] + m[g], md5_s[i]);
+        a = t;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d;
+}
+
+static void md5_init(md5_ctx *c)
+{
+    c->h[0] = 0x67452301u; c->h[1] = 0xEFCDAB89u; c->h[2] = 0x98BADCFEu; c->h[3] = 0x10325476u;
+    c->total = c->fill = 0;
+}
+
+static void md5_update(md5_ctx *c, const u8 *p, u32 n)
+{
+    c->total += n;
+    while (n) {
+        u32 k = 64 - c->fill;
+        if (k > n) k = n;
+        memcpy(c->buf + c->fill, p, k);
+        c->fill += k; p += k; n -= k;
+        if (c->fill == 64) { md5_block(c, c->buf); c->fill = 0; }
+    }
+}
+
+static void md5_final(md5_ctx *c, u8 out[16])
+{
+    u32 bits = c->total << 3, hi = c->total >> 29;
+    u8 pad[72];
+    u32 n = (c->fill < 56 ? 56 : 120) - c->fill;
+    memset(pad, 0, sizeof(pad));
+    pad[0] = 0x80;
+    for (int i = 0; i < 4; i++) {
+        pad[n + i]     = (u8)(bits >> (8 * i));
+        pad[n + 4 + i] = (u8)(hi >> (8 * i));
+    }
+    md5_update(c, pad, n + 8);
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            out[4*i + j] = (u8)(c->h[i] >> (8 * j));
+}
+
+void md5_hash(const u8 *p, u32 n, u8 out[16])
+{
+    md5_ctx c;
+    md5_init(&c);
+    md5_update(&c, p, n);
+    md5_final(&c, out);
+}
+
+void hmac_md5(const u8 key[16], const u8 *a, u32 alen, const u8 *b, u32 blen, u8 out[16])
+{
+    u8 k[64], pad[64], inner[16];
+    md5_ctx c;
+    memset(k, 0, sizeof(k));
+    memcpy(k, key, 16);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x36;
+    md5_init(&c);
+    md5_update(&c, pad, 64);
+    if (alen) md5_update(&c, a, alen);
+    if (blen) md5_update(&c, b, blen);
+    md5_final(&c, inner);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x5C;
+    md5_init(&c);
+    md5_update(&c, pad, 64);
+    md5_update(&c, inner, 16);
+    md5_final(&c, out);
+}
+
+/* RC4 with the 256-byte drop WPA uses for EAPOL-Key Key Data (RFC 4757
+   calls this RC4-drop). key = key_iv[16] || KEK[16] for WPA v1. */
+void wpa_rc4_skip(const u8 key[32], u32 keylen, u32 skip, u8 *data, u32 len)
+{
+    u8 s[256];
+    for (u32 i = 0; i < 256; i++) s[i] = (u8)i;
+    u32 j = 0;
+    for (u32 i = 0; i < 256; i++) {
+        j = (j + s[i] + key[i % keylen]) & 255;
+        u8 t = s[i]; s[i] = s[j]; s[j] = t;
+    }
+    u32 i = 0;
+    j = 0;
+    for (u32 k = 0; k < skip + len; k++) {
+        i = (i + 1) & 255;
+        j = (j + s[i]) & 255;
+        u8 t = s[i]; s[i] = s[j]; s[j] = t;
+        if (k >= skip) data[k - skip] ^= s[(s[i] + s[j]) & 255];
+    }
+}
+
+/* ------------------------------------------------------------------------ */
 /* key derivation */
 
 void wpa2_pmk(const char *pass, const u8 *ssid, u32 ssid_len, u8 pmk[32])
@@ -130,24 +256,40 @@ void wpa2_pmk(const char *pass, const u8 *ssid, u32 ssid_len, u8 pmk[32])
 static const u8 *lower(const u8 *a, const u8 *b, u32 n) { return memcmp(a, b, n) <= 0 ? a : b; }
 static const u8 *higher(const u8 *a, const u8 *b, u32 n) { return memcmp(a, b, n) <= 0 ? b : a; }
 
-void wpa2_ptk(const u8 pmk[32], const u8 sta[6], const u8 ap[6],
-              const u8 snonce[32], const u8 anonce[32], u8 ptk[48])
+/* IEEE 802.11i 8.5.1.2: PRF-X(PMK, "Pairwise key expansion",
+   min(AA,SA)||max(AA,SA)||min(ANonce,SNonce)||max(...)). 48 bytes for CCMP,
+   64 for TKIP (the last 16 are the TKIP MIC keys, not part of a CCMP TK). */
+static void ptk_derive(const u8 pmk[32], const u8 sta[6], const u8 ap[6],
+                       const u8 snonce[32], const u8 anonce[32], u8 *ptk, u32 len)
 {
     static const char label[] = "Pairwise key expansion";   /* incl. NUL = 23 bytes */
     hmac_ctx k;
-    u8 data[23 + 12 + 64 + 1], d[20], out[60];
+    u8 data[23 + 12 + 64 + 1], d[20], out[64];
     memcpy(data, label, 23);
     memcpy(data + 23, lower(sta, ap, 6), 6);
     memcpy(data + 29, higher(sta, ap, 6), 6);
     memcpy(data + 35, lower(snonce, anonce, 32), 32);
     memcpy(data + 67, higher(snonce, anonce, 32), 32);
     hmac_sha1_key(&k, pmk, 32);
-    for (u8 i = 0; i < 3; i++) {
-        data[99] = i;
+    for (u32 i = 0; i * 20 < len; i++) {
+        data[99] = (u8)i;
         hmac_sha1(&k, data, 100, NULL, 0, d);
-        memcpy(out + i * 20, d, 20);
+        u32 n = i * 20 + 20 <= len ? 20 : len - i * 20;
+        memcpy(out + i * 20, d, n);
     }
-    memcpy(ptk, out, 48);
+    memcpy(ptk, out, len);
+}
+
+void wpa2_ptk(const u8 pmk[32], const u8 sta[6], const u8 ap[6],
+              const u8 snonce[32], const u8 anonce[32], u8 ptk[48])
+{
+    ptk_derive(pmk, sta, ap, snonce, anonce, ptk, 48);
+}
+
+void wpa1_ptk(const u8 pmk[32], const u8 sta[6], const u8 ap[6],
+              const u8 snonce[32], const u8 anonce[32], u8 ptk[64])
+{
+    ptk_derive(pmk, sta, ap, snonce, anonce, ptk, 64);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -287,6 +429,7 @@ int aes_key_unwrap(const u8 kek[16], const u8 *in, u32 n, u8 *out)
 #define EK_KEYLEN   7
 #define EK_REPLAY   9
 #define EK_NONCE    17
+#define EK_IV       49       /* WPA v1: RC4 key IV (RSN leaves it zero) */
 #define EK_RSC      65
 #define EK_MIC      81
 #define EK_DATALEN  97
@@ -316,6 +459,14 @@ void wpa2_start(wpa2_t *w, const u8 pmk[32], const u8 sta[6], const u8 ap[6],
     w->group_cipher = 4;
 }
 
+void wpa1_start(wpa2_t *w, const u8 pmk[32], const u8 sta[6], const u8 ap[6],
+                const u8 snonce[32])
+{
+    wpa2_start(w, pmk, sta, ap, snonce);
+    w->wpa1 = 1;
+    w->group_cipher = 2;                    /* WPA v1 requires TKIP */
+}
+
 u32 wpa2_rsn_ie(const wpa2_t *w, u8 out[22])
 {
     static const u8 ie[22] = {
@@ -328,6 +479,57 @@ u32 wpa2_rsn_ie(const wpa2_t *w, u8 out[22])
     memcpy(out, ie, 22);
     out[7] = w->group_cipher;
     return 22;
+}
+
+u32 wpa1_ie(const wpa2_t *w, u8 out[26])
+{
+    static const u8 ie[26] = {
+        0xDD, 24, 0x00, 0x50, 0xF2, 0x01,       /* vendor WPA */
+        0x01, 0x00,                             /* version 1 */
+        0x00, 0x50, 0xF2, 0x02,                 /* group cipher: TKIP */
+        0x01, 0x00, 0x00, 0x50, 0xF2, 0x02,     /* 1 pairwise: TKIP */
+        0x01, 0x00, 0x00, 0x50, 0xF2, 0x02,     /* 1 AKM: WPA-PSK */
+        0x00, 0x00,                             /* capabilities */
+    };
+    memcpy(out, ie, sizeof(ie));
+    (void)w;
+    return sizeof(ie);
+}
+
+/* WPA v1's vendor IE: DD len 00 50 F2 01 ver(2) group(4) pairwise-count(2)
+   suites AKM-count(2) AKMs capabilities(2). Counts are little endian. */
+int wpa1_ie_parse(const u8 *ie, u32 n, rsn_info_t *r)
+{
+    memset(r, 0, sizeof(*r));
+    if (n < 2 || ie[0] != 0xDD) return RSN_MODE_OTHER;
+    u32 len = ie[1], p = 2, end;
+    if (len < 22 || len + 2 > n) return RSN_MODE_OTHER;
+    end = 2 + len;
+    if (memcmp(ie + p, "\x00\x50\xF2\x01", 4)) return RSN_MODE_OTHER;
+    p += 4;
+    if (ie[p] != 1 || ie[p + 1] != 0) return RSN_MODE_OTHER;  /* version 1 */
+    p += 2;
+    if (p + 4 > end) return RSN_MODE_OTHER;
+    if (!memcmp(ie + p, "\x00\x50\xF2\x02", 3)) r->group = 2;
+    else if (!memcmp(ie + p, "\x00\x50\xF2\x04", 3)) r->group = 4;
+    p += 4;
+    if (p + 2 > end) return RSN_MODE_OTHER;
+    u32 c = ie[p] | (u32)ie[p + 1] << 8;
+    p += 2;
+    if (p + 4 * c > end) return RSN_MODE_OTHER;
+    for (u32 i = 0; i < c; i++, p += 4) {
+        if (ie[p + 3] == 2) r->tkip = 1;
+        if (ie[p + 3] == 4) r->ccmp = 1;
+    }
+    if (p + 2 > end) return RSN_MODE_OTHER;
+    c = ie[p] | (u32)ie[p + 1] << 8;
+    p += 2;
+    if (p + 4 * c > end) return RSN_MODE_OTHER;
+    for (u32 i = 0; i < c; i++, p += 4)
+        if (!memcmp(ie + p, "\x00\x50\xF2\x02", 4)) r->psk = 1;
+    r->ok = 1;
+    r->wpa1 = 1;
+    return r->psk && r->tkip ? RSN_MODE_WPA1 : RSN_MODE_OTHER;
 }
 
 int wpa2_rsn_parse(const u8 *ie, u32 n, rsn_info_t *r)
@@ -379,14 +581,26 @@ int wpa2_rsn_parse(const u8 *ie, u32 n, rsn_info_t *r)
     return RSN_MODE_OTHER;
 }
 
-/* MIC over the whole EAPOL frame with the MIC field taken as zero */
-static void eapol_mic(const u8 kck[16], const u8 *f, u32 len, u8 mic[16])
+/* MIC over the whole EAPOL frame with the MIC field taken as zero.
+   WPA2: HMAC-SHA1 truncated to 16; WPA v1: HMAC-MD5 (802.11i/D10).
+   Never leave mic[] uninitialised: a rejected frame must be rejected by the
+   caller, not compared against whatever happened to be on the stack. */
+static int eapol_mic(const wpa2_t *w, const u8 *f, u32 len, u8 mic[16])
 {
     static const u8 zero[16];
     hmac_ctx k;
     sha1_ctx c;
     u8 d[20];
-    hmac_sha1_key(&k, kck, 16);
+    if (len < EK_MIC + 16) return WPA2_ERR_SHORT;
+    if (w->wpa1) {
+        u8 copy[512];
+        if (len > sizeof(copy)) return WPA2_ERR_LONG;
+        memcpy(copy, f, len);
+        memset(copy + EK_MIC, 0, 16);
+        hmac_md5(w->kck, copy, len, NULL, 0, mic);
+        return 0;
+    }
+    hmac_sha1_key(&k, w->kck, 16);
     c = k.in;
     sha1_update(&c, f, EK_MIC);
     sha1_update(&c, zero, 16);
@@ -396,6 +610,7 @@ static void eapol_mic(const u8 kck[16], const u8 *f, u32 len, u8 mic[16])
     sha1_update(&c, d, 20);
     sha1_final(&c, d);
     memcpy(mic, d, 16);
+    return 0;
 }
 
 static int build_reply(wpa2_t *w, const u8 *req, u32 info, const u8 *nonce,
@@ -408,15 +623,19 @@ static int build_reply(wpa2_t *w, const u8 *req, u32 info, const u8 *nonce,
     out[EK_TYPE] = 3;
     out[EK_BODYLEN] = (u8)((total - 4) >> 8);
     out[EK_BODYLEN + 1] = (u8)(total - 4);
-    out[EK_DESC] = 2;
+    out[EK_DESC] = w->wpa1 ? 0xFE : 2;  /* vendor WPA descriptor vs RSN */
     out[EK_INFO] = (u8)(info >> 8);
     out[EK_INFO + 1] = (u8)info;
     memcpy(out + EK_REPLAY, req + EK_REPLAY, 8);
     if (nonce) memcpy(out + EK_NONCE, nonce, 32);
+    /* WPA v1 message 2 echoes M1's Key Length (32 for TKIP); M4 uses 0. */
+    if (w->wpa1 && (info & KI_PAIRWISE) && !(info & KI_SECURE))
+        memcpy(out + EK_KEYLEN, req + EK_KEYLEN, 2);  /* M2 echoes M1; M4 does not */
     out[EK_DATALEN] = (u8)(dlen >> 8);
     out[EK_DATALEN + 1] = (u8)dlen;
     if (dlen) memcpy(out + EK_DATA, data, dlen);
-    eapol_mic(w->kck, out, total, out + EK_MIC);
+    int r = eapol_mic(w, out, total, out + EK_MIC);
+    if (r) return r;
     *outlen = total;
     return 0;
 }
@@ -445,14 +664,15 @@ static int find_gtk(wpa2_t *w, const u8 *kd, u32 n)
 
 int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen)
 {
-    u8 kd[256], mic[16];
+    u8 kd[256], mic[16], ek[32];
     *outlen = 0;
     if (len < EK_DATA) return WPA2_ERR_SHORT;
-    if (f[EK_TYPE] != 3 || f[EK_DESC] != 2) return WPA2_ERR_TYPE;
+    if (f[EK_TYPE] != 3 || f[EK_DESC] != (w->wpa1 ? 0xFE : 2)) return WPA2_ERR_TYPE;
     u32 body = be16(f + EK_BODYLEN), info = be16(f + EK_INFO), dlen = be16(f + EK_DATALEN);
     if (body + 4 > len || body + 4 < EK_DATA || dlen > body + 4 - EK_DATA) return WPA2_ERR_SHORT;
     len = body + 4;                             /* ignore trailing padding */
-    if ((info & KI_VER_MASK) != KI_VER_AES) return WPA2_ERR_TYPE;
+    u32 ver = w->wpa1 ? 0 : KI_VER_AES;         /* WPA v1: HMAC-MD5 + RC4 */
+    if ((info & KI_VER_MASK) != ver) return WPA2_ERR_TYPE;
     if (info & (KI_REQUEST | KI_ERROR) || !(info & KI_ACK)) return WPA2_ERR_TYPE;
     /* replay counter must increase (802.11i 8.5.2 f); the first one is free */
     if (w->have_replay && memcmp(f + EK_REPLAY, w->replay, 8) <= 0) return WPA2_ERR_REPLAY;
@@ -460,12 +680,13 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
     if ((info & KI_PAIRWISE) && !(info & KI_MIC)) {
         /* message 1: ANonce. Unauthenticated, so do not latch the replay
            counter here (a forged M1 must not lock out the real AP). */
-        u8 ptk[48], ie[40];
+        u8 ptk[64], ie[40];
         memcpy(w->anonce, f + EK_NONCE, 32);
-        wpa2_ptk(w->pmk, w->sta, w->ap, w->snonce, w->anonce, ptk);
+        if (w->wpa1) wpa1_ptk(w->pmk, w->sta, w->ap, w->snonce, w->anonce, ptk);
+        else wpa2_ptk(w->pmk, w->sta, w->ap, w->snonce, w->anonce, ptk);
         memcpy(w->kck, ptk, 16);
         memcpy(w->kek, ptk + 16, 16);
-        memcpy(w->tk, ptk + 32, 16);
+        memcpy(w->tk, ptk + 32, w->wpa1 ? 32 : 16);
         w->have_ptk = 1;
         w->done = 0;
         /* message 2 must carry the RSN IE of our association request byte for
@@ -476,40 +697,55 @@ int wpa2_rx_eapol(wpa2_t *w, const u8 *f, u32 len, u8 *out, u32 cap, u32 *outlen
             memcpy(ie, w->own_ie, w->own_ie_len);
             ielen = w->own_ie_len;
         } else {
-            ielen = wpa2_rsn_ie(w, ie);
+            ielen = w->wpa1 ? wpa1_ie(w, ie) : wpa2_rsn_ie(w, ie);
         }
-        int r = build_reply(w, f, KI_VER_AES | KI_PAIRWISE | KI_MIC, w->snonce, ie, ielen,
+        int r = build_reply(w, f, ver | KI_PAIRWISE | KI_MIC, w->snonce, ie, ielen,
                             out, cap, outlen);
         return r ? r : WPA2_EV_M2_SENT;
     }
 
     /* everything else is MIC-protected with our KCK */
     if (!w->have_ptk || !(info & KI_MIC)) return WPA2_ERR_STATE;
-    eapol_mic(w->kck, f, len, mic);
+    int r = eapol_mic(w, f, len, mic);
+    if (r) return r;
     u8 bad = 0;
     for (int i = 0; i < 16; i++) bad |= mic[i] ^ f[EK_MIC + i];
     if (bad) return WPA2_ERR_MIC;
     if (info & KI_PAIRWISE) {
-        if (!(info & KI_INSTALL)) return WPA2_ERR_TYPE;
+        /* WPA v1's bit 6 is the key index, not the RSN Install flag. */
+        if (!w->wpa1 && !(info & KI_INSTALL)) return WPA2_ERR_TYPE;
         if (memcmp(f + EK_NONCE, w->anonce, 32) != 0) return WPA2_ERR_NONCE;
     } else if (!w->done) {
         return WPA2_ERR_STATE;                  /* group rekey before the 4-way finished */
     }
-    if (!(info & KI_ENCDATA) || dlen < 24 || (dlen & 7) || dlen - 8 > sizeof(kd))
-        return WPA2_ERR_KEYDATA;
-    if (aes_key_unwrap(w->kek, f + EK_DATA, dlen, kd) != 0) return WPA2_ERR_KEYDATA;
-    int r = find_gtk(w, kd, dlen - 8);
+    if (!(info & KI_ENCDATA) || dlen < 24 || dlen > sizeof(kd)) return WPA2_ERR_KEYDATA;
+    u32 kdlen;
+    if (w->wpa1) {
+        /* WPA v1: RC4(key_iv || KEK) with the first 256 bytes dropped. The
+           Key IV is its own 16-byte field at EK_IV, after the 32-byte nonce. */
+        if (dlen > sizeof(kd)) return WPA2_ERR_KEYDATA;
+        memcpy(ek, f + EK_IV, 16);
+        memcpy(ek + 16, w->kek, 16);
+        memcpy(kd, f + EK_DATA, dlen);
+        wpa_rc4_skip(ek, 32, 256, kd, dlen);
+        kdlen = dlen;
+    } else {
+        if (dlen & 7) return WPA2_ERR_KEYDATA;
+        if (aes_key_unwrap(w->kek, f + EK_DATA, dlen, kd) != 0) return WPA2_ERR_KEYDATA;
+        kdlen = dlen - 8;
+    }
+    r = find_gtk(w, kd, kdlen);
     if (r) return r;
     memcpy(w->rsc, f + EK_RSC, 8);
     memcpy(w->replay, f + EK_REPLAY, 8);
     w->have_replay = 1;
     if (info & KI_PAIRWISE) {
-        r = build_reply(w, f, KI_VER_AES | KI_PAIRWISE | KI_MIC | KI_SECURE, NULL, NULL, 0,
+        r = build_reply(w, f, ver | KI_PAIRWISE | KI_MIC | KI_SECURE, NULL, NULL, 0,
                         out, cap, outlen);
         if (r) return r;
         w->done = 1;
         return WPA2_EV_KEYS;
     }
-    r = build_reply(w, f, KI_VER_AES | KI_MIC | KI_SECURE, NULL, NULL, 0, out, cap, outlen);
+    r = build_reply(w, f, ver | KI_MIC | KI_SECURE, NULL, NULL, 0, out, cap, outlen);
     return r ? r : WPA2_EV_GTK;
 }

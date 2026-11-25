@@ -78,7 +78,7 @@ the boot. Not debugged further (Substrate is closed source).
 | every app | SpringBoard inserts `/usr/lib/libgmalloc.dylib` (= ios3ds-applog, `SBGuardMallocAlways`) into each app, replacing anything else; ios3ds-applog's constructor `dlopen`s MobileSubstrate.dylib in executables inside a `.app` (after adding it to `DYLD_INSERT_LIBRARIES`, where Substrate's loader looks for and removes itself) | ios3ds-applog |
 | ios3ds-nettest | `dlopen` after it loads CFNetwork (TLSFix filters on CFNetwork) | |
 | configd, securityd, other daemons | none (nothing targets them; it would only cost memory) | configd: Wi-Fi bridge interposer; securityd: AES interposer (unchanged) |
-| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **none**: the sandbox refuses every file under `/Library` (`open` gives `EPERM` for `/Library/MobileSubstrate/...`, `/Library/Frameworks/CydiaSubstrate.framework/...`, and for `/var/mobile/Library/ConfigurationProfiles`), so the `dlopen` fails and the app runs without tweaks | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
+| **sandboxed apps** (MobileSafari with its built-in `MobileSafari` profile, App Store apps) | **the `/usr/lib` copies**: the sandbox refuses every file under `/Library`, so applog's `dlopen` of `MobileSubstrate.dylib` fails and it falls back to `/usr/lib/ios3ds-CydiaSubstrate.dylib` + `/usr/lib/ios3ds-tlsfix.dylib` (TLSFix only, loaded by a timer once CFNetwork is up; re-log 104) | ios3ds-applog (it is in `/usr/lib`, which the profile allows) |
 
 No launchd plist names `MobileSubstrate.dylib` (`substrate.daemons` is empty;
 `cydia.substrate_setup` can still append it to listed recipe jobs): a
@@ -95,33 +95,40 @@ extensions: `MobileSafety` (safe mode, SpringBoard) and `tlsfix` (any process wi
 `com.apple.CFNetwork`; TLSFix itself skips SpringBoard, launchd, lockdownd and
 securityd).
 
-## Reaching sandboxed apps (Safari): the sb_evaluate patch (opt-in, re-log 72)
+## Reaching sandboxed apps (Safari): /usr/lib copies (re-log 104)
 
 A sandboxed process (MobileSafari, App Store apps, Mail's helpers) runs under a
-Seatbelt profile that denies `open()` of everything under `/Library`, so Substrate
-and TLSFix can't load and Safari keeps iOS's TLS 1.0. The kernel patch
-`kernel/patches-sandbox.json` (`SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`)
-does what iOS 4 jailbreaks did: it hooks the Sandbox kext's `sb_evaluate`
-(`com.apple.security.sandbox` 0x803cd000, Sandbox-58.12; the central bytecode
-evaluator at 0x803ced98, found as the function 75 MAC-hooks funnel into, `r2` =
-operation index) via a shim trampoline (`shim_sb_evaluate`, `kernel/shim/entry.S`;
-the branch word is computed at build time from the shim ELF symbol, since the
-New-3DS work took the once-free `shim+0x0C` slot). It
-returns *allow* only for the file-read operations (op 1 `file*`, 6-9 `file-read*`
-and children, 11 `file-search`) and runs the real evaluator for everything else,
-so a sandboxed app can read the dylibs under `/Library` while write/exec/network/
-iokit/mach stay enforced. Operation indices are from the kext's `operation_names`
-table; the patch is verified against the original `push {r4,r5,r6,r7,lr}` bytes.
+Seatbelt profile that denies `open()` of everything under `/Library` and
+`/var/mobile/Library/ConfigurationProfiles`, but allows `/usr/lib` (that is where
+`ios3ds-applog` and our other interposers load from). So the build puts what
+TLSFix needs there, next to the dylibs from the pinned debs:
 
-**Why it is off by default:** with the patch Safari does load TLSFix, but on the
-128 MB device (`MEM_SIZE` 0x08000000, as the real iPod2,1) MobileSafari then dies
-with "The operation couldn't be completed. Cannot allocate memory" on the first
-HTTPS load — even for a 1 KB page (example.com) — because TLSFix's static OpenSSL
-1.1.1w (~1.9 MB text + its heap on the first handshake) does not fit in the WebKit
-content process's memory budget. So the patch turns Safari's "could not establish
-a secure connection" into an out-of-memory failure; it is left out by default and
-kept as an opt-in for a device with more RAM or a slimmer TLS library. Cydia and
-other unsandboxed apps get TLSFix without it.
+| Copy under `/usr/lib` | From |
+|---|---|
+| `ios3ds-CydiaSubstrate.dylib` | `/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate` |
+| `ios3ds-tlsfix.dylib` | `/Library/MobileSubstrate/DynamicLibraries/tlsfix.dylib`, with two strings rewritten: its CydiaSubstrate `LC_LOAD_DYLIB` and the `ConfigurationProfiles` directory path (same-length NUL padding inside the load command/string) |
+| `ConfigurationProfiles/ios3ds-roots.plist` | the CA payloads TLSFix's EC-chain check reads |
+
+`ios3ds-applog`'s `load_substrate()` first tries the `/Library` Substrate as
+before (SpringBoard and unsandboxed apps are unchanged). If that `dlopen` fails
+— a sandboxed app — it loads the `/usr/lib` TLSFix copy from a run-loop timer
+once CFNetwork is up (an app's constructors run before its frameworks), so
+TLSFix's hooks are installed before the first connection. This needs no kernel
+patch and no wider sandbox; it costs about 2.5-3 MiB of resident memory in
+MobileSafari (`--icount 2`: 8.2 MiB after a plain page, 10.7-11.7 MiB with TLSFix
+after an HTTPS page, 38-41 MiB still free of 128 MiB) and the old out-of-memory
+failure did not reappear (re-log 104).
+
+**The old sb_evaluate patch remains an opt-in** (`kernel/patches-sandbox.json`,
+`SANDBOX=1` / `--sandbox-open` / `IOS3DS_SANDBOX_OPEN=1`; re-log 72): it replaces
+the Sandbox kext's `sb_evaluate` first instruction (`com.apple.security.sandbox`
+0x803cd000, Sandbox-58.12, 0x803ced98) with a branch to `shim_sb_evaluate`, which
+allows the file-read operations (op 1, 6-9, 11) and runs the real evaluator for
+everything else. It is no longer needed for TLSFix: in a QEMU run with it applied,
+MobileSafari's probe still got `EPERM` opening `/Library/MobileSubstrate/...`
+(even with a temporary shim that allowed every operation), so the vnode-open
+check evidently does not reach that function in this build. It stays as an
+experiment for other tweaks, off by default.
 
 ## Installing tweaks: Substrate stays as it is (re-log 73)
 
@@ -232,6 +239,116 @@ still carry an armv6 (or generic ARM) slice.
   leaves `cpio 2.9-2p` "install ok installed" with `/usr/bin/cpio`.
 - `emu/soak.py --cycles 10` on the image after all of the above.
 
+## Refresh and install time (re-log 105)
+
+A tester on a New 2DS XL (public issue #1) reported that adding a repository
+and installing a tweak take "a really long time". QEMU with `--icount 2` can
+separate the parts; the local-repo harness `emu/cydia_perf.py` builds one small
+`.deb` itself (32 files, gzip, `iphoneos-arm`), serves `Release`/`Packages.gz`
+and the `.deb` from the host over slirp (`http://10.0.2.2:<random port>/repo`),
+and puts a temporary launch daemon in the image that times apt and dpkg with
+`[cperf] ... start/done` lines in `sd:/ios3ds/log.txt`. No third-party packages
+or internet hosts are used; the source is added before the boot, so "refresh"
+below is apt's backend work, not Cydia's URL-entry UI.
+
+The harness also reports each phase's guest CPU (`bash time`, `[cperf] ...
+cpu real= user= sys=`), can synthesize a larger index (`--fill N`), serve
+`Packages.bz2` as well (`--bz2`), add a second (dead) source
+(`--extra-source`), override apt config (`--apt-extra`, installed as
+`99zzios3ds-perf`) and skip the refresh to isolate `dpkg -i`
+(`--skip-refresh`). Run it on a fresh image (the script's docstring has the
+commands).
+
+### First measurement
+
+Guest seconds from the ARM9's `log_ts=1` stamps, same image and same `.deb`
+except for the fixes; host was otherwise idle:
+
+| Phase | before (`origin/main`) | after | change |
+|---|---:|---:|---:|
+| add source + `apt-get update` | 1.797 s | 1.747 s | −0.050 s |
+| download the one `.deb` | 0.173 s | 0.078 s | −0.095 s |
+| `dpkg -i` that `.deb` | 2.493 s | 2.423 s | −0.070 s |
+| **total** | **4.463 s** | **4.248 s** | **−0.215 s (−4.8 %)** |
+
+All runs returned rc=0; no md0 errors, panic or ARM9 exception. During
+`dpkg -i` the `[io]` lines went from 618 md0 chunks / 316 ms ARM9 service time
+to 556 chunks / 288 ms with the same ~600 KiB written: the 64 KiB bounce
+removes about one mailbox round trip in ten, and the write-back cache batches
+the small writes instead of calling `f_sync` once per dpkg file.
+
+A later re-run of the same A/B on a loaded host shows how much the guest wall
+clock moves with host load (same harness, fresh images, `fill=0`):
+
+| Phase | before (base 8fe190d) | after (this branch) | guest CPU before → after |
+|---|---:|---:|---:|
+| `apt-get update` | 2.993 s | 2.443 s | 0.72 → 0.67 s |
+| download | 0.132 s | 0.277 s | 0.07 → 0.10 s |
+| `dpkg -i` | 3.438 s | 2.664 s | 0.67 → 0.58 s |
+| **total** | **6.563 s** | **5.384 s** | **1.46 → 1.35 s** |
+
+QEMU's SD card is instant, so the remaining seconds are mostly apt/dpkg CPU on
+the emulated ARM11 plus emulator scheduling. On a real card the saved
+`f_sync` commands and smaller request count matter much more
+([boot-perf.md](boot-perf.md) §5, §8). Compare chunks/KiB/ARM9 time, not a
+single wall-clock run.
+
+### Where the time goes
+
+- **apt's index work is CPU, not network.** With a synthetic 2,000-package
+  `Packages` (440 KB; still built locally), `apt-get update` takes 3.8–5.1 s
+  and 1.3–1.6 s of guest CPU. Most of the rest is blocked time in md0 reads
+  (apt paging in its libraries and writing `/var/lib/apt/lists`) and QEMU
+  scheduling.
+- **Compression matters.** apt 0.7 prefers bzip2 over gzip when a source
+  offers both. Decompressing the same index as bz2 took 5.121 s / 1.60 s CPU;
+  with gzip it was 3.762–4.257 s / 1.30–1.43 s CPU. Images now order gzip
+  first (`Acquire::CompressionTypes::Order`).
+- **The dead default sources are the refresh outlier.** Cydia 1.1.30 still
+  writes its five 2011 sources on first launch; ModMyi, ZodTTD and
+  repo666.ultrasn0w.com are gone. Measured with one dead source
+  (`cydia.zodttd.com`) added to the local repo's list: refresh 2.544 s
+  without a fix (apt followed a redirect and retried) vs **1.490 s** when
+  `/private/etc/hosts` points the host at 127.0.0.1, so the connect is refused
+  at once. `apt.modmyi.com` already fails through DNS here but not on every
+  network; the hosts entry removes that variable. The 10 s
+  `Acquire::http::Timeout`/`Retries 0` stay as a backstop, and the sources are
+  still listed until the user removes them in Sources > Edit.
+- **`Dir::Cache::pkgcache` off is not a win:** it makes refresh look cheaper
+  by skipping the binary cache, but then `apt-get --download-only` and the
+  install re-parse the text lists (download phase CPU 0.07 → 0.47 s), so it is
+  not shipped.
+- **HTTPS handshakes** are software work in TLSFix's OpenSSL
+  ([certificates.md](certificates.md) §4 measures 2–9 s per Cydia fetch) and
+  are not removed by an apt option. **Substrate re-signing is not a cost:**
+  code signing is disabled in our boot-args and dpkg only unpacks the files;
+  nothing in our build re-signs a tweak.
+
+### What changed
+
+- `kernel/shim/blk.c` + `boot/common/ios3ds.h`: 127-sector (63.5 KiB) bounce
+  in the free FCRAM after the XNU log ring instead of 32 KiB.
+- `boot/arm9/blksrv.c` + `blkcache.c/h`: 256 KiB write-back cache, deferred
+  `f_sync` (500 ms idle / 2 s cap), flush-before-clean-flag, O(1) dirty count
+  and a one-`f_read` fast path when nothing is dirty.
+- `rootfs/cydia.json`: `/private/etc/hosts` fail-fast entries, gzip index
+  order, 10 s timeouts, no retries, no translations
+  (`/private/etc/apt/apt.conf.d/99ios3ds-speed`).
+- `emu/cydia_perf.py`: the measurement harness above; `tests/test_blkcache.c`
+  covers eviction, flush, invalidation and error retention.
+
+**Verification:** `make test` passes (including the cache test, the CI stub
+symbol check and the conflict-marker check) and a fresh-image
+`python3 emu/soak.py --cycles 5 --icount 2` printed **Result: PASS** after the
+rebase onto `origin/main`. Re-checked on a freshly rebuilt image from the
+final tree (`make userland`, `rm -f build/sd.img && make sdimg`): the local
+repo harness gave 1.645 s for refresh, 0.385 s for the download and 2.618 s
+for `dpkg -i` (4.648 s total, rc=0, no md0 or blk errors; guest CPU
+0.23/0.05/0.19 s user + 0.44/0.04/0.40 s sys), and another fresh-image
+5-cycle soak printed **Result: PASS**. These wall times are between the two
+A/B runs above on the same loaded host; the comparison columns remain the
+stable result.
+
 ## Known issues
 
 - **HTTPS:** the current root store ([certificates.md](certificates.md)) and
@@ -239,7 +356,7 @@ still carry an armv6 (or generic ARM) slice.
   depictions/repositories on TLS 1.2-only servers go through the same CFNetwork
   path that ios3ds-nettest tested (not tried in the Cydia UI). BigBoss's HTTPS host still
   fails: its certificate expired on 2026-06-15 (its repository is plain HTTP).
-- Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh.
+- Dead default sources (ModMyi, ZodTTD, repo666) show errors on refresh; they now fail at once (`/private/etc/hosts`).
 - The startup daemon re-runs `firmware.sh` on every boot (stock behaviour); it
   is a few seconds of background shell work.
 - Substrate is not in launchd daemons (only in SpringBoard and apps): tweaks

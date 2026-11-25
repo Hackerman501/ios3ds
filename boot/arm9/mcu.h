@@ -13,7 +13,18 @@ void mcu_set_powersave(bool on);
 void mcu_screen_off(bool off);
 /* boot.cfg notify_led=1: low battery (<= 10 %, not charging) blinks the notification LED red */
 void mcu_set_led(bool on);
+/* boot.cfg auto_brightness on New models: sample the inner camera's ambient
+   luminance into the MCU mailbox (docs/mcu.md section 13). Call after the
+   model check, once camera_init has run. */
+void mcu_set_als(bool on);
+/* Wi-Fi link LED (MCU reg 0x2A); boot.cfg wifi_led=0 disables it */
+void mcu_config_wifi_led(bool on);
+void mcu_set_wifi_led(bool on);
+/* 3D indicator LED (MCU reg 0x2C), follows the parallax barrier in stereo mode */
+void mcu_set_3d_led(bool on);
 /* monitor loop: IRQ events, sliders, battery, RTC, accelerometer, requests */
 void mcu_poll(u32 now_ticks);
 /* INBTN_HOME / INBTN_POWER for the input sample (boot/arm9/tsc.c) */
 u16 mcu_buttons(void);
+/* last 3D slider reading (MCU reg 0x08, 0..255) for the stereo screen copy */
+u32 mcu_slider3d(void);

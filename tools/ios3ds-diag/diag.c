@@ -80,6 +80,13 @@ long send(int, const void *, size_t, int);
 long recv(int, void *, size_t, int);
 static int urlpoll(const char *ip, int port)
 {
+    char ba[512];
+    size_t bn = sizeof(ba) - 1;
+    if (sysctlbyname("kern.bootargs", ba, &bn, NULL, 0) == 0) {
+        ba[bn < sizeof(ba) ? bn : sizeof(ba) - 1] = 0;
+        const char *q = strstr(ba, "ios3ds_urlport=");
+        if (q) port = atoi(q + 15);     /* test aid: 8080 is often taken on the host */
+    }
     void *cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_NOW);
     void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_NOW);
     if (!cf || !sbs) return 1;
@@ -151,7 +158,9 @@ int main(int argc, char **argv)
     ba[n < sizeof(ba) ? n : sizeof(ba) - 1] = 0;
     const char *p = strstr(ba, gate);
     size_t gl = strlen(gate);
-    if (!p || p[gl] == '0' || p[gl] == 0 || p[gl] == ' ') return 0;
+    if (!p || p[gl] == 0 || p[gl] == ' ') return 0;
+    /* only a bare 0 means off: gps=0.5,... is a real value */
+    if (p[gl] == '0' && (p[gl + 1] == 0 || p[gl + 1] == ' ')) return 0;
     execv(argv[1], argv + 1);
     perror(argv[1]);
     return 1;

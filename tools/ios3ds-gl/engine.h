@@ -20,6 +20,8 @@
 #define PROJ_STACK 2
 #define TEX_STACK 2
 #define MAX_TEX_SIZE 1024
+#define MAX_PALETTE_MATRICES 16
+#define MAX_MIP_LEVELS 11
 
 typedef struct GC GC;
 
@@ -33,9 +35,12 @@ typedef struct Tex {
     GLenum min_filter, mag_filter, wrap_s, wrap_t;
     int crop[4];
     int gen_mipmap;
+    uint32_t *mip[MAX_MIP_LEVELS];  /* glGenerateMipmapOES: 0 = base image */
+    int n_mip;                      /* number of levels stored (1 = base only) */
     void *be_priv;              /* back end's copy (PICA200: texture in linear memory) */
     unsigned be_seq;            /* bumped whenever px changes */
     int rect;                   /* last bound as GL_TEXTURE_RECTANGLE (0x84F5): texcoords in texels */
+    int stereo_opq;             /* stereo stamp: 0 unknown, 1 opaque, 2 has alpha < 255 */
 } Tex;
 
 /* QuartzCore binds IOSurface-backed images and its display surface with
@@ -158,6 +163,8 @@ struct GC {
     /* transform */
     GLenum matrix_mode;
     Mat4 mv[MV_STACK], proj[PROJ_STACK];
+    Mat4 palette[MAX_PALETTE_MATRICES];      /* OES_matrix_palette */
+    int palette_cur;
     int mv_depth, proj_depth;
     Mat4 mvp;
     int mvp_dirty;
@@ -169,6 +176,7 @@ struct GC {
     /* current values, arrays */
     float color[4], normal[3], texcoord[MAX_TEX_UNITS][4];
     Array a_vertex, a_normal, a_color, a_texcoord[MAX_TEX_UNITS], a_psize;
+    Array a_matrix_idx, a_weight;            /* OES_matrix_palette */
     GLuint array_buf, elem_buf;
     int active_tex, client_tex;
 
@@ -247,6 +255,16 @@ void pica_backend_stats2(PicaStats *s);
 int gl_scene_diff(int which, int *maxd);   /* ca.c: CPU vs GPU pixels off by > 24 (0 CA scene, 1 depth probe) */
 int ca_scene_check(void);               /* ca.c: GPU vs CPU on a CA-like scene, 1 = close enough */
 void ca_frame(void);                    /* ca.c: one CA swap (statistics) */                 /* 1 = CoreAnimation may composite with this engine (on the GPU) */
+
+/* stereo.c: the stereoscopic 3D stamp (docs/stereo3d.md). Off unless the
+   boot-args say ios3ds_stereo=1 and the process is the CA render server. */
+void stereo_init(void);                 /* once per process (lazy from stereo_prepare) */
+int  stereo_enabled(void);
+int  stereo_prepare(GC *gc, RT *rt, const Vtx *v, int n);  /* classify one draw: class >= 0 to stamp, -1 otherwise */
+int  stereo_tex_opaque(Tex *t);
+void gl_be_triangles(GC *gc, RT *rt, const Vtx *v, int n, int cls);  /* pass 1 + stamp pass */
+int  stereo_end_frame(GC *gc);          /* decide + wipe; 1 = a wipe was drawn (sync the target) */
+void stereo_stats(unsigned *frames, unsigned *home, unsigned *flat, unsigned *stamps, unsigned *wipes);
 void pica_forget(const void *mem);
 void pica_backend_stats(unsigned *lists, unsigned *draws);
 const Backend *gl_pick_backend(void);

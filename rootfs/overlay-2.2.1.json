@@ -1,0 +1,49 @@
+{
+ "_comment": "iOS 2.2.1 (5H11a) overlay on rootfs/recipe.json. Applied by scripts/versions.py into build/fw-2.2.1/recipe.json; the 4.2.1 recipe is never changed. 2.x has no dyld shared cache (frameworks are individual dylibs) and no MBXGLEngine/Substrate, so all cache patches, interposers, Cydia and TLSFix are left out. The liblockdown patches + ldid re-sign were removed after a control run showed the re-sign alone stops dyld after CoreSurface; the stock signed dylib lets it load the full framework set (re-log 115). Activation remains an open item.",
+ "cydia": false,
+ "tlsfix": false,
+ "trust_store": null,
+ "write": {
+  "_replace": true,
+  "/etc/fstab": "/dev/md0 / hfs rw 0 0\n",
+  "/etc/syslog.conf": "*.*\t/var/log/syslog\n",
+  "/var/log/syslog": ""
+ },
+ "remove": [
+  "/System/Library/Caches/com.apple.kernelcaches/kernelcache.s5l8720x"
+ ],
+ "mkdirs": [
+  "/private/var/mobile/Library/Logs",
+  "/private/var/mobile/Library/Logs/CrashReporter"
+ ],
+ "_activation": "SpringBoard's liblockdown calls lockdown_connect()/lockdown_copy_value() through /var/run/lockdown/localcomm, which does not exist without lockdownd. Patching and re-signing /usr/lib/liblockdown.dylib is not viable on 2.x: even a re-sign with no byte changes makes dyld stop after CoreSurface. The stock dylib is kept; activation/UI is still not reached.",
+ "symlink": {
+  "_replace": true
+ },
+ "plist_set": {
+  "_replace": true,
+  "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist": {
+   "StandardErrorPath": "/dev/console",
+   "StandardOutPath": "/dev/console",
+   "EnvironmentVariables": {
+    "DYLD_PRINT_LIBRARIES": "1"
+   }
+  }
+ },
+ "plist_merge": {
+  "_replace": true
+ },
+ "add": {
+  "_replace": true
+ },
+ "chmod": {
+  "_replace": true
+ },
+ "cydia_plist_write": {
+  "_replace": true
+ },
+ "file_patches": [],
+ "disable_daemons": [],
+ "_todo": "Darwin 9 lacks IOSurface, CoreMotion and Celestial's 4.x API: our 4.2.1 GPU/gyro/camera userland binaries cannot simply be copied here. The activation interposer above is the only 4.2.1-derived tool installed on 2.2.1; input/MCU/Wi-Fi tools are still not installed (docs/multi-version.md \u00a76.5).",
+ "extra_file_patches": []
+}

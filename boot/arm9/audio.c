@@ -60,6 +60,20 @@ static u8 hp_drv;               /* CODEC page 101 reg 11 value (headphone driver
 static const int16_t hp_filt32[15] = { 32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0, 32736, -16368, 0, 16352, 0 };
 static const int16_t hp_filt47[15] = { 32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0, 32745, -16372, 0, 16361, 0 };
 
+/* libn3ds microphoneInit()'s coefficient-RAM filters (hw_cal.c defaults,
+   big-endian on the wire): page 4 reg 8 = 10 Hz high-pass for the mic
+   autogain, pages 5 reg 8 / 5 reg 72 = pass-through PRB_P25 chains for the
+   32/47 kHz I2S lines. ios3ds used to skip them; GBATEK lists these exact
+   pages as the 3DS microphone filters and libn3ds writes them in CODEC_init
+   before the DACs are powered (page 100 reg 118 then locks the RAM). */
+static const int16_t mic_hp[3] = { 32737, -32737, 32705 };
+static const int16_t mic_prb[28] = {
+    32767, 0, 0,                          /* first-order IIR: pass through */
+    32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0, /* five pass-through biquads */
+    32767, 0, 0, 0, 0, 32767, 0, 0, 0, 0,
+    32767, 0, 0, 0, 0
+};
+
 static void cdc_coeffs(u8 page, u8 reg, const int16_t *c, u32 n)   /* big-endian, as the CODEC wants them */
 {
     for (u32 i = 0; i < n; i++) {
@@ -156,6 +170,13 @@ bool audio_init(void)
     cdc_mask(P0, 57, 0x66, 0x66);               /* GPI1/GPI2: don't force the speaker */
     cdc_write(P101, 122, 1);                    /* VREF */
     cdc_mask(P100, 34, 0x18, 0x18);             /* PLL */
+
+    /* Microphone filter coefficients, while the coefficient RAM is still
+       unlocked (as in libn3ds CODEC_init; DAC power-up locks it below). */
+    cdc_coeffs(4, 8, mic_hp, 3);
+    cdc_coeffs(5, 8, mic_prb, 28);
+    cdc_coeffs(5, 72, mic_prb, 28);
+    cdc_mask(P100, 49, 0x44, 0x44);             /* non-GBA (iOS) audio mode, libn3ds shutterSoundInit */
 
     /* headphone/speaker selection follows the jack (CDC_REG_HEADSET_SEL);
        audio_poll repeats it when the jack changes */
@@ -307,11 +328,27 @@ static void jack_poll(void)
    iOS records and says so in aud_mic_t.want; the ARM9 owns the CODEC (SPI), so
    it powers the ADC for that time, publishes boot.cfg mic=0 and logs. */
 static volatile aud_mic_t *const micr = (volatile aud_mic_t *)AUD_MIC_PA;
-static struct { bool enabled, adc; u32 state; } mic = { .enabled = true, .state = ~0u };
+static struct { bool enabled, adc; u32 state, diag_seq; } mic = { .enabled = true, .state = ~0u };
 
 void audio_set_mic(bool enabled) { mic.enabled = enabled; }
 void audio_set_hp_route(bool enabled) { hp_route = enabled; }
 void audio_set_hp_codec(u32 mode) { hp_codec = mode; }
+
+/* sqrt(sum of squares / n) * 256, from the shim's one-second report. Integer
+   only: the ARM9 has no FPU, and the log needs about 0.4 % resolution. */
+static u32 mic_rms(u32 lo, u32 hi, u32 n)
+{
+    if (!n) return 0;
+    u32 sq = (u32)(((u64)hi << 32 | lo) / n);
+    u32 v = 0, bit = 1u << 30;
+    while (bit > sq) bit >>= 2;
+    while (bit) {
+        if (sq >= v + bit) { sq -= v + bit; v = (v >> 1) + bit; }
+        else v >>= 1;
+        bit >>= 2;
+    }
+    return v << 8;
+}
 
 static void mic_poll(volatile aud_stat_t *st)
 {
@@ -335,10 +372,33 @@ static void mic_poll(volatile aud_stat_t *st)
         }
         mic.adc = want;
         micr->adc_on = want;
+        if (want && codec_ok && !cdc_bus_dead()) {
+            /* The registers that decide whether the 3DS mic reaches the ADC
+               (GBATEK 3DS TSC / TI TSC2117). Read after ADC power-up: this is
+               the evidence a hardware run needs to separate a CODEC-level
+               problem from iOS's input gain. rms numbers are x256. */
+            log_ok("[mic] CODEC on: 0:51=%02x 52=%02x 53=%02x | 1:2e=%02x 2f=%02x 30=%02x 31=%02x | "
+                   "100:22=%02x 31=%02x 77=%02x | 101:33=%02x 41=%02x 42=%02x | I2S1 %04x I2S2 %04x\n",
+                   cdc_read8(P0, 0x51), cdc_read8(P0, 0x52), cdc_read8(P0, 0x53),
+                   cdc_read8(1, 0x2E), cdc_read8(1, 0x2F), cdc_read8(1, 0x30), cdc_read8(1, 0x31),
+                   cdc_read8(P100, 0x22), cdc_read8(P100, 0x31), cdc_read8(P100, 0x77),
+                   cdc_read8(P101, 0x33), cdc_read8(P101, 0x41), cdc_read8(P101, 0x42),
+                   *(vu16 *)I2S1_CNT_PA, *(vu16 *)I2S2_CNT_PA);
+        }
+    }
+    if (micr->diag_seq != mic.diag_seq) {
+        mic.diag_seq = micr->diag_seq;
+        u32 raw_rms = mic_rms(micr->diag_raw_sq_lo, micr->diag_raw_sq_hi, micr->diag_raw_n);
+        u32 out_rms = mic_rms(micr->diag_out_sq_lo, micr->diag_out_sq_hi, micr->diag_frames);
+        log_ok("[mic] 1 s: FIFO peak %u rms %u.%u, iOS peak %u rms %u.%u (%u frames)\n",
+               (unsigned)micr->diag_raw_peak, raw_rms >> 8, (raw_rms & 255u) * 10u >> 8,
+               (unsigned)micr->diag_out_peak, out_rms >> 8, (out_rms & 255u) * 10u >> 8,
+               (unsigned)micr->diag_frames);
     }
     if (micr->state != mic.state) {
         mic.state = micr->state;
         if (mic.state == AUD_MIC_RUNNING) {
+            mic.diag_seq = 0;               /* the shim restarts its one-second report at 0 */
             svc0 = st ? st->services : 0;
             early0 = st ? st->early_wakes : 0;
             t0 = t9_ticks();

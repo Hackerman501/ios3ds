@@ -80,6 +80,8 @@ enum { BMI_DONE = 1, BMI_WRITE_MEMORY = 3, BMI_EXECUTE = 4, BMI_READ_SOC_REG = 6
    practice 1 = WMI control, 2..5 = data BE/BK/VI/VO */
 enum { PKT_HTC = 0 };
 #define HTC_FLG_RX_TRAILER 0x02
+#define HTC_FLG_NEED_CREDIT 0x01    /* ask the target to return credits */
+#define HTC_REC_CREDITS 1           /* trailer record id (ath6kl htc.h) */
 enum { HTC_READY = 1, HTC_CONN_SVC = 2, HTC_SETUP_COMPLETE = 4 };
 enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
        WMI_START_SCAN = 0x0007, WMI_SET_BSS_FILTER = 0x0009, WMI_SET_PROBED_SSID = 0x000A,
@@ -93,7 +95,8 @@ enum { WMI_CONNECT = 0x0001, WMI_DISCONNECT = 0x0003, WMI_SYNCHRONIZE = 0x0004,
 /* WMI crypto types as the DSi/3DS firmware uses them (GBATEK "WMI Connect
    Functions": NONE 1, WEP 2, TKIP 3, AES 4 - not the ath6kl bit values) */
 enum { CRYPT_NONE = 1, CRYPT_TKIP = 3, CRYPT_AES = 4 };
-enum { AUTH_NONE = 1, AUTH_WPA2_PSK = 5 };  /* WMI authMode as sent by dsiwifi */
+/* WMI authMode as sent by dsiwifi: WPA-PSK 3, WPA2-PSK 5 (GBATEK) */
+enum { AUTH_NONE = 1, AUTH_WPA_PSK = 3, AUTH_WPA2_PSK = 5 };
 
 /* ---- sd:/ios3ds/wifi-fw.bin (written by tools/ios3ds-wifi/nwmfw.py) ------ */
 #define FW_MAGIC 0x46573349u    /* 'I3WF' */
@@ -118,6 +121,20 @@ static struct {
     u8 rxframe[NET_FRAME_MAX];      /* one converted frame waiting for rx() */
     u32 rxlen;
     u8 ep_wmi, ep_data;             /* endpoints the firmware assigned */
+    /* HTC credits (ath6kl htc_mbox.c): the target owns a pool of credits of
+       cred_sz bytes; a message consumes ceil(padded_len / cred_sz) of them and
+       the target returns them in the RX trailer of the messages it sends. */
+    u8  ep_credits[8], ep_cred_per_msg[8];
+    u16 ep_max_msg[8];
+    u32 cred_sz, cred_pool;
+    u32 credit_rpt, credit_ret, credit_used, credit_low, credit_busy;
+    u32 credit_refund;              /* credits returned after a failed mailbox write */
+    u32 ep0_refill;                 /* HTC control credits funded locally (issue #11) */
+    u32 defer_drop;                 /* packets that could not be queued at all */
+    u32 defer_full;                 /* waits stopped with the deferred ring full */
+    u32 wmi_busy;                   /* WMI control sends queued for lack of credits */
+    u32 eapol_busy;                 /* EAPOL replies queued for lack of credits */
+    u8  credit_log;
     u32 t_state;                    /* now_ms() when the current wait started */
     u32 reconnect_at;               /* now_ms() for the next WMI_CONNECT, 0 = none */
     u8 scan_done, auth_fails;
@@ -126,6 +143,7 @@ static struct {
     u8 nonet, rescan;               /* NO_NETWORK_AVAIL failures in a row; a directed rescan is running */
     u8 cancelling;                  /* our WMI_DISCONNECT that ends the firmware's own retries */
     u8 rsn_mode;                    /* RSN_MODE_* of the target AP (scan), see wpa2_rsn_parse */
+    u8 wpa1_ap;                     /* AP offers WPA v1 (vendor IE) with TKIP pairwise */
     u16 disc_reason, disc_code;
     u32 link_seq;
     /* [wifi-diag] */
@@ -184,6 +202,8 @@ static u32 nscan, scan_seq;
 static u8 user_scan;                /* a WLAN_CMD_SCAN is running */
 
 static int soc_read(u32 addr, u32 *v);
+static void wmi_queue_clear(void);
+static u32 eapol_pending_len;       /* also cleared by fail() */
 
 /* A bring-up step failed: log it, park the chip in reset (nRESET low), and
    stay "failed". iOS boots on; Settings shows Wi-Fi as unavailable. */
@@ -192,6 +212,8 @@ static u32 fail(int err, const char *what)
     u32 st = A.state;
     A.err = err;
     A.state = NET_ST_FAILED;
+    wmi_queue_clear();
+    eapol_pending_len = 0;
     log_err("[wifi] %s failed: %d (sdio status %08x)\n", what, err, sdio_last_status());
     DIAG("FAILED in stage %s: %s, error %d, sdio status %08x", st_name(st), what, err, sdio_last_status());
     if (A.diag && st >= NET_ST_BOOT && st <= NET_ST_WMI) {
@@ -328,23 +350,232 @@ static int bmi_chunk(u32 cmd, u32 addr, const u8 *p, u32 n)
 }
 
 /* ---- mailbox packets (HTC framing) ------------------------------------------ */
-static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len)
+
+/* ---- HTC credits -----------------------------------------------------------
+   The target tells us in HTC_READY how many credits of how many bytes it has
+   (ath6kl htc_ready_msg: cred_cnt, cred_sz). A message consumes
+   ceil(padded_len / cred_sz) credits, at least one; the target returns credits
+   in the trailer of the messages it sends us (htc_credit_report: eid, credits).
+   Writing without credits overruns the firmware's mailbox ("Mbox Full" on the
+   AR6014), so the data path queues its frame and the control path waits for a
+   report instead. The initial distribution follows ath6kl: every endpoint gets
+   enough for one maximum-sized message, the rest goes to the data endpoint. */
+static int mbox_recv(u32 *type);
+static int pump_msg(u32 type, int n);
+static int defer_msg(u32 type, const u8 *body, int n);
+
+/* A burst of WMI control messages (connect, pairwise/group key, synchronize)
+   can exhaust the endpoint's credits. The bounded credit wait may return
+   BUSY, so queue control messages in order and retry them on the next monitor
+   pass; dropping one (typically the group key) breaks DHCP and rekeys. */
+#define WMI_QUEUE_MAX 8
+static struct { u8 len; u8 b[72]; } WQ[WMI_QUEUE_MAX];
+static u8 wq_head, wq_count;
+
+static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wait);
+static void wmi_queue_clear(void) { wq_head = wq_count = 0; }
+
+static void wmi_queue_put(const u8 *b, u32 len)
+{
+    u8 i = (u8)((wq_head + wq_count) % WMI_QUEUE_MAX);
+    WQ[i].len = (u8)len;
+    memcpy(WQ[i].b, b, len);
+    wq_count++;
+}
+
+static int wmi_queue_flush(void)
+{
+    while (wq_count) {
+        u8 i = wq_head;
+        int r = mbox_send(A.ep_wmi, 1, 0, WQ[i].b, WQ[i].len, 0);
+        if (r == SDIO_ERR_BUSY) return r;       /* credits may return in this pass */
+        wq_head = (u8)((wq_head + 1) % WMI_QUEUE_MAX);
+        wq_count--;
+        if (r < 0) return r;                    /* hard error: the rest stay queued */
+    }
+    return 0;
+}
+
+static u32 credit_need(u32 padded)
+{
+    return padded > A.cred_sz ? (padded + A.cred_sz - 1) / A.cred_sz : 1;
+}
+
+static void credit_assign(u32 ep, u32 max_msg)
+{
+    if (ep > 7) return;
+    u32 per = max_msg > A.cred_sz ? (max_msg + A.cred_sz - 1) / A.cred_sz : 1;
+    if (per < 1) per = 1;
+    A.ep_cred_per_msg[ep] = (u8)per;
+    A.ep_max_msg[ep] = (u16)max_msg;
+    u32 take = per < A.cred_pool ? per : A.cred_pool;
+    A.ep_credits[ep] += take;
+    A.cred_pool -= take;
+    DIAG("htc: endpoint %u: %u credit(s) of %u bytes (max message %u), %u left in the pool",
+         ep, take, A.cred_sz, max_msg, A.cred_pool);
+}
+
+static void credit_init(u32 n, u32 sz)
+{
+    memset(A.ep_credits, 0, sizeof(A.ep_credits));
+    memset(A.ep_cred_per_msg, 0, sizeof(A.ep_cred_per_msg));
+    memset(A.ep_max_msg, 0, sizeof(A.ep_max_msg));
+    A.cred_sz = sz ? sz : 1664;
+    A.cred_pool = n;
+    A.credit_rpt = A.credit_ret = A.credit_used = A.credit_low = A.credit_busy = 0;
+    A.credit_refund = A.ep0_refill = A.defer_drop = A.defer_full = A.wmi_busy = A.eapol_busy = 0;
+    A.credit_log = 0;
+    wmi_queue_clear();
+    credit_assign(0, A.cred_sz);            /* the control endpoint exists already */
+}
+
+/* one RX trailer: records of (id, len, data...); id 1 = credit reports */
+static void credit_report(const u8 *t, u32 n)
+{
+    u32 got = wifi_htc_credits(t, n, A.ep_credits);
+    if (!got) return;
+    A.credit_rpt += got;
+    A.credit_ret += got;
+    if (A.credit_log < 16) {
+        A.credit_log++;
+        DIAG("htc: credit report: +%u credit(s) = %u on ep1/%u on ep2, returned in total %u",
+             got, A.ep_credits[A.ep_data ? A.ep_data : 1], A.ep_credits[2], A.credit_ret);
+    }
+}
+
+/* A credit wait must not re-enter the WMI/HTC state machine (we may already
+   be inside its handler). Keep whole packets in a queue and run them after
+   the current step, from pump() below. Credit records are already applied by
+   mbox_recv() when it strips the trailer. A full ring is not an excuse to
+   drop a packet: the caller stops draining and leaves it in the hardware
+   mailbox for the next pump(). 16 x 1664 bytes is ~26 KiB of ARM9 RAM. */
+#define DEFER_MAX 16u
+static struct { u8 type; u16 len; u8 body[0x680]; } D[DEFER_MAX];
+static u8 d_head, d_count;
+
+/* 0 = queued, <0 = the packet stays in the mailbox (and is counted). */
+static int defer_msg(u32 type, const u8 *body, int n)
+{
+    if (n <= 0 || (u32)n > sizeof(D[0].body) || d_count >= DEFER_MAX) {
+        A.defer_drop++;
+        if (A.credit_log < 16) {
+            A.credit_log++;
+            DIAG("htc: deferred ring full (%u packets), leaving the mailbox packet pending", DEFER_MAX);
+        }
+        return SDIO_ERR_BUSY;
+    }
+    u8 i = (u8)((d_head + d_count) % DEFER_MAX);
+    D[i].type = (u8)type;
+    D[i].len = (u16)n;
+    memcpy(D[i].body, body, (u32)n);
+    d_count++;
+    return 0;
+}
+
+static int pump_msg(u32 type, int n)
+{
+    return defer_msg(type, pkt + 6, n);
+}
+
+/* One monitor step may spend at most ~20 ms here (20 x the 1 ms wait below):
+   md0, the GPU mirror and input must keep being polled. A control message
+   that cannot get credits returns BUSY to its caller, which retries on the
+   next pass; data frames never call this at all. */
+#define CREDIT_WAIT_POLLS 20u
+static int credit_wait(u32 ep, u32 need)
+{
+    /* Check the ring BEFORE reading: a packet already read from the hardware
+       mailbox cannot be put back. A full ring means the next pump() sees it. */
+    for (u32 i = 0; i < CREDIT_WAIT_POLLS && A.ep_credits[ep] < need && d_count < DEFER_MAX; i++) {
+        u32 type;
+        int n = mbox_recv(&type);
+        if (n > 0) {
+            if (pump_msg(type, n) < 0) break;    /* oversized: leave it in the mailbox */
+        } else if (n < 0) return n;
+        else waitcycles(3350);
+    }
+    if (A.ep_credits[ep] < need) {
+        if (d_count >= DEFER_MAX) {
+            A.defer_full++;
+            if (A.credit_log < 16) {
+                A.credit_log++;
+                DIAG("htc: deferred ring full (%u packets): leaving the mailbox for pump()", DEFER_MAX);
+            }
+        }
+        A.credit_busy++;
+        if (A.credit_log < 16)
+            DIAG("htc: tx waits for credits on endpoint %u (%u < %u)", ep, A.ep_credits[ep], need);
+        return SDIO_ERR_BUSY;
+    }
+    return 0;
+}
+
+static int mbox_send(u32 type, u32 ack, u32 ctl, const u8 *body, u32 len, int wait)
 {
     if (len + 6 > sizeof(pkt)) return SDIO_ERR_ARG;
     u32 total = (len + 6 + SDIO_BLOCK - 1) & ~(SDIO_BLOCK - 1);
+    u32 need = 0;
+    int r = 0, asked = 0;
+    if (type < 8) {
+        need = credit_need(total);
+        if (type == PKT_HTC && A.ep_credits[type] < need) {
+            /* The Type4 firmware on a real New 3DS answers CONNECT_SERVICE
+               (status 0, endpoint 1) but does not credit EP0 back: the next
+               control message waited ~17 ms, failed with SDIO_ERR_BUSY (-5)
+               and left iOS with no Wi-Fi interface or Settings toggle
+               (issue #11). dsiwifi sends all five CONNECT_SERVICE messages
+               plus SETUP_COMPLETE back-to-back, with no credit wait, on the
+               same chip. They are a fixed handful of short control messages,
+               so fund EP0 locally. A firmware/model that does return the
+               credit simply tops EP0 up again. */
+            A.ep_credits[type] = (u8)need;
+            A.ep0_refill++;
+            DIAG("htc: endpoint 0 credit not returned: funding %u for this control message", need);
+        }
+        if (A.ep_credits[type] < need) {
+            if (!wait) {
+                A.credit_busy++;
+                return SDIO_ERR_BUSY;       /* caller keeps the frame queued */
+            }
+            r = credit_wait(type, need);
+            if (r < 0) return r;
+        }
+        A.ep_credits[type] -= (u8)need;
+        A.credit_used += need;
+        if (A.ep_credits[type] < A.ep_cred_per_msg[type]) {
+            ack |= HTC_FLG_NEED_CREDIT;     /* ask the target to give them back */
+            A.credit_low++;
+            asked = 1;
+        }
+    }
     memset(pkt, 0, total);
     pkt[0] = (u8)type; pkt[1] = (u8)ack;
     pkt[2] = (u8)len; pkt[3] = (u8)(len >> 8);
     pkt[4] = (u8)ctl; pkt[5] = (u8)(ctl >> 8);
     if (len) memcpy(pkt + 6, body, len);
     if (A.byte_mode) {                  /* last byte at the window end = end of message */
-        for (u32 i = 0; i < total; i++) {
-            int r = sdio_w8(1, F1_MBOX0_END - total + i, pkt[i]);
-            if (r < 0) return r;
-        }
-        return 0;
+        for (u32 i = 0; i < total; i++)
+            if ((r = sdio_w8(1, F1_MBOX0_END - total + i, pkt[i])) < 0) goto failed;
+    } else {
+        r = sdio_write_blocks(1, F1_MBOX0_END - total, pkt, total);
     }
-    return sdio_write_blocks(1, F1_MBOX0_END - total, pkt, total);
+    if (r >= 0) return r;
+
+failed:
+    /* The target never saw the message, so it owes us no replacement report:
+       put the credits back now, as ath6kl returns cred_used on write failure. */
+    if (need) {
+        u32 back = need > 255u - A.ep_credits[type] ? 255u - A.ep_credits[type] : need;
+        A.ep_credits[type] = (u8)(A.ep_credits[type] + back);
+        A.credit_used -= need < A.credit_used ? need : A.credit_used;
+        A.credit_refund += need;
+        if (asked && A.credit_low) A.credit_low--;
+        if (A.credit_log < 16) {
+            A.credit_log++;
+            DIAG("htc: mailbox write failed (%d): returned %u credits to endpoint %u", r, need, type);
+        }
+    }
+    return r;
 }
 
 static int wmi_send(u32 id, const void *params, u32 len)
@@ -353,7 +584,20 @@ static int wmi_send(u32 id, const void *params, u32 len)
     if (len + 2 > sizeof(b)) return SDIO_ERR_ARG;
     b[0] = (u8)id; b[1] = (u8)(id >> 8);
     if (len) memcpy(b + 2, params, len);
-    return mbox_send(A.ep_wmi, 1, 0, b, len + 2);   /* flag 1: credit update wanted */
+    /* flag 1: credit update wanted; WMI waits briefly, then queues in order */
+    if (wq_count) {
+        if (wq_count >= WMI_QUEUE_MAX) return SDIO_ERR_BUSY;
+        A.wmi_busy++;
+        wmi_queue_put(b, len + 2);
+        return 0;
+    }
+    int r = mbox_send(A.ep_wmi, 1, 0, b, len + 2, 1);
+    if (r == SDIO_ERR_BUSY && wq_count < WMI_QUEUE_MAX) {
+        A.wmi_busy++;
+        wmi_queue_put(b, len + 2);
+        return 0;
+    }
+    return r;
 }
 
 /* Read one packet into pkt[]. Returns the payload length (bytes after the
@@ -384,6 +628,8 @@ static int mbox_recv(u32 *type)
     *type = pkt[0];
     /* credit / lookahead records at the end (ath6kl HTC_FLG_RX_TRAILER) */
     u32 trailer = (pkt[1] & HTC_FLG_RX_TRAILER) ? pkt[4] : 0;
+    if (trailer > len) trailer = 0;
+    if (trailer) credit_report(pkt + 6 + len - trailer, trailer);
     return trailer < len ? (int)(len - trailer) : 0;
 }
 
@@ -469,9 +715,9 @@ static int wmi_connect(void)
     memset(&p, 0, sizeof(p));
     p.networkType = 1;                          /* infrastructure */
     p.dot11AuthMode = 1;                        /* open system */
-    p.authMode = wpa ? AUTH_WPA2_PSK : AUTH_NONE;
-    p.pairwiseCryptoType = wpa ? CRYPT_AES : CRYPT_NONE;
-    p.groupCryptoType = wpa ? A.group_crypt : CRYPT_NONE;
+    p.authMode = wpa ? (A.wpa1_ap ? AUTH_WPA_PSK : AUTH_WPA2_PSK) : AUTH_NONE;
+    p.pairwiseCryptoType = wpa ? (A.wpa1_ap ? CRYPT_TKIP : CRYPT_AES) : CRYPT_NONE;
+    p.groupCryptoType = wpa ? (A.wpa1_ap ? CRYPT_TKIP : A.group_crypt) : CRYPT_NONE;
     p.ssidLength = T.ssid_len;
     memcpy(p.ssid, T.ssid, T.ssid_len);
     if (A.found) {
@@ -521,6 +767,8 @@ static void link_up(void)
     A.state = NET_ST_UP;
     A.auth_fails = 0;
     A.nonet = 0;
+    DIAG("htc: credits so far: used %u, returned %u, reports %u, low-credit flags %u, waits %u, EP0 refills %u",
+         A.credit_used, A.credit_ret, A.credit_rpt, A.credit_low, A.credit_busy, A.ep0_refill);
     log_ok("[wifi] link up: %s, AP %02x:%02x:%02x:%02x:%02x:%02x\n", T.ssid,
            A.bssid[0], A.bssid[1], A.bssid[2], A.bssid[3], A.bssid[4], A.bssid[5]);
 }
@@ -544,9 +792,43 @@ static void snonce(u8 out[32])
     }
 }
 
+/* An EAPOL reply is a data-frame send: never wait for credits in the monitor
+   step (on_eapol() is called from pump()). wpa2_rx_eapol() has already
+   advanced the handshake when it produced the reply, so keep the framed
+   reply here and retry it once per pass until the target reports credits. */
+#define EAPOL_OUT_MAX (2 + 14 + 8 + 160)
+static u8 eapol_pending[EAPOL_OUT_MAX];
+
+static int eapol_send(const u8 *out, u32 n)
+{
+    int r = n ? mbox_send(A.ep_data, 0, 0, out, n, 0) : SDIO_ERR_ARG;
+    if (r == SDIO_ERR_BUSY && n <= sizeof(eapol_pending)) {
+        memcpy(eapol_pending, out, n);
+        eapol_pending_len = n;
+        A.eapol_busy++;
+    }
+    return r;
+}
+
+static void eapol_pending_step(void)
+{
+    if (!eapol_pending_len) return;
+    if (A.state != NET_ST_AUTH && A.state != NET_ST_UP) {
+        eapol_pending_len = 0;              /* disconnected: AP retries the handshake */
+        return;
+    }
+    int r = mbox_send(A.ep_data, 0, 0, eapol_pending, eapol_pending_len, 0);
+    if (r == 0) {
+        eapol_pending_len = 0;
+    } else if (r != SDIO_ERR_BUSY) {
+        log_warn("[wifi] queued EAPOL reply failed: %d\n", r);
+        eapol_pending_len = 0;
+    }
+}
+
 static void on_eapol(const u8 *eth, u32 len)
 {
-    u8 frame[14 + 160], out[2 + 14 + 8 + 160];
+    u8 frame[14 + 160], out[EAPOL_OUT_MAX];
     u32 rlen = 0;
     /* PTK inputs straight from the frame: the authenticator is its source,
        the supplicant its destination (not what the CONNECT event parsing says) */
@@ -577,13 +859,14 @@ static void on_eapol(const u8 *eth, u32 len)
     memcpy(frame + 6, A.mac, 6);
     frame[12] = 0x88; frame[13] = 0x8E;
     u32 n = wifi_frame_to_wmi(frame, 14 + rlen, out, sizeof(out));
-    int r = n ? mbox_send(A.ep_data, 0, 0, out, n) : SDIO_ERR_ARG;
+    int r = eapol_send(out, n);     /* data endpoint: queue on BUSY, never wait */
     if (ev == WPA2_EV_GTK && A.state == NET_ST_UP)
         logp("[wifi] group key renewed by the AP (index %u): %d\n", A.wpa.gtk_idx, r);
     else
         logp("[wifi] EAPOL event %d, reply %u bytes: %d\n", ev, rlen, r);
     if (ev == WPA2_EV_KEYS || ev == WPA2_EV_GTK) {
-        if (ev == WPA2_EV_KEYS) wmi_add_key(0, 0, A.wpa.tk, 16, NULL);          /* pairwise */
+        if (ev == WPA2_EV_KEYS)
+            wmi_add_key(0, 0, A.wpa.tk, A.wpa.wpa1 ? 32 : 16, NULL);           /* pairwise */
         wmi_add_key(A.wpa.gtk_idx, 1, A.wpa.gtk, A.wpa.gtk_len, A.wpa.rsc);     /* group */
         if (A.state != NET_ST_UP) link_up();
     }
@@ -645,7 +928,7 @@ static void scan_record(const u8 *d, u32 n)
             memcpy(b->ssid, p + 2, p[1]);
         }
         if (p[0] == 0x30) b->flags |= WLAN_BSS_RSN;
-        if (p[0] == 0xDD && p[1] >= 4 && p[2] == 0x00 && p[3] == 0x50 && p[4] == 0xF2 && p[5] == 1)
+        if (p[0] == 0xDD && p[1] >= 6 && p[2] == 0x00 && p[3] == 0x50 && p[4] == 0xF2 && p[5] == 1)
             b->flags |= WLAN_BSS_WPA;
         if ((u32)b->ie_len + 2 + p[1] <= WLAN_IE_MAX) {
             memcpy(b->ie + b->ie_len, p, 2 + p[1]);
@@ -677,16 +960,26 @@ static void on_bssinfo(const u8 *d, u32 n)
     scan_record(d, n);
     if (!T.have) return;
     const u8 *ie = d + 28, *end = d + n;
-    int match = 0, group = CRYPT_AES;
+    int match = 0, group = CRYPT_AES, rsn = 0, wpa1 = 0;
     while (ie + 2 <= end && ie + 2 + ie[1] <= end) {
         if (ie[0] == 0 && ie[1] == T.ssid_len && !memcmp(ie + 2, T.ssid, ie[1])) match = 1;
-        if (ie[0] == 0x30 && ie[1] >= 6) group = ie[7] == 2 ? CRYPT_TKIP : CRYPT_AES;  /* RSN group suite 00-0F-AC-xx */
+        if (ie[0] == 0x30 && ie[1] >= 6) {                /* RSN group suite 00-0F-AC-xx */
+            rsn = 1;
+            group = ie[7] == 2 ? CRYPT_TKIP : CRYPT_AES;
+        }
+        if (!rsn && ie[0] == 0xDD && ie[1] >= 10 && !memcmp(ie + 2, "\x00\x50\xF2\x01", 4))
+            wpa1 = 1;                                    /* WPA v1 vendor IE */
         ie += 2 + ie[1];
     }
     if (!match || (A.found && d[3] <= A.found)) return;   /* keep the strongest (by SNR) */
     A.found = d[3] ? d[3] : 1;
     A.channel = (u16)(d[0] | d[1] << 8);
     memcpy(A.bssid, d + 6, 6);
+    A.wpa1_ap = (u8)(wpa1 && !rsn);                       /* mixed WPA+WPA2: use RSN */
+    if (A.wpa1_ap) {
+        group = CRYPT_TKIP;                               /* WPA v1 is TKIP pairwise */
+        DIAG("scan: WPA v1 vendor IE, TKIP pairwise");
+    }
     A.group_crypt = (u8)group;
 }
 
@@ -707,7 +1000,7 @@ static void do_connect(void)
         logp("[wifi] \"%s\" is a WPA2 + WPA3 network: joining with WPA2-PSK\n", T.ssid);
     int r = wmi_connect();
     logp("[wifi] connect \"%s\" (%s%s), %s: %d\n", T.ssid,
-         T.security == WIFI_SEC_WPA2 ? "WPA2-PSK/CCMP" : "open",
+         T.security == WIFI_SEC_WPA2 ? (A.wpa1_ap ? "WPA-PSK/TKIP" : "WPA2-PSK/CCMP") : "open",
          A.group_crypt == CRYPT_TKIP ? ", TKIP group" : "",
          A.found ? "seen in scan" : "not seen in scan, firmware picks", r);
     A.state = r < 0 ? NET_ST_FAILED : NET_ST_SCAN;
@@ -790,8 +1083,9 @@ static void on_wmi(const u8 *b, u32 len)
             u8 sn[32];
             memset(sn, 0, sizeof(sn));
             snonce(sn);
-            wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
-            /* our RSN IE as the firmware put it into the association request */
+            if (A.wpa1_ap) wpa1_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
+            else wpa2_start(&A.wpa, T.pmk, A.mac, A.bssid, sn);
+            /* our RSN / WPA IE as the firmware put it into the association request */
             if (n >= 19) {
                 u32 bl = d[16], ql = d[17], rl = d[18];
                 const u8 *q = d + 19 + bl;
@@ -800,7 +1094,9 @@ static void on_wmi(const u8 *b, u32 len)
                     for (u32 start = 4; start <= 10 && !A.wpa.own_ie_len; start += 6)   /* assoc / reassoc */
                         for (u32 i = start; i + 2 <= ql; i += 2 + q[i + 1]) {
                             if (i + 2 + q[i + 1] > ql) break;
-                            if (q[i] == 0x30 && q[i + 1] + 2 <= sizeof(A.wpa.own_ie)) {
+                            if ((q[i] == (A.wpa1_ap ? 0xDD : 0x30)) && (u32)(q[i + 1] + 2) <= sizeof(A.wpa.own_ie) &&
+                                (!A.wpa1_ap || (q[i + 1] >= 10 &&
+                                 !memcmp(q + i + 2, "\x00\x50\xF2\x01", 4)))) {
                                 A.wpa.own_ie_len = (u8)(q[i + 1] + 2);
                                 memcpy(A.wpa.own_ie, q + i, A.wpa.own_ie_len);
                                 break;
@@ -920,12 +1216,14 @@ static void on_htc(const u8 *b, u32 len)
     static const u8 done[2] = { HTC_SETUP_COMPLETE, 0 };
     u8 eid[5] = { 0 };
     int r = 0;
-    logp("[wifi] HTC ready: %u credits of %u bytes\n", len >= 6 ? b[2] | b[3] << 8 : 0,
-         len >= 6 ? b[4] | b[5] << 8 : 0);
+    u32 ncred = len >= 6 ? (u32)b[2] | (u32)b[3] << 8 : 0;
+    u32 csize = len >= 6 ? (u32)b[4] | (u32)b[5] << 8 : 0;
+    logp("[wifi] HTC ready: %u credits of %u bytes\n", ncred, csize);
     DIAG("htc: HTC_READY %u ms after the firmware started, %u bytes: %s", now_ms() - A.t_state, len, hex(b, len));
+    credit_init(ncred, csize);
     for (int i = 0; i < 5 && r >= 0; i++) {
         u32 type;
-        r = mbox_send(PKT_HTC, 0, 0, svc[i], 8);
+        r = mbox_send(PKT_HTC, 0, 0, svc[i], 8, 1);
         int t;
         for (t = 0; r >= 0 && t < 2000; t++) {          /* its response */
             int got = mbox_recv(&type);
@@ -935,8 +1233,10 @@ static void on_htc(const u8 *b, u32 len)
             if (got >= 6 && type == PKT_HTC && q[0] == 3 && q[2] == svc[i][2] && q[3] == svc[i][3]) {
                 if (q[4] != 0 || q[5] == 0 || q[5] > 7) r = -120 - q[4];
                 eid[i] = q[5];
+                u32 maxmsg = got >= 8 ? (u32)q[6] | (u32)q[7] << 8 : A.cred_sz;
+                credit_assign(q[5], maxmsg);
                 DIAG("htc: service %02x%02x -> status %u, endpoint %u, max message %u (%u polls)",
-                     q[3], q[2], q[4], q[5], got >= 8 ? q[6] | q[7] << 8 : 0, t);
+                     q[3], q[2], q[4], q[5], maxmsg, t);
                 break;
             }
             if (got == 0) waitcycles(3350);             /* nothing, or a credit report */
@@ -945,7 +1245,15 @@ static void on_htc(const u8 *b, u32 len)
     }
     A.ep_wmi = eid[0];
     A.ep_data = eid[1];
-    if (r >= 0) r = mbox_send(PKT_HTC, 0, 0, done, 2);
+    /* ath6kl gives every endpoint one credit and the rest to the BE data
+       endpoint; the target model uses the same split. */
+    if (r >= 0 && A.cred_pool && A.ep_data) {
+        A.ep_credits[A.ep_data] = (u8)((u32)A.ep_credits[A.ep_data] + A.cred_pool);
+        DIAG("htc: endpoint %u gets the remaining %u credits (%u total)", A.ep_data, A.cred_pool,
+             A.ep_credits[A.ep_data]);
+        A.cred_pool = 0;
+    }
+    if (r >= 0) r = mbox_send(PKT_HTC, 0, 0, done, 2, 1);
     if (r >= 0) r = f1_w32(F1_INT_STATUS_EN, 0x010300D1);
     logp("[wifi] HTC services connected: %d (WMI endpoint %u, data %u/%u/%u/%u)\n", r,
          eid[0], eid[1], eid[2], eid[3], eid[4]);
@@ -958,24 +1266,17 @@ static void on_htc(const u8 *b, u32 len)
     }
 }
 
-/* Drain one mailbox packet. Data frames end up in A.rxframe. */
-static void pump(void)
+/* One decoded mailbox message. Data frames end up in A.rxframe. */
+static void pump_body(u32 type, const u8 *body, u32 n)
 {
-    u32 type = 0;
-    int n = mbox_recv(&type);
-    if (n <= 0) {
-        if (n < 0 && A.verbose) log_warn("[wifi] mailbox read: %d\n", n);
-        return;
-    }
-    const u8 *body = pkt + 6;
     if (type == PKT_HTC) {
-        on_htc(body, (u32)n);
+        on_htc(body, n);
     } else if (type == A.ep_wmi) {
-        on_wmi(body, (u32)n);
+        on_wmi(body, n);
     } else if (A.ep_wmi) {                              /* the data endpoints */
         static u8 eth[NET_FRAME_MAX];
         u16 et = 0;
-        u32 len = wifi_frame_from_wmi(body, (u32)n, eth, sizeof(eth), &et);
+        u32 len = wifi_frame_from_wmi(body, n, eth, sizeof(eth), &et);
         if (!len) return;
         if (et == 0x888E) {
             /* also while up: group key rekeys (and PTK rekeys) arrive then; ignoring
@@ -986,6 +1287,30 @@ static void pump(void)
             memcpy(A.rxframe, eth, len);
             A.rxlen = len;
         }
+    }
+}
+
+/* Read the mailbox and run both fresh and deferred messages. */
+static void pump(void)
+{
+    u32 type = 0;
+    int n = mbox_recv(&type);
+    if (n > 0) {
+        u8 body[0x680];
+        memcpy(body, pkt + 6, (u32)n);
+        pump_body(type, body, (u32)n);
+    } else if (n < 0 && A.verbose) {
+        log_warn("[wifi] mailbox read: %d\n", n);
+    }
+    while (d_count) {
+        u8 i = d_head;
+        u32 t = D[i].type;
+        u32 l = D[i].len;
+        u8 body[0x680];
+        memcpy(body, D[i].body, l);
+        d_head = (u8)((d_head + 1) % DEFER_MAX);
+        d_count--;
+        pump_body(t, body, l);
     }
 }
 
@@ -1034,13 +1359,17 @@ static void target_lookup(void)
     A.found = 0;
     A.group_crypt = CRYPT_AES;
     A.rsn_mode = RSN_MODE_WPA2;
+    A.wpa1_ap = 0;
     if (!best) return;
     A.found = 1;
     A.channel = best->channel_mhz;
     memcpy(A.bssid, best->bssid, 6);
-    for (u32 i = 0; i + 2 <= best->ie_len; i += 2 + best->ie[i + 1])
+    int saw_rsn = 0;
+    for (u32 i = 0; i + 2 <= best->ie_len && i + 2 + best->ie[i + 1] <= WLAN_IE_MAX;
+         i += 2 + best->ie[i + 1]) {
         if (best->ie[i] == 0x30 && best->ie[i + 1] >= 6) {
             rsn_info_t ri;
+            saw_rsn = 1;                        /* a PSK/SAE RSN IE wins over WPA v1 */
             A.rsn_mode = (u8)wpa2_rsn_parse(best->ie + i, best->ie_len - i, &ri);
             A.group_crypt = (ri.ok ? ri.group : best->ie[i + 7]) == 2 ? CRYPT_TKIP : CRYPT_AES;
             u32 l = 2 + best->ie[i + 1];
@@ -1049,7 +1378,20 @@ static void target_lookup(void)
             char hx[2 * 40 + 1];
             for (u32 k = 0; k < l; k++) snprintf(hx + 2 * k, 3, "%02x", best->ie[i + k]);
             DIAG("target \"%s\": %u MHz, rssi %d, RSN IE %s", T.ssid, A.channel, best->rssi, hx);
+        } else if (best->ie[i] == 0xDD && best->ie[i + 1] >= 10 &&
+                   !memcmp(best->ie + i + 2, "\x00\x50\xF2\x01", 4)) {
+            rsn_info_t wi;
+            if (wpa1_ie_parse(best->ie + i, best->ie_len - i, &wi) == RSN_MODE_WPA1) {
+                A.wpa1_ap = 1;
+                DIAG("target \"%s\": WPA v1 vendor IE, TKIP pairwise", T.ssid);
+            }
         }
+    }
+    /* Only an actual RSN IE overrides WPA v1. RSN_MODE_WPA2 is also the
+       default when there is no RSN IE at all, so testing the mode alone
+       cleared WPA v1 and tried WPA2-PSK/CCMP against a TKIP-only AP. */
+    if (saw_rsn) A.wpa1_ap = 0;
+    if (A.wpa1_ap) A.group_crypt = CRYPT_TKIP;
 }
 
 int ar6k_command(const volatile wlan_cmd_t *c)
@@ -1278,6 +1620,8 @@ static u32 ar6k_step(void)
         log_warn("[wifi] no SCAN_COMPLETE 10 s after the scan request: %u networks (%u BSSINFO)\n",
                  nscan, A.nbssinfo);
     }
+    wmi_queue_flush();              /* one non-blocking retry per monitor pass */
+    eapol_pending_step();
     switch (A.state) {
     case NET_ST_POWER:
         /* libn3ds WIFI_init: CFG11 "wifi power" (really the MP regs), select
@@ -1428,7 +1772,9 @@ static int ar6k_tx(const u8 *eth, u32 len)
     static u8 out[2 + 14 + 8 + 1500];
     if (A.state != NET_ST_UP) return -1;
     u32 n = wifi_frame_to_wmi(eth, len, out, sizeof(out));
-    return n ? mbox_send(A.ep_data, 0, 0, out, n) : -2;
+    if (!n) return -2;
+    int r = mbox_send(A.ep_data, 0, 0, out, n, 0); /* no credits: leave the frame in the mailbox */
+    return r == SDIO_ERR_BUSY ? -1 : r;
 }
 
 static u32 ar6k_rx(u8 *eth, u32 cap)

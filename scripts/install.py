@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE) if os.path.basename(HERE) == "scripts" else HERE
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, SCRIPTS)
+import versions  # noqa: E402
 
 TARGET_IPSW = "iPod2,1_4.2.1_8C148_Restore.ipsw"
 GiB = 1 << 30
@@ -114,17 +115,18 @@ def hfsplus_tool(prebuilt, work):
     return built
 
 
-def fwprep(ipsw, staging, keys, force):
+def fwprep(ipsw, staging, keys, force, ios=versions.DEFAULT):
     man = os.path.join(staging, "manifest.json")
     if os.path.exists(man) and os.path.exists(os.path.join(staging, "rootfs.hfs")):
         try:
             src = json.load(open(man))["source"]
-            if src.get("ipsw") == os.path.basename(ipsw) and src.get("build") == "8C148":
+            if src.get("ipsw") == os.path.basename(ipsw) and src.get("build") == versions.get(ios)["build"]:
                 say("already extracted in %s (delete it to redo)" % staging)
                 return
         except (ValueError, KeyError):
             pass
-    cmd = [sys.executable, os.path.join(SCRIPTS, "fwprep.py"), ipsw, "-o", staging]
+    cmd = [sys.executable, os.path.join(SCRIPTS, "fwprep.py"), ipsw, "-o", staging,
+           "--ios", ios]
     if keys:
         cmd += ["--keys", keys]
     if force:
@@ -134,7 +136,7 @@ def fwprep(ipsw, staging, keys, force):
 
 
 def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, tlsfix=True,
-               music=None, test_song=True):
+               music=None, test_song=True, ios=versions.DEFAULT):
     import mksd
     args = mksd.parser().parse_args([])
     args.staging = staging
@@ -150,6 +152,7 @@ def build_tree(staging, tree, prebuilt, hfsplus, cydia=True, cydia_cache=None, t
     args.sandbox_open = False
     args.music = music
     args.no_test_song = not test_song
+    args.ios = ios
     # the installer carries from the user's card (see main), never from
     # CARRY_FROM/IOS3DS_CARRY_FROM, which is only for developer 'make sd' builds
     args.carry_from = None
@@ -200,6 +203,8 @@ def main():
     ap.add_argument("ipsw", nargs="?", help="iPod2,1_4.2.1_8C148_Restore.ipsw")
     ap.add_argument("sd", nargs="?", default="ios3ds-sd",
                     help="SD card root (mounted) or output folder (default: ./ios3ds-sd)")
+    ap.add_argument("--ios", default=versions.DEFAULT,
+                    help="iOS version to install (default 4.2.1; see scripts/versions.py)")
     ap.add_argument("--work", default="ios3ds-work", help="scratch folder (default: ./ios3ds-work)")
     ap.add_argument("--keep-work", action="store_true", help="keep the scratch folder (faster re-runs)")
     ap.add_argument("--keys", help="firmware keys JSON (ipsw.me v4 format) instead of downloading")
@@ -268,7 +273,7 @@ def main():
     staging = os.path.abspath(a.staging) if a.staging else os.path.join(work, "staging")
     if not a.staging:
         step(2, "Extracting your IPSW (kernel, device tree, root filesystem; a few minutes)")
-        fwprep(a.ipsw, staging, a.keys, a.force)
+        fwprep(a.ipsw, staging, a.keys, a.force, a.ios)
     else:
         step(2, "Using the extracted firmware in %s" % staging)
 
@@ -282,7 +287,7 @@ def main():
         die("no such folder: %s" % music)
     build_tree(staging, tree, a.prebuilt, hfs, cydia=not a.no_cydia,
                cydia_cache=os.path.join(work, "cydia"), tlsfix=not a.no_tlsfix,
-               music=music, test_song=not a.no_test_song)
+               music=music, test_song=not a.no_test_song, ios=a.ios)
 
     # carry user data over from a rootfs.hfs already on the card, if any
     fresh = a.fresh or os.environ.get("IOS3DS_FRESH", "").lower() in ("1", "true", "yes", "on") \

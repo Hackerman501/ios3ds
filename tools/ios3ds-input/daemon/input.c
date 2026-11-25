@@ -42,6 +42,9 @@ kern_return_t mach_port_type(mach_port_t task, mach_port_t name, unsigned *type)
 kern_return_t mach_port_deallocate(mach_port_t task, mach_port_t name);
 int sysctl(int *name, unsigned namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 int sysctlnametomib(const char *name, int *mibp, size_t *sizep);
+int sync(void);
+int reboot(int howto);
+#define RB_HALT 0x08            /* Darwin sys/reboot.h: halt after the BSD shutdown path */
 #define MACH_PORT_TYPE_DEAD_NAME 0x100000u
 
 /* ---- IOKit HID event SPI (IOKit.framework, 4.2.1 armv6) -------------
@@ -73,6 +76,9 @@ void IOHIDEventAppendEvent(IOHIDEventRef parent, IOHIDEventRef child);
 IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(const void *allocator);
 void IOHIDEventSystemClientDispatchEvent(IOHIDEventSystemClientRef client, IOHIDEventRef event);
 void CFRelease(const void *cf);
+typedef const struct __CFString *CFStringRef;
+unsigned char CFStringGetCString(CFStringRef s, char *buf, long size, uint32_t encoding);
+#define kCFStringEncodingUTF8 0x08000100u
 
 #define kIOHIDDigitizerTransducerTypeHand 3
 #define kIOHIDDigitizerEventRange    0x01
@@ -115,6 +121,23 @@ static const struct { uint16_t btn, usage; } keymap[] = {
 
 static int opt_flipx, opt_flipy, opt_stretch, opt_debug;
 static IOHIDEventSystemClientRef client;
+static char app_id[256];                /* frontmost app the cached port belongs to */
+static mach_port_t app_port;            /* its PurpleSystemEventPort send right (+1) */
+static uint64_t home_grace_until;       /* touches go to SpringBoard after Menu */
+#define HOME_GRACE_US 1500000ull
+static uint64_t now_us(void);
+
+/* Replace the cached app port and release the old send right: GSCopyPurpleNamedPort
+   returns +1 and the old code dropped that right on every app switch. */
+static void app_port_set(mach_port_t p)
+{
+    if (p == app_port) {
+        if (p) mach_port_deallocate(mach_task_self_, p);
+        return;
+    }
+    if (app_port) mach_port_deallocate(mach_task_self_, app_port);
+    app_port = p;
+}
 
 static void say(const char *fmt, ...)
 {
@@ -248,6 +271,7 @@ static void (*gs_send_event)(gsrec_t *, mach_port_t);
 static mach_port_t (*gs_named_port)(const char *);
 static mach_port_t (*sbs_port)(void);
 static void (*sb_frontmost)(mach_port_t, char *);
+static CFStringRef (*sb_frontmost_copy)(void);
 static void (*gs_send_system)(gsrec_t *);
 static uint64_t (*gs_timestamp)(void);
 
@@ -268,6 +292,10 @@ static void gs_load(void)
     if (h) {
         sbs_port = (mach_port_t (*)(void))dlsym(h, "SBSSpringBoardServerPort");
         sb_frontmost = (void (*)(mach_port_t, char *))dlsym(h, "SBFrontmostApplicationDisplayIdentifier");
+        /* The Copy variant returns NULL when SpringBoard/home is frontmost,
+           while the old identifier function can keep returning the app that
+           just went away (re-log 78/85). */
+        sb_frontmost_copy = (CFStringRef (*)(void))dlsym(h, "SBSCopyFrontmostApplicationDisplayIdentifier");
     }
     if (!gs_send_system) say("[input] GraphicsServices unavailable; using IOHID");
 }
@@ -302,10 +330,19 @@ static int sb_modal(void)
     return m;
 }
 
+/* A cached send right stays usable until the app exits; SpringBoard can also
+   restart an app with the same bundle id, which leaves a dead name behind.
+   Check before reuse so touches keep reaching the new process. */
+static int mach_port_alive(mach_port_t p)
+{
+    unsigned type = 0;
+    if (!p) return 0;
+    if (mach_port_type(mach_task_self_, p, &type) != 0) return 0;
+    return !(type & MACH_PORT_TYPE_DEAD_NAME);
+}
+
 static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
 {
-    static char app[256];
-    static mach_port_t app_port;
     gstouch_t e;
     uint64_t ts;
     float x = nx * 320.0f, y = ny * 480.0f;
@@ -339,15 +376,35 @@ static void send_touch_gs(float nx, float ny, int touch, uint32_t mask)
     if (touch && !(mask & kIOHIDDigitizerEventPosition)) {   /* new touch: re-resolve */
         char id[256] = "";
         int modal = sb_modal();
+        int grace = now_us() < home_grace_until;
         /* SpringBoard's lock screen or an alert over the app: the touch is
            SpringBoard's (issue #1: touch "locked up" after a popup / lock) */
-        if (!modal && sbs_port && sb_frontmost) sb_frontmost(sbs_port(), id);
+        if (!modal && !grace) {
+            if (sb_frontmost_copy) {
+                CFStringRef fs = sb_frontmost_copy();
+                if (fs) {
+                    if (!CFStringGetCString(fs, id, sizeof id, kCFStringEncodingUTF8))
+                        id[0] = 0;
+                    CFRelease(fs);
+                }
+            } else if (sbs_port && sb_frontmost) {
+                sb_frontmost(sbs_port(), id);
+            }
+        }
         /* Log every touch while modal: when SpringBoard covers the app its
            frontmost identifier can stay empty (QEMU), so a change-of-id test
-           alone would hide the switch to the system event port. */
-        if (modal || strcmp(id, app)) {
-            strncpy(app, id, sizeof app - 1);
-            app_port = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+           alone would hide the switch to the system event port. Re-resolve a
+           dead port too, and force the system port during the Home grace:
+           an app-targeted hand event after Home can kill the app/SB. */
+        if (modal || grace || strcmp(id, app_id) || (app_port && !mach_port_alive(app_port))) {
+            if (opt_debug && app_port && !mach_port_alive(app_port))
+                say("[input] stale touch port for %s: re-resolving", app_id[0] ? app_id : "SpringBoard");
+            mach_port_t p = (id[0] && gs_named_port) ? gs_named_port(id) : 0;
+            if (opt_debug && id[0] && !p)
+                say("[input] no touch port for %s; using SpringBoard", id);
+            app_port_set(p);
+            strncpy(app_id, id, sizeof app_id - 1);
+            app_id[sizeof app_id - 1] = 0;
             if (opt_debug) say("[input] touch target %s%s", id[0] ? id : "SpringBoard",
                                modal & 6 ? " (alert)" : modal & 1 ? " (lock screen)" : "");
         }
@@ -394,6 +451,10 @@ static uint64_t key_t0[NKEYS];
 static uint64_t loops, slept_us;
 static uint64_t now_us(void) { return slept_us; }
 
+/* SpringBoard's frontmost-app state lags the Home animation: a touch sent
+   right after Home still resolves the app that is being closed (and in QEMU
+   the app-targeted GSEvent panics the kernel, re-log 85). Send touches to
+   SpringBoard for a moment after Menu; the app port is dropped then anyway. */
 static void key_send(unsigned i, int down)
 {
     if (opt_debug) say("[input] key %02x %s @%u", keymap[i].usage, down ? "down" : "up", (unsigned)loops);
@@ -408,6 +469,8 @@ static void key_edge(unsigned i, int down)
     } else {
         if (key_state[i] == 1) key_send(i, 1);
         if (key_state[i]) key_send(i, 0);
+        if (keymap[i].usage == kHIDUsage_Csmr_Menu)
+            home_grace_until = now_us() + HOME_GRACE_US;
         key_state[i] = 0;
     }
 }
@@ -474,6 +537,8 @@ int main(int argc, char **argv)
     int mib[8], mcumib[8], i;
     size_t mculen = 8;
     int have_mcu = 0, screen_off = 0;
+    uint32_t last_power_holds = 0;
+    int mcu_seen = 0, poweroff_started = 0;
     size_t miblen = 8, len;
     inmbox_t box;
     insample_t state;
@@ -510,7 +575,10 @@ int main(int argc, char **argv)
         sleep(2);
         return 1;                           /* launchd KeepAlive restarts us */
     }
-    say("[input] connected to SpringBoard's HID event system");
+    /* The pid makes a KeepAlive restart unambiguous in a console log: a
+       SpringBoard restart and an input-daemon crash otherwise print the same
+       line (re-log 100). */
+    say("[input] connected to SpringBoard's HID event system (pid %d)", getpid());
 
     memset(&state, 0, sizeof state);
     for (idle = 0;; idle++) {
@@ -580,6 +648,29 @@ int main(int argc, char **argv)
                 int off = mb.ps_on && mb.screen_off;
                 if (off != screen_off && opt_debug) say("[input] screen %s: polling at %d Hz", off ? "off" : "on", off ? 10 : 60);
                 screen_off = off;
+                /* The MCU's POWER-held IRQ arrives while the key is still down
+                   (3 s in QEMU, before the console's ~10 s hard cut). The ARM9
+                   counts those events in mcubox.power_holds; use the count to
+                   start iOS's own clean shutdown instead of waiting for the
+                   user to drag "slide to power off". reboot(RB_HALT) is the
+                   same call launchd makes after its shutdown handlers have
+                   unmounted the file systems, so md0 ends up clean. Adopt the
+                   first value (a POWER press held through boot is not a
+                   shutdown request). */
+                if (!poweroff_started) {
+                    if (!mcu_seen) {
+                        last_power_holds = mb.power_holds;
+                        mcu_seen = 1;
+                    } else if (mb.power_holds != last_power_holds) {
+                        last_power_holds = mb.power_holds;
+                        poweroff_started = 1;
+                        say("[input] POWER held on the 3DS (count %u): sync + clean shutdown",
+                            (unsigned)mb.power_holds);
+                        sync();
+                        reboot(RB_HALT);
+                        say("[input] reboot(RB_HALT) returned; leaving shutdown to the slider");
+                    }
+                }
             }
         }
         {

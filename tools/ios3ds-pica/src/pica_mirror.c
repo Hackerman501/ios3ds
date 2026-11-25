@@ -8,6 +8,10 @@
 #include "pica_mirror.h"
 #include "pica_regs.h"
 
+/* The shim builds this file at -Os (the GPU part is close to its 32 KiB
+   limit); the frame path is the one part that benefits from -O2. */
+#define PM_HOT __attribute__((optimize("O2"), noinline))
+
 #define GXO(word)   ((word) * 4u)
 #define P3DO(reg)   (0x1000u + (reg) * 4u)
 
@@ -19,6 +23,7 @@ int pm_init(pica_mirror_t *m, const pm_plat_t *p, void *blob, uint32_t blob_pa, 
     for (i = 0; i < sizeof *m; i++)
         z[i] = 0;
     m->p = p;
+    m->blob = (uint8_t *)blob;
     /* 1 s per operation. Hardware needs ~0.6 ms (run12/13); a busy emulator
        can need far more (soak4: a PPF read-out of the self-test missed the
        old 200 ms limit). Only a GPU that has really stopped takes this long. */
@@ -34,19 +39,64 @@ int pm_init(pica_mirror_t *m, const pm_plat_t *p, void *blob, uint32_t blob_pa, 
         m->list_pa[i] = blob_pa + b->list_off[i];
         m->list_bytes[i] = b->list_bytes[i];
     }
-    /* point both lists at the texture (in the arena: FCRAM) */
+    /* Point every list (flat and stereo, two texture units in the latter) at
+       the texture. genmirror's version/magic check is the validation of all
+       the fixed offsets; patching here keeps the shim's IRQ path simple. */
     for (i = 0; i < 2; i++) {
         uint32_t *w = (uint32_t *)((uint8_t *)blob + b->tex_patch[i]);
-        if (b->tex_patch[i] < b->list_off[i] || b->tex_patch[i] >= b->list_off[i] + b->list_bytes[i] || (tex_pa & 7))
-            return -1;
         *w = tex_pa >> 3;
         p->to_gpu(w, 4);
+        if (b->st_list_bytes[i])
+            for (uint32_t j = 0; j < 4; j++) {
+                w = (uint32_t *)((uint8_t *)blob + b->st_tex_patch[i][j]);
+                *w = tex_pa >> 3;
+                p->to_gpu(w, 4);
+            }
     }
     m->tex_pa = tex_pa;
     return 0;
 }
 
-static void kick(pica_mirror_t *m, uint32_t n)
+/* Point the six per-class passes of a stereo list at the current slider's
+   texture-coordinate shifts. genmirror stores one IEEE word per pass and k,
+   so the kernel part needs no floating point and no class arithmetic. */
+static void stereo_shifts(pica_mirror_t *m, uint32_t v, uint32_t k)
+{
+    const gm_blob_t *b = (const gm_blob_t *)m->blob;
+    const uint32_t *tab = (const uint32_t *)(m->blob + b->st_shift_tab);
+    uint32_t j;
+    if (k < 1) k = 1;
+    if (k > 4) k = 4;
+    for (j = 0; j < 6; j++) {
+        uint32_t *w = (uint32_t *)(m->blob + b->st_shift_off[v][j]);
+        *w = tab[(k - 1) * 6 + j];
+        m->p->to_gpu(w, 4);
+    }
+}
+
+/* The PICA200 clamps texture coordinates to the 512-wide POT texture, not
+   to the 320 pixels of iOS content. A shifted eye sample just past x=319
+   would read the unused padding (stale or 0xa5); the CPU copy clamps to the
+   edge pixel instead. Replicate x=319 into the eight columns after it after
+   every upload, one 8x8 tile row at a time (tiled layout: pica_tex_index). */
+static void pad_edge(pica_mirror_t *m)
+{
+    const gm_blob_t *b = (const gm_blob_t *)m->blob;
+    static const uint8_t spread[8] = { 0, 1, 4, 5, 16, 17, 20, 21 };
+    const uint32_t *tab = (const uint32_t *)(m->blob + b->st_pad_off);
+    uint32_t *tex = (uint32_t *)m->tex_va;
+    for (uint32_t ty = 0; ty < GM_SRC_H / 8; ty++) {
+        uint32_t j = ty * 16, dst = tab[j + 1];
+        for (uint32_t dy = 0; dy < 8; dy++, j += 2) {
+            uint32_t v = tex[tab[j]], d = tab[j + 1];
+            for (uint32_t dx = 0; dx < 8; dx++)
+                tex[d + spread[dx]] = v;
+        }
+        m->p->to_gpu((uint8_t *)tex + dst * 4, 64 * 4);
+    }
+}
+
+PM_HOT static void kick(pica_mirror_t *m, uint32_t n)
 {
     const pm_plat_t *p = m->p;
     uint32_t i;
@@ -104,12 +154,24 @@ static void add(pica_mirror_t *m, uint8_t kind, uint8_t stage, uint32_t a, uint3
     m->nops++;
 }
 
-void pm_begin(pica_mirror_t *m, const pm_frame_t *f)
+PM_HOT void pm_begin(pica_mirror_t *m, const pm_frame_t *f)
 {
+    const gm_blob_t *b = (const gm_blob_t *)m->blob;
     uint32_t k, v = m->variant, s = v & GM_VAR_SAMPLE_HALF ? 1 : 0;
+    uint32_t list_pa, list_bytes;
     uint32_t in_dim = GM_SRC_H << 16 | GM_SRC_W;
     uint32_t out_flags = PPF_IN_FMT(PICA_FB_RGBA8) | PPF_OUT_FMT(PICA_FB_RGB8) |
                          (v & GM_VAR_OUT_FLIP ? PPF_FLIP_V : 0);
+    m->stereo = f->stereo && b->st_list_bytes[s] && f->top[0] != f->top[1];
+    m->tex_va = (uint8_t *)f->tex_va;
+    if (m->stereo) {
+        list_pa = GM_BLOB_PA + b->st_list_off[s];
+        list_bytes = b->st_list_bytes[s];
+        stereo_shifts(m, s, f->k);
+    } else {
+        list_pa = m->list_pa[s];
+        list_bytes = m->list_bytes[s];
+    }
     m->nops = 0;
     m->cur = 0;
     /* 1. iOS framebuffer -> tiled, 320 wide (same format, rows as stored),
@@ -120,18 +182,27 @@ void pm_begin(pica_mirror_t *m, const pm_frame_t *f)
         (v & GM_VAR_IN_FLIP ? PPF_FLIP_V : 0));
     add(m, PM_OP_TEXCOPY, 0, GM_SCR_PA, GM_SRC_W * GM_SRC_H * 4, m->tex_pa, GM_SRC_W * 8 * 4 / 16,
         ((GM_TEX_W - GM_SRC_W) * 8 * 4 / 16) << 16 | GM_SRC_W * 8 * 4 / 16);
-    /* 2. both quads */
-    add(m, PM_OP_P3D, 1, m->list_pa[s], m->list_bytes[s], 0, 0, 0);
-    /* 3. render targets -> LCD framebuffers, RGBA8 -> BGR8. The bottom
-       target follows the top one in VRAM, so when Luma's bottom framebuffer
-       follows the top one as well, one transfer does both screens. */
+    /* 2. the quads: flat has one target per screen, stereo draws the left eye
+       into GM_RT_TOP_PA and the right eye into the upload buffer (free after
+       the texture copy), each with its own per-class source offset. */
+    add(m, PM_OP_P3D, 1, list_pa, list_bytes, 0, 0, 0);
+    /* 3. render targets -> LCD framebuffers, RGBA8 -> BGR8. PDC0's A and B
+       framebuffers are both pointed at top[0] / top[1] by the stereo preset,
+       so the eye images go to those sets, not to the PDC's shown-set pair. */
+    if (m->stereo && f->mode != 2) {
+        add(m, PM_OP_PPF, 2, GM_RT_TOP_PA, GM_RT_TOP_H << 16 | GM_RT_W, f->top[0],
+            GM_RT_TOP_H << 16 | GM_RT_W, out_flags);
+        add(m, PM_OP_PPF, 2, GM_SCR_PA, GM_RT_TOP_H << 16 | GM_RT_W, f->top[1],
+            GM_RT_TOP_H << 16 | GM_RT_W, out_flags);
+    }
     for (k = 0; k < f->nsets && k < 2; k++) {
-        if (f->mode == 1 && !(v & GM_VAR_OUT_FLIP) && f->bot[k] == f->top[k] + GM_TOP_FB_BYTES) {
+        if (!m->stereo && f->mode == 1 && !(v & GM_VAR_OUT_FLIP) &&
+            f->bot[k] == f->top[k] + GM_TOP_FB_BYTES) {
             uint32_t dim = (GM_RT_TOP_H + GM_RT_BOT_H) << 16 | GM_RT_W;
             add(m, PM_OP_PPF, 2, GM_RT_TOP_PA, dim, f->top[k], dim, out_flags);
             continue;
         }
-        if (f->mode != 2)
+        if (f->mode != 2 && !m->stereo)
             add(m, PM_OP_PPF, 2, GM_RT_TOP_PA, GM_RT_TOP_H << 16 | GM_RT_W, f->top[k],
                 GM_RT_TOP_H << 16 | GM_RT_W, out_flags);
         if (f->mode != 0)
@@ -143,7 +214,7 @@ void pm_begin(pica_mirror_t *m, const pm_frame_t *f)
     kick(m, 0);
 }
 
-int pm_poll(pica_mirror_t *m, uint32_t spin_ticks)
+PM_HOT int pm_poll(pica_mirror_t *m, uint32_t spin_ticks)
 {
     uint32_t t0 = m->p->ticks(), now;
     if (m->state != PM_BUSY)
@@ -152,6 +223,8 @@ int pm_poll(pica_mirror_t *m, uint32_t spin_ticks)
         now = m->p->ticks();
         if (finished(m, m->cur)) {
             uint32_t st = m->op[m->cur].stage;
+            if (st == 0 && m->stereo && m->tex_va)
+                pad_edge(m);            /* texture copy just finished */
             m->cur++;
             if (m->cur == m->nops || m->op[m->cur].stage != st) {
                 uint32_t d = now - m->t_stage0[st];
@@ -222,14 +295,38 @@ int pm_clear_targets(pica_mirror_t *m)
     return ok ? 0 : -1;
 }
 
-/* expected framebuffer byte k of out (top image, then bottom) */
-static uint32_t expect(uint32_t off)
+/* Compare one screen's BGR8 pixels against gm_map()/pm_pattern(), one
+   24-bit pixel at a time. The old per-byte loop re-derived the source pixel
+   (two integer divisions) three times per pixel; the self-test compares
+   518400 bytes at boot and this cut it from ~3 divisions to 1 per pixel.
+   Adds the number of differing bytes to *bad and records the first one. */
+static void cmp_screen(const uint8_t *o, int bottom, uint32_t rows, uint32_t *bad, uint32_t *fb)
 {
-    uint32_t bottom = off >= GM_TOP_FB_BYTES, px = bottom ? (off - GM_TOP_FB_BYTES) / 3 : off / 3;
-    uint32_t x, y, c = bottom ? (off - GM_TOP_FB_BYTES) % 3 : off % 3;
-    if (!gm_map((int)bottom, px % GM_RT_W, px / GM_RT_W, &x, &y))
-        return 0;
-    return pm_pattern(x, y) >> (8 * c) & 0xFF;
+    uint32_t i, j;
+    for (j = 0; j < rows; j++) {
+        for (i = 0; i < GM_RT_W; i++) {
+            const uint8_t *q = o + (j * GM_RT_W + i) * 3;
+            uint32_t x, y, e, g = (uint32_t)q[0] | (uint32_t)q[1] << 8 | (uint32_t)q[2] << 16;
+            if (!gm_map(bottom, i, j, &x, &y))
+                e = 0;
+            else
+                e = pm_pattern(x, y) & 0xFFFFFFu;
+            if (e != g) {
+                uint32_t off = (uint32_t)(q - o) + (bottom ? GM_TOP_FB_BYTES : 0), k;
+                for (k = 0; k < 3; k++) {
+                    uint32_t eb = e >> (8 * k) & 0xFF, gb = g >> (8 * k) & 0xFF;
+                    if (eb != gb) {
+                        if (!*bad) {
+                            fb[0] = off + k;
+                            fb[1] = eb;
+                            fb[2] = gb;
+                        }
+                        (*bad)++;
+                    }
+                }
+            }
+        }
+    }
 }
 
 static const char *const var_name[GM_VARIANTS] = {
@@ -244,6 +341,8 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
     uint32_t body = GM_TOP_FB_BYTES + GM_BOT_FB_BYTES, total = body + 2 * guard, x, y, i, v;
     uint32_t *s = (uint32_t *)src_va;
     pm_frame_t f;
+    f.stereo = f.k = 0;
+    f.tex_va = 0;
 
     for (y = 0; y < GM_SRC_H; y++)
         for (x = 0; x < GM_SRC_W; x++)
@@ -260,7 +359,8 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
     f.top[0] = f.top[1] = out_pa + guard;
     f.bot[0] = f.bot[1] = out_pa + guard + GM_TOP_FB_BYTES;
     for (v = 0; v < GM_VARIANTS; v++) {
-        uint32_t bad = 0, guard_bad = 0, fb[4] = { 0, 0, 0, 0 };
+        uint32_t bad = 0, guard_bad = 0, fb[4];
+        fb[0] = fb[1] = fb[2] = fb[3] = 0;
         for (i = 0; i < total; i++)
             out_va[i] = 0xA5;
         p->to_gpu(out_va, total);
@@ -282,18 +382,10 @@ int pm_selftest(pica_mirror_t *m, uint8_t *src_va, uint32_t src_pa, uint8_t *out
         p->from_gpu(out_va, total);
         for (i = 0; i < guard; i++)
             guard_bad += (out_va[i] != 0xA5) + (out_va[guard + body + i] != 0xA5);
-        for (i = 0; i < body; i++) {
-            uint32_t e = expect(i), g = out_va[guard + i];
-            if (e != g) {
-                if (!bad) {
-                    fb[0] = i;
-                    fb[1] = e;
-                    fb[2] = g;
-                    fb[3] = m->nops;
-                }
-                bad++;
-            }
-        }
+        cmp_screen(out_va + guard, 0, GM_RT_TOP_H, &bad, fb);
+        cmp_screen(out_va + guard + GM_TOP_FB_BYTES, 1, GM_RT_BOT_H, &bad, fb);
+        if (bad)
+            fb[3] = m->nops;
         if (v == 0) {
             *bad0 = bad;
             for (i = 0; i < 4; i++)

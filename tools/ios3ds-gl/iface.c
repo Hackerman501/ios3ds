@@ -330,6 +330,7 @@ static int glesCreateGC(void *sg, void **front, void **back, void **out)
     if (getenv("IOS3DS_CA") && !pica_ca_gate())
         return 0;                       /* QuartzCore falls back to its software compositor */
 #endif
+    stereo_init();
     gc = gl_gc_new(sg);
     if (!gc)
         return 0;
@@ -512,8 +513,13 @@ static int glesSwapNotification(void *gc, uint32_t fb_id, uint32_t transaction, 
     (void)fb_id;
     if (!calls++)
         log_callers("first SwapNotification");
-    if (gc && ((GC *)gc)->be->flush_all)
-        ((GC *)gc)->be->flush_all(gc);      /* the display surface must be current before the swap */
+    if (gc) {
+        /* decide the stereo frame (and wipe a non-home frame's class map)
+           before the flush writes the surface back */
+        stereo_end_frame((GC *)gc);
+        if (((GC *)gc)->be->flush_all)
+            ((GC *)gc)->be->flush_all(gc);      /* the display surface must be current before the swap */
+    }
     ca_frame();
     io_init();
     if (!fb && io.fb_main)

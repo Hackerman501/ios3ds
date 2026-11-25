@@ -1,0 +1,220 @@
+[
+ {
+  "name": "ppmr-read",
+  "va": "0x8005ff34",
+  "orig": "923f1fee",
+  "new": "0030a0e3",
+  "why": "MRC c15,c2,4 (ARM1176 peripheral port remap) does not exist on ARM11 MPCore -> mov r3,#0 [4.1: relocated by context-8 from 8C148 0x80060274]"
+ },
+ {
+  "name": "ppmr-write",
+  "va": "0x80064208",
+  "orig": "920f0fee",
+  "new": "0000a0e1",
+  "why": "MCR c15,c2,4 in the vector-page reset path -> nop [4.1: relocated by same-va from 8C148 0x80064208]"
+ },
+ {
+  "name": "ifar-pabt-user",
+  "va": "0x800662e0",
+  "orig": "501f16ee",
+  "new": "0e10a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: the handler already did lr -= 4 at 0x800662ac, so fault address = lr (mov r1, lr) [4.1: relocated by same-va from 8C148 0x800662e0]"
+ },
+ {
+  "name": "ifar-pabt-kernel",
+  "va": "0x8006632c",
+  "orig": "505f16ee",
+  "new": "0e50a0e1",
+  "why": "IFAR (c6,c0,2) is absent on MPCore: fault address = lr after the entry lr -= 4 (mov r5, lr) [4.1: relocated by same-va from 8C148 0x8006632c]"
+ },
+ {
+  "name": "actlr-write",
+  "va": "0x80067bf0",
+  "orig": "300f01ee",
+  "new": "0000a0e1",
+  "why": "ARM1176 ACTLR bits mean different things on MPCore (bit5 = SMP): ignore writes [4.1: relocated by same-va from 8C148 0x80067bf0]"
+ },
+ {
+  "name": "uart-init",
+  "va": "0x801dc38c",
+  "orig": "90402de9",
+  "new": "1eff2fe1",
+  "why": "S5L UART init would touch MMIO that does not exist on the 3DS: bx lr [4.1: relocated by anchor from 8C148 0x801dcdd0]"
+ },
+ {
+  "name": "uart-baud",
+  "va": "0x801dc418",
+  "orig": "80402de9",
+  "new": "1eff2fe1",
+  "why": "S5L UART baud setup: bx lr [4.1: relocated by anchor from 8C148 0x801dce5c]"
+ },
+ {
+  "name": "uart-tx-ready",
+  "va": "0x801dc4a4",
+  "orig": "0c309fe5003093e5",
+  "new": "0400a0e31eff2fe1",
+  "why": "S5L UART transmit-ready: always ready (mov r0,#4; bx lr) [4.1: relocated by anchor from 8C148 0x801dcee8]"
+ },
+ {
+  "name": "uart-tx-data",
+  "va": "0x801dc4bc",
+  "orig": "0c309fe57000efe6",
+  "new": "04f01fe5@shim+0x0@",
+  "why": "S5L UART transmit: ldr pc,=shim_putc (log ring read by the ARM9) [4.1: relocated by unique-orig from 8C148 0x801dcf00]"
+ },
+ {
+  "name": "uart-rx-ready",
+  "va": "0x801dc4d4",
+  "orig": "0c309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive-ready: never (mov r0,#0; bx lr) [4.1: relocated by anchor from 8C148 0x801dcf18]"
+ },
+ {
+  "name": "uart-rx-data",
+  "va": "0x801dc4ec",
+  "orig": "08309fe5003093e5",
+  "new": "0000a0e31eff2fe1",
+  "why": "S5L UART receive: mov r0,#0; bx lr [4.1: relocated by unique-orig from 8C148 0x801dcf30]"
+ },
+ {
+  "name": "timer-get-abstime",
+  "va": "0x80068038",
+  "orig": "74c093e580109ce5",
+  "new": "04f01fe5@shim+0x10@",
+  "why": "cpu_data timer hook: 64-bit time base from the MPCore watchdog (S5L timer regs don't exist) [4.1: relocated by same-va from 8C148 0x80068038]"
+ },
+ {
+  "name": "timer-get-decrementer",
+  "va": "0x80068064",
+  "orig": "74c093e5b4009ce5",
+  "new": "04f01fe5@shim+0x14@",
+  "why": "cpu_data timer hook: ticks left = MPCore private timer counter [4.1: relocated by same-va from 8C148 0x80068064]"
+ },
+ {
+  "name": "timer-set-decrementer",
+  "va": "0x80068078",
+  "orig": "600083e574c093e5",
+  "new": "04f01fe5@shim+0x18@",
+  "why": "cpu_data timer hook: arm the MPCore private timer (GIC IRQ 29) [4.1: relocated by same-va from 8C148 0x80068078]"
+ },
+ {
+  "name": "irq-entry",
+  "va": "0x8006648c",
+  "orig": "04e04ee200d00fe1",
+  "new": "04f01fe5@shim+0x1c@",
+  "why": "IRQ entry -> shim: GIC ack; timer IRQ re-enters the kernel's FIQ handler (r9_fiq) [4.1: relocated by same-va from 8C148 0x8006648c]"
+ },
+ {
+  "name": "mdevstrategy",
+  "va": "0x80072bd8",
+  "orig": "f0b55e4655464446",
+  "new": "004b1847@shim+0x20@",
+  "why": "memdev (md0) strategy -> shim: block I/O served by the ARM9 from sd:/ios3ds/rootfs.hfs (Thumb: ldr r3,[pc]; bx r3) [4.1: relocated by anchor from 8C148 0x80072bf8]"
+ },
+ {
+  "name": "rtc-wait-0s",
+  "va": "0x802e68a4",
+  "orig": "1e23",
+  "new": "0023",
+  "why": "AppleARMPE::getGMTTimeOfDay waits 30 s for an RTC that doesn't exist yet (PMU/MCU driver TODO): timeout 0 [4.1: relocated by context-8 from 8C148 0x802e78b4]"
+ },
+ {
+  "name": "iortc-wait-2s",
+  "va": "0x801a75e2",
+  "orig": "1e23",
+  "new": "0223",
+  "why": "IOKitInitializeTime (bsd_init, 0x8024a53e) waits 30 s for resourceMatching(\"IORTC\") before clock_initialize_calendar; nothing publishes IORTC yet (no RTC driver). 2 s, not 0: with 0 the calendar can be initialised before AppleARMPE (gIOPlatform) is up, and early userland gettimeofday deltas then read 0 (gltest \"frame took 0 ms\", QEMU and hardware run10). AppleARMPE is up within 1 s even in plain QEMU, so 2 s keeps the original order [4.1: relocated by context-8 from 8C148 0x801a800a]"
+ },
+ {
+  "name": "clcd-sync-swap",
+  "va": "0x80758eb8",
+  "orig": "0400000a",
+  "new": "0000a0e1",
+  "why": "AppleM2CLCD swap_begin: take the debug-flag-0x10 path (swap-done signalled synchronously, no frame IRQ needed) [4.1: relocated by context-8 from 8C148 0x807a9b68]"
+ },
+ {
+  "name": "clcd-backlight-log-set",
+  "va": "0x80758408",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in the backlight-level setter (0x807a9514)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log [4.1: relocated by context-8 from 8C148 0x807a9558]"
+ },
+ {
+  "name": "clcd-backlight-log-disable",
+  "va": "0x80758460",
+  "orig": "33ff2fe1",
+  "new": "0000a0e1",
+  "why": "IOLog('%s, Where is my backlight?') in AppleM2CLCD::disable_backlight (0x807a9570)'s no-backlight-service branch -> nop. The 3DS has no S5L backlight service (the MCU daemon drives the LCD backlight), and since lock/wake cycles (re-log 41) the line was printed ~3 times a second (3504 lines in soak 6), flooding the console and the SD log [4.1: relocated by anchor from 8C148 0x807a95b0]"
+ },
+ {
+  "name": "iic-device-transfer",
+  "va": "0x802e3d1e",
+  "orig": "90b501af8ab0002a01d0002b2bd0",
+  "new": "c0467847c04604f01fe5@shim+0x24@",
+  "why": "AppleARMIICDevice transfer (vtable slot 0x35c: op, sub-address, data) -> shim_iic_transfer: a register file per I2C device instead of a bus that does not exist (Thumb: nop; bx pc; nop; ARM: ldr pc,[pc,#-4]; .word) [4.1: relocated by context-8 from 8C148 0x802e4d1e]"
+ },
+ {
+  "name": "i2s-start-no-lrck-sync",
+  "va": "0x80621490",
+  "orig": "0130a0e3b03080e5",
+  "new": "0330a0e3b03080e5",
+  "why": "AppleS5L8900XI2SController DMA start (0x8066d448): for i2s-version 0 with frame sync it sets state 1, enables its GPIO interrupt (i2s0 'interrupts' 0x2c on the GPIO controller) and sleeps until two edges took the state 1->2->3 (action 0x8066caf0) or the timeout set 4 (0x8066cb84) -> kIOReturnNotReady, 'could not start DMA: device is not ready'. Nothing raises that GPIO interrupt on the 3DS: start in state 3 (synced), so the wait loop falls through and the interrupt is disabled and the timeout cancelled as on success (mov r3,#1 -> mov r3,#3) [4.1: relocated by context-8 from 8C148 0x8066d490]"
+ },
+ {
+  "name": "wdt-no-pmu-wait",
+  "va": "0x802ec014",
+  "orig": "9847",
+  "new": "0020",
+  "why": "AppleARMWatchDogTimer::start (AppleARMPlatform+0xa014): waitForService(serviceMatching(\"IOPMU\"), no timeout) -> movs r0,#0. The 3DS has no PMU, so the wait never ended and kept the wdt nub busy: launchctl's IOKitWaitQuiet at boot always ran into its 5 s timeout. The code after it handles NULL (it only reads the PMU's IOPMUBootDebug property); the matching dictionary leaks once (docs/boot-perf.md, re-log 50) [4.1: relocated by same-va from 8C148 0x802ec014]"
+ },
+ {
+  "name": "pe-get-gmt",
+  "va": "0x801c7aa0",
+  "orig": "80b500af04480068",
+  "new": "004b1847@shim+0x30@",
+  "why": "PEGetGMTTimeOfDay -> shim_mcu_get_gmt (Thumb: ldr r3,[pc]; bx r3): Unix time from the 3DS MCU RTC (ARM9 mailbox, docs/mcu.md); without an RTC the shim runs the original body (gIOPlatform->getGMTTimeOfDay(), vtable +0x390) [4.1: relocated by unique-orig from 8C148 0x801c84d8]"
+ },
+ {
+  "name": "pe-set-gmt",
+  "va": "0x801c7abc",
+  "orig": "80b500af011c0548",
+  "new": "004b1847@shim+0x3c@",
+  "why": "PESetGMTTimeOfDay -> shim_mcu_set_gmt: AppleARMPE::setGMTTimeOfDay (0x802e7834) waits 30 s for an IORTC that never appears; the shim keeps iOS' time as an offset to the RTC instead (the 3DS RTC is not written) [4.1: relocated by unique-orig from 8C148 0x801c84f4]"
+ },
+ {
+  "name": "pe-halt-mcu",
+  "va": "0x801c8ebe",
+  "orig": "0268e2239b00291cd358",
+  "new": "291c004b01e0@shim+0x38@",
+  "why": "PEHaltRestart: gIOPlatform->haltRestart(type) (ldr r2,[r0]; movs r3,#0xe2; lsls; adds r1,r5,#0; ldr r3,[r2,r3]) -> adds r1,r5,#0; ldr r3,[pc,#0]; b +2; .word shim_mcu_halt_restart; the blx r3 at 0x801c9900 stays. Halt/restart power the console off through the MCU (ARM9), other types go to the platform as before [4.1: relocated by context-8 from 8C148 0x801c98f6]"
+ },
+ {
+  "name": "commpage-gtod-off",
+  "va": "0x8006ade8",
+  "orig": "66d0",
+  "new": "66e0",
+  "why": "commpage_set_timestamp (0x8006ade0): beq -> b, the gettimeofday timestamp is never published. Userland __commpage_gettimeofday (dyld cache 0x32d4b748) adds (now - base) / usec_divisor via a reciprocal the kernel computes here; our timebase is 1047311 Hz, so usec_divisor = 1 and the reciprocal degenerates (M = 0, add = 1, shift = 0 -> a shift by -1): elapsed time always reads 0 and gettimeofday() stays frozen at the last syscall refresh for up to 1 s (gltest '0 ms', '1063 ms vs mach 412 ms', docs/mcu.md section 8). With the base left at 0 userland always takes the gettimeofday syscall, which is exact [4.1: relocated by context-8 from 8C148 0x8006adfc]"
+ },
+ {
+  "name": "pe-halt-skip-pm",
+  "va": "0x801c8eb4",
+  "orig": "9847",
+  "new": "c046",
+  "why": "PEHaltRestart: skip the IOPMrootDomain halt/restart broadcast (blx r3 -> 0x801db12b). It messages IOMobileGraphicsFamily -> AppleM2CLCD (disable_backlight) -> AppleARMPlatform function -> AppleS5L8720X's SWI backlight function, which sleeps on a command gate (AppleS5L8720X+0x37cc) for an interrupt the 3DS never raises: every iOS shutdown hung there forever (QEMU, SELECT+START thread dump, re-log 33). File systems are already unmounted and md0 writes are synchronous; the platform call that follows (pe-halt-mcu) powers the console off [4.1: relocated by context-8 from 8C148 0x801c98ec]"
+ },
+ {
+  "name": "s5l-perf-nowait",
+  "va": "0x807047cc",
+  "orig": "8c33d5e5000053e3f6ffff1a",
+  "new": "0030a0e38c33c5e50000a0e1",
+  "why": "AppleS5L8720XClockController (kext AppleS5L8720X+0x37cc): after starting a performance-state change it sleeps on its command gate (vtable +0x90) until byte +0x38c is cleared by the change-done interrupt, which the fake clock/power page never raises. Hit by IOPMrootDomain's halt broadcast (re-log 36) and by every display sleep (lock): the CLCD stayed off and the screen froze after the first wake. ldrb r3,[r5,#0x38c]; cmp r3,#0; bne wait -> mov r3,#0; strb r3,[r5,#0x38c]; nop: the change counts as done at once (docs/mcu.md 6.3) [4.1: relocated by context-8 from 8C148 0x807517cc]"
+ },
+ {
+  "name": "sandbox-sb-evaluate",
+  "va": "0x803b9d8c",
+  "orig": "f0402de9",
+  "new": "00000000",
+  "why": "Seatbelt sandbox (com.apple.security.sandbox @0x803cd000, Sandbox-58.12) sb_evaluate(sandbox, label, op, ctx): r2 = operation index. Its first instruction (push {r4,r5,r6,r7,lr}) -> b shim_sb_evaluate (kernel/shim/entry.S), the branch word computed at build time from the shim ELF symbol. The shim returns 0 (allow) for the file-read operations (file* 1, file-read* and children 6-9, file-search 11) and replays push + continues into sb_evaluate at 0x803ced9c for everything else. This lets a sandboxed app (MobileSafari, App Store apps) read the Cydia Substrate / TLSFix dylibs under /Library so the tweaks load; write/exec/network/iokit/mach checks stay enforced. iOS 4 jailbreaks relaxed the sandbox the same way. Disabled by SANDBOX=0 / IOS3DS_SANDBOX_OPEN=0 / recipe \"sandbox_open\": false (docs/cydia.md). [4.1: relocated by context-16 from 8C148 0x803ced98]",
+  "branch": "shim_sb_evaluate"
+ }
+]
